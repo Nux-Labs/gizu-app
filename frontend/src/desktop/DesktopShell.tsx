@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { LayoutGrid, PieChart, ArrowLeftRight, Settings as Cog, Bell, LogOut } from 'lucide-react'
-import { notifications } from '../content'
+import { notifications, profile } from '../content'
 import AsciiChameleon from '../chameleon/AsciiChameleon'
 
 const NAV = [
@@ -84,11 +84,11 @@ export default function DesktopShell({
         <div className="mt-auto flex flex-col gap-1 pt-3">
           <div className="flex min-h-11 items-center gap-3 rounded-xl px-2">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_50%_30%,#14303a,#0a1420_48%,#05080d)] font-mono text-[11px] text-neon shadow-[0_0_0_1px_rgba(142,234,245,0.34),0_0_16px_-3px_rgba(124,232,242,0.55)]">
-              CP
+              {profile.initials}
             </span>
             <span className="min-w-0 leading-tight">
-              <span className="block truncate text-[13px] font-medium">Cankat Polat</span>
-              <span className="block font-mono text-[11px] text-[#808a9a]">0xA4f2…91c7</span>
+              <span className="block truncate text-[13px] font-medium">{profile.name}</span>
+              <span className="block font-mono text-[11px] text-[#808a9a]">{profile.address}</span>
             </span>
           </div>
           <button

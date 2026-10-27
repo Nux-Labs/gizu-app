@@ -8,6 +8,7 @@ import useSize from '../useSize'
 import { holdings, portfolioSeries } from '../data'
 import { MONAD_MAINNET_CHAIN_ID } from '../opportunities'
 import { useOpportunities } from '../useOpportunities'
+import { greeting, profile } from '../content'
 
 // Demo series window per period: newest samples last.
 const RANGES = { '1D': 8, '1W': 18, '1M': 36, '1Y': 60, All: 72 } as const
@@ -48,7 +49,7 @@ export default function DesktopHome({
       >
         <div>
           <h1 className="text-[38px] font-light leading-[1.1] tracking-[-0.04em]">
-            Good evening, <span className="text-gradient">Cankat</span>
+            {greeting()}, <span className="text-gradient">{profile.firstName}</span>
           </h1>
           <p className="mt-1.5 text-[13px] text-[#9aa4b4]">
             Three vaults active, next redemption window opens in 6 days.

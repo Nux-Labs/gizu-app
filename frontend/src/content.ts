@@ -208,3 +208,19 @@ export const notifications = [
     unread: false,
   },
 ]
+
+/** Demo account identity, shown wherever the signed-in member appears. */
+export const profile = {
+  name: 'Cankat Polat',
+  firstName: 'Cankat',
+  initials: 'CP',
+  address: '0xA4f2…91c7',
+}
+
+/** Greeting from the visitor's clock (Kurage greeting). */
+export function greeting(hour = new Date().getHours()) {
+  if (hour < 5) return 'Good night'
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
+}

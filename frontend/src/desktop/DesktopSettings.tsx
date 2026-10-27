@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Fingerprint, Bell, Globe, ShieldCheck, FileText, LifeBuoy, ChevronRight, Copy } from 'lucide-react'
 import SpotlightCard from '../components/SpotlightCard'
+import { profile } from '../content'
 
 const groups = [
   {
@@ -49,8 +50,8 @@ export default function DesktopSettings({ onOpen }: { onOpen: (id: string) => vo
               CP
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[17px] font-medium">Cankat Polat</div>
-              <div className="mt-1 truncate font-mono text-[12px] text-white/30">0xA4f2 . . . 91c7</div>
+              <div className="text-[17px] font-medium">{profile.name}</div>
+              <div className="mt-1 truncate font-mono text-[12px] text-white/30">{profile.address}</div>
             </div>
             <button className="glass-soft flex h-10 w-10 items-center justify-center rounded-xl text-white/45">
               <Copy size={14} />
