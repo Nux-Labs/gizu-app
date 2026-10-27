@@ -151,7 +151,7 @@ export function LineChart({
 
   const scrubValue = scrub === null ? undefined : points[scrub]?.v;
   const focusX = scrub === null ? null : (points[scrub]?.x ?? null);
-  const label = "text-[10px] text-white/30";
+  const label = "text-[10px] text-white/50";
 
   return (
     <View
