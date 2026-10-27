@@ -41,6 +41,8 @@ export type LineChartProps = {
   revealKey?: string;
   /** Axis and scrub value text; defaults to two decimals. */
   format?: (value: number) => string;
+  /** Optional per-sample labels (e.g. dates), shown while scrubbing and as an x axis. */
+  labels?: string[];
 };
 
 const twoDecimals = (value: number) => value.toFixed(2);
@@ -60,6 +62,7 @@ export function LineChart({
   up = true,
   revealKey,
   format = twoDecimals,
+  labels,
 }: LineChartProps) {
   const { fontScale } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
@@ -256,12 +259,26 @@ export function LineChart({
             style={[styles.nums, { color }]}
           >
             {format(scrubValue)}
+            {scrub !== null && labels?.[scrub] ? ` · ${labels[scrub]}` : ""}
           </Text>
         )}
         <Text key={`max-${fontScale}`} className={`font-mono ${label}`} style={styles.nums}>
           {format(max)}
         </Text>
       </View>
+      {labels && labels.length >= 2 && (
+        <View
+          style={styles.passThrough}
+          className="absolute inset-x-0 -bottom-4 flex-row justify-between"
+        >
+          <Text key={`from-${fontScale}`} className={`font-mono ${label}`}>
+            {labels[0]}
+          </Text>
+          <Text key={`to-${fontScale}`} className={`font-mono ${label}`}>
+            {labels[labels.length - 1]}
+          </Text>
+        </View>
+      )}
     </View>
   );
 }

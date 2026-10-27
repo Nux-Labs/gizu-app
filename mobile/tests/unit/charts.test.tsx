@@ -66,3 +66,12 @@ test("sparkline renders nothing for a single sample", () => {
   const { toJSON } = render(<Sparkline series={[1]} />);
   expect(toJSON()).toBeNull();
 });
+
+test("scrubbing shows the sample's label and the axis shows the range", () => {
+  render(<LineChart series={[10, 20, 30]} labels={["Oct 1", "Oct 2", "Oct 3"]} height={120} />);
+  const chart = screen.getByTestId("line-chart", hidden);
+  fireEvent(chart, "layout", { nativeEvent: { layout: { x: 0, y: 0, width: 300, height: 120 } } });
+  expect(screen.getByText("Oct 1", hidden)).toBeTruthy();
+  fireEvent(chart, "responderGrant", { nativeEvent: { locationX: 150 } });
+  expect(screen.getByText("20.00 · Oct 2", hidden)).toBeTruthy();
+});
