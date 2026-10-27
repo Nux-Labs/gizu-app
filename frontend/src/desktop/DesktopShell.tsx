@@ -1,8 +1,18 @@
 import { useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { LayoutGrid, PieChart, ArrowLeftRight, Settings as Cog, Bell, LogOut, Search } from 'lucide-react'
+import {
+  LayoutGrid,
+  PieChart,
+  ArrowLeftRight,
+  Settings as Cog,
+  Bell,
+  LogOut,
+  Search,
+  PanelLeft,
+} from 'lucide-react'
 import { notifications, profile } from '../content'
 import AsciiChameleon from '../chameleon/AsciiChameleon'
+import useStored from '../useStored'
 
 const NAV = [
   { id: 'home', label: 'Overview', icon: LayoutGrid },
@@ -30,13 +40,19 @@ export default function DesktopShell({
   const [bell, setBell] = useState(false)
   const [read, setRead] = useState<string[]>([])
   const unread = notifications.filter((n) => n.unread && !read.includes(n.id)).length
+  const [collapsed, setCollapsed] = useStored('gizu:rail-collapsed', false)
+  const hide = collapsed ? 'sr-only' : ''
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-ink">
-      <aside className="z-20 flex w-[248px] shrink-0 flex-col border-r border-white/[0.09] bg-[rgba(6,9,14,0.88)] px-3 pb-3 pt-3.5 backdrop-blur-[18px]">
+      <aside
+        className={`z-20 flex shrink-0 flex-col overflow-hidden border-r border-white/[0.09] bg-[rgba(6,9,14,0.88)] px-3 pb-3 pt-3.5 backdrop-blur-[18px] transition-[width] duration-200 ease-[cubic-bezier(.2,.7,.2,1)] ${
+          collapsed ? 'w-[72px]' : 'w-[248px]'
+        }`}
+      >
         <div className="mb-3.5 flex h-11 items-center gap-3 px-2.5">
           <img src="/gizulogo.svg" alt="" className="h-6 w-auto" />
-          <span className="text-[17px] font-medium tracking-[-0.025em]">Gizu</span>
+          <span className={`text-[17px] font-medium tracking-[-0.025em] ${hide}`}>Gizu</span>
         </div>
 
         <nav className="flex flex-col gap-1">
@@ -47,6 +63,7 @@ export default function DesktopShell({
                 key={id}
                 onClick={() => onTab(id)}
                 aria-current={on ? 'page' : undefined}
+                title={collapsed ? label : undefined}
                 className={`relative flex min-h-11 items-center gap-3 rounded-xl px-3 text-left text-[14px] transition-colors duration-150 ${
                   on ? 'text-white' : 'text-[#9aa4b4] hover:bg-white/[0.055] hover:text-white'
                 }`}
@@ -60,14 +77,14 @@ export default function DesktopShell({
                     <span className="absolute -left-3 bottom-3 top-3 w-0.5 rounded-full bg-gradient-to-b from-neon to-violet" />
                   </motion.span>
                 )}
-                <Icon size={19} strokeWidth={1.5} className="relative" />
-                <span className="relative">{label}</span>
+                <Icon size={19} strokeWidth={1.5} className="relative shrink-0" />
+                <span className={`relative whitespace-nowrap ${hide}`}>{label}</span>
               </button>
             )
           })}
         </nav>
 
-        <div className="mt-5 min-h-0">
+        <div className={`mt-5 min-h-0 ${collapsed ? 'hidden' : ''}`}>
           <h3 className="mb-1.5 px-3 font-mono text-[12px] font-normal text-[#808a9a]">recent</h3>
           <ul className="flex flex-col gap-0.5">
             {notifications.slice(0, 4).map((n) => (
@@ -88,16 +105,27 @@ export default function DesktopShell({
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_50%_30%,#14303a,#0a1420_48%,#05080d)] font-mono text-[11px] text-neon shadow-[0_0_0_1px_rgba(142,234,245,0.34),0_0_16px_-3px_rgba(124,232,242,0.55)]">
               {profile.initials}
             </span>
-            <span className="min-w-0 leading-tight">
+            <span className={`min-w-0 leading-tight ${hide}`}>
               <span className="block truncate text-[13px] font-medium">{profile.name}</span>
               <span className="block font-mono text-[11px] text-[#808a9a]">{profile.address}</span>
             </span>
           </div>
           <button
-            onClick={onDisconnect}
-            className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-[14px] text-rose-300/70 hover:bg-white/[0.055]"
+            onClick={() => setCollapsed(!collapsed)}
+            aria-expanded={!collapsed}
+            title={collapsed ? 'Expand sidebar' : undefined}
+            className="flex min-h-11 items-center gap-3 whitespace-nowrap rounded-xl px-3 text-[14px] text-[#9aa4b4] hover:bg-white/[0.055] hover:text-white"
           >
-            <LogOut size={18} strokeWidth={1.5} /> Disconnect
+            <PanelLeft size={18} strokeWidth={1.5} className="shrink-0" />
+            <span className={hide}>Collapse</span>
+          </button>
+          <button
+            onClick={onDisconnect}
+            title={collapsed ? 'Disconnect' : undefined}
+            className="flex min-h-11 items-center gap-3 whitespace-nowrap rounded-xl px-3 text-[14px] text-rose-300/70 hover:bg-white/[0.055]"
+          >
+            <LogOut size={18} strokeWidth={1.5} className="shrink-0" />
+            <span className={hide}>Disconnect</span>
           </button>
         </div>
       </aside>
@@ -107,7 +135,7 @@ export default function DesktopShell({
           aria-hidden
           className="pointer-events-none absolute inset-0 z-0 opacity-70 [mask-image:radial-gradient(140%_120%_at_50%_45%,#000_55%,rgba(0,0,0,0.55)_100%)]"
         >
-          <AsciiChameleon anchorX={0.74} anchorY={0.62} size={0.11} />
+          <AsciiChameleon anchorX={0.74} anchorY={0.8} size={0.1} />
         </div>
 
         <header className="relative z-30 flex shrink-0 justify-end gap-2 px-6 pt-4">
