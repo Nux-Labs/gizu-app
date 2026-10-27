@@ -16,9 +16,9 @@ export default function Onboarding({
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div className="pointer-events-none absolute inset-0">
         <GradientWaves
-          horizonColor="#070d0a"
-          waveColor="#2aa471"
-          crestColor="#5fe0a6"
+          horizonColor="#070a10"
+          waveColor="#3fa9b5"
+          crestColor="#b9a6ff"
           speed={0.22}
           amplitude={1.9}
           waveScale={0.45}

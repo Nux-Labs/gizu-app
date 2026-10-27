@@ -28,9 +28,13 @@
 }
 
 :root {
-  --neon: #31c47e;
+  /* Kurage tokens */
+  --neon: #7ce8f2;
+  --violet: #b9a6ff;
+  --ink: #04060a;
   --font-display: 'Helvetica Neue LT', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  --font-mono: 'Helvetica Neue LT', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --ease: cubic-bezier(.2, .7, .2, 1);
 }
 
 * { -webkit-tap-highlight-color: transparent; }
@@ -40,8 +44,8 @@ html, body, #root { height: 100%; }
 body {
   margin: 0;
   -webkit-font-smoothing: antialiased;
-  background: #050706;
-  color: #dfe8e3;
+  background: var(--ink);
+  color: #f1f4f8;
   font-family: var(--font-display);
   overscroll-behavior: none;
 }
@@ -54,18 +58,19 @@ body {
 
 /* ---------- glass ---------- */
 @layer components {
+  /* Kurage composer glass: translucent ink, lit top rim, deep drop shadow. */
   .glass {
-    background: rgba(14, 19, 16, 0.72);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-    border: 1px solid rgba(255, 255, 255, 0.055);
-    box-shadow: 0 18px 40px -30px rgba(0, 0, 0, 0.9);
+    background: linear-gradient(180deg, rgba(8, 12, 18, 0.84), rgba(8, 12, 18, 0.72));
+    backdrop-filter: blur(14px) saturate(1.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 40px 90px -36px rgba(0, 0, 0, 0.95);
   }
   .glass-soft {
-    background: rgba(255, 255, 255, 0.032);
+    background: rgba(11, 15, 22, 0.72);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
-    border: 1px solid rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.09);
   }
   .sell-btn {
     background: #c4576a;
@@ -73,9 +78,24 @@ body {
     box-shadow: none;
   }
   .neon-btn {
-    background: #31c47e;
-    color: #05140d;
+    background: linear-gradient(135deg, #bff6fb, #d7ccff);
+    color: var(--ink);
     box-shadow: none;
+  }
+  /* Glowing accent dot before Kurage eyebrows. */
+  .eyebrow-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--neon);
+    box-shadow: 0 0 10px 1px rgba(124, 232, 242, 0.7);
+  }
+  .text-gradient {
+    background: linear-gradient(100deg, #bff6fb 10%, #b9a6ff 95%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 }
 
@@ -118,13 +138,13 @@ body {
   clip-path: inset(0 0 0 0);
 }
 .glitch::before {
-  color: #49c9a0;
+  color: #7ce8f2;
   transform: translate(-1.5px, 0);
   animation: glitchTop 3.2s steps(2) infinite;
   opacity: 0.85;
 }
 .glitch::after {
-  color: #8fbf5a;
+  color: #b9a6ff;
   transform: translate(1.5px, 0);
   animation: glitchBottom 2.7s steps(2) infinite;
   opacity: 0.7;

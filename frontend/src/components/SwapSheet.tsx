@@ -36,7 +36,7 @@ export default function SwapSheet({
     getToken = ticker
   }
 
-  let sideLabelColor = 'rgba(49,196,126,0.75)'
+  let sideLabelColor = 'rgba(124,232,242,0.75)'
   let sideLabel = 'buy order'
   let confirmClass = 'neon-btn'
   let confirmLabel = `Buy ${ticker}`

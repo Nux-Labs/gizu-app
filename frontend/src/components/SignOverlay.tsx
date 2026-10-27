@@ -20,7 +20,7 @@ export default function SignOverlay({
   tone?: 'positive' | 'negative'
 }) {
   const negative = tone === 'negative'
-  const accent = negative ? '#c4576a' : '#31c47e'
+  const accent = negative ? '#c4576a' : '#7ce8f2'
   const isDesktop = useIsDesktop()
 
   return (

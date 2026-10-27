@@ -103,7 +103,7 @@ export default function ParticleDotOrb({
   className = '',
   size = 42,
   speed = 1.0,
-  color = '#31c47e',
+  color = '#7ce8f2',
   burst = false,
   distance = 4.4,
   spread = 5.0,

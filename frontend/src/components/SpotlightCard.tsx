@@ -6,7 +6,7 @@ export default function SpotlightCard({
   children,
   className = '',
   contentClassName = '',
-  spotlightColor = 'rgba(49,196,126,0.14)',
+  spotlightColor = 'rgba(124,232,242,0.12)',
   spotlightSize = 260,
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & {
@@ -34,7 +34,7 @@ export default function SpotlightCard({
     <div
       onMouseMove={onMove}
       onMouseLeave={() => setMoved(false)}
-      className={`group relative overflow-hidden rounded-2xl border border-white/[0.055] bg-[rgba(14,19,16,0.72)] ${className}`}
+      className={`group relative overflow-hidden rounded-2xl border border-white/[0.09] bg-[rgba(8,12,18,0.84)] backdrop-blur-[14px] ${className}`}
       {...props}
     >
       <motion.div
