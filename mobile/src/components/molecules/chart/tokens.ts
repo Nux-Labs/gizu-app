@@ -5,12 +5,17 @@ import { reduceMotion } from "@/theme/motion";
 // Frontend Chart.tsx / Sparkline.tsx values, kept in one place for both charts.
 export const chartColors = {
   up: colors.neon.DEFAULT,
+  /** Right-hand end of the gradient line and dither ramp. */
+  upTo: colors.violet.DEFAULT,
   down: colors.sell,
+  downTo: colors.rose,
   grid: "rgba(255,255,255,0.06)",
   crosshair: "rgba(255,255,255,0.22)",
 } as const;
 
-export const chartStroke = 1.6;
+export const chartStroke = 2;
+/** Soft glow under the line. */
+export const glowStroke = 7;
 export const gridLines = [0.25, 0.5, 0.75] as const;
 export const gridDash = "2 6";
 export const crosshairDash = "3 4";
@@ -18,7 +23,6 @@ export const crosshairDash = "3 4";
 export const chartPad = 9;
 /** Sparkline inner padding (frontend: `(height - 4) - 2`). */
 export const sparkPad = 2;
-export const fillOpacity = { chart: 0.22, spark: 0.28 } as const;
 
 /** Frontend reveal: `transition={{ duration: 1, ease: 'easeOut' }}` (framer easeOut). */
 export const revealTiming = {

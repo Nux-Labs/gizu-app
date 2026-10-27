@@ -8,20 +8,24 @@ import {
   type LayoutChangeEvent,
 } from "react-native";
 import Animated, {
+  Easing,
+  cancelAnimation,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
+  withRepeat,
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, Line, LinearGradient, Path, Stop } from "react-native-svg";
 import { useScrollLock } from "@/components/templates/ScrollLock";
-import { areaPath, nearestIndex, plotSeries, smoothPath } from "./path";
+import { DitherFill } from "./DitherFill";
+import { nearestIndex, plotSeries, smoothPath } from "./path";
 import {
   chartColors,
   chartPad,
   chartStroke,
   crosshairDash,
-  fillOpacity,
+  glowStroke,
   gridDash,
   gridLines,
   revealTiming,
@@ -44,7 +48,11 @@ const DOT = 9;
 const RING = 4;
 const HALO = DOT + RING * 2;
 
-/** Frontend `Chart`: smooth line, gradient fill, grid, reveal and touch scrub. */
+/**
+ * Kurage chart: a cyan → violet glowing line over a dithered pixel fill, dashed grid,
+ * left-to-right reveal, a pulsing live point and a touch scrub that lights the cells
+ * around the finger.
+ */
 export function LineChart({
   series,
   height = 150,
@@ -54,16 +62,16 @@ export function LineChart({
 }: LineChartProps) {
   const { fontScale } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
-  const fillId = svgId("chart-fill", useId());
+  const strokeId = svgId("chart-stroke", useId());
   const [width, setWidth] = useState(0);
   const [scrub, setScrub] = useState<number | null>(null);
   const lockScroll = useScrollLock();
   const color = up ? chartColors.up : chartColors.down;
+  const colorTo = up ? chartColors.upTo : chartColors.downTo;
 
-  const { points, min, max, line, area } = useMemo(() => {
+  const { points, min, max, line } = useMemo(() => {
     const plot = plotSeries(series, width, height, chartPad);
-    const d = smoothPath(plot.points);
-    return { ...plot, line: d, area: areaPath(d, width, height) };
+    return { ...plot, line: smoothPath(plot.points) };
   }, [series, width, height]);
 
   const reveal = useSharedValue(reducedMotion ? 1 : 0);
@@ -88,6 +96,18 @@ export function LineChart({
     activeX.set(last.x);
     activeY.set(last.y);
   }, [last, activeX, activeY]);
+
+  // Live point: a halo that breathes out and fades, like a heartbeat.
+  const pulse = useSharedValue(0);
+  useEffect(() => {
+    if (reducedMotion) return;
+    pulse.set(withRepeat(withTiming(1, { duration: 1600, easing: Easing.out(Easing.quad) }), -1));
+    return () => cancelAnimation(pulse);
+  }, [pulse, reducedMotion]);
+  const pulseStyle = useAnimatedStyle(() => ({
+    opacity: 0.55 * (1 - pulse.get()),
+    transform: [{ scale: 1 + pulse.get() * 1.6 }],
+  }));
 
   const revealStyle = useAnimatedStyle(() => ({ width: measured.get() * reveal.get() }));
   const crosshairStyle = useAnimatedStyle(() => ({
@@ -124,7 +144,8 @@ export function LineChart({
   };
 
   const scrubValue = scrub === null ? undefined : points[scrub]?.v;
-  const label = "text-[11px] text-white/30";
+  const focusX = scrub === null ? null : (points[scrub]?.x ?? null);
+  const label = "text-[10px] text-white/30";
 
   return (
     <View
@@ -157,18 +178,37 @@ export function LineChart({
             ))}
           </Svg>
           <Animated.View style={[styles.reveal, revealStyle]}>
+            <View style={StyleSheet.absoluteFill}>
+              <DitherFill
+                points={points}
+                width={width}
+                height={height}
+                from={color}
+                to={colorTo}
+                focusX={focusX}
+                ground
+              />
+            </View>
             <Svg width={width} height={height}>
               <Defs>
-                <LinearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0%" stopColor={color} stopOpacity={fillOpacity.chart} />
-                  <Stop offset="100%" stopColor={color} stopOpacity={0} />
+                <LinearGradient id={strokeId} x1="0" y1="0" x2="1" y2="0">
+                  <Stop offset="0%" stopColor={color} />
+                  <Stop offset="100%" stopColor={colorTo} />
                 </LinearGradient>
               </Defs>
-              <Path d={area} fill={`url(#${fillId})`} />
               <Path
                 d={line}
                 fill="none"
-                stroke={color}
+                stroke={`url(#${strokeId})`}
+                strokeOpacity={0.18}
+                strokeWidth={glowStroke}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <Path
+                d={line}
+                fill="none"
+                stroke={`url(#${strokeId})`}
                 strokeWidth={chartStroke}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -188,30 +228,34 @@ export function LineChart({
             </Svg>
           </Animated.View>
           <Animated.View
-            style={[styles.halo, { backgroundColor: `${color}26` }, dotStyle]}
+            style={[styles.halo, { backgroundColor: `${colorTo}26` }, dotStyle]}
             testID="line-chart-dot"
           >
-            <View style={[styles.dot, { backgroundColor: color }]} />
+            <Animated.View
+              style={[styles.pulse, { borderColor: colorTo }, pulseStyle]}
+              pointerEvents="none"
+            />
+            <View style={[styles.dot, { backgroundColor: colorTo }]} />
           </Animated.View>
         </View>
       )}
       <View
         style={styles.passThrough}
-        className="absolute inset-x-0 -top-1 flex-row justify-between"
+        className="absolute inset-x-0 -top-1 flex-row justify-between pr-6"
       >
-        <Text key={`min-${fontScale}`} className={`font-sans ${label}`} style={styles.nums}>
+        <Text key={`min-${fontScale}`} className={`font-mono ${label}`} style={styles.nums}>
           {format(min)}
         </Text>
         {scrubValue !== undefined && (
           <Text
             key={`value-${fontScale}`}
-            className="font-sans text-[10px] tracking-[1px]"
+            className="font-mono text-[10px] tracking-[1px]"
             style={[styles.nums, { color }]}
           >
             {format(scrubValue)}
           </Text>
         )}
-        <Text key={`max-${fontScale}`} className={`font-sans ${label}`} style={styles.nums}>
+        <Text key={`max-${fontScale}`} className={`font-mono ${label}`} style={styles.nums}>
           {format(max)}
         </Text>
       </View>
@@ -234,5 +278,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   dot: { width: DOT, height: DOT, borderRadius: DOT / 2 },
+  pulse: {
+    position: "absolute",
+    width: HALO,
+    height: HALO,
+    borderRadius: HALO / 2,
+    borderWidth: 1,
+  },
   nums: { fontVariant: ["tabular-nums"] },
 });
