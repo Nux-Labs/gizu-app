@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowDownLeft, ArrowUpRight } from 'lucide-react'
 import Chart from '../components/Chart'
@@ -7,6 +8,10 @@ import useSize from '../useSize'
 import { holdings, portfolioSeries } from '../data'
 import { MONAD_MAINNET_CHAIN_ID } from '../opportunities'
 import { useOpportunities } from '../useOpportunities'
+
+// Demo series window per period: newest samples last.
+const RANGES = { '1D': 8, '1W': 18, '1M': 36, '1Y': 60, All: 72 } as const
+type Range = keyof typeof RANGES
 
 export default function DesktopHome({
   onOpenOpportunity,
@@ -22,6 +27,10 @@ export default function DesktopHome({
   const total = holdings.reduce((a, h) => a + h.value, 0)
   const [whole, cents] = total.toFixed(2).split('.')
   const chart = useSize<HTMLDivElement>()
+  const [range, setRange] = useState<Range>('1M')
+  const series = portfolioSeries.slice(-RANGES[range])
+  const change = ((series[series.length - 1] - series[0]) / series[0]) * 100
+  const up = change >= 0
   const vaults = useOpportunities({
     protocol: 'all',
     search: '',
@@ -84,18 +93,29 @@ export default function DesktopHome({
                   <span className="pb-0.5 text-[22px] text-white/35">.{cents}</span>
                 </div>
                 <div className="mt-3 flex items-center gap-3">
-                  <span className="rounded-full bg-neon/10 px-3 py-1 font-mono text-[12px] text-neon">
-                    + 3.84%
+                  <span
+                    className={`rounded-full px-3 py-1 font-mono text-[12px] ${
+                      up ? 'bg-neon/10 text-neon' : 'bg-rose-400/10 text-rose-300'
+                    }`}
+                  >
+                    {up ? '+' : '-'} {Math.abs(change).toFixed(2)}%
                   </span>
                   <span className="font-mono text-[12px] text-white/30">+$30,412.09 today</span>
                 </div>
               </div>
-              <div className="flex gap-2 font-mono text-[10px] uppercase tracking-widest">
-                {['1D', '1W', '1M', '1Y', 'All'].map((t, i) => (
+              <div
+                role="radiogroup"
+                aria-label="Chart period"
+                className="flex gap-2 font-mono text-[10px] uppercase tracking-widest"
+              >
+                {(Object.keys(RANGES) as Range[]).map((t) => (
                   <button
                     key={t}
-                    className={`rounded-full px-3 py-1.5 ${
-                      i === 2 ? 'bg-neon/15 text-neon' : 'text-white/30'
+                    role="radio"
+                    aria-checked={t === range}
+                    onClick={() => setRange(t)}
+                    className={`rounded-full px-3 py-1.5 transition-colors ${
+                      t === range ? 'bg-neon/15 text-neon' : 'text-white/45 hover:text-white/80'
                     }`}
                   >
                     {t}
@@ -105,7 +125,9 @@ export default function DesktopHome({
             </div>
 
             <div ref={chart.ref} className="mt-5 min-h-0 flex-1">
-              {chart.height > 20 && <Chart series={portfolioSeries} height={chart.height} up />}
+              {chart.height > 20 && (
+                <Chart key={range} series={series} height={chart.height} up={up} />
+              )}
             </div>
           </SpotlightCard>
         </motion.div>
