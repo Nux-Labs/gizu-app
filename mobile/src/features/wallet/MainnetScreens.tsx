@@ -19,6 +19,7 @@ import { Button } from "@/components/atoms/Button";
 import { Skeleton } from "@/components/atoms/Skeleton";
 import { HoldingDetails } from "@/components/molecules/HoldingDetails";
 import { Surface } from "@/components/molecules/Surface";
+import { MascotHero } from "@/components/organisms/MascotHero";
 import { ErrorNotice } from "@/components/molecules/ErrorNotice";
 import { Notice } from "@/components/molecules/Notice";
 import { AccountAddress } from "@/features/account/AccountAddress";
@@ -357,19 +358,21 @@ export function MainnetPortfolioScreen({
   const ready = !!wallet.snapshot && wallet.snapshot.balanceComplete !== false;
   return (
     <Screen refreshing={wallet.loading} onRefresh={() => void wallet.refresh()}>
-      <View className="flex-row items-center gap-3 pb-1">
-        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          <GizuLogo width={24} height={32} />
-        </View>
-        <Typography variant="pageTitle" accessibilityRole="header" className="flex-1 !text-[26px]">
-          Your portfolio
-        </Typography>
-        <IconButton
-          icon={Bell}
-          label="Notifications"
-          onPress={() => root.navigate("Notifications")}
-        />
-      </View>
+      <MascotHero
+        title="Your portfolio"
+        leading={
+          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <GizuLogo width={21} height={28} />
+          </View>
+        }
+        trailing={
+          <IconButton
+            icon={Bell}
+            label="Notifications"
+            onPress={() => root.navigate("Notifications")}
+          />
+        }
+      />
       <BalanceStatus showRefresh={false} showLoading={false} />
       {wallet.snapshot && ready ? (
         <BalanceCard snapshot={wallet.snapshot} actions={actions} />
