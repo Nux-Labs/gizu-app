@@ -1,5 +1,6 @@
 import { Text, View, useWindowDimensions } from "react-native";
 import { PressableScale } from "@/components/atoms/PressableScale";
+import { haptic } from "@/theme/haptics";
 
 // Visual pills are small (frontend `px-3 py-1.5`); hitSlop keeps a comfortable touch target.
 const hitSlop = { top: 10, bottom: 10, left: 4, right: 4 };
@@ -32,7 +33,10 @@ export function PeriodPills<T extends string>({
             accessibilityLabel={value}
             accessibilityState={{ checked }}
             hitSlop={hitSlop}
-            onPress={() => onSelect(value)}
+            onPress={() => {
+              if (value !== selected) haptic.select();
+              onSelect(value);
+            }}
             className={`rounded-full px-3 py-1.5 ${checked ? "bg-neon/15" : ""}`}
           >
             <Text

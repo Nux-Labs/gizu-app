@@ -17,6 +17,7 @@ import {
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import colors from "@/theme/colors.json";
 import { springs } from "@/theme/motion";
+import { haptic } from "@/theme/haptics";
 
 const icons = { Home: House, Vaults: PieChart, Exchange: ArrowLeftRight, Settings };
 const titles = { Home: "Home", Vaults: "Vaults", Exchange: "Swap", Settings: "Settings" };
@@ -132,8 +133,10 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
                     target: route.key,
                     canPreventDefault: true,
                   });
-                  if (!selected && !event.defaultPrevented)
+                  if (!selected && !event.defaultPrevented) {
+                    haptic.select();
                     navigation.navigate(route.name, route.params);
+                  }
                 }}
                 onLongPress={() => navigation.emit({ type: "tabLongPress", target: route.key })}
                 className="h-14 w-[68px] items-center justify-center gap-1 rounded-[22px]"

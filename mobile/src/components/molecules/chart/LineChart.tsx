@@ -18,6 +18,7 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, Line, LinearGradient, Path, Stop } from "react-native-svg";
 import { useScrollLock } from "@/components/templates/ScrollLock";
+import { haptic } from "@/theme/haptics";
 import { DitherFill } from "./DitherFill";
 import { nearestIndex, plotSeries, smoothPath } from "./path";
 import {
@@ -128,7 +129,9 @@ export function LineChart({
     if (!point) return;
     activeX.set(point.x);
     activeY.set(point.y);
-    setScrub((current) => (current === index ? current : index));
+    // Tick once per sample crossed, not per move event.
+    if (scrub !== index) haptic.select();
+    setScrub(index);
   };
   const grant = (event: GestureResponderEvent) => {
     lockScroll(true);

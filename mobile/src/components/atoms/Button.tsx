@@ -1,5 +1,6 @@
 import { Text, useWindowDimensions } from "react-native";
 import { PrimaryFill } from "./PrimaryFill";
+import { haptic } from "@/theme/haptics";
 import colors from "@/theme/colors.json";
 import { PressableScale } from "./PressableScale";
 import { Spinner } from "./Spinner";
@@ -57,7 +58,10 @@ export function Button({
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: unavailable, busy: loading }}
       disabled={unavailable}
-      onPress={onPress}
+      onPress={() => {
+        if (variant === "primary" || variant === "sell") haptic.tap();
+        onPress();
+      }}
       className={`flex-row items-center justify-center gap-3 rounded-button ${quiet ? "min-h-11 px-2 py-2" : "min-h-14 px-5 py-4"} ${surface}`}
     >
       {variant === "primary" && !disabled && <PrimaryFill />}
