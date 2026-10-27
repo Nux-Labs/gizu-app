@@ -5,6 +5,7 @@ import OpportunityCard from '../components/OpportunityCard'
 import ProtocolFilters from '../components/ProtocolFilters'
 import { MONAD_MAINNET_CHAIN_ID, type ProtocolSelection } from '../opportunities'
 import { useOpportunities } from '../useOpportunities'
+import LoadError from '../components/LoadError'
 
 export default function DesktopVaults({
   onOpenOpportunity,
@@ -83,9 +84,7 @@ export default function DesktopVaults({
         </div>
       )}
       {load.kind === 'failed' && (
-        <div className="flex flex-1 items-center justify-center font-mono text-[11px] uppercase tracking-[0.25em] text-white/25">
-          {load.message}
-        </div>
+        <LoadError className="flex-1 justify-center" message={load.message} onRetry={load.retry} />
       )}
       {load.kind === 'ready' && load.page.list.length === 0 && (
         <div className="flex flex-1 items-center justify-center font-mono text-[11px] uppercase tracking-[0.25em] text-white/25">

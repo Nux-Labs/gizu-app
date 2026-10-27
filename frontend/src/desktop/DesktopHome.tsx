@@ -4,6 +4,7 @@ import { ArrowDownLeft, ArrowUpRight } from 'lucide-react'
 import Chart from '../components/Chart'
 import OpportunityCard from '../components/OpportunityCard'
 import SpotlightCard from '../components/SpotlightCard'
+import LoadError from '../components/LoadError'
 import useSize from '../useSize'
 import { holdings, portfolioSeries } from '../data'
 import { MONAD_MAINNET_CHAIN_ID } from '../opportunities'
@@ -204,11 +205,7 @@ export default function DesktopHome({
             Loading vaults
           </div>
         )}
-        {vaults.kind === 'failed' && (
-          <div className="py-10 text-center font-mono text-[11px] uppercase tracking-[0.25em] text-white/25">
-            {vaults.message}
-          </div>
-        )}
+        {vaults.kind === 'failed' && <LoadError message={vaults.message} onRetry={vaults.retry} />}
         {vaults.kind === 'ready' && vaults.page.list.length === 0 && (
           <div className="py-10 text-center font-mono text-[11px] uppercase tracking-[0.25em] text-white/25">
             No vaults

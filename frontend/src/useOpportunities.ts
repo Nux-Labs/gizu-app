@@ -10,7 +10,7 @@ import {
 type Load =
   | { kind: 'loading' }
   | { kind: 'ready'; page: OpportunityPage }
-  | { kind: 'failed'; message: string }
+  | { kind: 'failed'; message: string; retry: () => void }
 
 type DetailLoad =
   | { kind: 'loading' }
@@ -25,6 +25,7 @@ export function useOpportunities(query: {
   chainId: number
 }) {
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -43,10 +44,14 @@ export function useOpportunities(query: {
         if (err instanceof DOMException && err.name === 'AbortError') {
           return
         }
-        setLoad({ kind: 'failed', message: 'Could not load vaults' })
+        setLoad({
+          kind: 'failed',
+          message: 'Could not load vaults',
+          retry: () => setAttempt((n) => n + 1),
+        })
       })
     return () => controller.abort()
-  }, [query.protocol, query.search, query.page, query.items, query.chainId])
+  }, [query.protocol, query.search, query.page, query.items, query.chainId, attempt])
 
   return load
 }

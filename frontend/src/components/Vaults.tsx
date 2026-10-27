@@ -5,6 +5,7 @@ import OpportunityCard from './OpportunityCard'
 import ProtocolFilters from './ProtocolFilters'
 import { MONAD_MAINNET_CHAIN_ID, type ProtocolSelection } from '../opportunities'
 import { useOpportunities } from '../useOpportunities'
+import LoadError from './LoadError'
 
 export default function Vaults({ onOpenOpportunity }: { onOpenOpportunity: (id: string) => void }) {
   const [query, setQuery] = useState('')
@@ -78,9 +79,7 @@ export default function Vaults({ onOpenOpportunity }: { onOpenOpportunity: (id: 
         </div>
       )}
       {load.kind === 'failed' && (
-        <div className="mt-16 text-center font-mono text-[11px] uppercase tracking-[0.25em] text-white/25">
-          {load.message}
-        </div>
+        <LoadError className="mt-10" message={load.message} onRetry={load.retry} />
       )}
       {load.kind === 'ready' && load.page.list.length === 0 && (
         <div className="mt-16 text-center font-mono text-[11px] uppercase tracking-[0.25em] text-white/25">
