@@ -105,6 +105,17 @@ export function BalanceCard({
             </Text>
           )}
         </View>
+        {actions}
+        {!expanded && (
+          // Always-on glance; the full chart, periods and breakdown live behind Performance.
+          <LineChart
+            series={series.length >= 2 ? series : flat}
+            height={84}
+            up={up}
+            revealKey="compact"
+            format={(value) => `$${usd.format(value)}`}
+          />
+        )}
         {expanded && (
           <View className="gap-4">
             <PeriodPills
@@ -147,7 +158,6 @@ export function BalanceCard({
             </View>
           </View>
         )}
-        {actions}
       </View>
     </Surface>
   );
