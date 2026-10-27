@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { LayoutGrid, PieChart, ArrowLeftRight, Settings as Cog, Bell, LogOut } from 'lucide-react'
+import { LayoutGrid, PieChart, ArrowLeftRight, Settings as Cog, Bell, LogOut, Search } from 'lucide-react'
 import { notifications, profile } from '../content'
 import AsciiChameleon from '../chameleon/AsciiChameleon'
 
@@ -18,11 +18,13 @@ export default function DesktopShell({
   tab,
   onTab,
   onDisconnect,
+  onSearch,
   children,
 }: {
   tab: string
   onTab: (id: string) => void
   onDisconnect: () => void
+  onSearch: () => void
   children: ReactNode
 }) {
   const [bell, setBell] = useState(false)
@@ -108,7 +110,17 @@ export default function DesktopShell({
           <AsciiChameleon anchorX={0.74} anchorY={0.62} size={0.11} />
         </div>
 
-        <header className="relative z-30 flex shrink-0 justify-end px-6 pt-4">
+        <header className="relative z-30 flex shrink-0 justify-end gap-2 px-6 pt-4">
+          <button
+            onClick={onSearch}
+            className="glass-soft flex h-10 items-center gap-2 rounded-xl pl-3 pr-2 text-[14px] text-[#c9d0db] shadow-[0_14px_34px_-16px_rgba(0,0,0,0.9)] transition-colors hover:border-white/[0.18] hover:text-white"
+          >
+            <Search size={16} strokeWidth={1.5} />
+            Search
+            <kbd className="ml-1 flex h-6 items-center rounded-[7px] border border-white/[0.09] bg-white/[0.03] px-2 font-mono text-[12px] text-[#9aa4b4]">
+              {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'} K
+            </kbd>
+          </button>
           <div className="relative">
             <button
               onClick={() => setBell((b) => !b)}
