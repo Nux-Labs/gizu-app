@@ -1,5 +1,6 @@
 import { useId, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
+import DitherCanvas from './DitherCanvas'
 
 type Props = {
   series: number[]
@@ -29,7 +30,7 @@ export default function Chart({ series, height = 160, up = true, interactive = t
   const uid = useId().replace(/:/g, '')
   const ref = useRef<SVGSVGElement>(null)
 
-  const { line, area, points, min, max } = useMemo(() => {
+  const { line, points, min, max } = useMemo(() => {
     const min = Math.min(...series)
     const max = Math.max(...series)
     const span = max - min || 1
@@ -38,12 +39,18 @@ export default function Chart({ series, height = 160, up = true, interactive = t
       y: height - ((v - min) / span) * (height - 18) - 9,
       v,
     }))
-    const d = smooth(pts)
-    return { line: d, area: `${d} L${W},${height} L0,${height} Z`, points: pts, min, max }
+    return { line: smooth(pts), points: pts, min, max }
   }, [series, height])
 
-  const color = up ? '#31c47e' : '#c4576a'
+  // Kurage ramp: cyan → violet when up, sell → rose when down.
+  const color = up ? '#7ce8f2' : '#c4576a'
+  const colorTo = up ? '#b9a6ff' : '#fb7185'
   const active = hover === null ? points[points.length - 1] : points[hover]
+  const reveal = {
+    initial: { clipPath: 'inset(0 100% 0 0)' },
+    animate: { clipPath: 'inset(0 0% 0 0)' },
+    transition: { duration: 1, ease: 'easeOut' },
+  } as const
 
   const onMove = (e: React.PointerEvent) => {
     if (!interactive || !ref.current) return
@@ -55,6 +62,17 @@ export default function Chart({ series, height = 160, up = true, interactive = t
 
   return (
     <div className="relative select-none">
+      <motion.div {...reveal} className="pointer-events-none absolute inset-x-0 top-0" style={{ height }}>
+        <DitherCanvas
+          points={points}
+          viewW={W}
+          height={height}
+          from={color}
+          to={colorTo}
+          focusX={hover === null ? null : points[hover].x}
+          ground
+        />
+      </motion.div>
       <svg
         ref={ref}
         viewBox={`0 0 ${W} ${height}`}
@@ -66,9 +84,9 @@ export default function Chart({ series, height = 160, up = true, interactive = t
         className="block touch-none overflow-visible"
       >
         <defs>
-          <linearGradient id={`fill-${uid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.22" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          <linearGradient id={`stroke-${uid}`} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={color} />
+            <stop offset="100%" stopColor={colorTo} />
           </linearGradient>
         </defs>
 
@@ -84,17 +102,22 @@ export default function Chart({ series, height = 160, up = true, interactive = t
           />
         ))}
 
-        <motion.g
-          initial={{ clipPath: 'inset(0 100% 0 0)' }}
-          animate={{ clipPath: 'inset(0 0% 0 0)' }}
-          transition={{ duration: 1, ease: 'easeOut' }}
-        >
-          <path d={area} fill={`url(#fill-${uid})`} />
+        <motion.g {...reveal}>
           <path
             d={line}
             fill="none"
-            stroke={color}
-            strokeWidth="1.6"
+            stroke={`url(#stroke-${uid})`}
+            strokeOpacity="0.2"
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          <path
+            d={line}
+            fill="none"
+            stroke={`url(#stroke-${uid})`}
+            strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
@@ -122,10 +145,16 @@ export default function Chart({ series, height = 160, up = true, interactive = t
           style={{
             left: `${(active.x / W) * 100}%`,
             top: `${(active.y / height) * 100}%`,
-            background: color,
-            boxShadow: `0 0 0 4px ${color}26`,
+            background: colorTo,
+            boxShadow: `0 0 0 4px ${colorTo}26, 0 0 14px ${colorTo}`,
           }}
-        />
+        >
+          {/* live point heartbeat */}
+          <span
+            className="absolute inset-0 animate-ping rounded-full motion-reduce:hidden"
+            style={{ background: colorTo, opacity: 0.45 }}
+          />
+        </span>
       )}
 
       <div className="pointer-events-none absolute inset-x-0 -top-1 flex justify-between font-mono text-[10px] uppercase tracking-widest text-white/30">

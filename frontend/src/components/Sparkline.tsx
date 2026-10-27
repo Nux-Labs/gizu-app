@@ -1,3 +1,6 @@
+import DitherCanvas from './DitherCanvas'
+
+/** Card sparkline: cyan → violet line over a fine dithered fill (Kurage mosaic). */
 export default function Sparkline({
   series,
   up,
@@ -31,45 +34,39 @@ export default function Sparkline({
     const c2y = p.y - (p3.y - p1.y) / 6
     return `${acc} C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${p.x.toFixed(2)},${p.y.toFixed(2)}`
   }, '')
-  const area = `${d} L${width},${height} L0,${height} Z`
-  let color = '#c4576a'
-  if (up) {
-    color = '#31c47e'
-  }
-  let id = `sp-w${width}-h${height}`
-  if (gradientId) {
-    id = gradientId
-  }
-  if (up) {
-    id = `${id}-up`
-  } else {
-    id = `${id}-down`
-  }
+  const from = up ? '#7ce8f2' : '#c4576a'
+  const to = up ? '#b9a6ff' : '#fb7185'
+  const id = `${gradientId ?? `sp-w${width}-h${height}`}-${up ? 'up' : 'down'}`
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      width={fluid ? '100%' : width}
-      height={height}
-      preserveAspectRatio={fluid ? 'none' : undefined}
-      className={fluid ? 'block overflow-visible' : 'shrink-0 overflow-visible'}
+    <div
+      className={`relative ${fluid ? 'w-full' : 'shrink-0'}`}
+      style={{ width: fluid ? undefined : width, height }}
     >
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill={`url(#${id})`} />
-      <path
-        d={d}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+      <DitherCanvas points={pts} viewW={width} height={height} from={from} to={to} cell={3} />
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        height={height}
+        preserveAspectRatio="none"
+        className="relative block overflow-visible"
+      >
+        <defs>
+          <linearGradient id={id} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={from} />
+            <stop offset="100%" stopColor={to} />
+          </linearGradient>
+        </defs>
+        <path
+          d={d}
+          fill="none"
+          stroke={`url(#${id})`}
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    </div>
   )
 }
