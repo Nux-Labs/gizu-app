@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import type { MouseEventHandler } from 'react'
 import { ArrowRight } from 'lucide-react'
 import AsciiChameleon from '../chameleon/AsciiChameleon'
+import useStored from '../useStored'
 import GlitchText from '../components/GlitchText'
 import BubbleUpButton from '../components/BubbleUpButton'
 import Scramble from '../components/Scramble'
@@ -13,12 +14,14 @@ export default function DesktopEntry({
   onTestMobile: MouseEventHandler<HTMLButtonElement>
   onRequestAccess: MouseEventHandler<HTMLButtonElement>
 }) {
+  const [still] = useStored('gizu:motion-paused', false)
+
   return (
     <div className="relative flex h-[100dvh] w-full overflow-hidden bg-ink">
       {/* sol: ASCII bukalemun ve slogan */}
       <div className="relative hidden min-w-0 flex-1 flex-col justify-between p-14 lg:flex">
         <div className="pointer-events-none absolute inset-0">
-          <AsciiChameleon anchorX={0.58} anchorY={0.25} size={0.12} />
+          <AsciiChameleon anchorX={0.58} anchorY={0.25} size={0.12} paused={still} />
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-ink/90" />
         </div>
 

@@ -16,6 +16,7 @@ export default function AsciiChameleon({
   anchorY = 0.45,
   size = 0.2,
   grid = true,
+  paused = false,
   className = '',
 }: {
   anchorX?: number
@@ -23,6 +24,8 @@ export default function AsciiChameleon({
   /** Body unit as a fraction of the canvas width (capped by height). */
   size?: number
   grid?: boolean
+  /** Hold the current frame (user chose to pause motion). */
+  paused?: boolean
   className?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -121,12 +124,12 @@ export default function AsciiChameleon({
     observer.observe(canvas)
     // The ramp needs the monospace face; redraw once it has loaded.
     document.fonts?.load(`500 11px "Geist Mono"`).then(render).catch(() => undefined)
-    if (!reduce) raf = requestAnimationFrame(loop)
+    if (!reduce && !paused) raf = requestAnimationFrame(loop)
     return () => {
       cancelAnimationFrame(raf)
       observer.disconnect()
     }
-  }, [anchorX, anchorY, size, grid, reduce])
+  }, [anchorX, anchorY, size, grid, reduce, paused])
 
   return <canvas ref={canvasRef} aria-hidden className={`block h-full w-full ${className}`} />
 }

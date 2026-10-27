@@ -9,6 +9,8 @@ import {
   LogOut,
   Search,
   PanelLeft,
+  Pause,
+  Play,
 } from 'lucide-react'
 import { notifications, profile } from '../content'
 import AsciiChameleon from '../chameleon/AsciiChameleon'
@@ -46,6 +48,7 @@ export default function DesktopShell({
   }, [bell, focusId])
   const unread = notifications.filter((n) => n.unread && !read.includes(n.id)).length
   const [collapsed, setCollapsed] = useStored('gizu:rail-collapsed', false)
+  const [still, setStill] = useStored('gizu:motion-paused', false)
   const hide = collapsed ? 'sr-only' : ''
 
   return (
@@ -120,6 +123,19 @@ export default function DesktopShell({
             </span>
           </div>
           <button
+            onClick={() => setStill(!still)}
+            aria-pressed={still}
+            title={collapsed ? (still ? 'Play motion' : 'Pause motion') : undefined}
+            className="flex min-h-11 items-center gap-3 whitespace-nowrap rounded-xl px-3 text-[14px] text-[#9aa4b4] hover:bg-white/[0.055] hover:text-white"
+          >
+            {still ? (
+              <Play size={18} strokeWidth={1.5} className="shrink-0" />
+            ) : (
+              <Pause size={18} strokeWidth={1.5} className="shrink-0" />
+            )}
+            <span className={hide}>{still ? 'Play motion' : 'Pause motion'}</span>
+          </button>
+          <button
             onClick={() => setCollapsed(!collapsed)}
             aria-expanded={!collapsed}
             title={collapsed ? 'Expand sidebar' : undefined}
@@ -144,7 +160,7 @@ export default function DesktopShell({
           aria-hidden
           className="pointer-events-none absolute inset-0 z-0 opacity-70 [mask-image:radial-gradient(140%_120%_at_50%_45%,#000_55%,rgba(0,0,0,0.55)_100%)]"
         >
-          <AsciiChameleon anchorX={0.74} anchorY={0.8} size={0.1} />
+          <AsciiChameleon anchorX={0.74} anchorY={0.8} size={0.1} paused={still} />
         </div>
 
         <header className="relative z-30 flex shrink-0 justify-end gap-2 px-6 pt-4">
