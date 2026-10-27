@@ -10,16 +10,18 @@ const variants = {
   caption: "text-sm leading-5 text-muted",
   label: "text-sm font-semibold text-accent",
   // Frontend scale (additive; existing variants above are unchanged).
-  pageTitle: "text-[30px] font-medium ios:tracking-tight text-text",
+  pageTitle: "text-[30px] font-normal tracking-tight text-text",
   section: "text-[20px] font-medium ios:tracking-tight text-text",
   rowTitle: "text-[14px] font-medium text-text",
   rowValue: "text-[14px] font-normal text-text",
   micro: "text-[11px] text-fg-45",
-  eyebrow: "text-[12px] font-medium text-fg-55",
-  eyebrowSmall: "text-[11px] font-medium text-fg-55",
+  eyebrow: "text-[12px] tracking-[0.2px] text-muted",
+  eyebrowSmall: "text-[11px] tracking-[0.2px] text-muted",
   cardTitle: "text-[17px] font-medium text-text",
   label11: "text-[11px] tracking-[0.6px] text-fg-45",
 };
+// Kurage pairs a sans body with monospace eyebrows and labels.
+const mono = new Set<TypographyVariant>(["eyebrow", "eyebrowSmall", "label11"]);
 export type TypographyVariant = keyof typeof variants;
 const headers = new Set<TypographyVariant>([
   "title",
@@ -45,7 +47,7 @@ export function Typography({
       key={fontScale}
       accessibilityRole={headers.has(variant) ? "header" : undefined}
       {...props}
-      className={`font-sans ${variants[variant]} ${className}`}
+      className={`${mono.has(variant) ? "font-mono" : "font-sans"} ${variants[variant]} ${className}`}
     >
       {content}
     </Text>

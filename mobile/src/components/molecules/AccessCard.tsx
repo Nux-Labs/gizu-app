@@ -2,6 +2,7 @@ import { Pressable, Text, useWindowDimensions } from "react-native";
 import type { LucideIcon } from "lucide-react-native";
 import colors from "@/theme/colors.json";
 import { Spinner } from "@/components/atoms/Spinner";
+import { PrimaryFill } from "@/components/atoms/PrimaryFill";
 
 /**
  * Full-width primary access action (frontend `neon-btn`: 56 pt, button radius, neon
@@ -32,8 +33,9 @@ export function AccessCard({
       accessibilityState={{ disabled: unavailable, busy: loading }}
       disabled={unavailable}
       onPress={onPress}
-      className={`min-h-14 w-full flex-row items-center justify-center gap-3 rounded-button px-5 py-4 active:opacity-85 ${disabled ? "border border-borderSoft bg-glassSoft" : "bg-neon"}`}
+      className={`min-h-14 w-full flex-row items-center justify-center gap-3 rounded-button px-5 py-4 active:opacity-85 ${disabled ? "border border-borderSoft bg-glassSoft" : "overflow-hidden bg-neon"}`}
     >
+      {!disabled && <PrimaryFill />}
       {loading ? (
         <Spinner size="sm" color={foreground} />
       ) : (

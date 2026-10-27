@@ -1,4 +1,5 @@
 import { Text, useWindowDimensions } from "react-native";
+import { PrimaryFill } from "./PrimaryFill";
 import colors from "@/theme/colors.json";
 import { PressableScale } from "./PressableScale";
 import { Spinner } from "./Spinner";
@@ -14,7 +15,7 @@ type Props = {
 };
 
 const surfaces: Record<Variant, string> = {
-  primary: "bg-neon",
+  primary: "overflow-hidden bg-neon",
   sell: "bg-sell",
   secondary: "border border-cardEdge bg-well",
   destructive: "border border-glassBorder bg-glass",
@@ -59,6 +60,7 @@ export function Button({
       onPress={onPress}
       className={`flex-row items-center justify-center gap-3 rounded-button ${quiet ? "min-h-11 px-2 py-2" : "min-h-14 px-5 py-4"} ${surface}`}
     >
+      {variant === "primary" && !disabled && <PrimaryFill />}
       {loading && <Spinner size="sm" color={spinners[variant]} />}
       <Text
         key={fontScale}

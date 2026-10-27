@@ -24,7 +24,7 @@ export function IconButton({
       disabled={disabled || loading}
       onPress={onPress}
       hitSlop={4}
-      className={`h-11 w-11 items-center justify-center rounded-2xl border border-borderSoft bg-glassSoft ${disabled ? "opacity-50" : ""}`}
+      className={`h-11 w-11 items-center justify-center rounded-xl border border-glassBorder bg-glass ${disabled ? "opacity-50" : ""}`}
     >
       {loading ? <Spinner size="sm" /> : <Icon size={18} color={colors.fg["55"]} />}
     </PressableScale>
