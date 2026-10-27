@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { LayoutGrid, PieChart, ArrowLeftRight, Settings as Cog, Bell, LogOut } from 'lucide-react'
 import { notifications } from '../content'
+import AsciiChameleon from '../chameleon/AsciiChameleon'
 
 const NAV = [
   { id: 'home', label: 'Overview', icon: LayoutGrid },
@@ -10,6 +11,9 @@ const NAV = [
   { id: 'settings', label: 'Settings', icon: Cog },
 ] as const
 
+const ease = [0.2, 0.7, 0.2, 1] as const
+
+/** Kurage layout: glass rail on the left, ASCII chameleon ocean behind the main stage. */
 export default function DesktopShell({
   tab,
   onTab,
@@ -26,140 +30,155 @@ export default function DesktopShell({
   const unread = notifications.filter((n) => n.unread && !read.includes(n.id)).length
 
   return (
-    <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-ink">
-      <div className="scanlines noise relative flex min-h-0 flex-1 flex-col overflow-hidden pb-28">
-        <header className="z-30 shrink-0">
-          <div className="mx-auto flex max-w-[1520px] items-center gap-4 px-14 py-4">
-            <div className="flex items-center gap-3">
-              <img src="/gizulogo.svg" alt="" className="h-7 w-auto" />
-              <span className="text-[18px] font-medium tracking-tight">Gizu</span>
-            </div>
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-ink">
+      <aside className="z-20 flex w-[248px] shrink-0 flex-col border-r border-white/[0.09] bg-[rgba(6,9,14,0.88)] px-3 pb-3 pt-3.5 backdrop-blur-[18px]">
+        <div className="mb-3.5 flex h-11 items-center gap-3 px-2.5">
+          <img src="/gizulogo.svg" alt="" className="h-6 w-auto" />
+          <span className="text-[17px] font-medium tracking-[-0.025em]">Gizu</span>
+        </div>
 
-            <div className="ml-auto flex items-center gap-3">
-              <div className="relative">
-                <button
-                  onClick={() => setBell((b) => !b)}
-                  className="glass-soft relative flex h-11 w-11 items-center justify-center rounded-2xl text-white/55"
-                >
-                  <Bell size={17} />
-                  {unread > 0 && (
-                    <span className="absolute right-3 top-3 h-1.5 w-1.5 rounded-full bg-neon/70" />
-                  )}
-                </button>
-
-                <AnimatePresence>
-                  {bell && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setBell(false)} />
-                      <motion.div
-                        initial={{ opacity: 0, y: -8, scale: 0.98 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -8, scale: 0.98 }}
-                        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                        className="glass absolute right-0 top-14 z-50 w-[380px] overflow-hidden rounded-3xl"
-                      >
-                        <div className="flex items-center justify-between px-5 py-4">
-                          <span className="text-[15px] font-medium">Notifications</span>
-                          <button
-                            onClick={() => setRead(notifications.map((n) => n.id))}
-                            className="font-mono text-[10px] uppercase tracking-widest text-neon/70"
-                          >
-                            mark all
-                          </button>
-                        </div>
-                        <div className="max-h-[380px] divide-y divide-white/5 overflow-y-auto">
-                          {notifications.map((n) => {
-                            const isUnread = n.unread && !read.includes(n.id)
-                            return (
-                              <button
-                                key={n.id}
-                                onClick={() => setRead((r) => (r.includes(n.id) ? r : [...r, n.id]))}
-                                className="flex w-full items-start gap-3 px-5 py-4 text-left hover:bg-white/[0.02]"
-                              >
-                                <span
-                                  className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
-                                    isUnread ? 'bg-neon' : 'bg-white/15'
-                                  }`}
-                                />
-                                <span className="min-w-0 flex-1">
-                                  <span className="flex items-baseline justify-between gap-3">
-                                    <span className="truncate text-[14px] font-medium">{n.title}</span>
-                                    <span className="shrink-0 font-mono text-[10px] text-white/30">
-                                      {n.time}
-                                    </span>
-                                  </span>
-                                  <span className="mt-1 block truncate text-[12px] text-white/45">
-                                    {n.body}
-                                  </span>
-                                </span>
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </motion.div>
-                    </>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              <div className="glass flex items-center gap-3 rounded-2xl py-2 pl-2 pr-4">
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-neon/10 font-mono text-[11px] text-neon">
-                  CP
-                </div>
-                <div className="leading-tight">
-                  <div className="text-[13px] font-medium">Cankat Polat</div>
-                  <div className="font-mono text-[10px] text-white/30">0xA4f2 . . . 91c7</div>
-                </div>
-              </div>
-
-              <button
-                onClick={onDisconnect}
-                className="glass-soft flex h-11 w-11 items-center justify-center rounded-2xl text-rose-300/60"
-              >
-                <LogOut size={16} />
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <div className="flex min-h-0 flex-1 flex-col">{children}</div>
-      </div>
-
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center pb-7">
-        <motion.nav
-          initial={{ y: 60, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-          className="glass pointer-events-auto flex items-center gap-1 rounded-full p-2"
-        >
+        <nav className="flex flex-col gap-1">
           {NAV.map(({ id, label, icon: Icon }) => {
             const on = tab === id
             return (
               <button
                 key={id}
                 onClick={() => onTab(id)}
-                className="relative flex h-12 items-center gap-2.5 rounded-full px-6"
+                aria-current={on ? 'page' : undefined}
+                className={`relative flex min-h-11 items-center gap-3 rounded-xl px-3 text-left text-[14px] transition-colors duration-150 ${
+                  on ? 'text-white' : 'text-[#9aa4b4] hover:bg-white/[0.055] hover:text-white'
+                }`}
               >
                 {on && (
                   <motion.span
-                    layoutId="deskNavPill"
-                    transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-                    className="absolute inset-0 rounded-full neon-btn"
-                  />
+                    layoutId="railActive"
+                    transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                    className="absolute inset-0 rounded-xl bg-white/[0.08]"
+                  >
+                    <span className="absolute -left-3 bottom-3 top-3 w-0.5 rounded-full bg-gradient-to-b from-neon to-violet" />
+                  </motion.span>
                 )}
-                <Icon
-                  size={17}
-                  strokeWidth={on ? 2.3 : 1.8}
-                  className={`relative ${on ? 'text-ink' : 'text-white/45'}`}
-                />
-                <span className={`relative text-[13px] ${on ? 'text-ink font-medium' : 'text-white/45'}`}>
-                  {label}
-                </span>
+                <Icon size={19} strokeWidth={1.5} className="relative" />
+                <span className="relative">{label}</span>
               </button>
             )
           })}
-        </motion.nav>
-      </div>
+        </nav>
+
+        <div className="mt-5 min-h-0">
+          <h3 className="mb-1.5 px-3 font-mono text-[12px] font-normal text-[#808a9a]">recent</h3>
+          <ul className="flex flex-col gap-0.5">
+            {notifications.slice(0, 4).map((n) => (
+              <li key={n.id}>
+                <button
+                  onClick={() => setBell(true)}
+                  className="block w-full truncate rounded-[10px] px-3 py-2 text-left text-[13px] text-[#9aa4b4] hover:bg-white/[0.055] hover:text-white"
+                >
+                  {n.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="mt-auto flex flex-col gap-1 pt-3">
+          <div className="flex min-h-11 items-center gap-3 rounded-xl px-2">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_50%_30%,#14303a,#0a1420_48%,#05080d)] font-mono text-[11px] text-neon shadow-[0_0_0_1px_rgba(142,234,245,0.34),0_0_16px_-3px_rgba(124,232,242,0.55)]">
+              CP
+            </span>
+            <span className="min-w-0 leading-tight">
+              <span className="block truncate text-[13px] font-medium">Cankat Polat</span>
+              <span className="block font-mono text-[11px] text-[#808a9a]">0xA4f2…91c7</span>
+            </span>
+          </div>
+          <button
+            onClick={onDisconnect}
+            className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-[14px] text-rose-300/70 hover:bg-white/[0.055]"
+          >
+            <LogOut size={18} strokeWidth={1.5} /> Disconnect
+          </button>
+        </div>
+      </aside>
+
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 opacity-70 [mask-image:radial-gradient(140%_120%_at_50%_45%,#000_55%,rgba(0,0,0,0.55)_100%)]"
+        >
+          <AsciiChameleon anchorX={0.74} anchorY={0.62} size={0.11} />
+        </div>
+
+        <header className="relative z-30 flex shrink-0 justify-end px-6 pt-4">
+          <div className="relative">
+            <button
+              onClick={() => setBell((b) => !b)}
+              className="glass-soft flex h-10 items-center gap-2 rounded-xl pl-3 pr-2 text-[14px] text-[#c9d0db] shadow-[0_14px_34px_-16px_rgba(0,0,0,0.9)] transition-colors hover:border-white/[0.18] hover:text-white"
+            >
+              <Bell size={16} strokeWidth={1.5} />
+              Notifications
+              <kbd className="ml-1 flex h-6 items-center rounded-[7px] border border-white/[0.09] bg-white/[0.03] px-2 font-mono text-[12px] text-[#9aa4b4]">
+                {unread}
+              </kbd>
+            </button>
+
+            <AnimatePresence>
+              {bell && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setBell(false)} />
+                  <motion.div
+                    initial={{ opacity: 0, y: 6, scale: 0.99 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.99 }}
+                    transition={{ duration: 0.18, ease }}
+                    className="absolute right-0 top-12 z-50 w-[400px] overflow-hidden rounded-[18px] border border-white/[0.18] bg-[rgba(9,12,18,0.94)] shadow-[0_40px_120px_-24px_rgba(0,0,0,0.9)] backdrop-blur-[22px]"
+                  >
+                    <div className="flex items-center justify-between border-b border-white/[0.09] px-4 py-3.5">
+                      <span className="text-[15px] font-medium">Notifications</span>
+                      <button
+                        onClick={() => setRead(notifications.map((n) => n.id))}
+                        className="font-mono text-[12px] text-neon/80"
+                      >
+                        mark all read
+                      </button>
+                    </div>
+                    <div className="max-h-[380px] overflow-y-auto p-2">
+                      {notifications.map((n) => {
+                        const isUnread = n.unread && !read.includes(n.id)
+                        return (
+                          <button
+                            key={n.id}
+                            onClick={() => setRead((r) => (r.includes(n.id) ? r : [...r, n.id]))}
+                            className="flex w-full items-start gap-3 rounded-[10px] px-3 py-3 text-left hover:bg-white/[0.055]"
+                          >
+                            <span
+                              className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
+                                isUnread ? 'eyebrow-dot' : 'bg-white/15'
+                              }`}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-baseline justify-between gap-3">
+                                <span className="truncate text-[14px] font-medium">{n.title}</span>
+                                <span className="shrink-0 font-mono text-[11px] text-[#808a9a]">
+                                  {n.time}
+                                </span>
+                              </span>
+                              <span className="mt-1 block truncate text-[12px] text-[#9aa4b4]">
+                                {n.body}
+                              </span>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
+        </header>
+
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col">{children}</div>
+      </main>
     </div>
   )
 }

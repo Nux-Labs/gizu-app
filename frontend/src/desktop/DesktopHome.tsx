@@ -31,15 +31,17 @@ export default function DesktopHome({
   })
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-[1520px] flex-1 flex-col px-14 pb-6 pt-7">
+    <div className="mx-auto flex min-h-0 w-full max-w-[1520px] flex-1 flex-col px-14 pb-6 pt-1">
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex shrink-0 items-center justify-between"
       >
         <div>
-          <h1 className="text-[28px] font-medium tracking-tight">Good evening, Cankat</h1>
-          <p className="mt-1 text-[13px] text-white/40">
+          <h1 className="text-[38px] font-light leading-[1.1] tracking-[-0.04em]">
+            Good evening, <span className="text-gradient">Cankat</span>
+          </h1>
+          <p className="mt-1.5 text-[13px] text-[#9aa4b4]">
             Three vaults active, next redemption window opens in 6 days.
           </p>
         </div>

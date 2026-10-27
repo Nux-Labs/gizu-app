@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import type { MouseEventHandler } from 'react'
 import { ArrowRight } from 'lucide-react'
-import GradientWaves from '../components/GradientWaves'
+import AsciiChameleon from '../chameleon/AsciiChameleon'
 import GlitchText from '../components/GlitchText'
 import BubbleUpButton from '../components/BubbleUpButton'
 import Scramble from '../components/Scramble'
@@ -15,31 +15,11 @@ export default function DesktopEntry({
 }) {
   return (
     <div className="relative flex h-[100dvh] w-full overflow-hidden bg-ink">
-      {/* sol: dalga ve slogan */}
+      {/* sol: ASCII bukalemun ve slogan */}
       <div className="relative hidden min-w-0 flex-1 flex-col justify-between p-14 lg:flex">
         <div className="pointer-events-none absolute inset-0">
-          <GradientWaves
-            horizonColor="#070d0a"
-            waveColor="#2aa471"
-            crestColor="#5fe0a6"
-            speed={0.22}
-            amplitude={1.9}
-            waveScale={0.45}
-            waveRatio={0.9}
-            swell={26}
-            turbulence={11}
-            tilt={1.11}
-            zoom={1}
-            height={5.5}
-            fogDepth={18}
-            detail="high"
-            brightness={1}
-            opacity={1}
-            mouseInteraction={false}
-            grain
-            grainIntensity={0.03}
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-ink/70 via-ink/20 to-ink" />
+          <AsciiChameleon anchorX={0.58} anchorY={0.25} size={0.12} />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-ink/90" />
         </div>
 
         <div className="relative flex items-center gap-3">
