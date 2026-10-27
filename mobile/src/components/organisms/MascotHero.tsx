@@ -20,8 +20,8 @@ export function MascotHero({
 }) {
   const id = `hero-${useId().replace(/:/g, "")}`;
   return (
-    <View className="-mx-5 -mt-4 h-[264px] overflow-hidden">
-      <ChameleonField anchorX={0.62} anchorY={0.38} size={0.16} grid={false} />
+    <View className="-mx-5 -mt-4 h-[200px] overflow-hidden">
+      <ChameleonField anchorX={0.64} anchorY={0.42} size={0.13} grid={false} />
       <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%">
         <Defs>
           <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
