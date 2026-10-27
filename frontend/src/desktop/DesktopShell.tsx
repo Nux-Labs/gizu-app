@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutGrid,
@@ -39,6 +39,11 @@ export default function DesktopShell({
 }) {
   const [bell, setBell] = useState(false)
   const [read, setRead] = useState<string[]>([])
+  // Notification opened from the rail's recent list; highlighted and scrolled into view.
+  const [focusId, setFocusId] = useState<string | null>(null)
+  useEffect(() => {
+    if (bell && focusId) document.getElementById(`notice-${focusId}`)?.scrollIntoView({ block: 'nearest' })
+  }, [bell, focusId])
   const unread = notifications.filter((n) => n.unread && !read.includes(n.id)).length
   const [collapsed, setCollapsed] = useStored('gizu:rail-collapsed', false)
   const hide = collapsed ? 'sr-only' : ''
@@ -90,7 +95,11 @@ export default function DesktopShell({
             {notifications.slice(0, 4).map((n) => (
               <li key={n.id}>
                 <button
-                  onClick={() => setBell(true)}
+                  onClick={() => {
+                    setFocusId(n.id)
+                    setRead((r) => (r.includes(n.id) ? r : [...r, n.id]))
+                    setBell(true)
+                  }}
                   className="block w-full truncate rounded-[10px] px-3 py-2 text-left text-[13px] text-[#9aa4b4] hover:bg-white/[0.055] hover:text-white"
                 >
                   {n.title}
@@ -151,7 +160,10 @@ export default function DesktopShell({
           </button>
           <div className="relative">
             <button
-              onClick={() => setBell((b) => !b)}
+              onClick={() => {
+                setFocusId(null)
+                setBell((b) => !b)
+              }}
               className="glass-soft flex h-10 items-center gap-2 rounded-xl pl-3 pr-2 text-[14px] text-[#c9d0db] shadow-[0_14px_34px_-16px_rgba(0,0,0,0.9)] transition-colors hover:border-white/[0.18] hover:text-white"
             >
               <Bell size={16} strokeWidth={1.5} />
@@ -187,8 +199,12 @@ export default function DesktopShell({
                         return (
                           <button
                             key={n.id}
+                            id={`notice-${n.id}`}
+                            aria-current={focusId === n.id ? 'true' : undefined}
                             onClick={() => setRead((r) => (r.includes(n.id) ? r : [...r, n.id]))}
-                            className="flex w-full items-start gap-3 rounded-[10px] px-3 py-3 text-left hover:bg-white/[0.055]"
+                            className={`flex w-full items-start gap-3 rounded-[10px] px-3 py-3 text-left hover:bg-white/[0.055] ${
+                              focusId === n.id ? 'bg-white/[0.08] shadow-[inset_2px_0_0_#7ce8f2]' : ''
+                            }`}
                           >
                             <span
                               className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
