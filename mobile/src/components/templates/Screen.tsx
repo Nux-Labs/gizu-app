@@ -2,6 +2,7 @@ import { useState, type PropsWithChildren } from "react";
 import { RefreshControl, ScrollView, View } from "react-native";
 import { ScreenFrame, useScreenBottomPadding } from "./ScreenFrame";
 import { ScrollLockContext } from "./ScrollLock";
+import { ScreenReveal } from "./ScreenReveal";
 import colors from "@/theme/colors.json";
 
 export function Screen({
@@ -32,7 +33,7 @@ export function Screen({
               />
             ) : undefined
           }
-          contentContainerClassName="grow gap-4 px-5 py-4"
+          contentContainerClassName="grow px-5 py-4"
           contentContainerStyle={
             bottomPadding === undefined ? undefined : { paddingBottom: bottomPadding }
           }
@@ -42,12 +43,12 @@ export function Screen({
           showsHorizontalScrollIndicator={false}
         >
           <ScrollLockContext.Provider value={setScrollLocked}>
-            {children}
+            <ScreenReveal className="grow gap-4">{children}</ScreenReveal>
           </ScrollLockContext.Provider>
         </ScrollView>
       ) : (
-        <View className="flex-1 gap-4 px-5 py-4" style={{ paddingBottom: bottomPadding ?? 16 }}>
-          {children}
+        <View className="flex-1 px-5 py-4" style={{ paddingBottom: bottomPadding ?? 16 }}>
+          <ScreenReveal className="flex-1 gap-4">{children}</ScreenReveal>
         </View>
       )}
     </ScreenFrame>

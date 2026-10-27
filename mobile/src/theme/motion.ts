@@ -9,13 +9,15 @@ export const easeOut = Easing.bezier(0.22, 1, 0.36, 1);
 
 export const durations = {
   press: 120,
-  screen: 350,
+  screen: 380,
+  reveal: 560,
   fadeIn: 450,
 } as const;
 
 export const timing = {
   screen: { duration: durations.screen, easing: easeOut, reduceMotion },
   fadeIn: { duration: durations.fadeIn, easing: easeOut, reduceMotion },
+  reveal: { duration: durations.reveal, easing: easeOut, reduceMotion },
   press: { duration: durations.press, easing: easeOut, reduceMotion },
 } as const;
 
