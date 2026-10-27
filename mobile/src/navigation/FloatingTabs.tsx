@@ -14,6 +14,7 @@ import {
   BottomTabBarHeightCallbackContext,
   type BottomTabBarProps,
 } from "@react-navigation/bottom-tabs";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import colors from "@/theme/colors.json";
 import { springs } from "@/theme/motion";
 
@@ -71,7 +72,7 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
       }}
     >
       <Animated.View
-        className="self-center rounded-[28px] border border-cardEdge bg-card p-1.5"
+        className="self-center rounded-[28px] border border-glassBorder bg-rail p-1.5"
         style={entranceStyle}
       >
         {/* Keep measured tabs and the absolute pill in the same border-free coordinates. */}
@@ -81,9 +82,20 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
               pointerEvents="none"
               accessibilityElementsHidden
               importantForAccessibility="no-hide-descendants"
-              className="absolute left-0 top-0 rounded-[22px] bg-neon/15"
+              className="absolute left-0 top-0 items-center justify-end rounded-[22px] border border-white/5 bg-white/[0.08] pb-1"
               style={[{ width: bounds.width, height: bounds.height }, pillStyle]}
-            />
+            >
+              {/* Kurage active rail marker: a short cyan → violet bar. */}
+              <Svg width={18} height={2}>
+                <Defs>
+                  <LinearGradient id="tab-marker" x1="0" y1="0" x2="1" y2="0">
+                    <Stop offset="0" stopColor={colors.accent} />
+                    <Stop offset="1" stopColor={colors.violet.DEFAULT} />
+                  </LinearGradient>
+                </Defs>
+                <Rect width={18} height={2} rx={1} fill="url(#tab-marker)" />
+              </Svg>
+            </Animated.View>
           )}
           {state.routes.map((route, index) => {
             const selected = state.index === index;
@@ -141,7 +153,7 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
                   maxFontSizeMultiplier={1.3}
                   accessibilityElementsHidden
                   importantForAccessibility="no-hide-descendants"
-                  className={`font-sans text-[10px] font-medium ${selected ? "text-neon" : "text-fg-45"}`}
+                  className={`font-mono text-[10px] ${selected ? "text-text" : "text-fg-45"}`}
                 >
                   {titles[route.name as keyof typeof titles]}
                 </Text>
