@@ -12,6 +12,7 @@ import {
 import { useReducedMotion, useSharedValue } from "react-native-reanimated";
 import { NavigationContext } from "@react-navigation/native";
 import { monoFamily } from "@/theme/fonts";
+import { useAmbientMotion } from "@/storage/ambientMotion";
 import { createStyler, frame, type Layout } from "./field";
 
 const FRAME_MS = 1000 / 20;
@@ -80,7 +81,8 @@ export function ChameleonField({
   paused?: boolean;
 }) {
   const reduced = useReducedMotion();
-  const active = useActive(paused || reduced);
+  const ambient = useAmbientMotion();
+  const active = useActive(paused || reduced || !ambient);
   const [box, setBox] = useState({ width: 0, height: 0 });
   const picture = useSharedValue(createPicture(() => undefined));
   const state = useRef({ time: 4, dust: [] as Dust[], styler: createStyler() });
