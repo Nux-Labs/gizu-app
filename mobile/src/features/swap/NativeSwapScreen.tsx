@@ -133,6 +133,20 @@ export function NativeSwapScreen() {
             onPress={swap.start}
             disabled={!swap.canStart}
           />
+          {!swap.busy && !swap.canStart && (
+            // Say why review is unavailable instead of leaving a silent grey button.
+            <Typography
+              variant="micro"
+              className="-mt-2 px-1 text-center"
+              accessibilityLiveRegion="polite"
+            >
+              {!swap.target
+                ? "Choose a token to receive."
+                : Number(swap.amount) > 0
+                  ? "Check the amount to pay."
+                  : "Enter an amount to pay."}
+            </Typography>
+          )}
         </>
       )}
       {swap.error ? <Notice message={swap.error} error /> : null}
