@@ -81,7 +81,7 @@ export type AuralisProps = {
   paused?: boolean
 }
 
-const DEFAULT_COLORS = ['#31c47e', '#8af0c4', '#0f6b8c']
+const DEFAULT_COLORS = ['#7ce8f2', '#b9a6ff', '#0f6b8c']
 
 const hexToRgb = (hex: string): [number, number, number] => {
   const h = hex.replace('#', '')

@@ -4,8 +4,8 @@ import { useEffect, useRef } from 'react'
 // Two things keep a full screen field cheap: drawing is batched into runs of
 // cells that share a colour level, and the per cell trigonometry is replaced by
 // a sine table plus per row and per column terms computed once per frame.
-const BASE: [number, number, number] = [176, 206, 192]
-const PEAK: [number, number, number] = [49, 196, 126]
+const BASE: [number, number, number] = [170, 186, 210]
+const PEAK: [number, number, number] = [124, 232, 242]
 const LEVELS = 7
 const CHARS = ' .:-=+*#%@'
 

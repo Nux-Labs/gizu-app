@@ -5,8 +5,9 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: { DEFAULT: '#050706', soft: '#0b100d', card: '#0d1211' },
-        neon: { DEFAULT: '#31c47e', dim: '#238a5a', deep: '#123423' },
+        ink: { DEFAULT: '#04060a', soft: '#0a0e15', card: '#0c1119' },
+        neon: { DEFAULT: '#7ce8f2', dim: '#3fa9b5', deep: '#0e2a33' },
+        violet: { DEFAULT: '#b9a6ff', soft: '#d7ccff' },
       },
       maxWidth: { shell: '1200px' },
     },

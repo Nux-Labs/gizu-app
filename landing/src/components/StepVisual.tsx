@@ -26,7 +26,7 @@ function CheckCircle({ delay = 2.3 }: { delay?: number }) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3, delay }}
-        className="absolute h-3 w-3 rounded-full bg-neon drop-shadow-[0_0_3px_rgba(49,196,126,0.9)]"
+        className="absolute h-3 w-3 rounded-full bg-neon drop-shadow-[0_0_3px_rgba(124,232,242,0.9)]"
       />
       <motion.svg
         width="8"
@@ -39,7 +39,7 @@ function CheckCircle({ delay = 2.3 }: { delay?: number }) {
       >
         <path
           d="M2 6.4 4.6 9 10 3.4"
-          stroke="#05140d"
+          stroke="#04060a"
           strokeWidth="1.8"
           fill="none"
           strokeLinecap="round"
@@ -118,7 +118,7 @@ function Vault({ on }: { on: boolean }) {
         layoutId="carrier"
       data-carrier
         transition={{ layout: LAYOUT }}
-        className="absolute inset-x-0 top-[124px] mx-auto h-52 w-[90%] max-w-[420px] border-t border-white/10 bg-gradient-to-b from-[#141a17] to-[#0b100e] p-6 shadow-lg"
+        className="absolute inset-x-0 top-[124px] mx-auto h-52 w-[90%] max-w-[420px] border-t border-white/10 bg-gradient-to-b from-[#141a24] to-[#0b0f16] p-6 shadow-lg"
         style={{
           clipPath:
             'polygon(36px 0%, calc(100% - 36px) 0%, 100% 36px, 100% 100%, 0% 100%, 0% 36px)',
@@ -128,7 +128,7 @@ function Vault({ on }: { on: boolean }) {
       {/* the dial */}
       <motion.div
         variants={vaultVariant}
-        className="absolute inset-x-0 top-[52px] mx-auto flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-full bg-[#050806] p-1"
+        className="absolute inset-x-0 top-[52px] mx-auto flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-full bg-[#04060a] p-1"
       >
         <motion.div
           variants={shineVariant}
@@ -136,7 +136,7 @@ function Vault({ on }: { on: boolean }) {
         />
         <motion.div
           variants={lockVariant}
-          className="flex h-full w-full items-center justify-center rounded-full border border-white/10 bg-[repeating-radial-gradient(rgba(80,90,85,0.5)_0.15rem,rgba(30,36,33,0.5)_0.32rem)]"
+          className="flex h-full w-full items-center justify-center rounded-full border border-white/10 bg-[repeating-radial-gradient(rgba(80,88,100,0.5)_0.15rem,rgba(30,34,44,0.5)_0.32rem)]"
         >
           <div className="flex h-full w-2.5 items-center justify-center">
             <svg
@@ -148,13 +148,13 @@ function Vault({ on }: { on: boolean }) {
               className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]"
             >
               <path
-                fill="#050806"
+                fill="#04060a"
                 d="M3 0C1.34315 0 0 1.34315 0 3V19.5858C0 19.851 0.105357 20.1054 0.292893 20.2929L3.29289 23.2929C3.68342 23.6834 3.68342 24.3166 3.29289 24.7071L0.292893 27.7071C0.105357 27.8946 0 28.149 0 28.4142V33C0 34.6569 1.34315 36 3 36H5C6.65685 36 8 34.6569 8 33V16.4142C8 16.149 7.89464 15.8946 7.70711 15.7071L4.70711 12.7071C4.31658 12.3166 4.31658 11.6834 4.70711 11.2929L7.70711 8.29289C7.89464 8.10536 8 7.851 8 7.58579V3C8 1.34315 6.65685 0 5 0H3Z"
               />
             </svg>
           </div>
         </motion.div>
-        <div className="absolute inset-x-0 top-0 mx-auto flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-full border-4 border-[#050806]" />
+        <div className="absolute inset-x-0 top-0 mx-auto flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-full border-4 border-[#04060a]" />
       </motion.div>
 
       <motion.div
@@ -165,7 +165,7 @@ function Vault({ on }: { on: boolean }) {
       {/* the code field */}
       <motion.div
         variants={inputVariant}
-        className="absolute inset-x-0 top-[198px] mx-auto flex w-[90%] max-w-[300px] items-center justify-between rounded-md border border-white/[0.06] bg-white/[0.04] p-2 drop-shadow-[0_2px_5px_rgba(0,0,0,0.5)] transition-all duration-300 group-hover:border-neon/60 group-hover:[box-shadow:inset_0_0_6px_rgba(49,196,126,0.5)]"
+        className="absolute inset-x-0 top-[198px] mx-auto flex w-[90%] max-w-[300px] items-center justify-between rounded-md border border-white/[0.06] bg-white/[0.04] p-2 drop-shadow-[0_2px_5px_rgba(0,0,0,0.5)] transition-all duration-300 group-hover:border-neon/60 group-hover:[box-shadow:inset_0_0_6px_rgba(124,232,242,0.5)]"
       >
         <div className="ml-2 text-xs text-neon">
           {'••••••••••'.split('').map((char, index) => (
@@ -194,12 +194,12 @@ function Wallet({ on }: { on: boolean }) {
           initial={false}
           animate={{
             y: on ? -6 : 0,
-            borderColor: on ? 'rgba(49,196,126,0.28)' : 'rgba(255,255,255,0.08)',
+            borderColor: on ? 'rgba(124,232,242,0.28)' : 'rgba(255,255,255,0.08)',
           }}
           transition={{ layout: LAYOUT, duration: 0.4, ease: EASE }}
           layoutId="carrier"
       data-carrier
-          className="relative w-[min(400px,100%)] overflow-hidden rounded-xl border bg-gradient-to-b from-[#141a17] to-[#0b100e] p-4 shadow-lg"
+          className="relative w-[min(400px,100%)] overflow-hidden rounded-xl border bg-gradient-to-b from-[#141a24] to-[#0b0f16] p-4 shadow-lg"
         >
           {/* a light sweeps across the card while it reads the wallet */}
           <motion.span
@@ -211,7 +211,7 @@ function Wallet({ on }: { on: boolean }) {
               ease: 'easeInOut',
               repeatDelay: 1,
             }}
-            className="pointer-events-none absolute inset-y-0 w-1/3 bg-[linear-gradient(90deg,transparent,rgba(49,196,126,0.12),transparent)]"
+            className="pointer-events-none absolute inset-y-0 w-1/3 bg-[linear-gradient(90deg,transparent,rgba(124,232,242,0.12),transparent)]"
           />
 
           <div className="relative flex items-center gap-3">
@@ -232,8 +232,8 @@ function Wallet({ on }: { on: boolean }) {
           <motion.div
             initial={false}
             animate={{
-              backgroundColor: on ? 'rgba(49,196,126,1)' : 'rgba(255,255,255,0.06)',
-              color: on ? '#05140d' : 'rgba(255,255,255,0.5)',
+              backgroundColor: on ? 'rgba(124,232,242,1)' : 'rgba(255,255,255,0.06)',
+              color: on ? '#04060a' : 'rgba(255,255,255,0.5)',
             }}
             transition={{ duration: 0.4 }}
             className="relative mt-4 flex h-9 items-center justify-center rounded-md text-[12px] font-semibold"
@@ -254,7 +254,7 @@ function Funding({ on }: { on: boolean }) {
         <motion.div
           layoutId="carrier"
       data-carrier
-          className="rounded-xl border border-white/[0.07] bg-[#0b100e] px-6 py-4"
+          className="rounded-xl border border-white/[0.07] bg-[#0b0f16] px-6 py-4"
         >
           <NumberFlow
             value={on ? 184204 : 0}
@@ -291,7 +291,7 @@ function Wire({ on, delay = 0 }: { on: boolean; delay?: number }) {
           delay,
           ease: 'easeInOut',
         }}
-        className="absolute inset-y-0 w-1/2 bg-[linear-gradient(90deg,transparent,#31c47e,transparent)]"
+        className="absolute inset-y-0 w-1/2 bg-[linear-gradient(90deg,transparent,#7ce8f2,transparent)]"
       />
     </div>
   )
@@ -314,7 +314,7 @@ function Route({ on }: { on: boolean }) {
         <div className="flex w-full max-w-[560px] items-center">
           {/* where the value comes from */}
           <div className="relative w-[92px] shrink-0 text-center">
-            <div className="rounded-lg border border-white/10 bg-[#0a0e0c] py-2 font-mono text-[11px] text-white/70">
+            <div className="rounded-lg border border-white/10 bg-[#0a0d14] py-2 font-mono text-[11px] text-white/70">
               0x7a4f
             </div>
             <div className="absolute inset-x-0 top-full mt-2 text-[9px] uppercase tracking-[0.16em] text-white/30">
@@ -328,8 +328,8 @@ function Route({ on }: { on: boolean }) {
           <motion.div
             initial={false}
             animate={{
-              borderColor: on ? 'rgba(49,196,126,0.4)' : 'rgba(255,255,255,0.1)',
-              backgroundColor: on ? '#0c1712' : '#0a0e0c',
+              borderColor: on ? 'rgba(124,232,242,0.4)' : 'rgba(255,255,255,0.1)',
+              backgroundColor: on ? '#0d1622' : '#0a0d14',
             }}
             transition={{ layout: LAYOUT, duration: 0.4 }}
             layoutId="carrier"
@@ -348,11 +348,11 @@ function Route({ on }: { on: boolean }) {
             <motion.div
               initial={false}
               animate={{
-                borderColor: on ? 'rgba(49,196,126,0.35)' : 'rgba(255,255,255,0.1)',
-                color: on ? '#31c47e' : 'rgba(255,255,255,0.45)',
+                borderColor: on ? 'rgba(124,232,242,0.35)' : 'rgba(255,255,255,0.1)',
+                color: on ? '#7ce8f2' : 'rgba(255,255,255,0.45)',
               }}
               transition={{ duration: 0.4, delay: on ? 1 : 0 }}
-              className="rounded-lg border bg-[#0a0e0c] py-2 font-mono text-[11px]"
+              className="rounded-lg border bg-[#0a0d14] py-2 font-mono text-[11px]"
             >
               0x7a4f
             </motion.div>
@@ -380,7 +380,7 @@ function Keys({ on }: { on: boolean }) {
           transition={{ layout: LAYOUT, duration: 0.5, ease: EASE }}
           layoutId="carrier"
       data-carrier
-          className="flex items-center gap-2.5 rounded-xl border border-neon/25 bg-[#0c1712] px-3.5 py-2"
+          className="flex items-center gap-2.5 rounded-xl border border-neon/25 bg-[#0d1622] px-3.5 py-2"
         >
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-neon/15 font-mono text-[12px] font-semibold text-neon">
             M
@@ -403,7 +403,7 @@ function Keys({ on }: { on: boolean }) {
                 <motion.path
                   key={i}
                   d={`M 210 0 V 12 H ${x} V 28`}
-                  stroke={on ? 'rgba(49,196,126,0.45)' : 'rgba(255,255,255,0.12)'}
+                  stroke={on ? 'rgba(124,232,242,0.45)' : 'rgba(255,255,255,0.12)'}
                   strokeWidth="1"
                   initial={false}
                   animate={{ pathLength: on ? 1 : 0.15 }}
@@ -458,12 +458,12 @@ function Deposit({ on }: { on: boolean }) {
           initial={false}
           animate={{
             y: on ? -6 : 0,
-            borderColor: on ? 'rgba(49,196,126,0.5)' : 'rgba(255,255,255,0.08)',
+            borderColor: on ? 'rgba(124,232,242,0.5)' : 'rgba(255,255,255,0.08)',
           }}
           transition={{ layout: LAYOUT, duration: 0.4, ease: EASE }}
           layoutId="carrier"
       data-carrier
-          className="w-[min(408px,100%)] rounded-xl border bg-gradient-to-b from-[#141a17] to-[#0b100e] p-5"
+          className="w-[min(408px,100%)] rounded-xl border bg-gradient-to-b from-[#141a24] to-[#0b0f16] p-5"
         >
           <div className="text-[10px] uppercase tracking-[0.22em] text-white/35">Amount</div>
           <div className="mt-3 flex items-baseline">
@@ -488,8 +488,8 @@ function Deposit({ on }: { on: boolean }) {
                 initial={false}
                 animate={{
                   backgroundColor:
-                    on && i === pick ? 'rgba(49,196,126,0.16)' : 'rgba(255,255,255,0.05)',
-                  color: on && i === pick ? '#31c47e' : 'rgba(255,255,255,0.45)',
+                    on && i === pick ? 'rgba(124,232,242,0.16)' : 'rgba(255,255,255,0.05)',
+                  color: on && i === pick ? '#7ce8f2' : 'rgba(255,255,255,0.45)',
                 }}
                 transition={{ duration: 0.3 }}
                 className="flex-1 rounded-md py-1.5 text-center text-[10px]"
@@ -513,7 +513,7 @@ function Encrypt({ on }: { on: boolean }) {
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-6">
         {/* every character turns over in place, plain on one face, cipher on the other */}
         <motion.div layoutId="carrier"
-      data-carrier transition={{ layout: LAYOUT }} className="flex gap-1 rounded-xl border border-white/[0.07] bg-[#0b100e] px-3 py-2">
+      data-carrier transition={{ layout: LAYOUT }} className="flex gap-1 rounded-xl border border-white/[0.07] bg-[#0b0f16] px-3 py-2">
           {PLAIN.split('').map((c, i) => (
             <span key={i} className="relative block h-14 w-[36px] [perspective:400px]">
               <motion.span
@@ -579,7 +579,7 @@ function Batch({ on }: { on: boolean }) {
             ))}
 
             {on && (
-              <g stroke="#31c47e" strokeWidth="1.6" strokeLinecap="round" fill="none">
+              <g stroke="#7ce8f2" strokeWidth="1.6" strokeLinecap="round" fill="none">
                 <path className="reactor-flow reactor-flow-in" d={IN_PATH} pathLength={1} />
                 {ACCOUNTS.map((a, i) => (
                   <path
@@ -603,7 +603,7 @@ function Batch({ on }: { on: boolean }) {
 
           {/* the core, which the vault grows out of */}
           <div
-            className="absolute flex h-[88px] w-[88px] items-center justify-center rounded-full border border-neon/25 bg-[#0c1712]"
+            className="absolute flex h-[88px] w-[88px] items-center justify-center rounded-full border border-neon/25 bg-[#0d1622]"
             style={{ left: 196, top: 76 }}
           >
             <motion.img
@@ -666,13 +666,13 @@ function Shield({ on }: { on: boolean }) {
         transition={{ layout: LAYOUT, duration: 0.3, ease: 'easeInOut' }}
         layoutId="carrier"
       data-carrier
-        className="absolute inset-x-0 top-[74px] mx-auto h-[400px] w-[min(330px,92%)] rounded-[40px] border border-white/10 bg-[#111714] p-1.5"
+        className="absolute inset-x-0 top-[74px] mx-auto h-[400px] w-[min(330px,92%)] rounded-[40px] border border-white/10 bg-[#11151d] p-1.5"
       >
-        <div className="relative h-full overflow-hidden rounded-[28px] bg-[#070b09]">
+        <div className="relative h-full overflow-hidden rounded-[28px] bg-[#070a10]">
           <div className="absolute left-5 top-3 text-[9px] text-white/35">09:41</div>
           <motion.span
             initial={false}
-            animate={{ backgroundColor: on ? '#31c47e' : 'rgba(255,255,255,0.12)' }}
+            animate={{ backgroundColor: on ? '#7ce8f2' : 'rgba(255,255,255,0.12)' }}
             transition={{ duration: 0.2 }}
             className="absolute left-1/2 top-2.5 h-5 w-5 -translate-x-1/2 rounded-full"
           />
@@ -719,7 +719,7 @@ function Shield({ on }: { on: boolean }) {
 
       {/* the horizon itself */}
       <div className="pointer-events-none absolute inset-x-0 bottom-[14px] h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.18),transparent)]" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-[14px] mx-auto h-20 w-2/3 -translate-y-1/2 rounded-[50%] bg-[radial-gradient(50%_50%_at_50%_50%,rgba(49,196,126,0.1),transparent_70%)]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-[14px] mx-auto h-20 w-2/3 -translate-y-1/2 rounded-[50%] bg-[radial-gradient(50%_50%_at_50%_50%,rgba(124,232,242,0.1),transparent_70%)]" />
     </Stage>
   )
 }

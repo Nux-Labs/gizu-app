@@ -28,8 +28,8 @@ export default function Hero() {
               className="block"
             >
               {/* the promise stays encrypted until you look at it */}
-              <span className="group inline-block cursor-default text-neon">
-                <span className="inline-block blur-[10px] transition-[filter,opacity] duration-700 ease-out group-hover:blur-0 opacity-70 group-hover:opacity-100 motion-reduce:blur-0">
+              <span className="group inline-block cursor-default">
+                <span className="text-gradient inline-block blur-[10px] transition-[filter,opacity] duration-700 ease-out group-hover:blur-0 opacity-70 group-hover:opacity-100 motion-reduce:blur-0">
                   Now private.
                 </span>
               </span>

@@ -29,7 +29,8 @@
 
 :root {
   --nav-p: 0;
-  --neon: #31c47e;
+  --neon: #7ce8f2;
+  --violet: #b9a6ff;
   --font-sans: 'Helvetica Neue LT', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
@@ -43,8 +44,8 @@ html {
 
 body {
   margin: 0;
-  background: #050706;
-  color: #eef4f1;
+  background: #04060a;
+  color: #f1f4f8;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
@@ -63,7 +64,7 @@ body {
   padding-inline: calc(1.5rem + var(--nav-p) * 0.25rem);
   border-radius: calc(var(--nav-p) * 999px);
   border: 1px solid rgb(255 255 255 / calc(0.1 * var(--nav-p)));
-  background: rgb(10 14 12 / calc(0.72 * var(--nav-p)));
+  background: rgb(10 13 19 / calc(0.72 * var(--nav-p)));
   box-shadow: 0 18px 50px -30px rgb(0 0 0 / calc(0.9 * var(--nav-p)));
   backdrop-filter: blur(calc(var(--nav-p) * 20px)) saturate(1.1);
   -webkit-backdrop-filter: blur(calc(var(--nav-p) * 20px)) saturate(1.1);
@@ -93,13 +94,16 @@ body {
     @apply rounded-2xl border border-white/10 bg-ink-card;
   }
   .card-private {
-    @apply rounded-2xl border border-neon/25 bg-[#0c1712];
+    @apply rounded-2xl border border-neon/25 bg-[#0d1622];
+  }
+  .text-gradient {
+    @apply bg-gradient-to-r from-neon to-violet bg-clip-text text-transparent;
   }
   .eyebrow {
     @apply font-medium uppercase tracking-[0.22em] text-[11px] text-white/35;
   }
   .btn-neon {
-    @apply inline-flex h-[52px] items-center justify-center gap-2 rounded-full bg-neon px-7 text-[15px] font-semibold text-ink transition-transform;
+    @apply inline-flex h-[52px] items-center justify-center gap-2 rounded-full bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] px-7 text-[15px] font-semibold text-ink transition-transform;
   }
   .btn-ghost {
     @apply inline-flex h-[52px] items-center justify-center gap-2 rounded-full border border-white/10 px-7 text-[15px] font-medium text-white/80;

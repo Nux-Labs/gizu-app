@@ -93,13 +93,13 @@ export default function HowItWorks() {
     >
       <div className="sticky top-0 flex h-[100svh] flex-col overflow-hidden">
         {/* depth behind everything */}
-        <div className="pointer-events-none absolute inset-0 bg-[#070a09]" />
+        <div className="pointer-events-none absolute inset-0 bg-[#07090e]" />
         <motion.div
           style={{ x: glowX }}
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_45%,rgba(49,196,126,0.1),transparent_70%)]"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_45%,rgba(124,232,242,0.1),transparent_70%)]"
         />
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle,rgba(255,255,255,0.05)_1px,transparent_1px)] opacity-40 [background-size:26px_26px]" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(75%_60%_at_50%_50%,transparent,#050706)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(75%_60%_at_50%_50%,transparent,#04060a)]" />
 
         <div className="shell relative pt-24 text-center md:pt-28">
           <p className="eyebrow">How it works</p>

@@ -56,7 +56,7 @@ export default function Nav() {
 
         <a
           href="#top"
-          className="nav-cta ml-auto inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-neon text-[14px] font-semibold text-ink"
+          className="nav-cta ml-auto inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] text-[14px] font-semibold text-ink"
         >
           Explore the app
           <ArrowUpRight size={16} strokeWidth={2.4} />
