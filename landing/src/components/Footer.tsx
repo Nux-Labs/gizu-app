@@ -1,5 +1,5 @@
 import { ArrowUpRight } from 'lucide-react'
-import AsciiField from './AsciiField'
+import AsciiChameleon from '../chameleon/AsciiChameleon'
 
 const LINKS = [
   { label: 'How it works', href: '#money' },
@@ -12,13 +12,7 @@ const LINKS = [
 export default function Footer() {
   return (
     <footer className="relative overflow-hidden border-t border-white/[0.07]">
-      {/* one field behind the whole footer */}
-      <div className="pointer-events-none absolute inset-0">
-        <AsciiField fontSize={16} speed={0.4} opacity={0.8} />
-        <div className="absolute inset-0 bg-gradient-to-b from-ink/70 via-ink/80 to-ink" />
-      </div>
-
-      <div className="shell relative py-16">
+      <div className="shell relative pt-16">
         <div className="flex flex-col gap-10 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2.5">
             <img src="/gizulogo.svg" alt="" className="h-6 w-auto" />
@@ -34,14 +28,24 @@ export default function Footer() {
               placeholder="Email address"
               className="h-10 w-full min-w-0 bg-transparent text-[14px] outline-none placeholder:text-white/30"
             />
-            <button className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-neon px-5 text-[13px] font-semibold text-ink">
+            <button className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] px-5 text-[13px] font-semibold text-ink">
               Join
               <ArrowUpRight size={15} strokeWidth={2.6} />
             </button>
           </form>
         </div>
+      </div>
 
-        <div className="mt-12 flex flex-col gap-5 border-t border-white/[0.06] pt-7 sm:flex-row sm:items-center sm:justify-between">
+      {/* the mascot gets its own strip between the form and the links */}
+      <div
+        aria-hidden
+        className="pointer-events-none relative mt-4 h-[300px] [mask-image:linear-gradient(to_bottom,transparent,#000_22%,#000_78%,transparent)]"
+      >
+        <AsciiChameleon anchorX={0.5} anchorY={0.52} size={0.25} />
+      </div>
+
+      <div className="shell relative pb-12">
+        <div className="flex flex-col gap-5 border-t border-white/[0.06] pt-7 sm:flex-row sm:items-center sm:justify-between">
           <nav className="flex flex-wrap items-center gap-x-7 gap-y-3">
             {LINKS.map((l) => (
               <a key={l.label} href={l.href} className="text-[13.5px] text-white/50 hover:text-white">
