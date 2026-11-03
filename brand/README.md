@@ -6,8 +6,8 @@
 | `gizu-x-cover.png` | 1500x500 | X header image |
 | `social-media/anonymous-investors.png` | 1600x900 | X post, regenerate with `node brand/social-media/anonymous-investors.mjs` |
 
-SVG sources sit next to the PNGs, regenerate the PNGs from them if the logo changes.
+The X avatar and cover are rendered by `node brand/gizu-x.mjs` from the landing's ASCII chameleon field; it writes the `.html` sources and the PNGs.
 
-Colors: ink `#050706`, neon `#31c47e`, glitch echo `#49c9a0`.
+Colors: ink `#04060a`, cyan `#7ce8f2`, violet `#b9a6ff`, text `#f1f4f8`.
 
 The cover keeps the lower left corner clear so the profile picture does not cover the headline.
