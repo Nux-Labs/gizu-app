@@ -12,9 +12,41 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
 internal fun walletStore(context: Context) =
-  WalletStore(AndroidWalletFile(context, limit = 65536), AndroidWalletKeys())
+  WalletStore(AndroidWalletFile(context, limit = 16 * 1024 * 1024), AndroidWalletKeys())
 
 internal class AndroidWalletFile(
+  context: Context,
+  name: String = "gizu-stored-wallet-v1.enc",
+  limit: Int = 8192,
+) : WalletFile {
+  companion object {
+    private val locks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+  }
+
+  private val lock = locks.getOrPut(File(context.noBackupFilesDir, name).absolutePath) { Any() }
+  private val delegate =
+    PagedWalletFile(
+      AndroidAtomicWalletFile(context, name, maxOf(limit, 64 * 1024)),
+      { id -> AndroidAtomicWalletFile(context, "$name.page-$id", PagedWalletFile.PAGE_BYTES) },
+      maxOf(limit, 16 * 1024 * 1024),
+      { keep ->
+        context.noBackupFilesDir
+          .listFiles()
+          ?.filter {
+            it.name.startsWith("$name.page-") && it.name.removePrefix("$name.page-") !in keep
+          }
+          ?.forEach { it.delete() }
+      },
+    )
+
+  override fun exists() = synchronized(lock) { delegate.exists() }
+
+  override fun read() = synchronized(lock) { delegate.read() }
+
+  override fun write(bytes: ByteArray) = synchronized(lock) { delegate.write(bytes) }
+}
+
+internal class AndroidAtomicWalletFile(
   context: Context,
   name: String = "gizu-stored-wallet-v1.enc",
   private val limit: Int = 8192,

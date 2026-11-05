@@ -150,6 +150,43 @@ class EarnDepositHostTest {
         fail("No space for both independent payouts")
       } catch (_: IllegalStateException) {}
       requireDepositCapacity(review, full.take(254), payouts.take(254))
+      // Settled history spans pages and consumes no active-operation slots.
+      val settledSources =
+        (0 until 500).map {
+          org.json
+            .JSONObject()
+            .put("operationId", "settled-$it")
+            .put("status", "finalized")
+            .put("signedUserOperation", "exact-saved-bytes")
+        }
+      val settledPayouts =
+        (0 until 500).map {
+          org.json
+            .JSONObject()
+            .put("operationId", "settled-payout-$it")
+            .put("status", "paid")
+            .put("signedData", "exact-saved-intent")
+            .put(
+              "proposal",
+              org.json.JSONObject().put("operationId", "settled-source-$it").put("leg", "hold"),
+            )
+        }
+      requireDepositCapacity(review, settledSources, settledPayouts)
+      assertFalse(journalEntryPending(org.json.JSONObject().put("phase", "invested")))
+      assertFalse(
+        journalEntryPending(org.json.JSONObject().put("status", "credited").put("raw", "0x1234"))
+      )
+      assertFalse(
+        journalEntryPending(
+          org.json.JSONObject().put("status", "nonceCancelled").put("raw", "0x1234")
+        )
+      )
+      assertTrue(
+        journalEntryPending(org.json.JSONObject().put("status", "unknown").put("raw", "0x1234"))
+      )
+      assertTrue(
+        journalEntryPending(org.json.JSONObject().put("status", "expired").put("raw", "0x1234"))
+      )
     }
   }
 
@@ -330,6 +367,26 @@ class EarnDepositHostTest {
       assertEquals("paused", host.status(id)["phase"])
       assertTrue(j.get(id).getJSONObject("children").length() > 0)
       scope.cancel()
+    }
+  }
+
+  @Test
+  fun fiveWalletTwoSourceReviewFitsBoundedPayoutStorageAndOversizedHistoryFailsClosed() {
+    DistributionDepositFixtures.record(listOf(1000, 1500, 2000, 2500, 3000)).use { record ->
+      val review = DistributionDepositFixtures.review(record)
+      review.getJSONArray("sources").put(org.json.JSONObject().put("operationId", "source1"))
+      requireDepositCapacity(review, emptyList(), emptyList())
+      val oversized =
+        listOf(
+          org.json
+            .JSONObject()
+            .put("proposal", org.json.JSONObject().put("operationId", "old").put("leg", "hold"))
+            .put("status", "paid")
+            .put("preparedText", "x".repeat(6 * 1024 * 1024))
+        )
+      assertThrows(IllegalStateException::class.java) {
+        requireDepositCapacity(review, emptyList(), oversized)
+      }
     }
   }
 

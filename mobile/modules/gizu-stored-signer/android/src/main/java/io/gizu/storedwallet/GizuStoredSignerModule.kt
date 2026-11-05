@@ -50,6 +50,7 @@ class GizuStoredSignerModule : Module() {
   private var dialog: Dialog? = null
   private var awaitingProvider = false
   private var foreground = true
+  private val discoveryConsent = WalletDiscoveryConsent()
   private var balanceReadWallet: String? = null
   private var balanceReadGeneration: String? = null
   private var balanceReadUntil = 0L
@@ -58,6 +59,7 @@ class GizuStoredSignerModule : Module() {
   private var departureContext: Context? = null
   private val depositLifecycle = EarnDepositLifecycle {
     balanceReadUntil = 0
+    discoveryConsent.clear()
     depositHost?.revoke("approvalExpired")
     task?.cancel()
   }
@@ -155,7 +157,12 @@ class GizuStoredSignerModule : Module() {
     title: String,
     message: String,
     fullReview: Boolean = false,
-  ) =
+  ) {
+    if (fullReview)
+      withContext(Dispatchers.IO) {
+        val walletId = walletStore(activity).load().use { it.id }
+        WalletRecoveryRuntime.beforeFreshFunding(activity, walletId)
+      }
     suspendCancellableCoroutine<Unit> { continuation ->
       val alert = Dialog(activity)
       alert.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -191,6 +198,7 @@ class GizuStoredSignerModule : Module() {
       alert.show()
       continuation.invokeOnCancellation { scope.launch { alert.dismiss() } }
     }
+  }
 
   private fun confirmationView(
     activity: Activity,
@@ -261,7 +269,8 @@ class GizuStoredSignerModule : Module() {
       }
       task = coroutineContext[Job]
       try {
-        requireForeground(activity!!)
+        WalletRecoveryRuntime.initialize(activity!!.applicationContext)
+        requireForeground(activity)
         check(depositHost?.busy != true) {
           "A native deposit is running. Check its progress or stop its remaining approval first."
         }
@@ -319,6 +328,75 @@ class GizuStoredSignerModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("GizuStoredSigner")
+    OnCreate { appContext.reactContext?.let { WalletRecoveryRuntime.initialize(it) } }
+    AsyncFunction("getWalletRecoveryStatus") { walletId: String, promise: Promise ->
+      scope.launch {
+        try {
+          val context = checkNotNull(appContext.reactContext)
+          promise.resolve(
+            withContext(Dispatchers.IO) { WalletRecoveryRuntime.engine(context).status(walletId) }
+          )
+        } catch (_: Exception) {
+          promise.reject("RECOVERY_UNAVAILABLE", "Native recovery status is unavailable.", null)
+        }
+      }
+    }
+    AsyncFunction("cancelWalletDiscovery") { walletId: String, promise: Promise ->
+      discoveryConsent.clear()
+      scope.launch {
+        try {
+          val context = checkNotNull(appContext.reactContext)
+          promise.resolve(
+            withContext(Dispatchers.IO) { WalletRecoveryRuntime.engine(context).cancel(walletId) }
+          )
+        } catch (_: Exception) {
+          promise.reject("RECOVERY_UNAVAILABLE", "Native recovery status is unavailable.", null)
+        }
+      }
+    }
+    AsyncFunction("syncWalletRecovery") { walletId: String, promise: Promise ->
+      runCeremony(promise, timeoutMs = 300000L) { activity, _ ->
+        withContext(Dispatchers.IO) { WalletRecoveryRuntime.engine(activity).sync(walletId) }
+      }
+    }
+    AsyncFunction("restoreWalletRecovery") { walletId: String, promise: Promise ->
+      runCeremony(promise, timeoutMs = 300000L) { activity, _ ->
+        confirm(
+          activity,
+          "Restore wallet recovery metadata",
+          "Fetch encrypted recovery metadata and preserve signed history. Recovered activity remains blocked until verified reconciliation. No transaction will be submitted.",
+        )
+        withContext(Dispatchers.IO) { WalletRecoveryRuntime.engine(activity).restore(walletId) }
+      }
+    }
+    AsyncFunction("discoverWallets") { walletId: String, throughCycle: Int, promise: Promise ->
+      runCeremony(promise, timeoutMs = 300000L) { activity, store ->
+        require(throughCycle in 0..1_000_000)
+        val generation =
+          store.load().use {
+            check(it.id == walletId && it.verified)
+            it.journalId
+          }
+        observeDepositDepartures(activity)
+        if (
+          !discoveryConsent.permits(walletId, generation, throughCycle, System.currentTimeMillis())
+        ) {
+          confirm(
+            activity,
+            "Discover wallet activity",
+            "Read supported balances through cycle $throughCycle inclusive. This bound does not prove no further wallets exist. Discovery grants no spending authority.",
+          )
+          withTimeout(FOCUS_TIMEOUT_MS) {
+            while (foreground && !activity.hasWindowFocus()) delay(FOCUS_POLL_INTERVAL_MS)
+          }
+          requireForeground(activity)
+          discoveryConsent.approve(walletId, generation, throughCycle, System.currentTimeMillis())
+        }
+        withContext(Dispatchers.IO) {
+          WalletRecoveryRuntime.engine(activity).discover(walletId, throughCycle)
+        }
+      }
+    }
     AsyncFunction("getCapabilities") { promise: Promise ->
       promise.resolve(
         mapOf(
@@ -326,6 +404,8 @@ class GizuStoredSignerModule : Module() {
           "available" to eligible(appContext.currentActivity),
           "walletStorage" to eligible(appContext.currentActivity),
           "backup" to eligible(appContext.currentActivity),
+          "walletRecovery" to eligible(appContext.currentActivity),
+          "walletDiscovery" to eligible(appContext.currentActivity),
           "transfers" to eligible(appContext.currentActivity),
           "swaps" to eligible(appContext.currentActivity),
           "earnWallets" to eligible(appContext.currentActivity),
@@ -358,6 +438,7 @@ class GizuStoredSignerModule : Module() {
             check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
             store.prepareEarnDepositCycle(record, 4663, draftId, budgetAtoms)
           }
+        withContext(Dispatchers.IO) { WalletRecoveryRuntime.beforeFreshFunding(activity, walletId) }
         // Recover a crash after the invested journal commit but before its allocation marker
         // commit.
         if (draftId == null)
@@ -1912,6 +1993,7 @@ class GizuStoredSignerModule : Module() {
     OnUserLeavesActivity { depositLifecycle.onUserLeave(awaitingProvider) }
     OnActivityEntersBackground {
       foreground = false
+      discoveryConsent.clear()
       val systemContext = departureContext ?: appContext.reactContext
       val interactive =
         (systemContext?.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ==
@@ -1927,6 +2009,7 @@ class GizuStoredSignerModule : Module() {
       }
     }
     OnDestroy {
+      discoveryConsent.clear()
       departureContext?.let { context ->
         runCatching { context.unregisterReceiver(departureReceiver) }
       }

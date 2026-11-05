@@ -1,5 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import pg from "pg";
+import { PgOperationCoordination } from "../../../src/adapters/postgres/pg-operation-coordination.ts";
+import { OperationCoordinator } from "../../../src/adapters/earn/operation-coordinator.ts";
 import { privateKeyToAccount } from "viem/accounts";
 import { hexToBytes, toHex, keccak256 } from "viem";
 import { base58 } from "@scure/base";
@@ -119,8 +123,10 @@ function fixture(
   mutate?: (path: string, body: any, init?: RequestInit) => void,
   profileChainId: 1 | 4663 = 1,
   recoveryKey: string | null = "11".repeat(32),
+  coordination?: import("../../../src/adapters/earn/operation-coordinator.ts").OperationCoordinator,
+  initialClock = now,
 ) {
-  let clock = now;
+  let clock = initialClock;
   const calls: string[] = [];
   let quotes = 0;
   let lastRequest: any;
@@ -232,6 +238,7 @@ function fixture(
         robinhoodRpcUrl: "https://ethereum.test",
         monadRpcUrl: "https://ethereum.test",
         recoveryKey: recoveryKey ?? undefined,
+        coordination,
       },
       { fetcher, now: () => clock },
     );
@@ -1765,4 +1772,131 @@ test("Robinhood payouts are delivered from a canonical receipt before L1 finalit
       assert.equal(result.receivedAtoms, "99500");
     } else await assert.rejects(settle);
   }
+});
+
+test('shared payout guards survive replica restart, prevent rebinding and never resend uncertain authority',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  const rows=new Map<string,string>();const store={async bind(key:string,value:string,_expires:number,exclusive:boolean){const old=rows.get(key);if(old)return !exclusive&&old===value;rows.set(key,value);return true;}};
+  const coordination=new OperationCoordinator(store,'ab'.repeat(32));
+  const f=fixture(undefined,1,'11'.repeat(32),coordination);
+  const prepared=await f.gateway.prepare(await input());
+  const signedData={...prepared.intent,signature:await signature(prepared.intent.payload)};
+  const req={operationId:'source_1',revision:1,leg:'hold' as const,quoteId:prepared.quote.quoteId,signedData,recoveryEnvelope:prepared.recoveryEnvelope};
+  const results=await Promise.all([f.gateway.submit(req),f.restart().submit(req)]);
+  assert.equal(results.filter(r=>r.status==='submitted').length,1);
+  assert.equal((await f.restart().submit(req)).status,'submissionUnknown');
+  assert.equal(f.calls.filter(p=>p.includes('/submit-intent/')).length,1);
+  await assert.rejects(f.restart().prepare({...await input(),operationId:'another_child'}));
+  assert.equal(JSON.stringify([...rows]).includes(C),false);
+});
+async function assertSharedDistributionGuards(coordination: OperationCoordinator, clock = now) {
+  const f = fixture(undefined, 1, "11".repeat(32), coordination, clock);
+  for (const slot of [0, 1, 2, 3, 4] as const) {
+    const request = { ...await distributionInput(slot, [2000, 2000, 2000, 2000, 2000]), signedData: await readAuth(clock) };
+    const prepared = await f.restart().prepare(request);
+    const submission = {
+      operationId: request.operationId,
+      revision: request.revision,
+      leg: request.leg,
+      distribution: request.distribution,
+      quoteId: prepared.quote.quoteId,
+      recoveryEnvelope: prepared.recoveryEnvelope,
+      signedData: { ...prepared.intent, signature: await signature(prepared.intent.payload) },
+    };
+    const results = await Promise.all([
+      f.restart().submit(submission),
+      f.restart().submit(submission),
+    ]);
+    assert.deepEqual(results.map((result) => result.status).sort(), ["submissionUnknown", "submitted"]);
+    for (const result of results) {
+      assert.equal(result.leg, request.leg);
+      assert.deepEqual(result.distribution, request.distribution);
+    }
+    const replay = await f.restart().submit(submission);
+    assert.equal(replay.status, "submissionUnknown");
+    assert.deepEqual(replay.distribution, request.distribution);
+    await assert.rejects(f.restart().prepare({
+      ...request,
+      recipient: "0x" + "ab".repeat(20),
+    }), (error: any) => error.code === "EARN_COORDINATION_CONFLICT");
+  }
+  assert.equal(f.calls.filter((path) => path.includes("/submit-intent/")).length, 5);
+  await assert.rejects(f.restart().prepare({
+    ...await distributionInput(0),
+    signedData: await readAuth(clock),
+    distribution: { version: 1, weightsBps: [5000, 5000] },
+  }), (error: any) => error.code === "EARN_COORDINATION_CONFLICT");
+}
+
+test("shared distribution guards preserve independent slots and recovered replay protection", async () => {
+  const rows = new Map<string, string>();
+  const coordination = new OperationCoordinator({
+    async bind(key, value, _expires, exclusive) {
+      const prior = rows.get(key);
+      if (prior) return !exclusive && prior === value;
+      rows.set(key, value);
+      return true;
+    },
+  }, "ab".repeat(32));
+  await assertSharedDistributionGuards(coordination);
+});
+
+test("PostgreSQL distribution guards preserve independent slots and recovered replay protection", {
+  skip: !process.env.TEST_DATABASE_URL,
+}, async () => {
+  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const schema = `payout_test_${randomBytes(8).toString("hex")}`;
+  const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, options: `-c search_path=${schema}` });
+  try {
+    await admin.query(`create schema ${schema}`);
+    await assertSharedDistributionGuards(new OperationCoordinator(new PgOperationCoordination(pool), "ab".repeat(32)), Math.floor(Date.now() / 1000) * 1000);
+  } finally {
+    await pool.end();
+    await admin.query(`drop schema if exists ${schema} cascade`);
+    await admin.end();
+  }
+});
+
+test('unauthenticated payout preparation cannot occupy durable funding roles',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  const rows=new Map<string,string>();const coordination=new OperationCoordinator({async bind(key,value){rows.set(key,value);return true;}},'ab'.repeat(32));
+  const f=fixture(undefined,1,'11'.repeat(32),coordination),r=await input();
+  await assert.rejects(f.gateway.prepare({...r,signedData:{...r.signedData,signature:'secp256k1:'+base58.encode(Buffer.alloc(65,1))}}));
+  assert.equal(rows.size,0,'only authenticated actual credit may create persistent bindings');
+});
+test('temporary shared-store outage blocks payout sends and permits an untouched signed record after recovery',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  let down=false;const rows=new Map<string,string>();
+  const coordination=new OperationCoordinator({async bind(key,value,_expires,exclusive){if(down)throw new Error('private database detail');const old=rows.get(key);if(old)return !exclusive&&old===value;rows.set(key,value);return true;}},'ab'.repeat(32));
+  const f=fixture(undefined,1,'11'.repeat(32),coordination),p=await f.gateway.prepare(await input());
+  const req={operationId:p.quote.operationId,revision:1,leg:'hold' as const,quoteId:p.quote.quoteId,signedData:{...p.intent,signature:await signature(p.intent.payload)}};
+  down=true;await assert.rejects(f.gateway.submit(req),(error:any)=>error.statusCode===503);
+  assert.equal(f.calls.filter(p=>p.includes('/submit-intent/')).length,0);
+  down=false;assert.equal((await f.gateway.submit(req)).status,'submitted');
+  assert.equal(f.calls.filter(p=>p.includes('/submit-intent/')).length,1);
+});
+
+test('expired payout caches reclaim role, credit and nonce bindings while native envelopes remain recoverable',async()=>{
+  const f=fixture((path,body)=>{if(path.includes('/generate-intent/')){const message=JSON.parse(body.intent.payload);message.nonce=Buffer.alloc(32,1).toString('base64');body.intent.payload=JSON.stringify(message);}});const original=await input(),first=await f.gateway.prepare(original);
+  f.advance(86401000);
+  const next=await input();next.signedData=await readAuth(f.clock());
+  // The provider repeats its first nonce under a fresh process: expired local
+  // nonce and role state must not create a lifetime allocation limit.
+  const prepared=await f.gateway.prepare({...next,cycleIndex:1,sourceAccountIndex:1});
+  assert.notEqual(prepared.quote.quoteId,first.quote.quoteId);
+  await assert.rejects(f.gateway.submit({operationId:first.quote.operationId,revision:1,leg:'hold',quoteId:first.quote.quoteId,signedData:{...first.intent,signature:await signature(first.intent.payload)}}));
+});
+
+test('payout admission reclaims all 512 expired operation slots and their credit associations',async()=>{
+  let counter=0;let transaction=sourceTx;
+  const f=fixture((path,body)=>{
+    if(path.includes('/account/history/'))body.items[0].quoteTransactions[0].txHash=transaction;
+    if(path.includes('/generate-intent/')){const message=JSON.parse(body.intent.payload),nonce=Buffer.alloc(32);nonce.writeUInt32LE(counter);message.nonce=nonce.toString('base64');body.intent.payload=JSON.stringify(message);}
+  });
+  const base=await input();
+  const next=()=>{transaction='0x'+counter.toString(16).padStart(64,'0');const operationId='capacity_'+counter;return{...base,operationId,source:{...base.source,operationId,transactionHash:transaction}};};
+  for(counter=0;counter<512;counter++)await f.gateway.prepare(next(),'capacity-client-'+Math.floor(counter/20));
+  await assert.rejects(f.gateway.prepare(next(),'capacity-extra'),(error:any)=>error.code==='EARN_PAYOUT_CAPACITY');
+  f.advance(86401000);base.signedData=await readAuth(f.clock());
+  const reclaimed=await f.gateway.prepare(next(),'capacity-extra');assert.equal(reclaimed.quote.operationId,'capacity_512');
 });

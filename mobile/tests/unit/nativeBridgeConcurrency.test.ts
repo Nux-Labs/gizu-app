@@ -4,6 +4,7 @@ import {
   getStoredSigner,
   getStoredSwapSigner,
   getStoredEarnDepositSigner,
+  getStoredWalletRecoverySigner,
 } from "@/services/wallet/nativeBridge";
 jest.mock("expo", () => ({ requireOptionalNativeModule: jest.fn() }));
 const originalOS = Platform.OS;
@@ -37,6 +38,60 @@ test("an older native build can read saved deposits but cannot prepare a new dis
     signer.prepareEarnDeposit("wallet", "robinhood-usdg", "3000000", null),
   ).rejects.toThrow(/updated native app/);
   expect(native.prepareEarnDeposit).not.toHaveBeenCalled();
+});
+test("recovery snapshots stay readable during discovery and pause interrupts its native lane", async () => {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+  Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
+  let finish!: (value: unknown) => void;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const native = {
+    getCapabilities: jest.fn().mockResolvedValue({
+      contractVersion: 1,
+      available: true,
+      walletRecovery: true,
+      walletDiscovery: true,
+    }),
+    discoverWallets: jest.fn(() => pending),
+    getWalletRecoveryStatus: jest.fn().mockResolvedValue({ phase: "discovering" }),
+    syncWalletRecovery: jest.fn(),
+    cancelWalletDiscovery: jest.fn().mockResolvedValue({ phase: "paused" }),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+  const signer = getStoredWalletRecoverySigner()!;
+  const discovery = signer.discoverWallets("wallet", 256);
+  const interrupted = expect(discovery).rejects.toThrow(/cancelled/);
+  await tick();
+  try {
+    await Promise.all([
+      signer.getWalletRecoveryStatus("wallet"),
+      signer.getWalletRecoveryStatus("wallet"),
+    ]);
+    expect(native.getWalletRecoveryStatus).toHaveBeenCalledTimes(1);
+    const sync = signer.syncWalletRecovery("wallet");
+    const dropped = expect(sync).rejects.toThrow(/cancelled/);
+    await tick();
+    await expect(signer.cancelWalletDiscovery("wallet")).resolves.toEqual({ phase: "paused" });
+    await dropped;
+    expect(native.syncWalletRecovery).not.toHaveBeenCalled();
+  } finally {
+    finish({ phase: "paused" });
+    await interrupted;
+  }
+});
+test("older native capabilities cannot execute the new recovery APIs", async () => {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+  Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
+  const native = {
+    getCapabilities: jest.fn().mockResolvedValue({ contractVersion: 1, available: true }),
+    syncWalletRecovery: jest.fn(),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+  await expect(getStoredWalletRecoverySigner()!.syncWalletRecovery("wallet")).rejects.toThrow(
+    /unavailable/,
+  );
+  expect(native.syncWalletRecovery).not.toHaveBeenCalled();
 });
 test("deposit progress reads run during preparation while other mutations stay serialized", async () => {
   Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });

@@ -58,13 +58,47 @@ class WalletStoreMigrationTest {
           out.write(ByteArray(32) { 3 })
           out.write(ByteArray(32) { 4 })
           out.write(ByteArray(32) { it.toByte() })
-          if (version == 4 && !earnLayout) out.writeUTF(registry)
+          if (version == 4 && !earnLayout || version == 5) out.writeUTF(registry)
+          if (version == 5) {
+            out.writeInt(7)
+            out.writeUTF(
+              JSONArray()
+                .put(
+                  JSONObject()
+                    .put("cycleIndex", 7)
+                    .put("chainId", 4663)
+                    .put("intentId", "earn-v2:$id:robinhood-usdg:7")
+                )
+                .toString()
+            )
+          }
         }
       }
       .toByteArray()
 
   @Test
-  fun everyHistoricalLayoutPreservesEntropyAndRolesAcrossVersionFiveRewrite() {
+  fun releasedVersionFiveCatalogueMigratesWithoutChangingCycleOrRecipientCounter() {
+    val file = File()
+    val keys = Keys()
+    file.write(CryptoEnvelope.encrypt(keys.key, historical(5, true), aad))
+    val store = WalletStore(file, keys)
+    store.load().use { record ->
+      assertEquals(7, record.earnCycleIndex)
+      assertEquals(12, JSONObject(record.roleRegistry).getInt("nextRecipient"))
+      assertTrue(record.earnRecoveryRequired)
+      store.markVerified(record)
+    }
+    WalletStore(file, keys).load().use { record ->
+      assertEquals(7, record.earnCycleIndex)
+      assertEquals(
+        "earn-v2:$id:robinhood-usdg:7",
+        JSONArray(record.earnCycles).getJSONObject(0).getString("intentId"),
+      )
+    }
+  }
+
+  @Test
+  fun everyHistoricalLayoutPreservesEntropyAndRolesAcrossVersionSixRewrite() {
     for ((version, earn) in listOf(1 to false, 2 to false, 3 to false, 4 to false, 4 to true)) {
       val file = File()
       val keys = Keys()
@@ -90,7 +124,7 @@ class WalletStoreMigrationTest {
       }
       val clear = CryptoEnvelope.decrypt(keys.key, file.read(), aad)
       try {
-        assertEquals(5, java.io.DataInputStream(clear.inputStream()).readInt())
+        assertEquals(6, java.io.DataInputStream(clear.inputStream()).readInt())
       } finally {
         clear.fill(0)
       }

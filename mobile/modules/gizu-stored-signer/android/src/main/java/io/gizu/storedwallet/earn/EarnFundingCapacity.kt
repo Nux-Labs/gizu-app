@@ -4,9 +4,9 @@ import org.json.JSONObject
 
 /**
  * Distribution funding must leave space for its whole downstream investment. All four permanent
- * operation journals enforce 256 rows in read/create; these checks do not increase those limits.
- * Check both before displaying approval and in the native authority callback before a new
- * delegation or funding signature. Already-signed source bytes retain their recovery path.
+ * operation journals admit 256 pending rows while retaining settled history across pages. Check
+ * both before displaying approval and in the native authority callback before a new delegation or
+ * funding signature. Already-signed source bytes retain their recovery path.
  */
 internal fun requireDistributionFundingCapacity(
   record: WalletRecord,
@@ -56,12 +56,19 @@ internal fun requireDistributionFundingCapacity(
       .toSet()
   val missingPayouts =
     sources.sumOf { source -> slots.count { "$source:invest:$it" !in allocatedPayouts } }
-  check(payouts.size + missingPayouts <= 256) {
+  check(payouts.count(::journalEntryPending) + missingPayouts <= 256) {
     "Saved payout history has no space for every distribution wallet. Recover saved activity before funding."
   }
 
+  check(
+    org.json.JSONArray(payouts).toString().toByteArray().size +
+      missingPayouts.toLong() * DISTRIBUTION_PAYOUT_STORAGE_BYTES <= 15L * 1024 * 1024
+  ) {
+    "Encrypted recovery storage has no space for every distribution payout. No funding was authorized."
+  }
+
   // Only a usable row for this exact cycle, slot and derived owner occupies a required future
-  // position. Duplicate, reverted, expired, cancelled or unrelated rows still consume history.
+  // position. Other pending rows still consume active capacity.
   val addresses = cycleAddresses(record)
   fun existingSlots(rows: List<JSONObject>, kind: String): Set<Int> =
     rows
@@ -85,12 +92,12 @@ internal fun requireDistributionFundingCapacity(
   val sponsoredDeposits =
     if (record.earnChain == 4663) slots.count { it !in existingSlots(sponsored, "hoodDeposit") }
     else 0
-  check(sponsored.size + missingSources + sponsoredDeposits <= 256) {
+  check(sponsored.count(::journalEntryPending) + missingSources + sponsoredDeposits <= 256) {
     "Saved sponsored history has no space for the complete distribution. Recover saved activity before funding."
   }
   if (record.earnChain == 1) {
     val missingVaults = slots.count { it !in existingSlots(vaults, "vaultDeposit") }
-    check(vaults.size + missingVaults <= 256) {
+    check(vaults.count(::journalEntryPending) + missingVaults <= 256) {
       "Saved vault history has no space for every distribution wallet. Recover saved activity before funding."
     }
     // The allowance route needs an approval and an order per wallet. The zero-ETH permit route
@@ -99,7 +106,7 @@ internal fun requireDistributionFundingCapacity(
       listOf("fusionUsdcApproval", "fusionEthOrder").sumOf { kind ->
         slots.count { it !in existingSlots(liquidity, kind) }
       }
-    check(liquidity.size + missingLiquidity <= 256) {
+    check(liquidity.count(::journalEntryPending) + missingLiquidity <= 256) {
       "Saved liquidity history has no space for every distribution wallet. Recover saved activity before funding."
     }
   }

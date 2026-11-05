@@ -43,7 +43,8 @@ internal class EarnDepositJournal(
         )
         root.getJSONArray("journeys").objects().also { rows ->
           check(
-            rows.size <= 256 && rows.map { it.getString("journeyId") }.distinct().size == rows.size
+            rows.size <= 100_000 &&
+              rows.map { it.getString("journeyId") }.distinct().size == rows.size
           )
           rows.forEach {
             check(
@@ -68,7 +69,7 @@ internal class EarnDepositJournal(
         .toString()
         .toByteArray()
     try {
-      check(clear.size <= 3 * 1024 * 1024)
+      check(clear.size <= 15 * 1024 * 1024)
       file.write(CryptoEnvelope.encrypt(key(), clear, aad))
     } finally {
       clear.fill(0)
@@ -100,7 +101,7 @@ internal class EarnDepositJournal(
         check(nativeJsonEqual(existing.opt("distribution"), distribution))
         return@synchronized existing
       }
-      check(rows.size < 256)
+      check(rows.count(::journalEntryPending) < 256)
       val allocated =
         JSONArray(record.earnCycles).objects().singleOrNull {
           it.getInt("cycleIndex") == record.earnCycleIndex

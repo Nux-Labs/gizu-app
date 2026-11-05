@@ -45,6 +45,87 @@ class WalletStoreTest {
     )
 
   @Test
+  fun distributionAllocationHonorsDiscoveryHighWaterAndDraftRetriesKeepPlan() {
+    val store = WalletStore(File(), Keys())
+    wallet().use {
+      store.create(it)
+      store.markVerified(it)
+    }
+    store.load().use { store.recordDiscovered(it, 40, false) }
+    store.load().use { store.allocateEarnCycle(it, 1, "100000000") }
+    store.load().use {
+      assertEquals(41, it.earnCycleIndex)
+      assertNotNull(savedCycleDistribution(it))
+    }
+    val id = store.load().use { store.prepareEarnDepositCycle(it, 4663, null, "100000000") }
+    val plan =
+      store.load().use {
+        assertEquals(42, it.earnCycleIndex)
+        savedCycleDistribution(it)!!.toString()
+      }
+    store.load().use { store.prepareEarnDepositCycle(it, 4663, id, "100000000") }
+    store.load().use {
+      assertEquals(42, it.earnCycleIndex)
+      assertEquals(plan, savedCycleDistribution(it)!!.toString())
+    }
+  }
+
+  @Test
+  fun recoveryMergesPerSlotRecipientsWithoutChangingPlanOrLocalSelection() {
+    val store = WalletStore(File(), Keys())
+    DistributionDepositFixtures.record(listOf(3000, 3000, 4000)).use { store.create(it) }
+    store.load().use { store.reserveEarnWithdrawal(it) }
+    val metadata =
+      store.load().use {
+        val rows = org.json.JSONArray(it.earnCycles)
+        rows
+          .getJSONObject(0)
+          .put("investmentSlot", 2)
+          .put("withdrawalIndices", org.json.JSONObject().put("0", 3).put("2", 4))
+        org.json
+          .JSONObject()
+          .put("earnCycles", rows.toString())
+          .put("earnCycleIndex", it.earnCycleIndex)
+          .put("roleRegistry", """{"version":1,"nextRecipient":5}""")
+      }
+    store.mergeRecovery(metadata)
+    store.load().use {
+      assertEquals(0, selectedInvestmentSlot(it))
+      assertEquals(setOf(3, 4), earnWithdrawalIndices(it))
+      assertEquals(listOf(3000, 3000, 4000), distributionWeights(savedCycleDistribution(it)!!))
+      assertTrue(it.earnRecoveryRequired)
+    }
+    val conflict = org.json.JSONObject(metadata.toString())
+    val rows = org.json.JSONArray(conflict.getString("earnCycles"))
+    rows
+      .getJSONObject(0)
+      .getJSONObject("distribution")
+      .put("weightsBps", org.json.JSONArray(listOf(2000, 4000, 4000)))
+    conflict.put("earnCycles", rows.toString())
+    assertThrows(IllegalStateException::class.java) { store.mergeRecovery(conflict) }
+    store.load().use {
+      assertEquals(listOf(3000, 3000, 4000), distributionWeights(savedCycleDistribution(it)!!))
+    }
+  }
+
+  @Test
+  fun catalogueSurvivesMoreThan256CyclesAndRestart() {
+    val file = File()
+    val keys = Keys()
+    val store = WalletStore(file, keys)
+    wallet().use {
+      store.create(it)
+      store.markVerified(it)
+    }
+    store.load().use { store.bindEarnChain(it, 4663) }
+    repeat(300) { store.load().use { store.allocateEarnCycle(it, 4663) } }
+    WalletStore(file, keys).load().use {
+      assertEquals(300, it.earnCycleIndex)
+      assertEquals(301, org.json.JSONArray(it.earnCycles).length())
+    }
+  }
+
+  @Test
   fun freshCyclesKeepPreviousProfileAndWithdrawalRecipients() {
     val file = File()
     val store = WalletStore(file, Keys())

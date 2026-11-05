@@ -8,8 +8,9 @@ import {
   NativeEarnGateway,
   NativeGatewayError,
 } from "../../adapters/earn/native-gateway.ts";
+import { CoordinationError } from "../../adapters/earn/operation-coordinator.ts";
 function failure(reply: FastifyReply, error: unknown) {
-  const known = error instanceof NativeGatewayError;
+  const known = error instanceof NativeGatewayError || error instanceof CoordinationError;
   return reply.code(known ? error.statusCode : 502).send({
     code: known ? error.code : "EARN_NATIVE_UNAVAILABLE",
     message: "The native Earn request could not be verified.",

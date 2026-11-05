@@ -61,8 +61,10 @@ internal class NativeRpcTransport(
     return body
   }
 
-  suspend fun execute(method: String, url: String, body: String?): Pair<Int, String> =
-    suspendCancellableCoroutine { continuation ->
+  suspend fun execute(method: String, url: String, body: String?): Pair<Int, String> {
+    if (method != "GET" && requiresRecoveryPersistence(url, body ?: ""))
+      WalletRecoveryRuntime.beforeSubmission()
+    return suspendCancellableCoroutine { continuation ->
       require(allowed(url) && (method == "GET" || method == "POST"))
       val request =
         Request.Builder()
@@ -119,6 +121,7 @@ internal class NativeRpcTransport(
         }
       )
     }
+  }
 
   companion object {
     fun allowed(url: String): Boolean {
@@ -168,4 +171,15 @@ internal fun safeEarnGatewayFailure(body: String): EarnGatewayFailure? {
       else -> return null
     }
   return EarnGatewayFailure(code, message)
+}
+
+/**
+ * Only financial submission routes trigger portable signed-record persistence; reads remain
+ * available.
+ */
+internal fun requiresRecoveryPersistence(endpoint: String, payload: String): Boolean {
+  val root = runCatching { org.json.JSONObject(payload) }.getOrNull()
+  val method = root?.optString("method")
+  return method in setOf("eth_sendRawTransaction", "eth_sendUserOperation") ||
+    (endpoint.substringAfterLast('/') in setOf("submit", "submit-intent", "broadcast", "execute"))
 }

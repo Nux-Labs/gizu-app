@@ -28,6 +28,7 @@ test("swap errors log the code without provider messages or nested causes", asyn
       payload: { signedData: "private-signature" },
     });
     assert.equal(response.statusCode, 422);
+    assert.equal(response.body.includes("private-payload"),false);
     const logs = lines.join("");
     assert.ok(logs.includes("AURORA_REJECTED"));
     assert.ok(logs.includes("swap.error"));

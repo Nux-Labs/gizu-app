@@ -91,6 +91,19 @@ class EarnFundingCapacityTest {
       )
 
   @Test
+  fun settledHistoryBeyond256RowsLeavesCapacityForEveryDistributionWallet() {
+    for (chain in listOf(1, 4663)) record(chain).use { r ->
+      val source = sources(1, chain)
+      val settled = history(500).map { it.put("status", "finalized") }
+      requireDistributionFundingCapacity(r, source[0], source + settled, settled, settled, settled)
+      val unknown = history(256).map { it.put("status", "unknown").put("signedData", "exact") }
+      assertThrows(IllegalStateException::class.java) {
+        requireDistributionFundingCapacity(r, source[0], source, unknown, settled, settled)
+      }
+    }
+  }
+
+  @Test
   fun fiftyTwoSourcesCannotFundFiveWalletsAndFiftyOneRespectPermanentHistory() {
     record().use { r ->
       val tooMany = sources(52)
@@ -105,7 +118,9 @@ class EarnFundingCapacityTest {
         )
       }
       val fit = sources(51)
-      requireDistributionFundingCapacity(r, fit[0], fit, history(1), emptyList(), emptyList())
+      assertThrows(IllegalStateException::class.java) {
+        requireDistributionFundingCapacity(r, fit[0], fit, history(1), emptyList(), emptyList())
+      }
       assertThrows(IllegalStateException::class.java) {
         requireDistributionFundingCapacity(r, fit[0], fit, history(2), emptyList(), emptyList())
       }
@@ -217,16 +232,15 @@ class EarnFundingCapacityTest {
         history(246) + investment(r, 0, "fusionEthOrder"),
       )
       val reverted = investment(r, 0, "fusionEthOrder").put("status", "reverted")
-      assertThrows(IllegalStateException::class.java) {
-        requireDistributionFundingCapacity(
-          r,
-          sources[0],
-          sources,
-          emptyList(),
-          history(251),
-          history(246) + reverted,
-        )
-      }
+      // A reverted row is retained but no longer consumes pending admission capacity.
+      requireDistributionFundingCapacity(
+        r,
+        sources[0],
+        sources,
+        emptyList(),
+        history(251),
+        history(246) + reverted,
+      )
     }
   }
 
@@ -297,7 +311,10 @@ class EarnFundingCapacityTest {
         "sources",
         JSONArray(sources(51).map { JSONObject().put("operationId", it.getString("operationId")) }),
       )
-      requireDepositCapacity(review, emptyList(), history(1))
+      // The active row count fits, but conservative ciphertext reservation fails closed.
+      assertThrows(IllegalStateException::class.java) {
+        requireDepositCapacity(review, emptyList(), history(1))
+      }
       assertThrows(IllegalStateException::class.java) {
         requireDepositCapacity(review, emptyList(), history(2))
       }

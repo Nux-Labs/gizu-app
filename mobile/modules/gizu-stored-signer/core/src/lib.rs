@@ -8,12 +8,14 @@ mod portfolio;
 mod swap_holdings;
 pub use swap_holdings::*;
 mod source_planner;
+mod wallet_discovery;
 use alloy_primitives::{Address, keccak256};
 use bip32::{DerivationPath, XPrv};
 use bip39::{Language, Mnemonic};
 use k256::ecdsa::VerifyingKey;
 pub use portfolio::*;
 pub use source_planner::*;
+pub use wallet_discovery::wallet_discovery_candidates;
 use zeroize::Zeroizing;
 uniffi::setup_scaffolding!();
 

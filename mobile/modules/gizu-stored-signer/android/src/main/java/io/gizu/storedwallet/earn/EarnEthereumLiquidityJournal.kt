@@ -49,7 +49,7 @@ internal class EarnLiquidityJournal(
     try {
       val root = JSONObject(String(clear, Charsets.UTF_8))
       check(root.getInt("version") == 1 && root.getString("walletId") == walletId)
-      return root.getJSONArray("operations").also { check(it.length() <= 256) }
+      return root.getJSONArray("operations").also { check(it.length() <= 100_000) }
     } finally {
       clear.fill(0)
     }
@@ -79,7 +79,7 @@ internal class EarnLiquidityJournal(
   fun create(p: JSONObject): JSONObject {
     val old = all()
     check(
-      old.size < 256 &&
+      old.count(::journalEntryPending) < 256 &&
         old.none {
           it.liquidityBlocked() &&
             it

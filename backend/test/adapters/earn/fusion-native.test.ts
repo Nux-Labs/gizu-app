@@ -32,3 +32,17 @@ test('encrypted native Fusion quote survives server restart and retries only exa
   await assert.rejects(wrong.submit(signed));
   clock=Number(deadline)*1000+1;await assert.rejects(restarted.submit(signed));assert.equal(sends,2);
 });
+
+test('shared coordination prevents duplicate Fusion sends across replicas and after uncertain transport',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  const rows=new Map<string,string>();
+  const store={async bind(key:string,value:string,_expires:number,exclusive:boolean){const old=rows.get(key);if(old)return !exclusive&&old===value;rows.set(key,value);return true;}};
+  const coordination=new OperationCoordinator(store,'ab'.repeat(32));let sends=0;
+  const providers={now:()=>now,readFunding:async()=>({balance:2000000n,allowance:2000000n,permitNonce:4n}),quote:async()=>({input:2000000n,minimumEth:150n,grossEth:200n,deadline,quoteId:'provider-quote',quotedAtMs:now,expiresAtMs:now+60000,orderHash:hashTypedData(orderTyped),extension:'0x1234',unsignedOrder:order,priceUsdcPerEth:1n,economics:{estimatedGas:1n,gasUnits:2n,gasPrice:3n,gasCostWei:6n,profitWei:1n,allowanceWei:7n,inputValueWei:1000n,maximumGrossEth:993n}}),fetcher:async()=>{sends++;throw new Error('lost response');}};
+  const config={apiKey:'server-only',recoveryKey:'ab'.repeat(32),coordination};
+  const first=new FusionNativeGateway(config,providers),proof=await first.quote({...request,executionRequested:true});
+  const signed={operationId:request.operationId,revision:1,quoteId:proof.quoteId,order,extension:'0x1234',signature:await owner.signTypedData(orderTyped),recoveryEnvelope:proof.recoveryEnvelope};
+  await Promise.allSettled([first.submit(signed),new FusionNativeGateway(config,providers).submit(signed)]);
+  await assert.rejects(new FusionNativeGateway(config,providers).submit(signed));
+  assert.equal(sends,1,'only the first durable claim may send signed authority');
+});

@@ -127,3 +127,34 @@ These are local automated checks. No funded device transaction, deployment,
 commit or push was performed. Deploy the backend contract changes before using
 new deposits from a rebuilt native app; an OTA-only JavaScript update cannot add
 the new signer APIs.
+
+## Integration with wallet recovery — 2026-11-05
+
+Merged `origin/main` at `46516ec`, which includes wallet discovery/recovery, into
+the distribution branch. Kept both native capability families, immutable
+distribution plans and the recovery allocation high-water mark. Backend shared
+credit bindings include the saved plan, and replay results retain distribution
+metadata across replicas.
+
+Recovery recognizes already tracked distribution slots, preserves the investment
+slot during withdrawal reconciliation, merges per-slot withdrawal receiver indices
+monotonically, and rejects changes to saved allocation weights or signing identity.
+Funding capacity counts pending operations instead of retained settled history.
+Distribution payout storage reservations account for their serialized recovery
+representation so ordinary five-wallet/two-source deposits remain supported.
+Existing signed records keep their recovery path.
+
+Verification on the integrated tree:
+
+- Mobile: 94 suites / 802 tests passed; typecheck and lint passed.
+- Backend: 293 tests passed, 3 opt-in fork tests skipped; real PostgreSQL
+  distribution replay/replica tests, typecheck and build passed.
+- Rust: 204 tests passed; Android bindings regenerated.
+- Android: 64 suites / 365 tests passed; full debug app assembled. Cross-feature
+  regressions cover discovery ownership, restored plan/slot identity, monotonic
+  recipient maps, settled history capacity and bounded payout persistence.
+- Independent integration review passed. Changed Kotlin files are format-clean;
+  the full formatter check still flags pre-existing differences in
+  `swap/SwapScreens.kt` and `swap/SwapEngine.kt`, which were left unchanged.
+
+No production deployment or funded device transaction was performed.

@@ -10,9 +10,9 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import io.gizu.storedwallet.NativeStyle
 import io.gizu.storedwallet.PasskeyGate
+import io.gizu.storedwallet.WalletRecoveryRuntime
 import io.gizu.storedwallet.walletStore
 import java.util.UUID
 import kotlin.coroutines.resume
@@ -258,7 +258,9 @@ class SwapActivity : Activity() {
     root.removeAllViews()
     root.addView(
       SwapScreens.preparing(this, title, message),
-      LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = NativeStyle.dp(this@SwapActivity, 64) },
+      LinearLayout.LayoutParams(-1, 0, 1f).apply {
+        topMargin = NativeStyle.dp(this@SwapActivity, 64)
+      },
     )
   }
 
@@ -268,7 +270,8 @@ class SwapActivity : Activity() {
     if (error != null)
       root.addView(
         NativeStyle.body(this, error, NativeStyle.danger).apply {
-          background = NativeStyle.rounded(this@SwapActivity, 0x16FF9B9B, 16, NativeStyle.dangerBorder)
+          background =
+            NativeStyle.rounded(this@SwapActivity, 0x16FF9B9B, 16, NativeStyle.dangerBorder)
           setPadding(
             NativeStyle.dp(this@SwapActivity, 14),
             NativeStyle.dp(this@SwapActivity, 12),
@@ -326,6 +329,9 @@ class SwapActivity : Activity() {
       try {
         val wallet = walletStore(applicationContext)
         val identity = withContext(Dispatchers.IO) { wallet.load().use { it.id to it.credential } }
+        withContext(Dispatchers.IO) {
+          WalletRecoveryRuntime.beforeFreshFunding(applicationContext, identity.first)
+        }
         val digest = checkNotNull(engine).reviewDigest(text)
         providerPending = true
         try {

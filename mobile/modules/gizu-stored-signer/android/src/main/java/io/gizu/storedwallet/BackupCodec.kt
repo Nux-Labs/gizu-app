@@ -11,7 +11,7 @@ internal object BackupCodec {
   private fun dec(value: String) = Base64.getUrlDecoder().decode(value)
 
   private fun header(bytes: ByteArray): JSONObject {
-    require(bytes.size in 1..65536)
+    require(bytes.size in 1..16 * 1024 * 1024)
     val h = JSONObject(String(bytes, Charsets.UTF_8))
     require(h.getString("format") == "gizu-stored-wallet")
     require(
@@ -77,6 +77,8 @@ internal object BackupCodec {
         .put("earnRecoveryRequired", record.earnRecoveryRequired)
         .put("earnCycleIndex", record.earnCycleIndex)
         .put("earnCycles", record.earnCycles)
+        .put("discoveryHighWater", record.discoveryHighWater)
+        .put("discoveryRecoveryRequired", record.discoveryRecoveryRequired)
         .toString()
         .toByteArray()
     try {
@@ -114,6 +116,8 @@ internal object BackupCodec {
         earnRecoveryRequired = metadata?.getBoolean("earnRecoveryRequired") ?: false,
         earnCycleIndex = metadata?.getInt("earnCycleIndex") ?: 0,
         earnCycles = metadata?.getString("earnCycles") ?: "[]",
+        discoveryHighWater = metadata?.optInt("discoveryHighWater", -1) ?: -1,
+        discoveryRecoveryRequired = metadata?.optBoolean("discoveryRecoveryRequired") ?: false,
       )
     } catch (e: Exception) {
       entropy?.fill(0)
