@@ -31,6 +31,8 @@ Instructions for running the delivered feature belong in
 
 ## Plans
 
+- [AWS production deployment plan](AWS_DEPLOYMENT_PLAN.md): cost-conscious, production-facing hackathon proposal; single-server options, repository constraints, migration and open decisions; not provisioned or approved.
+
 - [Swap architecture](SWAP_ARCHITECTURE.md): implemented ownership map, with [contracts](SWAP_CONTRACTS.md) and [persistence/recovery](SWAP_PERSISTENCE.md) references.
 
 - [Aurora swap flow](AURORA_SWAP_FLOW.md): current buy/sell flow, diagrams and provider responsibilities; a reference for future improvements.
