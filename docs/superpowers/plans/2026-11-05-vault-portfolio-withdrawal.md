@@ -75,6 +75,14 @@ The standalone release APK targets Render and matches the existing local signing
 certificate. The phone disconnected before replacement installation; no data was
 cleared and no financial transaction was submitted.
 
+After the phone reconnected, replacement installation succeeded and the updated
+app opened with the existing wallet. Live Home displayed 2.731998 USDC known
+value, including one Steakhouse position of 2.345933 USDG valued at 2.346329 USDC.
+Opening that card selected the saved Robinhood investment and exposed its native
+withdrawal entry. A new Render exit-snapshot request succeeded with fresh prices.
+This supersedes the earlier installation/pricing blockage; provider freshness can
+still temporarily make valuation unavailable. No transaction was authorized.
+
 ## Verification
 
 - Mobile: all 855 tests in 97 suites pass; TypeScript, ESLint and changed-file
