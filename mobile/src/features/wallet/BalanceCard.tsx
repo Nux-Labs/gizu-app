@@ -15,6 +15,7 @@ import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
 import { holdingAmount } from "@/features/swap/SwapHoldingsSection";
 import colors from "@/theme/colors.json";
 import { useBalanceHistory } from "./useBalanceHistory";
+import { portfolioValue } from "@/domain/wallet/portfolioValue";
 
 const tabular = { fontVariant: ["tabular-nums" as const] };
 const periods = Object.keys(balancePeriods) as BalancePeriod[];
@@ -47,11 +48,12 @@ export function BalanceCard({
   const { fontScale } = useWindowDimensions();
   const [expanded, setExpanded] = useState(false);
   const [period, setPeriod] = useState<BalancePeriod>("1M");
-  const history = useBalanceHistory(snapshot);
-  const series = balanceSeries(history, period, snapshot.checkedAt);
+  const value = portfolioValue(snapshot);
+  const history = useBalanceHistory(snapshot, value);
+  const series = balanceSeries(history, period, value.checkedAt);
   const change = balanceChange(series);
   const up = !change || change.delta >= 0;
-  const total = holdingAmount(snapshot.totalAtoms, 6);
+  const total = holdingAmount(value.totalAtoms, 6);
   return (
     <Surface>
       <View className="gap-5 p-5">
@@ -87,6 +89,11 @@ export function BalanceCard({
             {total}
             <Text className="font-sans text-[18px] text-fg-45"> USDC</Text>
           </Text>
+          {!value.complete && (
+            <Typography variant="micro">
+              Known value · some balances or prices need refreshing.
+            </Typography>
+          )}
           {change && (
             <Text
               key={`change-${fontScale}`}
@@ -132,6 +139,8 @@ export function BalanceCard({
               <Typography>
                 Receiving wallets: {holdingAmount(snapshot.returnAtoms, 6)} USDC
               </Typography>
+              <Typography>Other assets: {holdingAmount(value.assetsAtoms, 6)} USDC</Typography>
+              <Typography>Vault positions: {holdingAmount(value.vaultAtoms, 6)} USDC</Typography>
               <Typography variant="micro">
                 Last checked {new Date(snapshot.checkedAt).toLocaleTimeString()}
               </Typography>

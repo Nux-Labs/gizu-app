@@ -679,6 +679,13 @@ class GizuStoredSignerModule : Module() {
         }
       }
     }
+    AsyncFunction("listEarnInvestmentPositions") { walletId: String, promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        withContext(Dispatchers.IO) {
+          store.load().use { record -> readEarnInvestmentPositions(activity, record, walletId) }
+        }
+      }
+    }
     AsyncFunction("listEarnIntents") { walletId: String, promise: Promise ->
       runCeremony(promise) { _, store ->
         store.load().use { record ->

@@ -15,6 +15,8 @@ import { OpportunityHero } from "./detail/OpportunityHero";
 import { money, rate } from "./format";
 import { useOpportunityDetail } from "./useOpportunityDetail";
 import { catalogEarnProfile } from "@/domain/earn/catalog";
+import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
+import { portfolioVaultPosition } from "@/domain/wallet/portfolioValue";
 
 /** Shape-matched placeholder for the summary card while the vault loads. */
 function DetailSkeleton() {
@@ -47,6 +49,8 @@ export function OpportunityDetailScreen({
   navigation,
 }: NativeStackScreenProps<RootStackParamList, "OpportunityDetail">) {
   const { load, history, retry } = useOpportunityDetail(route.params.id);
+  const wallet = useOptionalMainnetWallet();
+  const profileId = load.kind === "ready" ? catalogEarnProfile(load.opportunity) : null;
   return (
     <Screen>
       <BackAction fallback="Vaults" />
@@ -66,8 +70,14 @@ export function OpportunityDetailScreen({
               opportunity={load.opportunity}
               history={history}
               onDeposit={() => navigation.navigate("Earn", { opportunityId: load.opportunity.id })}
-              // Withdrawals run from existing earn positions, not a fresh deposit cycle.
-              onWithdraw={() => navigation.navigate("Earn")}
+              position={profileId ? portfolioVaultPosition(wallet?.snapshot, profileId) : null}
+              onWithdraw={() => {
+                if (profileId)
+                  navigation.navigate("VaultPosition", {
+                    profileId,
+                    opportunityId: load.opportunity.id,
+                  });
+              }}
             />
           </FadeIn>
           <FadeIn delay={sectionDelay(2)}>

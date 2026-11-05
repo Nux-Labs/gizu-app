@@ -22,6 +22,7 @@ const coalescedReads = new Set([
   "getSwapHoldings",
   "getSwapStatus",
   "getEarnDepositStatus",
+  "listEarnInvestmentPositions",
   "getWalletRecoveryStatus",
 ]);
 function nativeModule(): StoredSignerContract | null {
@@ -508,6 +509,14 @@ export function getStoredEarnSigner() {
           async selectEarnInvestmentSlot(walletId: string, intentId: string, slot: number) {
             await checked(native, "earnWallets");
             return native.selectEarnInvestmentSlot!(walletId, intentId, slot);
+          },
+        }
+      : {}),
+    ...(native.listEarnInvestmentPositions
+      ? {
+          async listEarnInvestmentPositions(walletId: string) {
+            await checked(native, "earnWallets");
+            return readNative(() => native.listEarnInvestmentPositions!(walletId));
           },
         }
       : {}),

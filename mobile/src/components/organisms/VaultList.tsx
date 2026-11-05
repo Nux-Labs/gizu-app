@@ -38,6 +38,8 @@ export type VaultCardProps = {
   rate: string;
   /** Optional small suffix after the rate, e.g. ` total APR`. */
   rateSuffix?: string;
+  depositedAmount?: string;
+  depositedValue?: string;
   /** Top-right text: 24h change or catalog status. */
   trailing?: string;
   trailingTone?: keyof typeof trailingTones;
@@ -89,6 +91,8 @@ function CardBody({
   tvl,
   rate,
   rateSuffix,
+  depositedAmount,
+  depositedValue,
   trailing,
   trailingTone = "positive",
   series,
@@ -133,6 +137,19 @@ function CardBody({
             )}
           </CardText>
         </View>
+        {depositedAmount !== undefined && (
+          <View className="mt-3 gap-1 border-t border-cardEdge pt-3">
+            <CardText className="font-sans text-[10px] text-fg-45">YOUR POSITION</CardText>
+            <CardText className="font-sans text-[13px] text-text" style={tabular}>
+              {depositedAmount}
+            </CardText>
+            {depositedValue !== undefined && (
+              <CardText className="font-sans text-[11px] text-fg-55" style={tabular}>
+                {depositedValue}
+              </CardText>
+            )}
+          </View>
+        )}
       </View>
     </>
   );

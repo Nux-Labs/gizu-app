@@ -3,6 +3,10 @@ import { tvlChange, type Opportunity } from "@/domain/opportunities";
 import { useTvlSeries } from "../useTvlSeries";
 import { money, percent, rate } from "../format";
 import { protocolLogo } from "../protocolLogos";
+import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
+import { portfolioVaultPosition } from "@/domain/wallet/portfolioValue";
+import { catalogEarnProfile } from "@/domain/earn/catalog";
+import { holdingAmount } from "@/features/swap/SwapHoldingsSection";
 
 /** No history yet: a flat line at zero rather than an empty-state message. */
 const flat = [0, 0];
@@ -27,6 +31,11 @@ export function OpportunityCard({
   onOpen: (id: string) => void;
 }) {
   const history = useTvlSeries(opportunity.id);
+  const wallet = useOptionalMainnetWallet();
+  const profileId = catalogEarnProfile(opportunity);
+  const position = profileId ? portfolioVaultPosition(wallet?.snapshot, profileId) : null;
+  const hasPosition =
+    position && (!position.complete || BigInt(position.shareAtoms ?? position.observedAtoms) > 0n);
   const tvl = money.format(opportunity.tvl);
   const apr = rate(opportunity.totalApr);
   const label = opportunity.rateType === "apy" ? "net APY" : "total APR";
@@ -46,6 +55,18 @@ export function OpportunityCard({
       tvl={tvl}
       rate={apr}
       rateSuffix={opportunity.rateType === "apy" ? " net APY" : rateSuffix}
+      depositedAmount={
+        hasPosition
+          ? position.underlyingAtoms !== null && position.complete && position.decimals !== null
+            ? `${holdingAmount(position.underlyingAtoms, position.decimals)} ${position.symbol} deposited`
+            : "Checking position…"
+          : undefined
+      }
+      depositedValue={
+        hasPosition && position.valueUsdcAtoms !== null
+          ? `≈ ${holdingAmount(position.valueUsdcAtoms, 6)} USDC`
+          : undefined
+      }
       trailing={
         opportunity.featured
           ? "Featured"

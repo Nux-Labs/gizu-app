@@ -1,3 +1,4 @@
+import { VaultPositionScreen } from "@/features/earn/VaultPositionScreen";
 import { EarnInvestmentScreen } from "@/features/earn/EarnInvestmentScreen";
 import { UnavailableScreen } from "./UnavailableScreen";
 import { AccountPageScreen } from "@/features/account/AccountPageScreen";
@@ -40,6 +41,10 @@ export function RootNavigator() {
           <Stack.Screen
             name="EarnInvestment"
             component={native && session.chainId === 143 ? EarnInvestmentScreen : UnavailableScreen}
+          />
+          <Stack.Screen
+            name="VaultPosition"
+            component={native && session.chainId === 143 ? VaultPositionScreen : UnavailableScreen}
           />
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
           <Stack.Screen

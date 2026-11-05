@@ -13,6 +13,7 @@ const now = Date.parse("2026-09-30T10:00:00Z"),
   u = (n: bigint) => encodeAbiParameters([{ type: "uint256" }], [n]);
 test("real read-only transport pins every contract/balance read then canonically rechecks after fresh server-held prices", async (t) => {
   const calls: { method: string; params: any[] }[] = [];
+  const rpcOrigins = new Set<string>();
   t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
     if (
       String(url).startsWith(
@@ -39,10 +40,15 @@ test("real read-only transport pins every contract/balance read then canonically
           },
         ],
       });
-    assert.equal(
-      new URL(url instanceof Request ? url.url : String(url)).origin,
-      "https://hood-rpc.test",
+    const origin = new URL(url instanceof Request ? url.url : String(url))
+      .origin;
+    assert.ok(
+      [
+        "https://hood-rpc.test",
+        "https://rpc.mainnet.chain.robinhood.com",
+      ].includes(origin),
     );
+    rpcOrigins.add(origin);
     const q = JSON.parse(init?.body ?? (await url.text()));
     calls.push(q);
     let result: unknown;
@@ -101,4 +107,11 @@ test("real read-only transport pins every contract/balance read then canonically
       (q) => !q.method.includes("send") && !q.method.includes("sign"),
     ),
   );
+  const defaultRpc = await new EarnExitSnapshot(
+    { auroraApiKey: "server-held-test-key" },
+    undefined,
+    () => now,
+  ).read({ profileId: "robinhood-usdg", owner });
+  assert.equal(defaultRpc.residualUsdcAtoms, "100000");
+  assert.ok(rpcOrigins.has("https://rpc.mainnet.chain.robinhood.com"));
 });

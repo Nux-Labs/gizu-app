@@ -9,15 +9,21 @@ import type { EarnIntent } from "@/domain/earn/types";
 import type { EarnExitCompletionService, ExitCompletion } from "@/domain/earn/exitCompletion";
 import { createEarnExitCompletionService } from "@/services/earn/exitCompletion";
 import { formatUsdc } from "@/domain/wallet/amounts";
+import type { EarnInvestmentExitProof } from "@/domain/earn/investmentPositions";
+import { investmentDestination } from "@/domain/earn/distribution";
 import { useEarn } from "./EarnProvider";
 export function ExitCompletionPanel({
   intent,
   service,
   withdrawal = earnWithdrawalService,
+  aggregate = false,
+  onWithdrawalComplete,
 }: {
   intent: EarnIntent;
   service?: EarnExitCompletionService;
   withdrawal?: EarnWithdrawalService;
+  aggregate?: boolean;
+  onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
 }) {
   const withdrawals = useEarnJournal(intent, withdrawal);
   const earn = useEarn(),
@@ -60,6 +66,50 @@ export function ExitCompletionPanel({
     );
     return () => clearTimeout(timer);
   }, [result]);
+  useEffect(() => {
+    if (!onWithdrawalComplete) return;
+    const complete =
+      result?.complete === true &&
+      result.snapshot.expiresAtMs > Date.now() &&
+      result.snapshot.profileId === intent.profileId &&
+      result.snapshot.owner.toLowerCase() === investmentDestination(intent).address.toLowerCase() &&
+      !busy &&
+      !withdrawals.busy &&
+      !withdrawals.loading &&
+      withdrawals.available &&
+      !withdrawals.message &&
+      result.creditedReturnOperationIds.length > 0 &&
+      result.creditedReturnOperationIds.every((id) =>
+        withdrawals.rows.some(
+          (row) =>
+            row.returnOperationId === id &&
+            row.status === "paid" &&
+            !row.blocked &&
+            row.walletId === intent.walletId &&
+            (row.cycleIndex ?? 0) === (intent.cycleIndex ?? 0),
+        ),
+      ) &&
+      withdrawals.rows.every(
+        (row) => !row.blocked && (row.status === "paid" || row.status === "cancelled"),
+      );
+    onWithdrawalComplete({
+      walletId: intent.walletId,
+      intentId: intent.intentId,
+      profileId: intent.profileId,
+      ...(intent.investmentSlot !== undefined ? { investmentSlot: intent.investmentSlot } : {}),
+      expiresAtMs: complete ? result!.snapshot.expiresAtMs : null,
+    });
+  }, [
+    result,
+    intent,
+    busy,
+    withdrawals.rows,
+    withdrawals.busy,
+    withdrawals.loading,
+    withdrawals.available,
+    withdrawals.message,
+    onWithdrawalComplete,
+  ]);
   const check = async () => {
     if (active.current) return;
     const controller = new AbortController();
@@ -69,6 +119,7 @@ export function ExitCompletionPanel({
     setMessage("");
     try {
       const next = await checker.check(intent, controller.signal);
+      if (!controller.signal.aborted && withdrawals.available) await withdrawals.refresh();
       if (!controller.signal.aborted) setResult(next);
     } catch (error) {
       if (!controller.signal.aborted)
@@ -83,9 +134,11 @@ export function ExitCompletionPanel({
   return (
     <View className="gap-2">
       <Typography>
-        {intent.distribution
-          ? "Exit completion checks the selected investment wallet. Check each wallet to complete the whole investment exit."
-          : "Exit completion checks wallet 2 only. Wallet 1 holdings are intentionally excluded."}
+        {aggregate
+          ? "Exit completion verifies this portion of your vault withdrawal before continuing to the next portion."
+          : intent.distribution
+            ? "Exit completion checks the selected investment wallet. Check each wallet to complete the whole investment exit."
+            : "Exit completion checks wallet 2 only. Wallet 1 holdings are intentionally excluded."}
       </Typography>
       <Button
         label={busy ? "Checking exit completion…" : "Check exit completion"}

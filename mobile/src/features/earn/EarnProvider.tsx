@@ -1,3 +1,8 @@
+import type {
+  EarnInvestmentPosition,
+  EarnInvestmentPositionsService,
+} from "@/domain/earn/investmentPositions";
+import { createEarnInvestmentPositionsService } from "@/services/wallet/investmentPositions";
 import { createEarnDepositService } from "@/services/earn/depositJourney";
 import type { EarnDepositService } from "@/domain/earn/depositJourney";
 import {
@@ -43,8 +48,13 @@ function useEarnController(
   injectedPayout?: EarnPayoutService,
   injectedRobinhood?: EarnRobinhoodService,
   injectedDeposit?: EarnDepositService,
+  injectedPositions?: EarnInvestmentPositionsService,
 ) {
   const { session } = useFundingWallet();
+  const investmentPositions = useMemo(
+    () => injectedPositions ?? createEarnInvestmentPositionsService(),
+    [injectedPositions],
+  );
   const depositJourney = useMemo(
     () => injectedDeposit ?? createEarnDepositService(),
     [injectedDeposit],
@@ -162,7 +172,71 @@ function useEarnController(
       if (active.current === attempt) setBusy(false);
     }
   };
+  const selectPosition = useCallback(
+    async (position: EarnInvestmentPosition): Promise<EarnIntent> => {
+      if (occupied.current || session.chainId !== 143)
+        throw new Error("Another wallet action is in progress.");
+      occupied.current = true;
+      const attempt = active.current;
+      setBusy(true);
+      setMessage("");
+      try {
+        const rows = await service.list?.(owner);
+        const saved = rows?.find(
+          (row) =>
+            row.intentId === position.intentId &&
+            row.walletId === owner.walletId &&
+            row.profileId === position.profileId &&
+            (row.cycleIndex ?? 0) === position.cycleIndex,
+        );
+        if (!saved || !service.select)
+          throw new Error("Saved investment is unavailable for this wallet. Check saved activity.");
+        if (position.recoveryRequired || saved.status !== "prepared")
+          throw new Error("Restore and reconcile saved activity before withdrawing.");
+        if (
+          saved.distribution &&
+          (position.investmentSlot === undefined ||
+            !Number.isInteger(position.investmentSlot) ||
+            position.investmentSlot < 0 ||
+            position.investmentSlot >= saved.distribution.weightsBps.length)
+        )
+          throw new Error("Saved investment distribution requires reconciliation.");
+        if (!saved.distribution && position.investmentSlot !== undefined)
+          throw new Error("Saved investment slot changed.");
+        if (attempt !== active.current) throw new Error("Vault selection cancelled.");
+        let next = await service.select(owner, position.intentId);
+        if (position.investmentSlot !== undefined) {
+          if (!service.selectInvestmentSlot)
+            throw new Error("Saved investment selection requires the updated native build.");
+          if (attempt !== active.current) throw new Error("Vault selection cancelled.");
+          next = await service.selectInvestmentSlot(
+            owner,
+            position.intentId,
+            position.investmentSlot,
+          );
+        }
+        if (
+          attempt !== active.current ||
+          next.walletId !== owner.walletId ||
+          next.intentId !== position.intentId ||
+          next.profileId !== position.profileId ||
+          next.investmentSlot !== position.investmentSlot ||
+          next.status !== "prepared"
+        )
+          throw new Error("Selected vault investment changed. Check saved activity.");
+        setState(next);
+        setCycles(rows!.map((row) => (row.intentId === next.intentId ? next : row)));
+        return next;
+      } finally {
+        occupied.current = false;
+        if (attempt === active.current) setBusy(false);
+      }
+    },
+    [service, owner, session.chainId],
+  );
   return {
+    investmentPositions,
+    selectPosition,
     cycles,
     depositJourney,
     prepareNew: service.prepareNew
@@ -205,6 +279,7 @@ export function EarnProvider({
   payout,
   robinhood,
   depositJourney,
+  investmentPositions,
   children,
 }: PropsWithChildren<{
   service?: EarnWalletService;
@@ -216,6 +291,7 @@ export function EarnProvider({
   payout?: EarnPayoutService;
   robinhood?: EarnRobinhoodService;
   depositJourney?: EarnDepositService;
+  investmentPositions?: EarnInvestmentPositionsService;
 }>) {
   const value = useEarnController(
     service,
@@ -227,6 +303,7 @@ export function EarnProvider({
     payout,
     robinhood,
     depositJourney,
+    investmentPositions,
   );
   return <EarnContext.Provider value={value}>{children}</EarnContext.Provider>;
 }

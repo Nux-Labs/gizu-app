@@ -186,10 +186,16 @@ internal class NativeOwnedPortfolio(
     )
       groups.add(Group(4663, token, "Token ${token.takeLast(6)}", null, public))
     // Independent token cursors are rotated; opening a large catalogue does not rescan every asset.
-    val start = root.optInt("tokenOffset", 0).mod(groups.size)
-    val selected =
-      (0 until minOf(TOKEN_GROUP_BUDGET, groups.size)).map { (start + it) % groups.size }.toSet()
-    root.put("tokenOffset", (start + selected.size) % groups.size)
+    val activeVault =
+      groups.indexOfFirst { it.chain == record.earnChain.toLong() && it.underlying != null }
+    val initial =
+      if (JSONArray(record.earnCycles).length() > 0 && activeVault >= 0) activeVault else 0
+    val start = root.optInt("readOffset", initial).mod(groups.size)
+    val order = (groups.indices.drop(start) + groups.indices.take(start))
+    val selected = order.take(TOKEN_GROUP_BUDGET).toSet()
+    // Rotate work itself, including when every group fits the selection budget. A slow
+    // provider must not always consume the deadline before a later vault is observed.
+    root.put("readOffset", (start + 1) % groups.size)
     var calls = 0
     val rpcs = mutableMapOf<Long, PortfolioRpc>()
     val budget = rpcBudget()
@@ -210,7 +216,8 @@ internal class NativeOwnedPortfolio(
       }
     val assets = mutableListOf<Map<String, Any?>>()
     val positions = mutableListOf<Map<String, Any?>>()
-    for ((index, group) in groups.withIndex()) {
+    for (index in order) {
+      val group = groups[index]
       val id = groupKey(group.chain, group.token)
       val snapshot =
         tokenSnapshot(record, root, group, now, index in selected, chainRpc(group.chain))
@@ -309,6 +316,10 @@ internal class NativeOwnedPortfolio(
         positions.add(row)
       }
     }
+    val displayOrder =
+      groups.mapIndexed { index, group -> groupKey(group.chain, group.token) to index }.toMap()
+    assets.sortBy { displayOrder[it["assetId"]] }
+    positions.sortBy { displayOrder[it["assetId"]] }
     assets.addAll(nativeAssets(root, public, eth, hood, record.earnChain.toLong(), now, ::chainRpc))
     val all = assets + positions
     save(record, root)

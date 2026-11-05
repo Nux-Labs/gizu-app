@@ -137,7 +137,7 @@ test("Swap shows the same total public USDC funding balance including receiving 
 test("Home balance shows observed performance and expands to a period chart", async () => {
   const day = 24 * 3_600_000;
   await AsyncStorage.setItem(
-    `gizu:balance-history:v1:${walletId}`,
+    `gizu:balance-history:v1:${encodeURIComponent(`${walletId}:portfolio-value-v1`)}`,
     JSON.stringify([{ at: snapshot.checkedAt - 20 * day, atoms: "2000000" }]),
   );
   await open();
@@ -150,4 +150,15 @@ test("Home balance shows observed performance and expands to a period chart", as
   fireEvent.press(screen.getByRole("radio", { name: "1Y" }));
   expect(screen.getByRole("radio", { name: "1Y", checked: true })).toBeVisible();
   expect(screen.getByLabelText("Balance past year: +$1.00 (+50%)")).toBeVisible();
+});
+
+test("Home does not compare portfolio value against older liquid-only history", async () => {
+  await AsyncStorage.setItem(
+    `gizu:balance-history:v1:${walletId}`,
+    JSON.stringify([{ at: snapshot.checkedAt - 20 * 24 * 3_600_000, atoms: "2000000" }]),
+  );
+  await open();
+  expect(screen.queryByText("+$1.00 (+50%) · past month")).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Balance details", expanded: false }));
+  expect(screen.getByLabelText("Balance history is not available yet")).toBeVisible();
 });

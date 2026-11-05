@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { EarnInvestmentExitProof } from "@/domain/earn/investmentPositions";
 import { View } from "react-native";
 import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
@@ -140,9 +141,11 @@ function useVaultExecution(intent: EarnIntent) {
 export function VaultExecutionPanel({
   intent,
   presentation = "legacy",
+  onWithdrawalComplete,
 }: {
   intent: EarnIntent;
-  presentation?: "legacy" | "investment";
+  presentation?: "legacy" | "investment" | "withdrawal";
+  onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
 }) {
   const v = useVaultExecution(intent),
     blocked = v.operations.some((op) => op.blocked),
@@ -205,8 +208,12 @@ export function VaultExecutionPanel({
             ) : (
               <>
                 <Typography>
-                  Redeem all {intent.distribution ? "selected wallet" : "wallet 2"} shares. The
-                  asset amount depends on the vault at execution; there is no minimum-assets guard.
+                  Redeem all{" "}
+                  {presentation === "withdrawal"
+                    ? "shares for this portion of your vault position"
+                    : `${intent.distribution ? "selected wallet" : "wallet 2"} shares`}
+                  . The asset amount depends on the vault at execution; there is no minimum-assets
+                  guard.
                 </Typography>
                 <Typography>
                   This withdrawal spends the retained gas reserve. The Aurora return requires its
@@ -320,14 +327,22 @@ export function VaultExecutionPanel({
         )}
         {withdrawn && (
           <Typography>
-            {intent.distribution
-              ? "Returning the selected wallet’s assets"
-              : "Wallet 1 remains separate. Returning wallet 2 assets"}{" "}
+            {presentation === "withdrawal"
+              ? "Returning this portion of the vault position"
+              : intent.distribution
+                ? "Returning the selected wallet’s assets"
+                : "Wallet 1 remains separate. Returning wallet 2 assets"}{" "}
             needs zero shares, fresh quotes, gas and authenticated confidential credit.
           </Typography>
         )}
         {intent.profileId === "ethereum-usdc" && (
-          <EthereumLiquidityPanel intent={intent} bootstrapPlan={v.plan} withdrawn={withdrawn} />
+          <EthereumLiquidityPanel
+            intent={intent}
+            bootstrapPlan={v.plan}
+            withdrawn={withdrawn}
+            aggregate={presentation === "withdrawal"}
+            onWithdrawalComplete={onWithdrawalComplete}
+          />
         )}
         {intent.profileId === "ethereum-usdc" && (
           <Button

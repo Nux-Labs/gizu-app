@@ -129,6 +129,8 @@ export type MainnetPortfolioSnapshot = {
   ownedAssets?: OwnedPortfolioAsset[];
   positions?: OwnedPortfolioPosition[];
   valuationComplete?: boolean;
+  /** Expiry of externally priced display values; never used for spending. */
+  valuationExpiresAt?: number;
   ownedBalanceComplete?: boolean;
   ownedStale?: boolean;
   ownedSyncPending?: boolean;
@@ -237,6 +239,7 @@ export interface StoredSignerContract {
   ): Promise<unknown>;
   prepareNewEarnIntent?(walletId: string, profile: string): Promise<unknown>;
   listEarnIntents?(walletId: string): Promise<unknown>;
+  listEarnInvestmentPositions?(walletId: string): Promise<unknown>;
   selectEarnIntent?(walletId: string, intentId: string): Promise<unknown>;
   readEarnBalance?(walletId: string): Promise<unknown>;
   executeEarnVault?(

@@ -172,7 +172,8 @@ export class EarnExitSnapshot {
       const url =
         r.profileId === "ethereum-usdc"
           ? config.ethereumRpcUrl
-          : config.robinhoodRpcUrl;
+          : (config.robinhoodRpcUrl ??
+            "https://rpc.mainnet.chain.robinhood.com");
       if (!url || !/^https:\/\//.test(url)) throw Error("Exit RPC unavailable");
       return createPublicClient({
         chain: r.profileId === "ethereum-usdc" ? mainnet : robinhoodChain,
