@@ -107,7 +107,7 @@ receiving children; existing public children remain resume/reconcile-only.
   legacy journals, recovery and no-replay/partial settlement contracts.
 - [x] Fix important findings with regressions and rerun affected checks.
 - [x] Build standalone Render APK with the existing certificate.
-- [ ] Update/open phone preserving app data after USB reconnect. Inspect screens
+- [x] Update/open phone preserving app data after USB reconnect. Inspect screens
   only; never authorize funds.
 - [x] Record exact checks, supported platforms and live provider limits in the spec.
 
@@ -143,6 +143,9 @@ Android merge/strip steps. Certificate SHA-256 remains
 
 APK: `mobile/android/app/build/outputs/apk/release/app-release.apk` (54,831,003 bytes),
 SHA-256 `839bf9cbe3d4ab15ed646bef67a265785fd297d7144fca909740d5a5de11a867`.
-The S23 disconnected before installation; a USB reconnection request is pending.
-No app data has been removed, no installation is claimed, and no financial
-transaction was authorized.
+After USB reconnection, `adb install -r` succeeded on the Galaxy S23
+(`RFCWA0F5SAN`). The APK hash still matched the verified release above.
+Launching `com.example.gizu.dev/io.gizu.android.MainActivity` returned `Status: ok`
+with a cold start. UI inspection showed the welcome screen and **Continue with
+passkey**; the app is open and awaiting the user's unlock. Installation preserved
+app data; no restore, data-clear or financial authorization was performed.
