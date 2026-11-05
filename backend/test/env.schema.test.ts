@@ -187,3 +187,8 @@ test("VAULT_CHAINS accepts custom chain metadata and retains inactive known-chai
   });
   assert.deepEqual(env.VAULT_CHAINS, [1, 4663, 8453]);
 });
+
+test('recovery upload admission and global storage limits accept bounded configuration and reject invalid budgets',()=>{
+  assert.equal(parseApiEnv({...apiEnv,RECOVERY_UPLOAD_CALLS_PER_MINUTE:'1024'}).RECOVERY_UPLOAD_CALLS_PER_MINUTE,1024);
+  for(const name of ['RECOVERY_UPLOAD_CALLS_PER_MINUTE','RECOVERY_UPLOAD_BYTES_PER_MINUTE','RECOVERY_UPLOAD_BYTES_PER_DAY','RECOVERY_UPLOAD_MAX_CLIENTS','RECOVERY_STORAGE_MAX_BYTES','RECOVERY_STORAGE_MAX_OBJECTS'])assert.throws(()=>parseApiEnv({...apiEnv,[name]:'-1'}));
+});

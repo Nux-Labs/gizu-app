@@ -45,6 +45,23 @@ class WalletStoreTest {
     )
 
   @Test
+  fun catalogueSurvivesMoreThan256CyclesAndRestart() {
+    val file = File()
+    val keys = Keys()
+    val store = WalletStore(file, keys)
+    wallet().use {
+      store.create(it)
+      store.markVerified(it)
+    }
+    store.load().use { store.bindEarnChain(it, 4663) }
+    repeat(300) { store.load().use { store.allocateEarnCycle(it, 4663) } }
+    WalletStore(file, keys).load().use {
+      assertEquals(300, it.earnCycleIndex)
+      assertEquals(301, org.json.JSONArray(it.earnCycles).length())
+    }
+  }
+
+  @Test
   fun freshCyclesKeepPreviousProfileAndWithdrawalRecipients() {
     val file = File()
     val store = WalletStore(file, Keys())

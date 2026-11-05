@@ -23,6 +23,8 @@ export type StoredSignerCapabilities = {
   backup: boolean;
   transfers: boolean;
   swaps: boolean;
+  walletRecovery?: boolean;
+  walletDiscovery?: boolean;
   earnWallets?: boolean;
   earnVaultExecution?: boolean;
   earnSponsoredExecution?: boolean;
@@ -161,6 +163,11 @@ export type MainnetPortfolioSnapshot = {
 
 /** All dialogs, file IO and authorization originate natively. No JS approve/export API. */
 export interface StoredSignerContract {
+  getWalletRecoveryStatus?(walletId: string): Promise<unknown>;
+  syncWalletRecovery?(walletId: string): Promise<unknown>;
+  restoreWalletRecovery?(walletId: string): Promise<unknown>;
+  discoverWallets?(walletId: string, throughCycle: number): Promise<unknown>;
+  cancelWalletDiscovery?(walletId: string): Promise<unknown>;
   prepareEarnDeposit?(
     walletId: string,
     profileId: string,

@@ -823,3 +823,26 @@ test("an unsigned recovered legacy quote cannot bypass snapshot admission throug
   const gateway=new NativeEarnGateway(cfg,{now:()=>now,fetcher:p.fetcher});
   assert.throws(()=>gateway.quoteBinding({...binding(quote),recoveryEnvelope:envelope}),{code:"EARN_NATIVE_UPGRADE_REQUIRED"});
 });
+
+test('replicas claim signed bundler authority once and preserve receipt recovery',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  const rows=new Map<string,string>();const store={async bind(key:string,value:string,_expires:number,exclusive:boolean){const old=rows.get(key);if(old)return !exclusive&&old===value;rows.set(key,value);return true;}};
+  const coordination=new OperationCoordinator(store,'ab'.repeat(32));const {outgoing,expected}=await signedOperation(true);let sends=0;
+  const fetcher:typeof fetch=async(_url,init)=>{const body=JSON.parse(String(init?.body));if(body.method==='eth_sendUserOperation')sends++;return new Response(JSON.stringify({jsonrpc:'2.0',id:body.id,result:expected}));};
+  const config={pimlicoApiKey:'server-only',coordination};
+  const req={jsonrpc:'2.0',id:1,method:'eth_sendUserOperation',params:[outgoing,entryPoint08Address]};
+  await Promise.allSettled([new NativeEarnGateway(config,{fetcher,now:()=>now}).bundler(143,req),new NativeEarnGateway(config,{fetcher,now:()=>now}).bundler(143,req)]);
+  await Promise.allSettled([new NativeEarnGateway(config,{fetcher,now:()=>now}).bundler(143,req)]);
+  assert.equal(sends,1);
+});
+test('shared source quote issuance cannot change operation binding on a second replica',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  const rows=new Map<string,string>();const store={async bind(key:string,value:string,_expires:number,exclusive:boolean){const old=rows.get(key);if(old)return !exclusive&&old===value;rows.set(key,value);return true;}};
+  const coordination=new OperationCoordinator(store,'ab'.repeat(32)),p=provider();
+  const cfg={auroraHistoryQualified:true,auroraApiKey:'server-only',auroraFeeQualification:config,recoveryKey:'11'.repeat(32),coordination};
+  const first=new NativeEarnGateway(cfg,{fetcher:p.fetcher,now:()=>now}),quote=await first.sourceQuote(input);
+  const second=new NativeEarnGateway(cfg,{fetcher:p.fetcher,now:()=>now});
+  await assert.rejects(second.sourceQuote({...input,amountAtoms:'2000000'}));
+  assert.equal((await second.sourceQuote({...input,recoveryEnvelope:quote.recoveryEnvelope})).quoteId,quote.quoteId);
+  assert.equal(p.calls,1);
+});

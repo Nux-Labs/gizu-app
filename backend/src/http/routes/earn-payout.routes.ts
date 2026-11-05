@@ -6,8 +6,9 @@ import type {
 } from "fastify";
 import { PrivatePayoutGateway } from "../../adapters/earn/private-payout.ts";
 import { NativeGatewayError } from "../../adapters/earn/native-gateway.ts";
+import { CoordinationError } from "../../adapters/earn/operation-coordinator.ts";
 function failure(reply: FastifyReply, error: unknown) {
-  const known = error instanceof NativeGatewayError;
+  const known = error instanceof NativeGatewayError || error instanceof CoordinationError;
   return reply.code(known ? error.statusCode : 502).send({
     code: known ? error.code : "EARN_PRIVATE_PAYOUT_UNAVAILABLE",
     message:

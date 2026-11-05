@@ -43,6 +43,7 @@ Proposed changes belong in [Feature plans](../feature-plans/README.md).
 - [Signer architecture](NATIVE_SIGNER_ARCHITECTURE.md): active stored-wallet boundary and identity.
 - [Portfolio and holdings](NATIVE_SIGNER_PORTFOLIO.md): shared validation and platform read/recovery behavior.
 - [Signer storage](NATIVE_SIGNER_STORAGE.md): platform authorization, backup and restore.
+- [Wallet discovery and recovery](WALLET_DISCOVERY_RECOVERY.md): private recovery sync, older backups, paged storage and Android rollout.
 - [Exact transfers](NATIVE_SIGNER_TRANSFERS.md): testnet policy, journals and retries.
 - [Native Earn](NATIVE_SIGNER_EARN.md): native authorization and platform transport.
 - [Retired signer](NATIVE_SIGNER_RETIRED.md): inactive implementation and historical decisions.

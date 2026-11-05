@@ -17,6 +17,7 @@ import { AccountAddress } from "./AccountAddress";
 import { PreferenceFeedback } from "./PreferenceFeedback";
 import { useAccount } from "./AccountProvider";
 import { WalletBackupAction } from "./WalletBackupAction";
+import { WalletRecoveryAction } from "./WalletRecoveryAction";
 import { SettingsGroup } from "./components/SettingsGroup";
 import { AccountInitials } from "./components/AccountInitials";
 import type { AccountPage } from "./pages";
@@ -106,6 +107,7 @@ export function AccountScreen({ navigation }: BottomTabScreenProps<MainTabParamL
       {native && session.walletId && (
         <FadeIn delay={sectionDelay(groups.length + 2)} className="mt-3">
           <WalletBackupAction />
+          <WalletRecoveryAction key={session.walletId} walletId={session.walletId} />
         </FadeIn>
       )}
       <FadeIn delay={sectionDelay(groups.length + 3)} className="mt-3">
