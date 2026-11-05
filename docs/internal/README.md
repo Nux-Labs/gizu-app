@@ -48,6 +48,7 @@ Proposed changes belong in [Feature plans](../feature-plans/README.md).
 - [Native Earn](NATIVE_SIGNER_EARN.md): native authorization and platform transport.
 - [Retired signer](NATIVE_SIGNER_RETIRED.md): inactive implementation and historical decisions.
 - [Confidential Earn](CONFIDENTIAL_EARN.md): integration behavior and verification boundaries.
+- [Confidential withdrawals](CONFIDENTIAL_WITHDRAWALS.md): private sale/vault proceeds, explicit distributed cashout, recovery and backend deployment.
 - [Mobile foundation](FOUNDATION.md): runtime ownership and shared engineering conventions.
 - [Infinite lists](INFINITE_LISTS.md): shared pagination and virtualized-list contracts.
 - [Toast feedback](TOASTS.md): customization, accessibility and native-modal behavior.
