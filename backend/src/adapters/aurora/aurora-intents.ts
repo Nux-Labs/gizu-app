@@ -39,6 +39,13 @@ export class AuroraIntents {
     return tokens;
   }
 
+  async history(accessToken: string, depositAddress: string): Promise<AuroraJson> {
+    const query = new URLSearchParams({depositAddress, status: "SUCCESS", depositType: "ORIGIN_CHAIN", recipientType: "CONFIDENTIAL_INTENTS", refundType: "ORIGIN_CHAIN", limit: "100"});
+    const result = await this.call("account/history", {token: accessToken, query});
+    if (!Array.isArray(result.items) || result.items.length > 100) throw new InfrastructureError(502, "AURORA_INVALID", "Invalid bounded private history");
+    return {items: result.items};
+  }
+
   quote(request: AuroraJson): Promise<AuroraJson> {
     return this.call("quote", { method: "POST", body: request });
   }

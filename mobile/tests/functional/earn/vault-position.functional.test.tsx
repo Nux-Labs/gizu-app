@@ -79,6 +79,7 @@ function setup(
     redeemed?: boolean;
     withdrawalPending?: boolean;
     residualAtoms?: string;
+    privateOnly?: boolean;
   } = {},
 ) {
   let rows = options.rows ?? [position(first), position(first, 1), position(second)];
@@ -113,28 +114,32 @@ function setup(
       ];
     });
     jest.mocked(getStoredEarnWithdrawalSigner).mockReturnValue({
-      listEarnWithdrawalOperations: jest.fn().mockImplementation(async () => [
-        {
-          operationId: `paid_${selectedSlot}`,
-          walletId: hoodIntent.walletId,
-          investmentSlot: selectedSlot,
-          returnOperationId: `return_${selectedSlot}`,
-          revision: 1,
-          kind: "confidentialWithdrawal",
-          leg: "withdrawal",
-          chainId: 143,
-          recipient: "0x" + "8".repeat(40),
-          amountAtoms: "899000",
-          minimumDestinationAtoms: "880000",
-          receivedAtoms: options.withdrawalPending ? "0" : "890000",
-          status: options.withdrawalPending ? "pending" : "paid",
-          blocked: !!options.withdrawalPending,
-          canResume: false,
-          ...(!options.withdrawalPending
-            ? { destinationTransactionHash: "0x" + "a".repeat(64) }
-            : {}),
-        },
-      ]),
+      listEarnWithdrawalOperations: jest.fn().mockImplementation(async () =>
+        options.privateOnly
+          ? []
+          : [
+              {
+                operationId: `paid_${selectedSlot}`,
+                walletId: hoodIntent.walletId,
+                investmentSlot: selectedSlot,
+                returnOperationId: `return_${selectedSlot}`,
+                revision: 1,
+                kind: "confidentialWithdrawal",
+                leg: "withdrawal",
+                chainId: 143,
+                recipient: "0x" + "8".repeat(40),
+                amountAtoms: "899000",
+                minimumDestinationAtoms: "880000",
+                receivedAtoms: options.withdrawalPending ? "0" : "890000",
+                status: options.withdrawalPending ? "pending" : "paid",
+                blocked: !!options.withdrawalPending,
+                canResume: false,
+                ...(!options.withdrawalPending
+                  ? { destinationTransactionHash: "0x" + "a".repeat(64) }
+                  : {}),
+              },
+            ],
+      ),
       executeEarnWithdrawal: jest.fn(),
       resumeEarnWithdrawalOperation: jest.fn(),
       cancelEarnWithdrawalOperation: jest.fn(),
@@ -364,6 +369,29 @@ test("fresh complete exit and paid receiving withdrawal advance to the next save
     expect(h.selectInvestmentSlot).toHaveBeenCalledWith(expect.anything(), first.intentId, 1),
   );
   expect(h.robinhood.execute).not.toHaveBeenCalled();
+});
+test("a vault exit finishes at verified private credit without creating a public payout", async () => {
+  const h = setup({
+    redeemed: true,
+    privateOnly: true,
+    rows: [position(first, 0, "redeemed"), position(first, 1)],
+  });
+  await userEvent.press(await screen.findByRole("button", { name: "Check exit completion" }));
+  expect(
+    await screen.findByText(
+      "Proceeds stay in your confidential USDC balance. Withdraw from Gizu separately to make a public payout.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /Review withdrawal to Monad receiving account/ }),
+  ).toBeNull();
+  await userEvent.press(screen.getByRole("button", { name: "Check vault withdrawal progress" }));
+  await waitFor(() =>
+    expect(h.selectInvestmentSlot).toHaveBeenCalledWith(expect.anything(), first.intentId, 1),
+  );
+  expect(
+    jest.mocked(getStoredEarnWithdrawalSigner)()?.executeEarnWithdrawal,
+  ).not.toHaveBeenCalled();
 });
 test.each([{ residualAtoms: "700000" }, { withdrawalPending: true }])(
   "residual assets or pending receiving withdrawal prevent advancing",

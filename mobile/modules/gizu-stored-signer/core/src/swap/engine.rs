@@ -88,6 +88,10 @@ enum Step {
         salt: String,
     },
     Balances,
+    PrivateHistoryProbe,
+    PrivateCredit {
+        index: usize,
+    },
     PayoutQuote {
         index: usize,
     },
@@ -144,6 +148,8 @@ enum Step {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Plan {
     kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion_target: Option<String>,
     #[serde(default = "legacy_source_index")]
     source_index: u32,
     target: Address,
@@ -263,6 +269,24 @@ struct Order {
     /// position, which only works while holders and payouts pair one to one.
     #[serde(default)]
     inbound_request: Option<QuoteRequest>,
+    #[serde(default)]
+    inbound_quoted_ms: u64,
+    #[serde(default)]
+    sold_total: U256,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SaleInbound {
+    order_index: usize,
+    request: QuoteRequest,
+    quote: Quote,
+    input: U256,
+    transaction_hashes: Vec<B256>,
+    quoted_ms: u64,
+    retry: bool,
+    exhausted: bool,
+    credited: U256,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -297,6 +321,8 @@ struct Data {
     sale_estimate: U256,
     #[serde(default)]
     leg: usize,
+    #[serde(default)]
+    sale_inbounds: Vec<SaleInbound>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -516,6 +542,10 @@ impl Engine {
     }
     /// A sell that pools every holder's proceeds in C and then splits them over randomly sized
     /// payouts, as a buy does. Older sells pay each holder's proceeds straight through.
+    fn private_sell(&self) -> bool {
+        self.m.plan.kind == "confidentialSell"
+            && self.m.plan.completion_target.as_deref() == Some("confidential")
+    }
     fn pooled_sell(&self) -> bool {
         self.m.plan.kind == "confidentialSell" && self.m.plan.legs_random.is_some()
     }
@@ -752,7 +782,7 @@ impl Engine {
             Step::Authenticate { salt } => {
                 // Planning a payout reads C's balance before approval. The ownership proof carries
                 // no intents, so it cannot move funds; spending intents still need the approval.
-                let planning = self.payout_only() && self.m.approved_ms.is_none() && self.seed.is_some();
+                let planning = (self.payout_only() || self.private_sell()) && self.m.approved_ms.is_none() && self.seed.is_some();
                 if !planning && !self.can_sign(now) {
                     return Ok(self.unlock_or_expire(now));
                 }
@@ -761,6 +791,15 @@ impl Engine {
                 let payload = aurora::auth_payload(self.m.confidential, &salt, now, aurora::auth_random(&secret, now, self.m.next_id))?;
                 let sig = evm::sign(&key, evm::personal_hash(payload.as_bytes()))?;
                 self.post("/v1/swap/aurora/authenticate", json!({"payload": payload, "signature": aurora::encode_signature(&sig)}))
+            }
+            Step::PrivateHistoryProbe => {
+                let token = d.access_token.clone().ok_or(SignerError::InvalidInput)?;
+                self.post("/v1/swap/aurora/history", json!({"accessToken":token,"depositAddress":format!("{:#x}",self.m.confidential)}))
+            }
+            Step::PrivateCredit { index } => {
+                let inbound = d.sale_inbounds.get(index).ok_or(SignerError::InvalidInput)?;
+                let token = d.access_token.clone().ok_or(SignerError::InvalidInput)?;
+                self.post("/v1/swap/aurora/history", json!({"accessToken": token, "depositAddress": inbound.quote.deposit_address}))
             }
             Step::Balances => {
                 let token = d.access_token.clone().ok_or(SignerError::InvalidInput)?;
@@ -833,6 +872,7 @@ impl Engine {
                 let amount = d.orders[index].min_out;
                 let request = QuoteRequest::sell_in(self.m.confidential, self.holder(index), &d.destination_asset, &d.source_asset, amount);
                 self.m.data.orders[index].inbound_request = Some(request.clone());
+                self.m.data.orders[index].inbound_quoted_ms = now;
                 self.post("/v1/swap/aurora/quote", serde_json::to_value(request).map_err(|_| SignerError::InvalidInput)?)
             }
             Step::FusionPermit { index } => {
@@ -955,6 +995,10 @@ impl Engine {
             return Err(SignerError::InvalidInput);
         }
         self.m.pending = None;
+        if self.m.step == Step::PrivateHistoryProbe && !(200..300).contains(&status) {
+            self.m.paused = Some("PRIVATE_CREDIT_UNAVAILABLE".into());
+            return Ok(());
+        }
         let result = outcome(status, body);
         if let Outcome::Transient = result {
             let submit = matches!(
@@ -1034,7 +1078,9 @@ impl Engine {
                 }
                 self.m.data.target_symbol = abi_string(&value, 1)?;
                 self.m.data.target_decimals = decimals.to::<u8>();
-                self.go(if self.sell() {
+                self.go(if self.private_sell() {
+                    Step::AuthSalt
+                } else if self.sell() {
                     Step::Holdings
                 } else if self.payout_only() {
                     Step::AuthSalt
@@ -1307,12 +1353,16 @@ impl Engine {
             }
             (Step::Credit, None) => match text(&value, "status")? {
                 // A pooled sell banks each sale and moves on; payouts start after the last one.
+                "SUCCESS" if self.private_sell() => self.go(Step::AuthSalt),
                 "SUCCESS" if self.pooled_sell() => {
                     let leg = self.m.data.leg;
                     self.m.data.orders[leg].complete = true;
                     self.after_order(leg);
                 }
                 "SUCCESS" => self.go(Step::AuthSalt),
+                "REFUNDED" | "FAILED" if self.private_sell() => {
+                    self.m.paused = Some(format!("SALE_CREDIT_{}", text(&value, "status")?));
+                }
                 "REFUNDED" | "FAILED" => {
                     self.m.paused = Some(format!("FUNDING_{}", text(&value, "status")?))
                 }
@@ -1324,7 +1374,28 @@ impl Engine {
             }
             (Step::Authenticate { .. }, None) => {
                 self.m.data.access_token = Some(text(&value, "accessToken")?.to_string());
-                self.go(Step::Balances);
+                self.go(if self.private_sell() && self.m.approved_ms.is_none() {
+                    Step::PrivateHistoryProbe
+                } else if self.private_sell() {
+                    Step::PrivateCredit {
+                        index: self
+                            .m
+                            .data
+                            .sale_inbounds
+                            .len()
+                            .checked_sub(1)
+                            .ok_or(SignerError::InvalidInput)?,
+                    }
+                } else {
+                    Step::Balances
+                });
+            }
+            (Step::Authenticate { .. }, Some(401)) | (Step::PrivateCredit { .. }, Some(401))
+                if self.private_sell() =>
+            {
+                self.m.data.access_token = None;
+                self.go(Step::AuthSalt);
+                self.m.paused = Some("PRIVATE_CREDIT_AUTH_REQUIRED".into());
             }
             (Step::Authenticate { .. }, Some(401)) | (Step::Balances, Some(401))
                 if self.payout_only() =>
@@ -1342,6 +1413,52 @@ impl Engine {
                     .ok_or(SignerError::InvalidInput)?
                     .min_amount_out;
                 self.credit(minimum, "route_success_minimum")?;
+            }
+            (Step::PrivateHistoryProbe, None) => {
+                if value
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .is_none_or(|rows| rows.len() > 100 || rows.iter().any(|row| !row.is_object()))
+                {
+                    return Err(SignerError::InvalidInput);
+                }
+                self.m.data.access_token = None;
+                self.go(Step::Holdings);
+            }
+            (Step::PrivateCredit { index }, None) => {
+                let inbound = self
+                    .m
+                    .data
+                    .sale_inbounds
+                    .get(index)
+                    .ok_or(SignerError::InvalidInput)?
+                    .clone();
+                let Some(credited) = self.sale_credit(&inbound, &value, now)? else {
+                    self.wait(now, POLL_MS * 2);
+                    return Ok(());
+                };
+                self.m.data.sale_inbounds[index].credited = credited;
+                self.m.data.available =
+                    self.m
+                        .data
+                        .sale_inbounds
+                        .iter()
+                        .try_fold(U256::ZERO, |sum, row| {
+                            sum.checked_add(row.credited)
+                                .ok_or(SignerError::InvalidInput)
+                        })?;
+                self.m.data.credit_basis = Some("authenticated_operation_history".into());
+                self.m.data.access_token = None;
+                if inbound.exhausted {
+                    self.m.paused = Some(format!("FUSION_{}_UNFILLED", inbound.order_index + 1));
+                } else if inbound.retry {
+                    self.go(Step::FusionPreview {
+                        index: inbound.order_index,
+                    });
+                } else {
+                    self.m.data.orders[inbound.order_index].complete = true;
+                    self.after_order(inbound.order_index);
+                }
             }
             (Step::Balances, None) => {
                 let available = aurora::private_available(&value, &self.m.data.source_asset)?;
@@ -1778,12 +1895,35 @@ impl Engine {
                 let topic = keccak256("Transfer(address,address,uint256)");
                 let mut swapped = U256::ZERO;
                 let mut received = U256::ZERO;
+                let mut seen = std::collections::HashSet::new();
                 for i in 0..self.m.data.orders[index].fills.len() {
+                    let expected_hash: B256 = self.m.data.orders[index].fills[i]
+                        .0
+                        .parse()
+                        .map_err(|_| SignerError::InvalidInput)?;
+                    if self.private_sell()
+                        && (expected_hash.is_zero() || !seen.insert(expected_hash))
+                    {
+                        return Err(SignerError::InvalidInput);
+                    }
                     let receipt = rpc_result(&value, i as u64)?;
                     if receipt.get("status").and_then(Value::as_str) != Some("0x1") {
                         self.m.paused = Some(format!("FUSION_{}_FILL_REVERTED", index + 1));
                         return Ok(());
                     }
+                    if self.private_sell()
+                        && (text(receipt, "transactionHash")?.parse::<B256>().ok()
+                            != Some(expected_hash)
+                            || text(receipt, "blockHash")?
+                                .parse::<B256>()
+                                .ok()
+                                .is_none_or(|h| h.is_zero())
+                            || evm::quantity(text(receipt, "blockNumber")?)?.is_zero())
+                    {
+                        return Err(SignerError::InvalidInput);
+                    }
+                    let before_swapped = swapped;
+                    let before_received = received;
                     for log in receipt
                         .get("logs")
                         .and_then(Value::as_array)
@@ -1810,6 +1950,12 @@ impl Engine {
                             received += amount;
                         }
                     }
+                    if self.private_sell()
+                        && (swapped - before_swapped != self.m.data.orders[index].fills[i].1
+                            || received == before_received)
+                    {
+                        return Err(SignerError::InvalidInput);
+                    }
                 }
                 let filled = self.m.data.orders[index]
                     .fills
@@ -1835,9 +1981,70 @@ impl Engine {
                     let filled_all = o.swapped == o.amount;
                     if !eth.is_zero()
                         || target.checked_add(o.swapped) != Some(o.before_target)
-                        || o.received < o.min_out
+                        || (if self.private_sell() {
+                            o.swapped.is_zero()
+                                || o.received
+                                    .checked_mul(o.amount)
+                                    .ok_or(SignerError::InvalidInput)?
+                                    < o.min_out
+                                        .checked_mul(o.swapped)
+                                        .ok_or(SignerError::InvalidInput)?
+                        } else {
+                            o.received < o.min_out
+                        })
                     {
                         self.m.paused = Some(format!("FUSION_{}_UNRECONCILED", index + 1));
+                        return Ok(());
+                    }
+                    if self.private_sell() {
+                        let quote = o.inbound.clone().ok_or(SignerError::InvalidInput)?;
+                        let request = o.inbound_request.clone().ok_or(SignerError::InvalidInput)?;
+                        let transaction_hashes = o
+                            .fills
+                            .iter()
+                            .map(|(hash, _)| {
+                                hash.parse::<B256>().map_err(|_| SignerError::InvalidInput)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        if self.m.data.sale_inbounds.iter().any(|row| {
+                            row.quote
+                                .deposit_address
+                                .eq_ignore_ascii_case(&quote.deposit_address)
+                                || row
+                                    .transaction_hashes
+                                    .iter()
+                                    .any(|hash| transaction_hashes.contains(hash))
+                        }) {
+                            return Err(SignerError::InvalidInput);
+                        }
+                        self.m.data.sale_inbounds.push(SaleInbound {
+                            order_index: index,
+                            request,
+                            quote: quote.clone(),
+                            input: o.received,
+                            transaction_hashes,
+                            quoted_ms: o.inbound_quoted_ms,
+                            retry: !filled_all,
+                            exhausted: !filled_all && o.attempts + 1 >= MAX_FUSION_ATTEMPTS,
+                            credited: U256::ZERO,
+                        });
+                        let row = &mut self.m.data.orders[index];
+                        row.received_total = row
+                            .received_total
+                            .checked_add(o.received)
+                            .ok_or(SignerError::InvalidInput)?;
+                        row.sold_total = row
+                            .sold_total
+                            .checked_add(o.swapped)
+                            .ok_or(SignerError::InvalidInput)?;
+                        if !filled_all {
+                            row.attempts += 1;
+                            row.amount = target;
+                            row.before_target = target;
+                        }
+                        self.m.data.funding_quote = Some(quote);
+                        self.m.data.leg = index;
+                        self.go(Step::Credit);
                         return Ok(());
                     }
                     if !filled_all {
@@ -1933,6 +2140,116 @@ impl Engine {
         Ok(())
     }
 
+    fn sale_credit(
+        &self,
+        inbound: &SaleInbound,
+        value: &Value,
+        now: u64,
+    ) -> Result<Option<U256>, SignerError> {
+        let items = value
+            .get("items")
+            .and_then(Value::as_array)
+            .filter(|rows| rows.len() <= 100)
+            .ok_or(SignerError::InvalidInput)?;
+        let matches = items
+            .iter()
+            .filter(|row| {
+                row.get("depositAddress")
+                    .and_then(Value::as_str)
+                    .is_some_and(|address| {
+                        address.eq_ignore_ascii_case(&inbound.quote.deposit_address)
+                    })
+            })
+            .collect::<Vec<_>>();
+        let row = match matches.as_slice() {
+            [] => return Ok(None),
+            [row] => *row,
+            _ => return Err(SignerError::InvalidInput),
+        };
+        let same = |name: &str, expected: &str| {
+            text(row, name)
+                .map(|v| v.eq_ignore_ascii_case(expected))
+                .unwrap_or(false)
+        };
+        if !same("status", "SUCCESS")
+            || !same("depositType", "ORIGIN_CHAIN")
+            || !same("recipientType", "CONFIDENTIAL_INTENTS")
+            || !same("refundType", "ORIGIN_CHAIN")
+            || !same("originAsset", &inbound.request.origin_asset)
+            || !same("destinationAsset", &self.m.data.source_asset)
+            || !same("recipient", &format!("{:#x}", self.m.confidential))
+            || !same("refundTo", &inbound.request.refund_to)
+            || row.get("depositMemo").is_some_and(|v| !v.is_null())
+            || inbound.quote.deposit_memo.is_some()
+        {
+            return Err(SignerError::InvalidInput);
+        }
+        let created = aurora::iso_millis(text(row, "createdAt")?)?;
+        if inbound.quoted_ms < self.m.created_ms
+            || created.saturating_add(5_000) < inbound.quoted_ms
+            || created > now.saturating_add(5_000)
+            || created > inbound.quote.deadline_ms
+        {
+            return Err(SignerError::InvalidInput);
+        }
+        let formatted = |name: &str| -> Result<U256, SignerError> {
+            let value = text(row, name)?;
+            let parts = value.split('.').collect::<Vec<_>>();
+            if parts.is_empty()
+                || parts.len() > 2
+                || parts[0].is_empty()
+                || !parts[0].bytes().all(|c| c.is_ascii_digit())
+                || (parts[0].len() > 1 && parts[0].starts_with('0'))
+            {
+                return Err(SignerError::InvalidInput);
+            }
+            let fraction = parts.get(1).copied().unwrap_or("");
+            if fraction.len() > 6
+                || !fraction.bytes().all(|c| c.is_ascii_digit())
+                || (parts.len() == 2 && fraction.is_empty())
+            {
+                return Err(SignerError::InvalidInput);
+            }
+            let atoms = format!("{}{}{}", parts[0], fraction, "0".repeat(6 - fraction.len()));
+            let canonical = atoms.trim_start_matches('0');
+            evm::decimal(if canonical.is_empty() { "0" } else { canonical })
+        };
+        let input = formatted("amountInFormatted")?;
+        let output = formatted("amountOutFormatted")?;
+        let minimum = inbound
+            .quote
+            .min_amount_out
+            .checked_mul(inbound.input)
+            .ok_or(SignerError::InvalidInput)?
+            .div_ceil(inbound.quote.amount_in);
+        if input != inbound.input
+            || output.is_zero()
+            || output < minimum
+            || output > U256::from(MAX_SOURCE_ATOMS)
+        {
+            return Err(SignerError::InvalidInput);
+        }
+        let transactions = row
+            .get("quoteTransactions")
+            .and_then(Value::as_array)
+            .filter(|rows| rows.len() == inbound.transaction_hashes.len())
+            .ok_or(SignerError::InvalidInput)?;
+        let mut seen = std::collections::HashSet::new();
+        for tx in transactions {
+            let hash = text(tx, "txHash")?
+                .parse::<B256>()
+                .map_err(|_| SignerError::InvalidInput)?;
+            if hash.is_zero()
+                || !seen.insert(hash)
+                || !inbound.transaction_hashes.contains(&hash)
+                || evm::addr(text(tx, "sender")?)?.is_zero()
+            {
+                return Err(SignerError::InvalidInput);
+            }
+        }
+        Ok(Some(output))
+    }
+
     fn credit(&mut self, available: U256, basis: &str) -> Result<(), SignerError> {
         if available.is_zero() || available > U256::from(MAX_SOURCE_ATOMS) {
             return Err(SignerError::InvalidInput);
@@ -1999,7 +2316,7 @@ impl Engine {
             match self.next_sell_index(index + 1) {
                 Some(next) => self.go(Step::FusionPreview { index: next }),
                 // Every sale is banked in C: read the pooled balance and pay it out.
-                None if self.pooled_sell() => self.go(Step::AuthSalt),
+                None if self.pooled_sell() && !self.private_sell() => self.go(Step::AuthSalt),
                 None => self.go(Step::Done),
             }
         } else {
@@ -2208,6 +2525,27 @@ impl Engine {
     }
 
     fn review_sell(&self) -> String {
+        if self.private_sell() {
+            let d = &self.m.data;
+            let mut out = format!(
+                "CONFIDENTIAL SELL · MAINNET\n{} → USDG (Fusion) → stop at verified private USDC credit\nConfidential account {}\nNo public receiving wallets or public payouts are created.\n",
+                d.target_symbol,
+                self.m.confidential.to_checksum(None)
+            );
+            for i in 0..self.sales() {
+                if !d.orders[i].amount.is_zero() && !d.orders[i].dust {
+                    out.push_str(&format!(
+                        "\nSell {} {} from {}\n",
+                        units(d.orders[i].amount, d.target_decimals),
+                        d.target_symbol,
+                        self.holder(i).to_checksum(None)
+                    ));
+                }
+            }
+            out.push_str(&self.skipped_note());
+            out.push_str("\nEach inbound credit requires authenticated operation history matching the verified Fusion transfers. Private USDC remains in Gizu until you separately choose Withdraw from Gizu. One approval covers these sale steps for 15 minutes; submitted steps cannot be undone.");
+            return out;
+        }
         let d = &self.m.data;
         // A holder group may include wallets with nothing to sell; only real legs are shown.
         let active: Vec<usize> = (0..self.sales())
@@ -2248,6 +2586,7 @@ impl Engine {
         } else {
             match self.m.step {
                 Step::Assets
+                | Step::PrivateHistoryProbe
                 | Step::SourceChain { execute: false }
                 | Step::TargetChain
                 | Step::Holdings
@@ -2299,7 +2638,11 @@ impl Engine {
             "receivedTargetAtoms": d.orders.iter().fold(U256::ZERO, |sum, o| sum + o.received_total).to_string(),
             "direction": if self.sell() { "sell" } else { "buy" },
             "kind": self.m.plan.kind,
-            "legs": self.legs(),
+            "completionTarget": if self.private_sell() { "confidential" } else { "public" },
+            "privateCreditedAtoms": if self.private_sell() { d.available.to_string() } else { "0".into() },
+            "soldAtoms": d.orders.iter().fold(U256::ZERO, |sum, row| sum + row.sold_total).to_string(),
+            "receivedUsdgAtoms": if self.sell() { d.orders.iter().fold(U256::ZERO, |sum, row| sum + row.received_total).to_string() } else { "0".into() },
+            "legs": if self.private_sell() { 0 } else { self.legs() },
             "holders": self.sales(),
             // After approval funds may be in flight: the UI must pause, never cancel, on leave.
             "approved": self.m.approved_ms.is_some(),
@@ -2352,6 +2695,14 @@ impl SwapOperation {
             return Err(SignerError::InvalidInput);
         }
         let sweep = plan.kind == "debugSweep";
+        let private_sell = plan.kind == "confidentialSell"
+            && plan.completion_target.as_deref() == Some("confidential");
+        if plan.completion_target.is_some() && !private_sell {
+            return Err(SignerError::InvalidInput);
+        }
+        if private_sell && (plan.legs_random.is_some() || plan.weights.is_some()) {
+            return Err(SignerError::InvalidInput);
+        }
         let sell = plan.kind == "confidentialSell" || sweep;
         let payout = plan.kind == "confidentialPayout";
         let recovery = plan.kind == "confidentialRecovery";
@@ -2417,7 +2768,8 @@ impl SwapOperation {
             {
                 return Err(SignerError::InvalidInput);
             }
-            if sweep {
+            if sweep || private_sell {
+                // No public payouts: internal slots name exactly the existing holders.
                 // A sweep pays no return wallets; its recipients are the holders themselves.
                 if plan.recipient_indices != held {
                     return Err(SignerError::InvalidInput);
@@ -2616,6 +2968,22 @@ impl SwapOperation {
     /// Stops all future signatures. Submitted steps cannot be undone.
     pub fn cancel(&self) {
         if let Ok(mut e) = self.inner.lock() {
+            if e.private_sell() {
+                if e.m.step == Step::Done {
+                    return;
+                }
+                if e.m
+                    .data
+                    .orders
+                    .iter()
+                    .any(|row| row.permit.is_some() || row.signature.is_some())
+                    || !e.m.data.sale_inbounds.is_empty()
+                {
+                    e.m.paused = Some("SALE_PAUSED_SAVED_PROGRESS".into());
+                    e.seed = None;
+                    return;
+                }
+            }
             e.m.cancelled = true;
             e.seed = None;
         }

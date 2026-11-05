@@ -61,6 +61,14 @@ internal suspend fun scanNativePayoutTransfers(
   quote: JSONObject,
   start: String,
   topic: (String) -> String = ::earnEventTopic,
+): NativePayoutScan = scanNativePayoutTransfersExcluding(rpc, quote, start, emptySet(), topic)
+
+internal suspend fun scanNativePayoutTransfersExcluding(
+  rpc: TransferRpc,
+  quote: JSONObject,
+  start: String,
+  excludedTransactions: Set<String>,
+  topic: (String) -> String = ::earnEventTopic,
 ): NativePayoutScan {
   val reference = payoutReference(rpc, quote)
   val from = start.toBigInteger()
@@ -95,12 +103,18 @@ internal suspend fun scanNativePayoutTransfers(
         val block = quantity(log.getString("blockNumber"))
         check(block in from..end)
         val amount = payoutTransfer(log, quote, event)
-        amount != null &&
+        val eventIdentity =
+          earnHash(log.getString("transactionHash")) +
+            ":" +
+            (if (log.has("logIndex")) quantity(log.getString("logIndex")).toString() else "unknown")
+        eventIdentity !in excludedTransactions &&
+          amount != null &&
           amount >= quote.getString("minimumDestinationAtoms").toBigInteger() &&
           (!quote.has("maximumDestinationAtoms") ||
             amount <= quote.getString("maximumDestinationAtoms").toBigInteger())
       }
       .map { earnHash(it.getString("transactionHash")) }
+      .filterNot { it in excludedTransactions }
       .distinct()
   check(candidates.size <= 1) { "Ambiguous payout receipts require authenticated reconciliation" }
   return NativePayoutScan(
@@ -165,4 +179,33 @@ internal suspend fun confirmNativePayoutReceipt(
     .put("receivedAtoms", receivedAtoms)
     .put("blockNumber", number.toString())
     .put("blockHash", receiptHash)
+}
+
+/**
+ * Invalidate both sides before saving newly authenticated private credit to avoid cache overlap.
+ */
+internal fun invalidateEarnPrivateCreditCaches(
+  context: android.content.Context,
+  record: WalletRecord,
+  operation: JSONObject,
+  proof: JSONObject,
+) {
+  if (proof.getString("status") != "credited") return
+  check(proof.getBoolean("authenticated") && proof.getBoolean("operationScoped"))
+  val proposal = operation.getJSONObject("proposal")
+  val (chain, tokens) =
+    when (proposal.getString("kind")) {
+      "sourceFunding" -> 143L to setOf(io.gizu.storedwallet.swap.MainnetPortfolio.USDC, "native")
+      "hoodTokenReturn" -> 4663L to setOf(HOOD_EARN_USDG, HOOD_EARN_VAULT, "native")
+      "returnUsdc",
+      "returnEth" -> 1L to setOf(ETH_EARN_USDC, ETH_EARN_VAULT, ETH_EARN_WETH, "native")
+      else -> error("Unsupported authenticated private credit")
+    }
+  if (chain == 143L) io.gizu.storedwallet.swap.MainnetPortfolio(context).invalidate(record)
+  io.gizu.storedwallet.portfolio
+    .NativeOwnedPortfolio(context)
+    .invalidateTokens(record, chain, tokens)
+  io.gizu.storedwallet.portfolio
+    .NativeOwnedConfidentialPortfolio(context)
+    .invalidateSources(record, setOf(proposal.getString("confidentialAccount")))
 }

@@ -37,6 +37,7 @@ internal class NativeOwnedConfidentialPortfolio(
   private val deriveEarn: (WalletRecord, Int, Int) -> String,
   private val clock: () -> Long = System::currentTimeMillis,
   private val discovered: (WalletRecord) -> List<NativeConfidentialTarget> = { emptyList() },
+  private val outgoing: (WalletRecord) -> Set<String> = { emptySet() },
 ) {
   constructor(
     context: Context
@@ -46,6 +47,16 @@ internal class NativeOwnedConfidentialPortfolio(
     deriveSwap = { deriveAccountAddresses(it.entropy)[2] },
     deriveEarn = { record, chain, cycle ->
       deriveEarnCycleConfidentialAddress(record.entropy, chain.toULong(), cycle.toUInt())
+    },
+    outgoing = { record ->
+      confidentialWithdrawalJournal(context, record)
+        .active()
+        ?.getJSONObject("plan")
+        ?.getJSONObject("proposal")
+        ?.getJSONArray("sources")
+        ?.objects()
+        ?.map { it.getString("address").lowercase() }
+        ?.toSet() ?: emptySet()
     },
     discovered = { record ->
       listOf(1, 4663).flatMap { chain ->
@@ -164,6 +175,18 @@ internal class NativeOwnedConfidentialPortfolio(
     }
   }
 
+  /** In-flight outgoing/private-credit changes must invalidate pre-operation display amounts. */
+  fun invalidateSources(record: WalletRecord, addresses: Set<String>) {
+    val root = load(record.id, record.journalId)
+    val observations = root.getJSONObject("observations")
+    addresses.forEach { observations.remove(it.lowercase()) }
+    save(record.id, record.journalId, root)
+  }
+
+  /** Fresh spending must authenticate these native descriptors, never the display cache. */
+  fun ownedTargets(record: WalletRecord): List<NativeConfidentialTarget> =
+    targets(record, load(record.id, record.journalId))
+
   fun nextTargets(
     record: WalletRecord,
     now: Long = clock(),
@@ -174,6 +197,7 @@ internal class NativeOwnedConfidentialPortfolio(
     val all = targets(record, root)
     val observations = root.getJSONObject("observations")
     val offset = root.optInt("offset", 0).mod(all.size)
+    val blocked = outgoing(record)
     val rotating = all.drop(offset) + all.take(offset)
     val current =
       all.firstOrNull {
@@ -186,8 +210,9 @@ internal class NativeOwnedConfidentialPortfolio(
       (priority + rotating)
         .distinct()
         .filter { target ->
-          !observations.has(target.address) ||
-            !fresh(observations.getJSONObject(target.address).getLong("timestampMs"), now)
+          target.address !in blocked &&
+            (!observations.has(target.address) ||
+              !fresh(observations.getJSONObject(target.address).getLong("timestampMs"), now))
         }
         .take(max)
     // Skip fresh priority rows; the persisted cursor still gives historical accounts fair progress.
@@ -334,12 +359,17 @@ internal class NativeOwnedConfidentialPortfolio(
     val root = load(record.id, record.journalId)
     val all = targets(record, root)
     val observations = root.getJSONObject("observations")
-    val known = all.mapNotNull { observations.optJSONObject(it.address) }
+    val blocked = outgoing(record)
+    val known =
+      all.filterNot { it.address in blocked }.mapNotNull { observations.optJSONObject(it.address) }
     val observed =
       known
         .fold(BigInteger.ZERO) { sum, row -> sum + BigInteger(row.getString("available")) }
         .toString()
-    val complete = known.size == all.size && known.all { fresh(it.getLong("timestampMs"), now) }
+    val complete =
+      blocked.isEmpty() &&
+        known.size == all.size &&
+        known.all { fresh(it.getLong("timestampMs"), now) }
     val checked = known.minOfOrNull { it.getLong("timestampMs") } ?: 0L
     val row =
       mapOf<String, Any?>(

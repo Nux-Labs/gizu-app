@@ -250,7 +250,7 @@ class GizuStoredSignerModule : Module() {
     promise: Promise,
     wait: Boolean = false,
     timeoutMs: Long = CEREMONY_TIMEOUT_MS,
-    block: suspend (Activity, WalletStore) -> Any,
+    block: suspend (Activity, WalletStore) -> Any?,
   ) {
     scope.launch {
       val activity = appContext.currentActivity
@@ -401,6 +401,8 @@ class GizuStoredSignerModule : Module() {
       promise.resolve(
         mapOf(
           "contractVersion" to 1,
+          "confidentialWithdrawals" to eligible(appContext.currentActivity),
+          "confidentialSaleProceeds" to eligible(appContext.currentActivity),
           "available" to eligible(appContext.currentActivity),
           "walletStorage" to eligible(appContext.currentActivity),
           "backup" to eligible(appContext.currentActivity),
@@ -429,6 +431,7 @@ class GizuStoredSignerModule : Module() {
       draftId: String?,
       promise: Promise ->
       runCeremony(promise, timeoutMs = 180000L) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         check(profile == "robinhood-usdg") {
           "Guided native deposits currently support Robinhood USDG only"
         }
@@ -506,6 +509,7 @@ class GizuStoredSignerModule : Module() {
       promise: Promise ->
       // Wait for a read-only status reconciliation instead of rejecting the user's action.
       runCeremony(promise, wait = true) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val host = makeDepositHost(activity, store, walletId, id)
         depositHost = host
         host.confirm(id, revision, false)
@@ -518,6 +522,7 @@ class GizuStoredSignerModule : Module() {
       promise: Promise ->
       // Wait for a read-only status reconciliation instead of rejecting the user's action.
       runCeremony(promise, wait = true) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val row =
           store.load().use { record ->
             check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
@@ -1059,11 +1064,13 @@ class GizuStoredSignerModule : Module() {
     AsyncFunction("executeEarnFundingBatch") { walletId: String, batchId: String, promise: Promise
       ->
       runCeremony(promise, timeoutMs = 300_000L) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         approveEarnFundingBatch(activity, store, walletId, batchId)
       }
     }
     AsyncFunction("executeEarnSponsored") { request: Map<String, Any?>, promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val walletId = request["walletId"] as? String ?: error("Missing wallet")
         val journal =
           store.load().use { record ->
@@ -1135,6 +1142,7 @@ class GizuStoredSignerModule : Module() {
       revision: Int,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val journal =
           store.load().use { record ->
             requireSponsoredWallet(record, walletId)
@@ -1248,6 +1256,9 @@ class GizuStoredSignerModule : Module() {
           requireSponsoredWallet(record, walletId)
           check(record.journalId == journal.generation && record.earnChain == identity.second)
         }
+        store.load().use { record ->
+          invalidateEarnPrivateCreditCaches(activity, record, operation, proof)
+        }
         val committed =
           journal.update(id, operation.getInt("revision")) { it.put("settlement", proof) }
         store.load().use { record -> fundingReservations(activity, record).complete(id) }
@@ -1259,24 +1270,10 @@ class GizuStoredSignerModule : Module() {
       returnOperationId: String,
       revision: Int,
       promise: Promise ->
-      runCeremony(promise) { activity, store ->
-        withdrawalEngine(activity, store, walletId).use { engine ->
-          val op =
-            engine.create(
-              mapOf(
-                "walletId" to walletId,
-                "returnOperationId" to returnOperationId,
-                "revision" to revision,
-              )
-            )
-          approveEarnWithdrawal(
-            activity,
-            store,
-            engine,
-            op.getString("operationId"),
-            op.getInt("revision"),
-          )
-        }
+      runCeremony(promise) { _, _ ->
+        error(
+          "New public payouts are created only through Withdraw from Gizu. Resume saved legacy withdrawals from their recovery controls."
+        )
       }
     }
     AsyncFunction("listEarnWithdrawalOperations") { walletId: String, promise: Promise ->
@@ -1294,6 +1291,7 @@ class GizuStoredSignerModule : Module() {
       revision: Int,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         withdrawalEngine(activity, store, walletId).use {
           approveEarnWithdrawal(activity, store, it, id, revision)
         }
@@ -1326,6 +1324,7 @@ class GizuStoredSignerModule : Module() {
     }
     AsyncFunction("executeEarnPrivatePayout") { request: Map<String, Any?>, promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val walletId = request["walletId"] as? String ?: error("Missing wallet")
         payoutEngine(activity, store, walletId).use { engine ->
           val op = engine.create(request)
@@ -1357,6 +1356,7 @@ class GizuStoredSignerModule : Module() {
       revision: Int,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         payoutEngine(activity, store, walletId).use { engine ->
           var op = engine.journal.get(id)
           check(op.getInt("revision") == revision)
@@ -1487,6 +1487,7 @@ class GizuStoredSignerModule : Module() {
     }
     AsyncFunction("executeEarnEthereumLiquidity") { request: Map<String, Any?>, promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val walletId = request["walletId"] as? String ?: error("Missing wallet")
         val journal =
           store.load().use { record ->
@@ -1529,6 +1530,7 @@ class GizuStoredSignerModule : Module() {
       revision: Int,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val journal =
           store.load().use { record ->
             requireEarnExecutionWallet(record, walletId)
@@ -1636,6 +1638,9 @@ class GizuStoredSignerModule : Module() {
           requireEarnExecutionWallet(record, walletId)
           check(record.journalId == journal.generation)
         }
+        store.load().use { record ->
+          invalidateEarnPrivateCreditCaches(activity, record, operation, proof)
+        }
         journal.public(
           journal.update(id, operation.getInt("revision")) { it.put("settlement", proof) }
         )
@@ -1643,6 +1648,7 @@ class GizuStoredSignerModule : Module() {
     }
     AsyncFunction("executeEarnVault") { request: Map<String, Any?>, promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val walletId = request["walletId"] as? String ?: error("Missing wallet")
         val journal =
           store.load().use { record ->
@@ -1685,6 +1691,7 @@ class GizuStoredSignerModule : Module() {
       revision: Int,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         val journal =
           store.load().use { record ->
             requireEarnExecutionWallet(record, walletId)
@@ -1786,23 +1793,89 @@ class GizuStoredSignerModule : Module() {
       amountAtoms: String,
       gateway: String,
       promise: Promise ->
-      runCeremony(promise, timeoutMs = 900_000L) { activity, _ ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         withProviderUi(activity) {
           SwapHost.open(activity, gateway, target, amountAtoms.ifBlank { null }, false)
         }
       }
     }
     AsyncFunction("startPayout") { target: String, gateway: String, promise: Promise ->
-      runCeremony(promise, timeoutMs = 900_000L) { activity, _ ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         withProviderUi(activity) {
           SwapHost.open(activity, gateway, target, null, false, payout = true)
         }
       }
     }
     AsyncFunction("startRecovery") { target: String, gateway: String, promise: Promise ->
-      runCeremony(promise, timeoutMs = 900_000L) { activity, _ ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         withProviderUi(activity) {
           SwapHost.open(activity, gateway, target, null, false, recovery = true)
+        }
+      }
+    }
+    AsyncFunction("getConfidentialWithdrawal") { walletId: String, promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        withContext(Dispatchers.IO) {
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            val journal = confidentialWithdrawalJournal(activity, record)
+            journal.active()?.let { journal.public(it) }
+          }
+        }
+      }
+    }
+    AsyncFunction("prepareConfidentialWithdrawal") { request: Map<String, Any?>, promise: Promise ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        check(request.keys == setOf("walletId", "amountAtoms"))
+        val wallet = request["walletId"] as? String ?: error("Missing wallet")
+        ensureCashoutReadPermission(activity, store, wallet)
+        withContext(Dispatchers.IO) {
+          cashoutEngine(activity, store, wallet)
+            .prepare(request["amountAtoms"] as? String ?: error("Missing exact amount"))
+        }
+      }
+    }
+    AsyncFunction("executeConfidentialWithdrawal") { request: Map<String, Any?>, promise: Promise ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        check(request.keys == setOf("walletId", "operationId", "revision"))
+        val wallet = request["walletId"] as? String ?: error("Missing wallet")
+        ensureCashoutReadPermission(activity, store, wallet)
+        val revision = request["revision"] as? Number ?: error("Missing revision")
+        check(revision.toDouble() == revision.toInt().toDouble() && revision.toInt() > 0)
+        runCashout(
+          activity,
+          store,
+          wallet,
+          request["operationId"] as? String ?: error("Missing operation"),
+          revision.toInt(),
+        )
+      }
+    }
+    AsyncFunction("resumeConfidentialWithdrawal") { request: Map<String, Any?>, promise: Promise ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        check(request.keys == setOf("walletId", "operationId"))
+        val wallet = request["walletId"] as? String ?: error("Missing wallet")
+        val id = request["operationId"] as? String ?: error("Missing operation")
+        ensureCashoutReadPermission(activity, store, wallet)
+        val revision =
+          store.load().use { record ->
+            confidentialWithdrawalJournal(activity, record).get(id).getInt("revision")
+          }
+        runCashout(activity, store, wallet, id, revision)
+      }
+    }
+    AsyncFunction("cancelConfidentialWithdrawal") { request: Map<String, Any?>, promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        check(request.keys == setOf("walletId", "operationId"))
+        store.load().use { record ->
+          check(record.verified && record.id == request["walletId"])
+          val journal = confidentialWithdrawalJournal(activity, record)
+          val id = request["operationId"] as? String ?: error("Missing operation")
+          journal.cancel(id)
+          journal.public(journal.get(id))
         }
       }
     }
@@ -1922,7 +1995,8 @@ class GizuStoredSignerModule : Module() {
       }
     }
     AsyncFunction("sellSwapHolding") { holdingId: String, gateway: String, promise: Promise ->
-      runCeremony(promise, timeoutMs = 900_000L) { activity, _ ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         withProviderUi(activity) {
           SwapHost.open(activity, gateway, null, null, false, sell = true, holdingId = holdingId)
         }
@@ -1951,12 +2025,14 @@ class GizuStoredSignerModule : Module() {
       }
     }
     AsyncFunction("startSell") { gateway: String, promise: Promise ->
-      runCeremony(promise, timeoutMs = 900_000L) { activity, _ ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         withProviderUi(activity) { SwapHost.open(activity, gateway, null, null, false, true) }
       }
     }
     AsyncFunction("resumeSwap") { gateway: String, promise: Promise ->
-      runCeremony(promise, timeoutMs = 900_000L) { activity, _ ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        store.load().use { assertCashoutInactive(activity, it) }
         withProviderUi(activity) { SwapHost.open(activity, gateway, null, null, true) }
       }
     }
@@ -2383,6 +2459,145 @@ class GizuStoredSignerModule : Module() {
       readAuth = { payoutReadAuth(activity, store, journal.walletId, journal.generation) },
     )
   }
+
+  private suspend fun ensureCashoutReadPermission(
+    activity: Activity,
+    store: WalletStore,
+    wallet: String,
+  ) {
+    val identity =
+      store.load().use { record ->
+        check(record.id == wallet && record.verified)
+        record.credential to record.journalId
+      }
+    if (
+      balanceReadWallet == wallet &&
+        balanceReadGeneration == identity.second &&
+        balanceReadUntil > System.currentTimeMillis()
+    )
+      return
+    confirm(
+      activity,
+      "Check private cash",
+      "Authenticate read-only checks of your existing confidential accounts to prepare this exact withdrawal. This approval does not move funds.",
+    )
+    withProviderUi(activity) {
+      PasskeyGate(activity).authorize(identity.first, wallet, "cashout-read:v1:${identity.second}")
+    }
+    currentCoroutineContext().ensureActive()
+    requireForeground(activity)
+    store.load().use { record ->
+      check(record.id == wallet && record.journalId == identity.second && record.verified)
+    }
+    balanceReadWallet = wallet
+    balanceReadGeneration = identity.second
+    balanceReadUntil = System.currentTimeMillis() + 900_000L
+  }
+
+  private fun cashoutEngine(
+    activity: Activity,
+    store: WalletStore,
+    wallet: String,
+  ): ConfidentialWithdrawalEngine {
+    val generation =
+      store.load().use { record ->
+        check(record.id == wallet && record.verified)
+        record.journalId
+      }
+    fun authority() {
+      requireForeground(activity)
+      check(
+        balanceReadWallet == wallet &&
+          balanceReadGeneration == generation &&
+          balanceReadUntil > System.currentTimeMillis()
+      )
+      store.load().use { record ->
+        check(record.id == wallet && record.journalId == generation && record.verified)
+      }
+    }
+    suspend fun auth(source: JSONObject): EarnReadAuthentication {
+      authority()
+      val salt = ConfidentialBalance().salt()
+      val random = ByteArray(7).also { SecureRandom().nextBytes(it) }
+      val started = System.currentTimeMillis()
+      authority()
+      return store.load().use { record ->
+        if (source.getString("kind") == "swap")
+          uniffi.gizu_stored_signer_core.authenticateSwapRead(
+            record.entropy,
+            salt,
+            random,
+            started.toULong(),
+            System.currentTimeMillis().toULong(),
+          )
+        else
+          uniffi.gizu_stored_signer_core.authenticateEarnCycleRead(
+            record.entropy,
+            source.getLong("profileChainId").toULong(),
+            source.getInt("cycleIndex").toUInt(),
+            salt,
+            random,
+            started.toULong(),
+            System.currentTimeMillis().toULong(),
+          )
+      }
+    }
+    val gateway =
+      NativeCashoutGateway(
+        auth = { source ->
+          val signed = auth(source)
+          JSONObject()
+            .put("standard", "erc191")
+            .put("payload", signed.payload)
+            .put("signature", signed.signature)
+        }
+      )
+    val journal = store.load().use { confidentialWithdrawalJournal(activity, it) }
+    return ConfidentialWithdrawalEngine(
+      store,
+      journal,
+      gateway,
+      { source -> ConfidentialBalance().read(auth(source), source.getString("address")) },
+      ::authority,
+      { record ->
+        io.gizu.storedwallet.portfolio
+          .NativeOwnedConfidentialPortfolio(activity)
+          .ownedTargets(record)
+      },
+      { record -> assertCashoutCanStart(activity, record) },
+      { record, addresses ->
+        io.gizu.storedwallet.swap.MainnetPortfolio(activity).invalidate(record)
+        io.gizu.storedwallet.portfolio
+          .NativeOwnedConfidentialPortfolio(activity)
+          .invalidateSources(record, addresses)
+      },
+    )
+  }
+
+  private suspend fun runCashout(
+    activity: Activity,
+    store: WalletStore,
+    wallet: String,
+    id: String,
+    revision: Int,
+  ): Map<String, Any> =
+    withContext(Dispatchers.IO) {
+      cashoutEngine(activity, store, wallet).execute(id, revision) { review, hash ->
+        withContext(Dispatchers.Main.immediate) {
+          val credential =
+            store.load().use { record ->
+              check(record.id == wallet && record.verified)
+              record.credential
+            }
+          confirm(activity, "Withdraw from Gizu", review, fullReview = true)
+          withProviderUi(activity) {
+            PasskeyGate(activity).authorize(credential, wallet, "cashout:v1:$id:$revision:$hash")
+          }
+          currentCoroutineContext().ensureActive()
+          requireForeground(activity)
+        }
+      }
+    }
 
   private suspend fun approveEarnWithdrawal(
     activity: Activity,

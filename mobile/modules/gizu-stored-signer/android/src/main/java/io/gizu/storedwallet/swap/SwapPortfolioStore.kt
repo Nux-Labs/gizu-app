@@ -47,14 +47,7 @@ internal class SwapPortfolioStore(context: Context, record: WalletRecord) {
       .asSequence()
       .map { id ->
         val item = history.getJSONObject(id)
-        mapOf<String, Any?>(
-          "operationId" to id,
-          "phase" to item.getString("phase"),
-          "direction" to item.getString("direction"),
-          "symbol" to item.optString("targetSymbol"),
-          "receivedAtoms" to item.optString("receivedTargetAtoms", "0"),
-          "recordedAt" to item.getLong("recordedAt"),
-        )
+        historyView(id, item)
       }
       .toList()
       .sortedByDescending { it["recordedAt"] as Long }
@@ -86,6 +79,26 @@ internal class SwapPortfolioStore(context: Context, record: WalletRecord) {
   }
 
   companion object {
+    internal fun historyView(id: String, item: JSONObject): Map<String, Any?> {
+      val privateSale =
+        item.optString("direction") == "sell" &&
+          item.optString("completionTarget") == "confidential"
+      return mapOf(
+        "operationId" to id,
+        "phase" to item.getString("phase"),
+        "direction" to item.getString("direction"),
+        "symbol" to item.optString("targetSymbol"),
+        "completionTarget" to item.optString("completionTarget", "public"),
+        "privateCreditedAtoms" to item.optString("privateCreditedAtoms", "0"),
+        "receivedAtoms" to
+          if (privateSale) item.getString("privateCreditedAtoms")
+          else item.optString("receivedTargetAtoms", "0"),
+        "soldAtoms" to item.optString("soldAtoms", "0"),
+        "receivedUsdgAtoms" to item.optString("receivedUsdgAtoms", "0"),
+        "recordedAt" to item.getLong("recordedAt"),
+      )
+    }
+
     internal fun archive(history: JSONObject, view: JSONObject) {
       val id = view.getString("operationId")
       // A later cancellation cannot rewrite evidence that an operation completed.

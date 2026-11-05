@@ -28,7 +28,12 @@ beforeEach(() => {
   Object.defineProperty(Platform, "OS", { configurable: true, value: "ios" });
   Object.defineProperty(Platform, "Version", { configurable: true, value: "18.5" });
   sellHolding.mockReset().mockResolvedValue({ phase: "COMPLETE" });
-  capabilities.mockReset().mockResolvedValue({ contractVersion: 1, available: true, swaps: true });
+  capabilities.mockReset().mockResolvedValue({
+    contractVersion: 1,
+    available: true,
+    swaps: true,
+    confidentialSaleProceeds: true,
+  });
   readHoldings.mockReset().mockResolvedValue({ checkedAt: 1, block: "0x123", holdings: [] });
   jest.mocked(requireOptionalNativeModule).mockReturnValue({
     getCapabilities: capabilities,

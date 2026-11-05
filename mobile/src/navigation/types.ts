@@ -8,6 +8,7 @@ export type MainTabParamList = {
   Settings: undefined;
 };
 export type RootStackParamList = {
+  ConfidentialWithdrawal: undefined;
   Welcome: undefined;
   RequestAccess: undefined;
   Main: NavigatorScreenParams<MainTabParamList>;

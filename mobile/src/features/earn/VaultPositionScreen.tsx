@@ -64,8 +64,9 @@ export function VaultPositionScreen({
         </View>
       </Surface>
       <Typography>
-        Withdraw the full vault position. Each withdrawal and return requires its own native review
-        and authorization.
+        Return the full vault position to confidential USDC. Each redemption and return requires its
+        own native review and authorization. Your proceeds stay private until you withdraw from
+        Gizu.
       </Typography>
       {v.loading && (
         <Typography accessibilityLiveRegion="polite">

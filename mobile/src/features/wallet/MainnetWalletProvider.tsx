@@ -44,6 +44,22 @@ export function validateMainnetPortfolio(
     return sum + atoms(account.balanceAtoms);
   }, 0n);
   if (total !== atoms(value.totalAtoms)) throw new Error("Inconsistent account balances");
+  for (const item of value.history) {
+    if (
+      item.completionTarget !== undefined &&
+      item.completionTarget !== "public" &&
+      item.completionTarget !== "confidential"
+    )
+      throw new Error("Invalid sale completion target");
+    if (item.completionTarget !== "confidential") continue;
+    const credit = atoms(item.privateCreditedAtoms ?? "");
+    if (
+      item.direction !== "sell" ||
+      credit !== atoms(item.receivedAtoms) ||
+      (item.phase === "COMPLETE" ? credit <= 0n : item.phase !== "CANCELLED" || credit !== 0n)
+    )
+      throw new Error("Invalid private sale credit");
+  }
   const assets = [...(value.ownedAssets ?? []), ...(value.positions ?? [])];
   if (assets.length > 4096) throw new Error("Invalid owned portfolio size");
   for (const asset of assets) {

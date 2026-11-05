@@ -165,10 +165,19 @@ export function LastSwapSummary({ status, canSell }: { status: StoredSwapView; c
                 }
               />
             )}
-            {sell && done ? (
+            {sell && done && status.completionTarget !== "confidential" ? (
               <Row label="USDC sent to" value={`${wallets(status.payoutsSubmitted)} on Monad`} />
             ) : null}
-            {/^[1-9]\d*$/.test(status.creditedAtoms) && sell && done ? (
+            {status.completionTarget === "confidential" && sell && done ? (
+              <Row
+                label="Verified private USDC credit"
+                value={`${formatSwapAmount(BigInt(status.privateCreditedAtoms!))} USDC`}
+              />
+            ) : null}
+            {/^[1-9]\d*$/.test(status.creditedAtoms) &&
+            sell &&
+            done &&
+            status.completionTarget !== "confidential" ? (
               <Row
                 label={status.holders !== undefined ? "Paid out" : "Last payout"}
                 value={`${formatSwapAmount(BigInt(status.creditedAtoms))} USDC`}
@@ -176,6 +185,11 @@ export function LastSwapSummary({ status, canSell }: { status: StoredSwapView; c
             ) : null}
           </View>
         ) : null}
+        {sell && done && status.completionTarget === "confidential" && (
+          <Typography variant="caption">
+            Proceeds remain confidential until you withdraw from Gizu.
+          </Typography>
+        )}
         {status.returnAddresses.length > 0 ? (
           <HoldingDetails label="Show wallet addresses" accessibilityLabel="Wallet addresses">
             <Typography variant="micro">Wallets set aside for this payout</Typography>

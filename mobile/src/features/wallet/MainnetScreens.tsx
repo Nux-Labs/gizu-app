@@ -337,6 +337,11 @@ export function MainnetPortfolioScreen({
         actions
       )}
       {/* Home Earn shortcut is temporarily hidden; the Earn flow remains available. */}
+      <Button
+        label="Withdraw from Gizu"
+        variant="secondary"
+        onPress={() => root.navigate("ConfidentialWithdrawal")}
+      />
       <OwnedBalances onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })} />
       <SwapHoldingsSection
         onReviewSale={() => navigation.navigate("Exchange")}
@@ -422,7 +427,11 @@ export function MainnetActivity() {
             </Typography>
             <Typography>{item.phase === "COMPLETE" ? "Completed" : "Cancelled"}</Typography>
             {item.direction === "sell" && item.phase === "COMPLETE" ? (
-              <Typography>Returned {holdingAmount(item.receivedAtoms, 6)} USDC on Monad</Typography>
+              <Typography>
+                {item.completionTarget === "confidential"
+                  ? `Credited ${holdingAmount(item.privateCreditedAtoms ?? item.receivedAtoms, 6)} USDC to confidential cash`
+                  : `Returned ${holdingAmount(item.receivedAtoms, 6)} USDC on Monad`}
+              </Typography>
             ) : null}
             <Typography variant="micro">{new Date(item.recordedAt).toLocaleString()}</Typography>
           </View>

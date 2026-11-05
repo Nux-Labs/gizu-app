@@ -160,7 +160,8 @@ internal class TokenBalanceSync(
         root.optJSONArray("pending")?.length() == 0 &&
         !root.has("scan") &&
         !root.has("reconcile") &&
-        !root.optBoolean("catchingUp")
+        !root.optBoolean("catchingUp") &&
+        !root.optBoolean("invalidated")
     return TokenSnapshot(
       balances,
       root.optString("block", "0x0"),
@@ -170,6 +171,21 @@ internal class TokenBalanceSync(
       !complete || root.optBoolean("catchingUp"),
       root.optString("sampleBlock", root.optString("block", "0x0")),
     )
+  }
+
+  /** Retain observations, but require canonical balances before calling them fresh again. */
+  fun invalidate() {
+    val root = load() ?: return
+    val owners =
+      root.optJSONArray("owners")
+        ?: JSONArray(root.getJSONObject("balances").keys().asSequence().toList())
+    val pending = root.getJSONArray("pending")
+    val dirty =
+      ((0 until pending.length()).map(pending::getString) +
+          (0 until owners.length()).map(owners::getString))
+        .distinct()
+    root.put("pending", JSONArray(dirty)).put("invalidated", true)
+    save(root)
   }
 
   fun cachedSnapshot(rawAddresses: List<String>, now: Long): TokenSnapshot? {
@@ -211,6 +227,7 @@ internal class TokenBalanceSync(
           addresses.all { it in previous }
         } ?: true) &&
         !old.optBoolean("catchingUp") &&
+        !old.optBoolean("invalidated") &&
         !old.has("scan") &&
         !old.has("reconcile") &&
         old.getJSONArray("pending").length() == 0
@@ -439,6 +456,7 @@ internal class TokenBalanceSync(
         root.remove("scan")
         root.remove("reconcile")
         root.remove("reorg")
+        root.remove("invalidated")
       }
       root.put("sampleBlock", sampleBlock).put("sampleHash", sampleHash)
       root
