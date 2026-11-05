@@ -23,6 +23,10 @@ allows browser requests from `https://gizu.io` and `https://www.gizu.io`.
 Submitting an email joins the invitation list. It does not send an email immediately;
 invitations are sent later by the team. No email delivery service is configured here.
 
+Signup requests allow up to 90 seconds for the API to respond, including a slow
+backend startup. A timeout reports that signup could not be confirmed; retrying
+the same email is safe because the backend keeps one row per email address.
+
 ## Retained token discovery components
 
 The retained Swap UI components display a read-only 1inch token catalog for Robinhood Chain
