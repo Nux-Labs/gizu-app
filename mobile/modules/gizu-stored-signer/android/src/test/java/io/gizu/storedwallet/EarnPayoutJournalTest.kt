@@ -42,6 +42,177 @@ class EarnPayoutJournalTest {
     EarnPayoutJournal(file, { key }, wallet, generation)
 
   @Test
+  fun distributionRowBudgetIncludesRichSourceEnvelopesAndSnapshotEscapingBeforeSigning() {
+    val file = File()
+    val j = journal(file)
+    val p =
+      proposal(leg = "invest:0")
+        .put(
+          "distribution",
+          JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(10000))),
+        )
+    val prepared =
+      JSONObject()
+        .put("recoveryEnvelope", "v1." + "a".repeat(180000))
+        .put("payload", "\"".repeat(4096))
+        .toString()
+    val source =
+      JSONObject()
+        .put("baselineEnvelope", "a".repeat(16384))
+        .put("quoteEnvelope", "b".repeat(65536))
+        .put("settlementEnvelope", "c".repeat(131072))
+        .toString()
+    val row = j.create(p, prepared, "nonce0", hash, hash, source)
+    assertTrue(payoutRecoveryStorageBytes(row) > row.toString().toByteArray().size)
+    assertEquals(source, row.getString("sourceRequest"))
+    j.evidence("source-1", "invest:0", 1, 1000)
+    j.saveSigned("source-1", "invest:0", 1, "signed", "review", hash)
+    assertTrue(
+      payoutRecoveryStorageBytes(j.get("source-1", "invest:0")) <= DISTRIBUTION_PAYOUT_STORAGE_BYTES
+    )
+    val before = file.read()
+    assertThrows(IllegalStateException::class.java) {
+      j.update("source-1", "invest:0", 2) { it.put("settlement", "\"".repeat(600000)) }
+    }
+    assertArrayEquals(before, file.read())
+    val other = journal(File())
+    assertThrows(IllegalStateException::class.java) {
+      other.create(p, "\"".repeat(300000), "nonce0", hash, hash, source)
+    }
+    assertTrue(other.all().isEmpty())
+  }
+
+  @Test
+  fun nearCapDistributionPayoutCanSaveSignatureSubmissionAndSettlementWithinReservedGrowth() {
+    val file = File()
+    val p =
+      proposal(leg = "invest:0")
+        .put(
+          "distribution",
+          JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(10000))),
+        )
+    val probe = journal(File()).create(p, "body", "nonce0", hash, hash)
+    val padding =
+      DISTRIBUTION_PAYOUT_STORAGE_BYTES - 128 * 1024 - payoutRecoveryStorageBytes(probe) - 16
+    val j = journal(file)
+    val row = j.create(p, "body" + "x".repeat(padding), "nonce0", hash, hash)
+    val payload = "\"".repeat(4096)
+    val review = "r".repeat(8192)
+    requireDistributionPayoutSigningStorage(row, payload, review, hash)
+    val signed =
+      JSONObject()
+        .put("standard", "erc191")
+        .put("payload", payload)
+        .put("signature", "s".repeat(100))
+        .toString()
+    j.saveSigned("source-1", "invest:0", 1, signed, review, hash)
+    val submission = JSONObject().put("data", "s".repeat(15 * 1024))
+    val settlement = JSONObject().put("data", "s".repeat(31 * 1024))
+    val receipt = JSONObject().put("data", "s".repeat(15 * 1024))
+    for ((field, value) in
+      listOf(
+        "submission" to submission,
+        "settlement" to settlement,
+        "receipt" to receipt,
+      )) requireDistributionPayoutResponseStorage(p, field, value)
+    j.update("source-1", "invest:0", 2) {
+      it
+        .put("submission", submission)
+        .put("settlement", settlement)
+        .put("receipt", receipt)
+        .put("status", "paid")
+    }
+    val saved = j.get("source-1", "invest:0")
+    assertEquals(signed, saved.getString("signedData"))
+    assertTrue(payoutRecoveryStorageBytes(saved) <= DISTRIBUTION_PAYOUT_STORAGE_BYTES)
+    assertThrows(IllegalStateException::class.java) {
+      requireDistributionPayoutSigningStorage(row, "x".repeat(4097), review, hash)
+    }
+    assertThrows(IllegalStateException::class.java) {
+      requireDistributionPayoutResponseStorage(
+        p,
+        "settlement",
+        JSONObject().put("data", "s".repeat(33 * 1024)),
+      )
+    }
+  }
+
+  @Test
+  fun historicalOversizedSignedDistributionRowsKeepExactRecoveryBytes() {
+    for (size in
+      listOf(DISTRIBUTION_PAYOUT_STORAGE_BYTES - 2048, DISTRIBUTION_PAYOUT_STORAGE_BYTES)) {
+      val file = File()
+      val p =
+        proposal(leg = "invest:0")
+          .put(
+            "distribution",
+            JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(10000))),
+          )
+      val row =
+        JSONObject()
+          .put("operationId", "legacy-large")
+          .put("walletId", wallet)
+          .put("revision", 1)
+          .put("leg", "invest:0")
+          .put("proposal", p)
+          .put("preparedText", "x".repeat(size))
+          .put("signedData", "exact-signed-bytes")
+          .put("status", "submissionUnknown")
+      val root =
+        JSONObject()
+          .put("version", 1)
+          .put("walletId", wallet)
+          .put("operations", org.json.JSONArray().put(row))
+      file.write(
+        CryptoEnvelope.encrypt(
+          key,
+          root.toString().toByteArray(),
+          "gizu-earn-payout:v1:$wallet:$wallet".toByteArray(),
+        )
+      )
+      val j = journal(file)
+      j.update("legacy-large", "invest:0", 1) {
+        it
+          .put("status", "awaitingSettlement")
+          .put("settlement", JSONObject().put("data", "x".repeat(4096)))
+      }
+      assertEquals("exact-signed-bytes", j.get("legacy-large").getString("signedData"))
+    }
+  }
+
+  @Test
+  fun siblingInvestmentSlotsReserveIndependentlyAndCannotChangeSavedWeights() {
+    val j = journal(File())
+    val distribution =
+      JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(4000, 6000)))
+    val a =
+      proposal(leg = "invest:0").put("distribution", distribution).put("amountAtoms", "400000")
+    val b =
+      proposal(leg = "invest:1").put("distribution", distribution).put("amountAtoms", "600000")
+    val first = j.create(a, "body", "nonce0", hash, hash)
+    j.create(b, "body", "nonce1", hash, hash)
+    assertEquals(2, j.all().size)
+    assertThrows(IllegalStateException::class.java) { j.create(a, "body", "nonce2", hash, hash) }
+    val changed =
+      JSONObject(a.toString())
+        .put(
+          "distribution",
+          JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(3000, 7000))),
+        )
+    assertThrows(IllegalStateException::class.java) {
+      j.refreshUnsigned(first.getString("operationId"), 1, changed, "body", "nonce0", hash)
+    }
+    assertEquals(
+      listOf(4000, 6000),
+      distributionWeights(
+        j.get(first.getString("operationId"))
+          .getJSONObject("proposal")
+          .getJSONObject("distribution")
+      ),
+    )
+  }
+
+  @Test
   fun encryptedSignedBytesRemainPrivateAndImmutableAcrossRestart() {
     val file = File()
     val j = journal(file)

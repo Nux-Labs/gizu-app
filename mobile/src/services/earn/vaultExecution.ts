@@ -1,3 +1,4 @@
+import { investmentDestination } from "@/domain/earn/distribution";
 import { assertNotAborted } from "./abort";
 import { getSignerCapabilities, getStoredEarnVaultSigner } from "@/services/wallet/nativeBridge";
 import {
@@ -58,7 +59,11 @@ export function createEarnVaultExecutionService(
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ owner: intent.destinations[1].address, operationId, revision }),
+            body: JSON.stringify({
+              owner: investmentDestination(intent).address,
+              operationId,
+              revision,
+            }),
             signal: controller.signal,
           },
         );

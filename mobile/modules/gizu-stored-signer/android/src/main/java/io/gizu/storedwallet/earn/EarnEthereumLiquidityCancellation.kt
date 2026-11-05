@@ -134,6 +134,11 @@ internal fun nativeLiquidityCancellationProposal(
     .put("maxFeePerGasWei", maximum.toString())
     .put("priorityFeePerGasWei", tip.toString())
     .put("maximumGasCostWei", cost.toString())
+    .also {
+      if (original.has("cycleIndex")) it.put("cycleIndex", original.getInt("cycleIndex"))
+      if (original.has("investmentSlot"))
+        it.put("investmentSlot", original.getInt("investmentSlot"))
+    }
 }
 
 internal fun requireSavedLiquidityCancellationAffordable(
@@ -185,14 +190,15 @@ internal class EarnLiquidityCancellationEngine(
   private var displayed: LiquidityCancellationReview? = null
   private var proposal: JSONObject? = null
 
-  private fun walletCheck(record: WalletRecord) {
+  private fun walletCheck(record: WalletRecord, proposal: JSONObject) {
     requireEarnExecutionWallet(record, journal.walletId)
     check(record.journalId == journal.generation)
+    requireActiveEarnCycle(record, proposal)
   }
 
   suspend fun prepare(id: String, revision: Int): LiquidityCancellationReview? {
     check(journal.get(id).getInt("revision") == revision)
-    store.load().use { walletCheck(it) }
+    store.load().use { walletCheck(it, journal.get(id).getJSONObject("proposal")) }
     reconcile()
     val op = journal.get(id)
     if (op.liquidityRawConsumed()) return null
@@ -233,7 +239,7 @@ internal class EarnLiquidityCancellationEngine(
     signer?.close()
     signer =
       store.load().use { record ->
-        walletCheck(record)
+        walletCheck(record, p)
         signerFactory(p.toString(), record.entropy)
       }
     val core = checkNotNull(signer)
@@ -247,7 +253,7 @@ internal class EarnLiquidityCancellationEngine(
   suspend fun execute(review: LiquidityCancellationReview, authority: () -> Unit) {
     check(displayed == review && journal.get(review.id).getInt("revision") == review.revision)
     authority()
-    store.load().use { walletCheck(it) }
+    store.load().use { walletCheck(it, journal.get(review.id).getJSONObject("proposal")) }
     currentCoroutineContext().ensureActive()
     reconcile()
     val op = journal.get(review.id)
@@ -257,7 +263,7 @@ internal class EarnLiquidityCancellationEngine(
     val p = checkNotNull(proposal)
     val state = stateReader(p)
     authority()
-    store.load().use { walletCheck(it) }
+    store.load().use { walletCheck(it, journal.get(review.id).getJSONObject("proposal")) }
     currentCoroutineContext().ensureActive()
     if (review.retry) {
       val saved = op.liquidityCancellationAttempts().last()
@@ -267,7 +273,7 @@ internal class EarnLiquidityCancellationEngine(
         target.put("status", "cancellationPending")
       }
       authority()
-      store.load().use { walletCheck(it) }
+      store.load().use { walletCheck(it, journal.get(review.id).getJSONObject("proposal")) }
       currentCoroutineContext().ensureActive()
       check(
         rpc
@@ -279,7 +285,7 @@ internal class EarnLiquidityCancellationEngine(
       signer = null
       val core =
         store.load().use { record ->
-          walletCheck(record)
+          walletCheck(record, p)
           signerFactory(p.toString(), record.entropy)
         }
       core.use {
@@ -321,7 +327,7 @@ internal class EarnLiquidityCancellationEngine(
           target.put("cancellationAttempts", attempts).put("status", "cancellationPending")
         }
         authority()
-        store.load().use { walletCheck(it) }
+        store.load().use { walletCheck(it, journal.get(review.id).getJSONObject("proposal")) }
         currentCoroutineContext().ensureActive()
         check(
           rpc

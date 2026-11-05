@@ -1,3 +1,4 @@
+import { investmentDestination } from "@/domain/earn/distribution";
 import { earnProfiles, type EarnIntent } from "./types";
 import { earnAtoms, earnObject } from "./vaultExecution";
 import { assertFresh, conservativeResidual } from "./policy";
@@ -40,7 +41,7 @@ function timestamp(v: unknown): number {
 export function parseExitSnapshot(raw: unknown, intent: EarnIntent, now: number): ExitSnapshot {
   const r = earnObject(raw),
     p = earnProfiles[intent.profileId],
-    owner = intent.destinations[1].address,
+    owner = investmentDestination(intent).address,
     wrapped =
       intent.profileId === "ethereum-usdc"
         ? "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -166,7 +167,7 @@ export function assertReturnCredits(
       !Number.isSafeInteger(row.revision) ||
       row.revision < 1 ||
       row.walletId !== intent.walletId ||
-      !same(row.from, intent.destinations[1].address) ||
+      !same(row.from, investmentDestination(intent).address) ||
       row.chainId !== earnProfiles[intent.profileId].chainId ||
       typeof row.blocked !== "boolean" ||
       row.blocked

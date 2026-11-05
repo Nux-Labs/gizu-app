@@ -155,8 +155,9 @@ internal class EarnDepositEngineAdapter(
     }
   }
 
-  override suspend fun prepareDeposit(id: String, attributedAtoms: String): JSONObject {
+  override suspend fun prepareDeposit(id: String, attributedAtoms: String, slot: Int?): JSONObject {
     foreground()
+    selectDepositSlot(slot)
     val existing = sponsored().all().singleOrNull { it.getString("operationId") == id }
     if (
       existing != null &&
@@ -168,7 +169,7 @@ internal class EarnDepositEngineAdapter(
       store.load().use { r ->
         record {}
         checkNotNull(executionGrant).assertRead(r, now())
-        gateway.depositPlan(r, id, attributedAtoms)
+        gateway.depositPlan(r, id, attributedAtoms, slot)
       }
     if (existing != null) {
       pair.first.put("revision", existing.getJSONObject("proposal").getInt("revision") + 1)
@@ -183,6 +184,27 @@ internal class EarnDepositEngineAdapter(
           "userOperation" to depositJsonMap(pair.second),
         )
       )
+    }
+  }
+
+  private fun selectDepositSlot(slot: Int?) {
+    record { r ->
+      val distribution = savedCycleDistribution(r)
+      if (distribution == null) check(slot == null)
+      else check(slot != null && slot in distributionWeights(distribution).indices)
+    }
+    if (slot != null) store.selectEarnInvestmentSlot(cycle, slot)
+  }
+
+  private fun selectDepositChild(stage: String, id: String) {
+    if (stage != "deposit") return
+    val p = sponsored().get(id).getJSONObject("proposal")
+    check(p.getString("kind") == "hoodDeposit" && p.optInt("cycleIndex", 0) == cycle)
+    val slot = if (p.has("investmentSlot")) p.getInt("investmentSlot") else null
+    selectDepositSlot(slot)
+    record { r ->
+      requireActiveEarnCycle(r, p)
+      check(p.getString("expectedFrom").equals(cycleInvestmentAddress(r, slot), true))
     }
   }
 
@@ -215,6 +237,7 @@ internal class EarnDepositEngineAdapter(
 
   override suspend fun execute(stage: String, id: String, grant: EarnDepositApproval) {
     foreground()
+    selectDepositChild(stage, id)
     record { grant.assertRead(it, now()) }
     if (stage == "payouts") {
       payoutEngine(grant).use { engine ->
@@ -292,6 +315,7 @@ internal class EarnDepositEngineAdapter(
     id: String,
     grant: EarnDepositApproval?,
   ): JSONObject {
+    selectDepositChild(stage, id)
     if (stage == "payouts") {
       val journal = payouts()
       val row = journal.get(id)

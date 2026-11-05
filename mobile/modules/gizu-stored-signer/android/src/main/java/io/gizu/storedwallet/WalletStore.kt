@@ -44,6 +44,23 @@ internal class WalletRecord(
       val row = rows.getJSONObject(i)
       require(row.getInt("cycleIndex") in 0..1_000_000 && seen.add(row.getInt("cycleIndex")))
       require(row.getInt("chainId") in listOf(1, 4663))
+      if (row.has("distribution")) {
+        val weights = distributionWeights(row.getJSONObject("distribution"))
+        if (row.has("distributionBudgetAtoms"))
+          depositAtoms(row.getString("distributionBudgetAtoms"), true)
+        if (row.has("investmentSlot"))
+          require(
+            row.getDouble("investmentSlot") == row.getInt("investmentSlot").toDouble() &&
+              row.getInt("investmentSlot") in weights.indices
+          )
+        val withdrawals = row.optJSONObject("withdrawalIndices")
+        withdrawals?.keys()?.asSequence()?.forEach { slot ->
+          require(slot.toInt() in weights.indices)
+          require(
+            withdrawals.getInt(slot) in 3 until JSONObject(roleRegistry).getInt("nextRecipient")
+          )
+        }
+      } else require(!row.has("investmentSlot") && !row.has("withdrawalIndices"))
       if (row.has("withdrawalIndex"))
         require(
           row.getInt("withdrawalIndex") in 3 until JSONObject(roleRegistry).getInt("nextRecipient")
@@ -236,7 +253,7 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
       }
     }
 
-  fun allocateEarnCycle(expected: WalletRecord, chain: Int) =
+  fun allocateEarnCycle(expected: WalletRecord, chain: Int, budgetAtoms: String? = null) =
     synchronized(lock) {
       require(chain in listOf(1, 4663))
       load().use { current ->
@@ -249,9 +266,17 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
         val next =
           (0 until rows.length())
             .maxOfOrNull { rows.getJSONObject(it).getInt("cycleIndex") }
-            ?.let { maxOf(it, current.discoveryHighWater) + 1 }
+            ?.let { Math.addExact(maxOf(it, current.discoveryHighWater), 1) }
             ?: maxOf(1, current.discoveryHighWater + 1)
-        rows.put(cycleRow(current.id, next, chain))
+        rows.put(
+          cycleRow(current.id, next, chain).also { row ->
+            if (budgetAtoms != null)
+              row
+                .put("distribution", chooseEarnDistribution(budgetAtoms))
+                .put("distributionBudgetAtoms", budgetAtoms)
+                .put("investmentSlot", 0)
+          }
+        )
         replacement(current, chain = chain, cycle = next, cycles = rows.toString()).use { save(it) }
       }
     }
@@ -268,8 +293,26 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
       }
     }
 
+  fun selectEarnInvestmentSlot(index: Int, slot: Int) =
+    synchronized(lock) {
+      load().use { current ->
+        check(current.verified)
+        val rows = JSONArray(current.earnCycles)
+        val row = rows.objects().single { it.getInt("cycleIndex") == index }
+        require(slot in distributionWeights(row.getJSONObject("distribution")).indices)
+        row.put("investmentSlot", slot)
+        replacement(current, chain = row.getInt("chainId"), cycle = index, cycles = rows.toString())
+          .use { save(it) }
+      }
+    }
+
   /** Commit unsigned draft identity with its fresh cycle before the journey file is created. */
-  fun prepareEarnDepositCycle(expected: WalletRecord, chain: Int, draftId: String?): String =
+  fun prepareEarnDepositCycle(
+    expected: WalletRecord,
+    chain: Int,
+    draftId: String?,
+    budgetAtoms: String? = null,
+  ): String =
     synchronized(lock) {
       check(chain == 4663)
       load().use { current ->
@@ -287,6 +330,13 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           check(existing != null) { "Deposit draft was not allocated by this device" }
         if (existing != null) {
           check(existing.getInt("chainId") == chain)
+          check(!existing.optBoolean("depositAbandoned")) {
+            "This unsigned draft was discarded; prepare a new deposit"
+          }
+          if (existing.has("distributionBudgetAtoms") && budgetAtoms != null)
+            check(existing.getString("distributionBudgetAtoms") == budgetAtoms) {
+              "Resume the saved deposit budget or start a new deposit"
+            }
           replacement(current, chain = chain, cycle = existing.getInt("cycleIndex")).use {
             save(it)
           }
@@ -305,6 +355,13 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           cycleRow(current.id, next, chain)
             .put("depositJourneyId", id)
             .put("depositFinished", false)
+            .also {
+              if (budgetAtoms != null)
+                it
+                  .put("distribution", chooseEarnDistribution(budgetAtoms))
+                  .put("distributionBudgetAtoms", budgetAtoms)
+                  .put("investmentSlot", 0)
+            }
         )
         replacement(current, chain = chain, cycle = next, cycles = rows.toString()).use { save(it) }
         id
@@ -312,7 +369,11 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
     }
 
   /** Call only after the journey journal has durably saved its independently verified result. */
-  fun completeEarnDepositCycle(expected: WalletRecord, journeyId: String) =
+  fun completeEarnDepositCycle(
+    expected: WalletRecord,
+    journeyId: String,
+    abandoned: Boolean = false,
+  ) =
     synchronized(lock) {
       load().use { current ->
         checkIdentity(current, expected)
@@ -328,6 +389,7 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
               it.optString("depositJourneyId") == journeyId
           }
         cycle.put("depositFinished", true)
+        if (abandoned) cycle.put("depositAbandoned", true)
         replacement(current, cycles = rows.toString()).use { save(it) }
       }
     }
@@ -344,12 +406,19 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           (0 until rows.length()).map(rows::getJSONObject).single {
             it.getInt("cycleIndex") == current.earnCycleIndex
           }
-        if (row.has("withdrawalIndex")) return@synchronized row.getInt("withdrawalIndex")
+        val slot = selectedInvestmentSlot(current)
+        val withdrawals =
+          if (slot == null) row
+          else
+            row.optJSONObject("withdrawalIndices")
+              ?: JSONObject().also { row.put("withdrawalIndices", it) }
+        val field = slot?.toString() ?: "withdrawalIndex"
+        if (withdrawals.has(field)) return@synchronized withdrawals.getInt(field)
         val registry = JSONObject(current.roleRegistry)
         val index = registry.getInt("nextRecipient")
         check(index < Int.MAX_VALUE)
         registry.put("nextRecipient", index + 1)
-        row.put("withdrawalIndex", index)
+        withdrawals.put(field, index)
         replacement(current, registry = registry.toString(), cycles = rows.toString()).use {
           save(it)
         }
@@ -403,16 +472,37 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           val index = row.getInt("cycleIndex")
           val existing = merged[index]
           if (existing == null) merged[index] = JSONObject(row.toString())
-          else
+          else {
+            // A cycle's derivation and plan are immutable, including legacy absence.
+            check(existing.has("distribution") == row.has("distribution")) {
+              "RECOVERY_METADATA_CONFLICT"
+            }
             for (field in row.keys()) {
-              if (
-                existing.has(field) && existing.get(field).toString() != row.get(field).toString()
+              if (field == "investmentSlot")
+                continue // Local navigation is not recovered authority.
+              if (field == "withdrawalIndices" && existing.has(field)) {
+                val localIndices = existing.getJSONObject(field)
+                val remoteIndices = row.getJSONObject(field)
+                for (slot in remoteIndices.keys()) {
+                  check(
+                    !localIndices.has(slot) ||
+                      localIndices.getInt(slot) == remoteIndices.getInt(slot)
+                  ) {
+                    "RECOVERY_METADATA_CONFLICT"
+                  }
+                  localIndices.put(slot, remoteIndices.getInt(slot))
+                }
+              } else if (
+                existing.has(field) && !nativeJsonEqual(existing.get(field), row.get(field))
               ) {
                 // Completion is monotonic; all identity/recipient conflicts fail closed.
-                check(field == "depositFinished") { "RECOVERY_METADATA_CONFLICT" }
+                check(field in setOf("depositFinished", "depositAbandoned")) {
+                  "RECOVERY_METADATA_CONFLICT"
+                }
                 existing.put(field, existing.getBoolean(field) || row.getBoolean(field))
               } else existing.put(field, row.get(field))
             }
+          }
         }
         val registry = JSONObject(current.roleRegistry)
         registry.put(

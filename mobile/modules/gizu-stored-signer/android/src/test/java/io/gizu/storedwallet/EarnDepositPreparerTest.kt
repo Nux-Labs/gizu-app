@@ -26,6 +26,31 @@ internal fun testDepositJournal(file: WalletFile = DepositMemoryFile()): EarnDep
   return EarnDepositJournal(file, { key }, DepositFixtures.wallet, DepositFixtures.wallet)
 }
 
+internal fun distributionDepositRecord(
+  weights: List<Int> = listOf(2500, 7500),
+  budgetAtoms: String? = null,
+): WalletRecord =
+  WalletRecord(
+    DepositFixtures.wallet,
+    StoredPasskey(byteArrayOf(1), ByteArray(32), ByteArray(32)),
+    ByteArray(32),
+    true,
+    DepositFixtures.wallet,
+    INITIAL_ROLE_REGISTRY,
+    4663,
+    false,
+    0,
+    JSONArray()
+      .put(
+        JSONObject()
+          .put("cycleIndex", 0)
+          .put("chainId", 4663)
+          .put("distribution", JSONObject().put("version", 1).put("weightsBps", JSONArray(weights)))
+          .also { if (budgetAtoms != null) it.put("distributionBudgetAtoms", budgetAtoms) }
+      )
+      .toString(),
+  )
+
 class EarnDepositPreparerTest {
   private fun sourceDraft(r: WalletRecord): DepositSourceDraft {
     val review = DepositFixtures.review(r)
@@ -84,6 +109,65 @@ class EarnDepositPreparerTest {
       .put("previewShares", assets.toString())
       .put("maxSharePrice", "1000000000000000000000000000")
       .toString()
+  }
+
+  @Test
+  fun distributionPreparesOnlyInvestmentSlotsAndReviewsIndependentVaultBudgets() = runBlocking {
+    for (weights in listOf(listOf(10000), listOf(2500, 7500), List(5) { 2000 })) {
+      distributionDepositRecord(weights).use { record ->
+        val requests = mutableListOf<Pair<String, JSONObject>>()
+        val gateway =
+          EarnDepositGateway(
+            { path, text ->
+              val body = JSONObject(text)
+              requests.add(path to body)
+              previewResponse(path, body, 1000)
+            },
+            { 1000 },
+            feeValidator = { 0 },
+          )
+        val draft = DepositFixtures.record().use { sourceDraft(it) }
+        val journal = testDepositJournal()
+        val row =
+          EarnDepositPreparer(journal, gateway, { _, _ -> draft }, {}, { 1000 })
+            .prepare(record, 4663, "1010000", null)
+        assertEquals("review", row.getString("phase"))
+        val review = row.getJSONObject("review")
+        assertEquals(weights, distributionWeights(review.getJSONObject("distribution")))
+        val allocations =
+          review.getJSONArray("sources").getJSONObject(0).getJSONArray("allocations")
+        assertEquals(weights.size, allocations.length())
+        assertEquals(
+          "990000",
+          allocations.objects().sumOf { it.getString("inputAtoms").toLong() }.toString(),
+        )
+        val deposits = review.getJSONArray("deposits").objects()
+        assertEquals(weights.size, deposits.size)
+        assertEquals(weights.size, requests.count { it.first == "/robinhood/deposit-preview" })
+        assertEquals(
+          weights.indices.map { "invest:$it" },
+          requests
+            .filter { it.first == "/native/payout/preview" }
+            .map { it.second.getString("leg") },
+        )
+        for (slot in weights.indices) {
+          assertEquals(
+            cycleInvestmentAddress(record, slot),
+            allocations.getJSONObject(slot).getString("recipient"),
+          )
+          assertEquals(slot, deposits[slot].getInt("slot"))
+          assertEquals(cycleInvestmentAddress(record, slot), deposits[slot].getString("recipient"))
+        }
+        assertEquals(
+          (990000L - weights.size * 21000L).toString(),
+          review.getJSONObject("deposit").getString("estimatedAssetsAtoms"),
+        )
+        val public = JSONObject(journal.publicSnapshot(row.getString("journeyId")))
+        assertEquals(weights.size, public.getJSONObject("review").getJSONArray("deposits").length())
+        assertFalse(public.toString().contains("fundingRows"))
+        assertFalse(public.toString().contains("roleRegistry"))
+      }
+    }
   }
 
   @Test

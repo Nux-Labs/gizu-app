@@ -139,6 +139,11 @@ internal class EarnDepositPreparer(
       check(row.getString("phase") == "preparing" && row.getJSONObject("children").length() == 0)
       check(row.getString("budgetAtoms") == budgetAtoms)
       check(draft.rows.isNotEmpty())
+      savedCycleDistribution(record)?.let { distribution ->
+        return prepareDistribution(record, profile, budgetAtoms, id, draft, distribution) {
+          stage = it
+        }
+      }
       val sources = JSONArray()
       var offset = BigInteger.ZERO
       var minimumInvest = BigInteger.ZERO
@@ -337,5 +342,218 @@ internal class EarnDepositPreparer(
       if (failure is CancellationException) throw failure
       return journal.get(id)
     }
+  }
+
+  private suspend fun prepareDistribution(
+    record: WalletRecord,
+    profile: Int,
+    budgetAtoms: String,
+    id: String,
+    draft: DepositSourceDraft,
+    distribution: JSONObject,
+    stage: (String) -> Unit,
+  ): JSONObject {
+    val weights = distributionWeights(distribution)
+    val sources = JSONArray()
+    var offset = BigInteger.ZERO
+    var sourceExpiry = Long.MAX_VALUE
+    var payoutExpiry = Long.MAX_VALUE
+    suspend fun readPayouts(source: JSONObject, revision: Int) = supervisorScope {
+      val allocations = source.getJSONArray("allocations")
+      val tasks =
+        weights.indices.map { slot ->
+          async {
+            gateway.payoutPreview(
+              record,
+              source.getString("operationId"),
+              revision,
+              "invest:$slot",
+              allocations.getJSONObject(slot).getString("inputAtoms"),
+            )
+          }
+        }
+      for (slot in weights.indices) {
+        stage("invest:$slot-preview")
+        val preview = tasks[slot].await()
+        allocations
+          .getJSONObject(slot)
+          .put("estimatedOutputAtoms", preview.getString("estimatedOutputAtoms"))
+          .put("minimumOutputAtoms", preview.getString("minimumOutputAtoms"))
+          .put("providerFeeBps", preview.getInt("providerFeeBps"))
+        payoutExpiry = minOf(payoutExpiry, preview.getLong("expiresAtMs"))
+      }
+    }
+    for (child in
+      draft.rows.sortedBy { it.getJSONObject("proposal").getInt("sourceAccountIndex") }) {
+      val proposal = child.getJSONObject("proposal")
+      val sourceId = child.getString("operationId")
+      val credit = depositAtoms(checkNotNull(draft.minimumCredits[sourceId]), true)
+      val amounts = distributionAmounts(distribution, credit, offset)
+      val source =
+        JSONObject()
+          .put("operationId", sourceId)
+          .put("accountIndex", proposal.getInt("sourceAccountIndex"))
+          .put("address", proposal.getString("expectedFrom"))
+          .put("budgetAtoms", proposal.getString("budgetAtoms"))
+          .put("amountAtoms", proposal.getString("amountAtoms"))
+          .put("maximumFeeAtoms", proposal.getString("maximumTokenFeeAtoms"))
+          .put("minimumCreditAtoms", credit.toString())
+          .put(
+            "retainedAtoms",
+            (depositAtoms(proposal.getString("budgetAtoms")) -
+                depositAtoms(proposal.getString("amountAtoms")) -
+                depositAtoms(proposal.getString("maximumTokenFeeAtoms")))
+              .toString(),
+          )
+          .put(
+            "allocations",
+            JSONArray(
+              amounts.mapIndexed { slot, amount ->
+                JSONObject()
+                  .put("recipient", cycleInvestmentAddress(record, slot))
+                  .put("inputAtoms", amount.toString())
+              }
+            ),
+          )
+      readPayouts(source, proposal.getInt("revision"))
+      sources.put(source)
+      sourceExpiry = minOf(sourceExpiry, Math.multiplyExact(proposal.getLong("deadline"), 1000))
+      offset += credit
+    }
+    fun publishIndicative() {
+      val saved = journal.get(id)
+      journal.update(id, saved.getInt("revision")) {
+        check(it.getString("phase") == "preparing" && it.getString("budgetAtoms") == budgetAtoms)
+        val estimated =
+          sources
+            .objects()
+            .flatMap { source -> source.getJSONArray("allocations").objects() }
+            .fold(BigInteger.ZERO) { sum, allocation ->
+              sum + depositAtoms(allocation.getString("estimatedOutputAtoms"), true)
+            }
+        val fees =
+          sources.objects().fold(BigInteger.ZERO) { sum, source ->
+            sum + depositAtoms(source.getString("maximumFeeAtoms"), true)
+          }
+        it.put(
+          "indicativeReview",
+          JSONObject()
+            .put("quotedAtMs", now())
+            .put("sourceBudgetAtoms", budgetAtoms)
+            .put("holdEstimatedAtoms", "0")
+            .put("investEstimatedAtoms", estimated.toString())
+            .put("sourceMaximumFeeAtoms", fees.toString()),
+        )
+      }
+    }
+    fun minimums() =
+      weights.indices.map { slot ->
+        sources.objects().fold(BigInteger.ZERO) { sum, source ->
+          sum +
+            depositAtoms(
+              source
+                .getJSONArray("allocations")
+                .getJSONObject(slot)
+                .getString("minimumOutputAtoms"),
+              true,
+            )
+        }
+      }
+    publishIndicative()
+    var completed: List<JSONObject>? = null
+    for (attempt in 0 until 3) {
+      val saved = journal.get(id)
+      check(saved.getString("phase") == "preparing")
+      val minimums = minimums()
+      stage("vault-preview")
+      val previews = supervisorScope {
+        weights.indices
+          .map { slot ->
+            async {
+              gateway.depositPreview(
+                record,
+                id,
+                saved.getInt("revision"),
+                minimums[slot].toString(),
+                slot = slot,
+              )
+            }
+          }
+          .map { it.await() }
+      }
+      if (payoutExpiry <= now() + 15000) {
+        payoutExpiry = Long.MAX_VALUE
+        for (source in sources.objects()) {
+          val proposal =
+            draft.rows
+              .single { it.getString("operationId") == source.getString("operationId") }
+              .getJSONObject("proposal")
+          readPayouts(source, proposal.getInt("revision"))
+        }
+        publishIndicative()
+        continue
+      }
+      if (
+        previews.indices.all { slot ->
+          val preview = previews[slot]
+          val required =
+            listOf("depositAmount", "depositFeeBudget", "withdrawalReserve").fold(
+              BigInteger.ZERO
+            ) { sum, field ->
+              sum + depositAtoms(preview.getString(field), true)
+            }
+          required <= minimums[slot] &&
+            minOf(sourceExpiry, payoutExpiry, preview.getLong("expiresAtMs")) > now() + 15000
+        }
+      ) {
+        completed = previews
+        break
+      }
+    }
+    val previews = checkNotNull(completed) { "Fresh distribution deposit terms did not converge" }
+    check(
+      previews.all { it.getString("policyVersion") == previews.first().getString("policyVersion") }
+    )
+    val deposits =
+      previews.mapIndexed { slot, preview ->
+        vaultApprovalBounds(preview)
+          .put("slot", slot)
+          .put("recipient", cycleInvestmentAddress(record, slot))
+      }
+    val saved = journal.get(id)
+    check(saved.getString("phase") == "preparing")
+    val quotedAt = now()
+    val review =
+      JSONObject()
+        .put("walletId", record.id)
+        .put("generation", record.journalId)
+        .put("cycleIndex", record.earnCycleIndex)
+        .put("roleRegistry", JSONObject(record.roleRegistry))
+        .put("profileChainId", profile)
+        .put("confidentialAccount", cycleConfidential(record))
+        .put("journeyId", id)
+        .put("destinations", JSONArray(cycleAddresses(record)))
+        .put("distribution", JSONObject(distribution.toString()))
+        .put("policyVersion", previews.first().getString("policyVersion"))
+        .put("sourceRefreshWithinLimits", true)
+        .put("quotedAtMs", quotedAt)
+        .put(
+          "expiresAtMs",
+          minOf(
+            quotedAt + 45000,
+            sourceExpiry,
+            payoutExpiry,
+            previews.minOf { it.getLong("expiresAtMs") },
+          ),
+        )
+        .put("sourceBudgetAtoms", budgetAtoms)
+        .put("sources", sources)
+        .put("fundingRows", JSONArray(draft.rows))
+        .put("reservation", draft.reservation)
+        .put("deposits", JSONArray(deposits))
+        .put("deposit", aggregateDepositBounds(deposits))
+    stage("review-validation")
+    EarnDepositApproval.fromReview(record, review).invalidate()
+    return journal.saveReview(id, saved.getInt("revision"), review)
   }
 }

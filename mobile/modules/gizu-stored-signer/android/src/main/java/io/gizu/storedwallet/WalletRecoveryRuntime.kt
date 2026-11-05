@@ -258,14 +258,11 @@ internal object WalletRecoveryRuntime {
         }
         if (found) {
           discovered++
-          val cycles = JSONArray(record.earnCycles)
           val tracked =
-            row.getString("derivation") == "legacy" &&
-              (0 until cycles.length()).any { index ->
-                cycles.getJSONObject(index).let {
-                  it.getInt("cycleIndex") == cycle && it.getInt("chainId") == chain
-                }
-              }
+            discoveredOwnerTracked(
+              record,
+              JSONObject(row.toString()).put("chainId", chain).put("cycleIndex", cycle),
+            )
           walletStore(context).recordDiscovered(record, cycle, !tracked)
         }
         registry.observed(chain, cycle, i + 1, discovered, row, found)

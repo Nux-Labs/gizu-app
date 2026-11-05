@@ -82,7 +82,8 @@ rules and temporary shared replay guards are described in
 [the backend protocol](../../backend/docs/wallet-recovery.md).
 
 Build and distribute the updated Android app only after the backend recovery
-routes are available. This branch does not deploy services, modify production
-data or merge the separately pushed distribution feature. Distribution-v1
-discovery support is present for forward compatibility; the deposit distribution
-implementation remains on `feat/distribution-algorithm`.
+routes are available. The distribution branch combines this recovery support with
+algorithm-selected deposits. Recovery preserves each saved distribution plan and
+wallet slot, and discovery recognizes owners already covered by that plan.
+Restored withdrawals retain the selected investment slot and its receiver indices.
+No deployment or production data changes are performed by the branch update.

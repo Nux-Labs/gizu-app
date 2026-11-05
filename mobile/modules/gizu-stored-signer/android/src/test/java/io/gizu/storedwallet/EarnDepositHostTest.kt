@@ -369,4 +369,89 @@ class EarnDepositHostTest {
       scope.cancel()
     }
   }
+
+  @Test
+  fun fiveWalletTwoSourceReviewFitsBoundedPayoutStorageAndOversizedHistoryFailsClosed() {
+    DistributionDepositFixtures.record(listOf(1000, 1500, 2000, 2500, 3000)).use { record ->
+      val review = DistributionDepositFixtures.review(record)
+      review.getJSONArray("sources").put(org.json.JSONObject().put("operationId", "source1"))
+      requireDepositCapacity(review, emptyList(), emptyList())
+      val oversized =
+        listOf(
+          org.json
+            .JSONObject()
+            .put("proposal", org.json.JSONObject().put("operationId", "old").put("leg", "hold"))
+            .put("status", "paid")
+            .put("preparedText", "x".repeat(6 * 1024 * 1024))
+        )
+      assertThrows(IllegalStateException::class.java) {
+        requireDepositCapacity(review, emptyList(), oversized)
+      }
+    }
+  }
+
+  @Test
+  fun distributionCapacityReservesEverySlotBeforeFunding() {
+    DistributionDepositFixtures.record(listOf(1000, 1500, 2000, 2500, 3000)).use { record ->
+      val review = DistributionDepositFixtures.review(record)
+      val sponsored = (0 until 251).map { org.json.JSONObject().put("operationId", "old-$it") }
+      assertThrows(IllegalStateException::class.java) {
+        requireDepositCapacity(review, sponsored, emptyList())
+      }
+      requireDepositCapacity(review, sponsored.take(250), emptyList())
+      val payouts =
+        (0 until 252).map {
+          org.json
+            .JSONObject()
+            .put("proposal", org.json.JSONObject().put("operationId", "old-$it").put("leg", "hold"))
+        }
+      assertThrows(IllegalStateException::class.java) {
+        requireDepositCapacity(review, emptyList(), payouts)
+      }
+      requireDepositCapacity(review, emptyList(), payouts.take(251))
+    }
+  }
+
+  @Test
+  fun oneNativeApprovalCoversAllDistributionWalletsAndPendingSiblingResume() = runBlocking {
+    DistributionDepositFixtures.record(listOf(3000, 3000, 4000)).use { record ->
+      val journal = testDepositJournal()
+      val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+      journal.saveReview(id, 1, DistributionDepositFixtures.review(record).put("journeyId", id))
+      val engines =
+        EarnDepositCoordinatorTest.Engines(record).apply {
+          creditReady = true
+          pendingDepositSlot = 1
+        }
+      val waiting = CompletableDeferred<Unit>()
+      val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+      var approvals = 0
+      val host =
+        EarnDepositHost(
+          scope,
+          journal,
+          { DistributionDepositFixtures.record(listOf(3000, 3000, 4000)) },
+          { EarnDepositCoordinator(journal, engines) },
+          { _, _, _ -> approvals++ },
+          {},
+          now = { 1002 },
+          wait = { waiting.await() },
+        )
+      try {
+        host.confirm(id, 2, false)
+        assertEquals(1, approvals)
+        assertTrue(host.busy)
+        assertEquals(listOf(0, 1, 2), engines.signedDeposits)
+        assertEquals("depositing", host.status(id)["phase"])
+        engines.rows.getValue("vault_${id}_1").put("status", "finalized")
+        waiting.complete(Unit)
+        assertEquals("invested", host.status(id)["phase"])
+        assertEquals(1, approvals)
+        assertEquals(7, engines.signed)
+        assertFalse(host.busy)
+      } finally {
+        scope.cancel()
+      }
+    }
+  }
 }

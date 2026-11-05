@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "@fastify/type-provider-zod";
 import { z } from "zod";
+import { payoutLegSchema } from "../../adapters/earn/distribution.ts";
 import type { RobinhoodDepositPreviewPlanner } from "../../adapters/earn/robinhood-deposit-preview.ts";
 import type { EarnPayoutPreviewGateway } from "../../adapters/earn/payout-preview.ts";
 const addr = z
@@ -66,7 +67,7 @@ export function registerEarnPreviewRoutes(
             confidentialAccount: addr,
             recipient: addr,
             amountAtoms: atoms,
-            leg: z.enum(["hold", "invest"]),
+            leg: payoutLegSchema,
           })
           .strict(),
       },

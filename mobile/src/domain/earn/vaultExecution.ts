@@ -1,3 +1,8 @@
+import {
+  investmentDestination,
+  investmentSlotField,
+  assertInvestmentSlot,
+} from "@/domain/earn/distribution";
 import { earnProfiles, type EarnIntent } from "./types";
 import { ceilDiv } from "./policy";
 export const ethereumEarnRouter = "0x02912516d49dE997db75B9D7858faAE59209650B";
@@ -47,6 +52,7 @@ export type VaultProposal = Omit<
 > & {
   walletId: string;
   cycleIndex?: number;
+  investmentSlot?: number;
   chainId: 1;
   expectedFrom: string;
   vault: string;
@@ -130,11 +136,11 @@ function owner(intent: EarnIntent): string {
   if (
     intent.status !== "prepared" ||
     intent.profileId !== "ethereum-usdc" ||
-    intent.destinations[1].role !== "invest" ||
-    intent.destinations[1].chainId !== 1
+    investmentDestination(intent).role !== "invest" ||
+    investmentDestination(intent).chainId !== 1
   )
     throw new Error("Native Ethereum execution is unavailable for this intent.");
-  return address(intent.destinations[1].address);
+  return address(investmentDestination(intent).address);
 }
 function gas(v: unknown): number[] {
   if (!Array.isArray(v) || v.length < 1 || v.length > 2)
@@ -385,6 +391,7 @@ export function vaultProposal(plan: VaultPlan, intent: EarnIntent, now: number):
     ...proposal,
     walletId: intent.walletId,
     ...(intent.cycleIndex ? { cycleIndex: intent.cycleIndex } : {}),
+    ...investmentSlotField(intent),
     chainId: 1,
     expectedFrom,
     vault: earnProfiles[intent.profileId].vault,
@@ -400,6 +407,7 @@ export function parseVaultOperations(value: unknown, intent: EarnIntent): VaultO
   return value.map((v) => {
     const row = earnObject(v),
       operationId = id(row.operationId);
+    assertInvestmentSlot(row, intent);
     if (
       seen.has(operationId) ||
       row.walletId !== intent.walletId ||

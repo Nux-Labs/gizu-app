@@ -22,7 +22,12 @@ export const earnProfiles = {
   },
 } as const;
 export type EarnOwner = { walletId: string; address?: string };
-export type EarnDestination = { role: "hold" | "invest"; address: string; chainId: 1 | 4663 };
+export type EarnDestination = {
+  role: "hold" | "invest";
+  slot?: number;
+  address: string;
+  chainId: 1 | 4663;
+};
 export type EarnIntent = {
   status: "prepared" | "recoveryRequired";
   version: "gizu-earn-v1" | "gizu-earn-v2";
@@ -34,7 +39,10 @@ export type EarnIntent = {
   sourceChainId: 143;
   confidentialAddress: string;
   backupCovered: true;
-  destinations: [EarnDestination, EarnDestination];
+  destinations: [EarnDestination, ...EarnDestination[]];
+  distribution?: import("./distribution").EarnDistribution;
+  investmentSlot?: number;
+  distributionBudgetAtoms?: string;
 };
 export type EarnWalletState = EarnIntent | { status: "absent" | "recoveryRequired" };
 export interface EarnWalletService {
@@ -42,6 +50,12 @@ export interface EarnWalletService {
   prepare(owner: EarnOwner, profile: EarnProfileId): Promise<EarnIntent>;
   list?(owner: EarnOwner): Promise<EarnIntent[]>;
   prepareNew?(owner: EarnOwner, profile: EarnProfileId): Promise<EarnIntent>;
+  prepareDistribution?(
+    owner: EarnOwner,
+    profile: EarnProfileId,
+    budgetAtoms: string,
+  ): Promise<EarnIntent>;
+  selectInvestmentSlot?(owner: EarnOwner, intentId: string, slot: number): Promise<EarnIntent>;
   select?(owner: EarnOwner, intentId: string): Promise<EarnIntent>;
   cancel(): void;
 }

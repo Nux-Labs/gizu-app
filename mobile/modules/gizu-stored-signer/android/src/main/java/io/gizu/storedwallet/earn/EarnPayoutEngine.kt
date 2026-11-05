@@ -75,7 +75,9 @@ private fun payoutIdentities(record: WalletRecord, leg: String) =
   PayoutIdentities(
     deriveAccountAddresses(record.entropy)[0],
     cycleConfidential(record),
-    cycleAddresses(record)[if (leg == "hold") 0 else 1],
+    savedCycleDistribution(record)?.let {
+      cycleInvestmentAddress(record, distributionSlot(leg, it))
+    } ?: cycleAddresses(record)[if (leg == "hold") 0 else 1],
   )
 
 internal fun nativePayoutSource(
@@ -182,7 +184,16 @@ internal fun nativePayoutBatchOffset(
   return offset.toString()
 }
 
-internal fun nativePayoutAmount(credited: String, offset: String, leg: String): String {
+internal fun nativePayoutAmount(
+  credited: String,
+  offset: String,
+  leg: String,
+  distribution: JSONObject? = null,
+): String {
+  if (distribution != null)
+    return distributionAmounts(distribution, credited.toBigInteger(), offset.toBigInteger())[
+        distributionSlot(leg, distribution)]
+      .toString()
   val credit = credited.toBigInteger()
   val prefix = offset.toBigInteger()
   val total = prefix + credit
@@ -228,6 +239,7 @@ internal class EarnPayoutEngine(
     if (proposal != null) {
       check(proposal.getInt("profileChainId") == record.earnChain)
       requireActiveEarnCycle(record, proposal)
+      requireSavedDistribution(record, proposal)
       val pair = identities(record, proposal.getString("leg"))
       check(
         proposal.getString("expectedSigner").equals(pair.confidential, true) &&
@@ -249,7 +261,12 @@ internal class EarnPayoutEngine(
     val revision = request["sourceRevision"] as? Number ?: error("Missing source revision")
     check(revision.toDouble() == revision.toInt().toDouble() && revision.toInt() > 0)
     val leg = request["leg"] as? String ?: error("Missing payout role")
-    check(leg in setOf("hold", "invest"))
+    val distribution =
+      store.load().use { record ->
+        walletCheck(record)
+        check(leg in cyclePayoutLegs(record))
+        savedCycleDistribution(record)
+      }
     val pair =
       store.load().use { record ->
         walletCheck(record)
@@ -281,6 +298,7 @@ internal class EarnPayoutEngine(
           .put("sourceAccountIndex", selectedIndex)
           .put("cycleIndex", cycle)
           .put("splitOffsetAtoms", offset)
+          .also { if (distribution != null) it.put("distribution", distribution) }
       }
     val prepared =
       gateway.prepare(
@@ -312,7 +330,7 @@ internal class EarnPayoutEngine(
         q.destinationRecipient.equals(pair.recipient, true) &&
         q.confidentialAccount.equals(pair.confidential, true)
     )
-    val amount = nativePayoutAmount(credited, offset, leg)
+    val amount = nativePayoutAmount(credited, offset, leg, distribution)
     check(q.amountAtoms == amount)
     val p =
       JSONObject()
@@ -335,6 +353,7 @@ internal class EarnPayoutEngine(
         .put("quoteId", q.quoteId)
         .put("minimumDestinationAtoms", q.minimumDestinationAtoms)
         .put("deadlineMs", q.deadlineMs.toLong())
+    if (distribution != null) p.put("distribution", distribution)
     if (sourceProposal.has("fundingBatchId"))
       p.put("fundingBatchId", sourceProposal.getString("fundingBatchId"))
         .put("fundingBatchSize", sourceProposal.getInt("fundingBatchSize"))
@@ -539,6 +558,8 @@ internal class EarnPayoutEngine(
       val core = checkNotNull(signer)
       val evidence = journal.evidence(review.id, leg, review.revision, now())
       check(core.reviewHash() == review.hash)
+      val boundedPrepared = gateway.decode(op.getString("preparedText"), false)
+      requireDistributionPayoutSigningStorage(op, boundedPrepared.payload, review.text, review.hash)
       authority()
       core.approve(review.coreRevision, review.hash)
       val signed = core.sign(review.coreRevision, evidence)
@@ -576,6 +597,8 @@ internal class EarnPayoutEngine(
     currentCoroutineContext().ensureActive()
     store.load().use { walletCheck(it, p) }
     val response = gateway.submit(submission(op, JSONObject(op.getString("signedData"))))
+    if (op.has("distributionStorageVersion"))
+      requireDistributionPayoutResponseStorage(p, "submission", response)
     validateResponseIdentity(response, p)
     check(response.getString("status") in setOf("submitted", "submissionUnknown"))
     op =
@@ -598,6 +621,7 @@ internal class EarnPayoutEngine(
       .put("leg", p.getString("leg"))
       .put("quoteId", p.getString("quoteId"))
       .put("signedData", signedData)
+      .also { if (p.has("distribution")) it.put("distribution", p.getJSONObject("distribution")) }
   }
 
   private fun validateResponseIdentity(row: JSONObject, p: JSONObject) {
@@ -625,7 +649,7 @@ internal class EarnPayoutEngine(
       submission(op, signedData).put("submittedIntent", JSONObject(op.getString("signedData")))
     val privateQuote = gateway.decode(op.getString("preparedText"), false).reference
     var row = gateway.settlement(request)
-    validateSettlement(row, p)
+    validateSettlement(row, p, op.has("distributionStorageVersion"))
     var nextScan: String? = null
     if (row.getString("status") == "awaitingDestinationConfirmation") {
       val scan =
@@ -643,7 +667,7 @@ internal class EarnPayoutEngine(
       if (scan.transactionHash != null) {
         request.put("destinationTransactionHash", scan.transactionHash)
         row = gateway.settlement(request)
-        validateSettlement(row, p)
+        validateSettlement(row, p, op.has("distributionStorageVersion"))
       }
     }
     if (row.getString("status") == "delivered") {
@@ -655,6 +679,8 @@ internal class EarnPayoutEngine(
           row.getString("receivedAtoms"),
           eventTopic,
         )
+      if (op.has("distributionStorageVersion"))
+        requireDistributionPayoutResponseStorage(p, "receipt", receipt)
       requireUnusedPayoutReceipt(journal.all(), op, receipt.getString("transactionHash"))
       return journal.update(id, op.getString("leg"), revision) {
         it
@@ -681,7 +707,8 @@ internal class EarnPayoutEngine(
     }
   }
 
-  private fun validateSettlement(row: JSONObject, p: JSONObject) {
+  private fun validateSettlement(row: JSONObject, p: JSONObject, bounded: Boolean) {
+    if (bounded) requireDistributionPayoutResponseStorage(p, "settlement", row)
     validateResponseIdentity(row, p)
     earnHash(row.getString("nativeTlsBodyHash"))
     check(

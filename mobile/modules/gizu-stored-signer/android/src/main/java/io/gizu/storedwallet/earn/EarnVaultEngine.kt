@@ -34,7 +34,9 @@ internal fun canonicalEarnVaultProposal(
 ): JSONObject {
   check(
     request.keys.containsAll(earnProposalFields + "walletId") &&
-      request.keys.all { it in earnProposalFields + setOf("walletId", "cycleIndex") } &&
+      request.keys.all {
+        it in earnProposalFields + setOf("walletId", "cycleIndex", "investmentSlot")
+      } &&
       request["walletId"] == walletId
   )
   val p = JSONObject(request)
@@ -147,8 +149,9 @@ internal class EarnVaultEngine(
     reconcileEarnVaultOperations(journal, rpc, eventTopic)
     return store.load().use { record ->
       walletCheck(record)
-      val owner = cycleAddresses(record)[1]
-      val proposal = canonicalEarnVaultProposal(record.id, owner, request)
+      val owner = cycleInvestmentAddress(record)
+      val proposal =
+        attachInvestmentSlot(record, canonicalEarnVaultProposal(record.id, owner, request))
       // Validate strict Rust proposal/derivation before durable creation, without approval.
       requireActiveEarnCycle(record, proposal)
       signerFactory(proposal.toString(), record.entropy).use {}

@@ -168,6 +168,14 @@ function useEarnController(
     prepareNew: service.prepareNew
       ? (profile: EarnProfileId) => changeCycle(() => service.prepareNew!(owner, profile))
       : undefined,
+    prepareDistribution: service.prepareDistribution
+      ? (profile: EarnProfileId, budgetAtoms: string) =>
+          changeCycle(() => service.prepareDistribution!(owner, profile, budgetAtoms))
+      : undefined,
+    selectInvestmentSlot: service.selectInvestmentSlot
+      ? (intentId: string, slot: number) =>
+          changeCycle(() => service.selectInvestmentSlot!(owner, intentId, slot))
+      : undefined,
     selectCycle: service.select
       ? (intentId: string) => changeCycle(() => service.select!(owner, intentId))
       : undefined,

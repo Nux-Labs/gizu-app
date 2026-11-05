@@ -1,9 +1,15 @@
+import {
+  investmentDestination,
+  investmentSlotField,
+  assertInvestmentSlot,
+} from "@/domain/earn/distribution";
 import { earnAtoms, earnObject, type VaultPlan } from "./vaultExecution";
 import { earnProfiles, monadConfidentialUsdcAssetId, type EarnIntent } from "./types";
 import { ceilDiv } from "./policy";
 export type LiquidityKind = "fusionEthOrder" | "fusionUsdcApproval" | "returnUsdc" | "returnEth";
 export type FusionProposal = {
   cycleIndex?: number;
+  investmentSlot?: number;
   kind: "fusionEthOrder";
   operationId: string;
   revision: number;
@@ -22,6 +28,7 @@ export type FusionProposal = {
 };
 export type ReturnProposal = {
   cycleIndex?: number;
+  investmentSlot?: number;
   kind: "returnUsdc" | "returnEth";
   operationId: string;
   revision: number;
@@ -126,11 +133,11 @@ function identity(intent: EarnIntent) {
   if (
     intent.profileId !== "ethereum-usdc" ||
     intent.status !== "prepared" ||
-    intent.destinations[1].chainId !== 1 ||
-    intent.destinations[1].role !== "invest"
+    investmentDestination(intent).chainId !== 1 ||
+    investmentDestination(intent).role !== "invest"
   )
     throw new Error("Native Ethereum intent required.");
-  return addr(intent.destinations[1].address);
+  return addr(investmentDestination(intent).address);
 }
 export function parseFusionQuote(
   value: unknown,
@@ -209,6 +216,7 @@ export function parseFusionQuote(
     throw new Error("Fusion order changed.");
   const proposal: FusionProposal = {
     ...(intent.cycleIndex ? { cycleIndex: intent.cycleIndex } : {}),
+    ...investmentSlotField(intent),
     kind: "fusionEthOrder",
     operationId: id(operationId),
     revision: number(revision, 1),
@@ -310,6 +318,7 @@ export function parseEthereumReturnPlan(
     throw new Error("USDC return would strand assets.");
   const proposal: ReturnProposal = {
     ...(intent.cycleIndex ? { cycleIndex: intent.cycleIndex } : {}),
+    ...investmentSlotField(intent),
     kind: q.kind as ReturnProposal["kind"],
     operationId: id(operationId),
     revision: number(revision, 1),
@@ -337,6 +346,7 @@ export function parseLiquidityOperations(value: unknown, intent: EarnIntent): Li
   return value.map((v) => {
     const q = earnObject(v),
       operationId = id(q.operationId);
+    assertInvestmentSlot(q, intent);
     if (
       seen.has(operationId) ||
       q.walletId !== intent.walletId ||

@@ -148,6 +148,7 @@ internal fun liquidityPermitProposal(
   return JSONObject().put("kind", "fusionUsdcPermit").put("nonce", state.permitNonce).also { out ->
     for (field in fields) out.put(field, p.get(field))
     if (p.has("cycleIndex")) out.put("cycleIndex", p.getInt("cycleIndex"))
+    if (p.has("investmentSlot")) out.put("investmentSlot", p.getInt("investmentSlot"))
   }
 }
 
@@ -206,7 +207,14 @@ internal class EarnLiquidityEngine(
       walletCheck(record)
       check(request["walletId"] == record.id)
       val p =
-        canonicalLiquidityProposal(cycleAddresses(record)[1], cycleConfidential(record), request)
+        attachInvestmentSlot(
+          record,
+          canonicalLiquidityProposal(
+            cycleInvestmentAddress(record),
+            cycleConfidential(record),
+            request,
+          ),
+        )
       requireActiveEarnCycle(record, p)
       signerFactory(p.toString(), record.entropy).use {}
       journal.create(p)

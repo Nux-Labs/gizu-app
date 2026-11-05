@@ -414,6 +414,7 @@ class GizuStoredSignerModule : Module() {
           "earnPrivatePayoutExecution" to eligible(appContext.currentActivity),
           "earnEthereumLiquidityExecution" to eligible(appContext.currentActivity),
           "earnDepositJourney" to eligible(appContext.currentActivity),
+          "earnDepositDistribution" to eligible(appContext.currentActivity),
           "earnBalanceDeltaSettlement" to eligible(appContext.currentActivity),
         )
       )
@@ -435,7 +436,7 @@ class GizuStoredSignerModule : Module() {
         var id =
           store.load().use { record ->
             check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
-            store.prepareEarnDepositCycle(record, 4663, draftId)
+            store.prepareEarnDepositCycle(record, 4663, draftId, budgetAtoms)
           }
         withContext(Dispatchers.IO) { WalletRecoveryRuntime.beforeFreshFunding(activity, walletId) }
         // Recover a crash after the invested journal commit but before its allocation marker
@@ -450,7 +451,7 @@ class GizuStoredSignerModule : Module() {
               }
             if (old?.getString("phase") != "invested") break
             store.load().use { store.completeEarnDepositCycle(it, id) }
-            id = store.load().use { store.prepareEarnDepositCycle(it, 4663, null) }
+            id = store.load().use { store.prepareEarnDepositCycle(it, 4663, null, budgetAtoms) }
           }
         store.load().use { record ->
           val journal = earnDepositJournal(activity, record)
@@ -465,6 +466,37 @@ class GizuStoredSignerModule : Module() {
           }
           journal.publicSnapshot(id)
         }
+      }
+    }
+    AsyncFunction("discardEarnDepositDraft") { walletId: String, draftId: String, promise: Promise
+      ->
+      runCeremony(promise) { activity, store ->
+        store.load().use { record ->
+          check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
+          val context = activity.applicationContext
+          val journal = earnDepositJournal(context, record)
+          val row = journal.get(draftId)
+          check(
+            row.getJSONObject("children").length() == 0 && row.getString("phase") != "invested"
+          ) {
+            "A started deposit must be reconciled before it can be changed"
+          }
+          val cycle =
+            org.json.JSONArray(record.earnCycles).objects().single {
+              it.optString("depositJourneyId") == draftId
+            }
+          check(cycle.has("distribution"))
+          if (cycle.optBoolean("depositAbandoned")) return@use
+          journal.cancelUnsignedReview(draftId) { batch ->
+            fundingReservations(context, record).cancelBatchUnsigned(batch)
+          }
+          journal.pause(draftId, "cancelled")
+          store.selectEarnCycle(cycle.getInt("cycleIndex"))
+          store.load().use { selected ->
+            store.completeEarnDepositCycle(selected, draftId, abandoned = true)
+          }
+        }
+        true
       }
     }
     AsyncFunction("confirmEarnDeposit") {
@@ -531,9 +563,9 @@ class GizuStoredSignerModule : Module() {
             }
           val lookupId =
             if (id == "current-deposit")
-              journal
-                .all()
-                .filter { it.getString("phase") != "invested" }
+              store
+                .load()
+                .use { activeDepositDrafts(it, journal.all()) }
                 .maxByOrNull { it.getInt("cycleIndex") }
                 ?.getString("journeyId") ?: error("No saved deposit draft")
             else if (id.startsWith("intent:"))
@@ -673,6 +705,56 @@ class GizuStoredSignerModule : Module() {
               .getInt("cycleIndex")
           }
         store.selectEarnCycle(index)
+        store.load().use { earnPublic(it) }
+      }
+    }
+    AsyncFunction("selectEarnInvestmentSlot") {
+      walletId: String,
+      intentId: String,
+      slot: Int,
+      promise: Promise ->
+      runCeremony(promise) { _, store ->
+        val index =
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            org.json
+              .JSONArray(record.earnCycles)
+              .objects()
+              .single { it.getString("intentId") == intentId }
+              .getInt("cycleIndex")
+          }
+        store.selectEarnInvestmentSlot(index, slot)
+        store.load().use { earnPublic(it) }
+      }
+    }
+    AsyncFunction("prepareNewEarnDistributionIntent") {
+      walletId: String,
+      profile: String,
+      budgetAtoms: String,
+      promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        val chain =
+          when (profile) {
+            "ethereum-usdc" -> 1
+            "robinhood-usdg" -> 4663
+            else -> error("Unsupported earn profile")
+          }
+        depositAtoms(budgetAtoms, true)
+        val credential =
+          store.load().use { record ->
+            check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
+            record.credential
+          }
+        confirm(
+          activity,
+          "Prepare investment wallets",
+          "Create one to five investment wallets for this deposit. Every wallet invests in the same vault. Wallet count and weights are saved before quotes and preserved on retry. No funds move.",
+        )
+        withProviderUi(activity) {
+          PasskeyGate(activity).authorize(credential, walletId, "earn-distribution:$profile")
+        }
+        currentCoroutineContext().ensureActive()
+        store.load().use { store.allocateEarnCycle(it, chain, budgetAtoms) }
         store.load().use { earnPublic(it) }
       }
     }
@@ -903,7 +985,7 @@ class GizuStoredSignerModule : Module() {
           store.load().use { record ->
             requireSponsoredWallet(record, walletId)
             check(record.earnChain == 4663)
-            cycleAddresses(record)[1] to cycleConfidential(record)
+            cycleInvestmentAddress(record) to cycleConfidential(record)
           }
         val quote =
           NativeEarnQuoteGateway(quotes = quotes)
@@ -1328,7 +1410,7 @@ class GizuStoredSignerModule : Module() {
         val identity =
           store.load().use { record ->
             requireEarnExecutionWallet(record, walletId)
-            Triple(record.journalId, cycleAddresses(record)[1], cycleConfidential(record))
+            Triple(record.journalId, cycleInvestmentAddress(record), cycleConfidential(record))
           }
         val body = JSONObject(request)
         body.remove("walletId")
@@ -1375,7 +1457,7 @@ class GizuStoredSignerModule : Module() {
         val identity =
           store.load().use { record ->
             requireEarnExecutionWallet(record, walletId)
-            Triple(record.journalId, cycleAddresses(record)[1], cycleConfidential(record))
+            Triple(record.journalId, cycleInvestmentAddress(record), cycleConfidential(record))
           }
         val quote =
           NativeEarnQuoteGateway(quotes = quotes)
@@ -2019,6 +2101,7 @@ class GizuStoredSignerModule : Module() {
 
   private fun depositReviewText(grant: EarnDepositApproval, remaining: Boolean): String {
     val review = grant.review
+    val distribution = review.optJSONObject("distribution")
     val sources = review.getJSONArray("sources").objects()
     val deposit = review.getJSONObject("deposit")
     fun usd(atoms: String) =
@@ -2029,7 +2112,10 @@ class GizuStoredSignerModule : Module() {
         .toPlainString()
     val hold =
       sources.fold(java.math.BigInteger.ZERO) { n, s ->
-        n + depositAtoms(s.getJSONObject("hold").getString("minimumOutputAtoms"))
+        n +
+          if (distribution == null)
+            depositAtoms(s.getJSONObject("hold").getString("minimumOutputAtoms"))
+          else java.math.BigInteger.ZERO
       }
     val sourceFees =
       sources.fold(java.math.BigInteger.ZERO) { n, s ->
@@ -2042,7 +2128,25 @@ class GizuStoredSignerModule : Module() {
         )
       append("Total source budget: ${usd(review.getString("sourceBudgetAtoms"))} USDC\n")
       append("Source gas limit: ${usd(sourceFees.toString())} USDC\n")
-      append("Holding wallet receives at least ${usd(hold.toString())} USDG\n")
+      if (distribution == null)
+        append("Holding wallet receives at least ${usd(hold.toString())} USDG\n")
+      else {
+        val weights = distributionWeights(distribution)
+        append("Investment wallets: ${weights.size}; all allocated funds invest.\n")
+        for (wallet in review.getJSONArray("deposits").objects()) {
+          val slot = wallet.getInt("slot")
+          append("\nInvestment wallet ${slot + 1}: ${wallet.getString("recipient")}\n")
+          append(
+            "Source share: ${java.math.BigDecimal(weights[slot]).movePointLeft(2).stripTrailingZeros().toPlainString()}%\n"
+          )
+          append(
+            "Minimum investment: ${usd(wallet.getString("minimumAssetsAtoms"))} USDG; minimum share units: ${wallet.getString("minimumSharesAtoms")}\n"
+          )
+          append(
+            "Maximum gas: ${usd(wallet.getString("maximumFeeAtoms"))} USDG; retained withdrawal reserve: ${usd(wallet.getString("withdrawalReserveAtoms"))} USDG\n"
+          )
+        }
+      }
       append("Vault deposit: at least ${usd(deposit.getString("minimumAssetsAtoms"))} USDG\n")
       append("Minimum share units: ${deposit.getString("minimumSharesAtoms")}\n")
       append("Vault gas limit: ${usd(deposit.getString("maximumFeeAtoms"))} USDG\n")
@@ -2050,13 +2154,16 @@ class GizuStoredSignerModule : Module() {
         "Liquid withdrawal reserve: ${usd(deposit.getString("withdrawalReserveAtoms"))} USDG. This is retained, not paid now.\n\n"
       )
       append(
-        "Funding becomes confidential USDC. Each source retains its own funding and independent 10/90 payouts. Only wallet 2 deposits into Steakhouse USDG on Robinhood. This approval never withdraws or returns funds.\n\n"
+        if (distribution == null)
+          "Funding becomes confidential USDC. Each source retains its own funding and independent 10/90 payouts. Only wallet 2 deposits into Steakhouse USDG on Robinhood. This approval never withdraws or returns funds.\n\n"
+        else
+          "Funding becomes confidential USDC. The saved distribution applies to verified confidential credit. Each selected wallet receives its own payout and deposits into Steakhouse USDG on Robinhood, retaining its own withdrawal reserve. This approval never withdraws or returns funds.\n\n"
       )
       append(
         "Valid for up to 15 minutes in the foreground. Leaving, locking or closing revokes further signing. Submitted transactions remain saved.\n\n"
       )
       append(
-        "EIP-7702 may persistently delegate selected source wallets and wallet 2 to $EARN_IMPLEMENTATION. Token approvals and sponsorship use $EARN_PAYMASTER and $EARN_ENTRY_POINT. Canceling this journey does not revoke a saved delegation signature.\n\n"
+        "EIP-7702 may persistently delegate selected source and investment wallets to $EARN_IMPLEMENTATION. Token approvals and sponsorship use $EARN_PAYMASTER and $EARN_ENTRY_POINT. Canceling this journey does not revoke a saved delegation signature.\n\n"
       )
       append(
         "Read-only confidential authentication for this cycle is included. Its identity is visible to the confidential provider: ${review.getString("confidentialAccount")}\n"
@@ -2064,10 +2171,34 @@ class GizuStoredSignerModule : Module() {
       for (source in sources) append(
         "\nSource ${source.getInt("accountIndex")}: ${source.getString("address")}\nMaximum budget ${usd(source.getString("budgetAtoms"))} USDC; retained margin ${usd(source.getString("retainedAtoms"))} USDC\n"
       )
-      append(
-        "\nWallet 1: ${review.getJSONArray("destinations").getString(0)}\nWallet 2: ${review.getJSONArray("destinations").getString(1)}\nVault: $HOOD_EARN_VAULT\n"
-      )
+      if (distribution == null)
+        append(
+          "\nWallet 1: ${review.getJSONArray("destinations").getString(0)}\nWallet 2: ${review.getJSONArray("destinations").getString(1)}\n"
+        )
+      append("\nVault: $HOOD_EARN_VAULT\n")
     }
+  }
+
+  /** Applies to staged batch, individual and resumed source execution before new authority. */
+  private fun requireEarnFundingCapacity(
+    activity: Activity,
+    record: WalletRecord,
+    child: JSONObject,
+  ) {
+    if (
+      savedCycleDistribution(record) == null ||
+        child.sponsoredSpendSaved() ||
+        child.getJSONObject("proposal").getString("kind") != "sourceFunding"
+    )
+      return
+    requireDistributionFundingCapacity(
+      record,
+      child,
+      earnSponsoredJournal(activity, record).all(),
+      earnPayoutJournal(activity, record).all(),
+      if (record.earnChain == 1) earnVaultJournal(activity, record).all() else emptyList(),
+      if (record.earnChain == 1) earnLiquidityJournal(activity, record).all() else emptyList(),
+    )
   }
 
   private suspend fun approveEarnFundingBatch(
@@ -2126,6 +2257,7 @@ class GizuStoredSignerModule : Module() {
         store.load().use { record ->
           requireSponsoredWallet(record, walletId)
           check(record.journalId == journal.generation)
+          rows.forEach { requireEarnFundingCapacity(activity, record, it) }
           grant =
             EarnFundingBatchApproval.createManifest(
               rows,
@@ -2168,6 +2300,7 @@ class GizuStoredSignerModule : Module() {
           val authorize = {
             requireForeground(activity)
             store.load().use { record ->
+              requireEarnFundingCapacity(activity, record, journal.get(review.id))
               approval.assertAuthorized(record, journal.get(review.id), System.currentTimeMillis())
               ledger.assertActive(review.id)
             }
@@ -2597,6 +2730,7 @@ class GizuStoredSignerModule : Module() {
         store.load().use { record ->
           requireSponsoredWallet(record, engine.journal.walletId)
           check(record.journalId == engine.journal.generation)
+          requireEarnFundingCapacity(activity, record, engine.journal.get(id))
           record.credential
         }
       confirm(
@@ -2621,6 +2755,7 @@ class GizuStoredSignerModule : Module() {
           store.load().use { record ->
             requireSponsoredWallet(record, engine.journal.walletId)
             check(record.journalId == engine.journal.generation)
+            requireEarnFundingCapacity(activity, record, engine.journal.get(id))
           }
         }
       } catch (failure: Exception) {
@@ -2725,7 +2860,10 @@ class GizuStoredSignerModule : Module() {
       return mapOf("status" to if (record.earnRecoveryRequired) "recoveryRequired" else "absent")
     val profile = if (record.earnChain == 1) "ethereum-usdc" else "robinhood-usdg"
     val addresses = cycleAddresses(record)
-    check(addresses.size == 2 && addresses[0] != addresses[1])
+    val distribution = savedCycleDistribution(record)
+    check(
+      addresses.distinct().size == addresses.size && (distribution != null || addresses.size == 2)
+    )
     return mapOf(
       "status" to if (record.earnRecoveryRequired) "recoveryRequired" else "prepared",
       "intentId" to
@@ -2742,12 +2880,22 @@ class GizuStoredSignerModule : Module() {
       "destinations" to
         addresses.mapIndexed { index, address ->
           mapOf(
-            "role" to if (index == 0) "hold" else "invest",
+            "role" to if (distribution != null || index != 0) "invest" else "hold",
             "address" to address,
             "chainId" to record.earnChain,
-          )
+          ) + (if (distribution != null) mapOf("slot" to index) else emptyMap())
         },
-    )
+    ) +
+      (distribution?.let {
+        mapOf(
+          "distribution" to mapOf("version" to 1, "weightsBps" to distributionWeights(it)),
+          "investmentSlot" to selectedInvestmentSlot(record)!!,
+        ) +
+          (savedEarnCycle(record)
+            ?.optString("distributionBudgetAtoms")
+            ?.takeIf { budget -> budget.isNotEmpty() }
+            ?.let { budget -> mapOf("distributionBudgetAtoms" to budget) } ?: emptyMap())
+      } ?: emptyMap())
   }
 
   private fun project(record: WalletRecord): Map<String, Any> =

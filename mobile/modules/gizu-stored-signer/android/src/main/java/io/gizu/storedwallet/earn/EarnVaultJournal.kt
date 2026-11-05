@@ -169,6 +169,7 @@ internal class EarnVaultJournal(
       "revision" to op.getInt("revision"),
       "kind" to proposal.getString("kind"),
       "from" to proposal.getString("expectedFrom"),
+      "cycleIndex" to proposal.optInt("cycleIndex", 0),
       "amountAtoms" to proposal.getString("amountAtoms"),
       "residualShares" to (steps.lastOrNull()?.optString("residualShares", "0") ?: "0"),
       "actualFeeWei" to
@@ -209,6 +210,9 @@ internal class EarnVaultJournal(
               put("transactionHash", step.getString("transactionHash"))
           }
         },
-    )
+    ) +
+      (if (proposal.has("investmentSlot"))
+        mapOf("investmentSlot" to proposal.getInt("investmentSlot"))
+      else emptyMap())
   }
 }

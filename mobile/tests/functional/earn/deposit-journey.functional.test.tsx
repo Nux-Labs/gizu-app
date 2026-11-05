@@ -7,6 +7,8 @@ import { EarnProvider } from "@/features/earn/EarnProvider";
 import { DepositJourneyScreen } from "@/features/earn/DepositJourneyScreen";
 import type { EarnDepositService, DepositSnapshot } from "@/domain/earn/depositJourney";
 import { depositSnapshot } from "../../support/depositJourney";
+import { distributionDepositSnapshot } from "../../support/depositDistribution";
+import { parseDepositSnapshot } from "@/domain/earn/depositJourney";
 import { hoodIntent } from "../../support/robinhoodEarn";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
 import { deferred } from "../../support/renderApp";
@@ -76,6 +78,59 @@ async function review() {
   await user.press(screen.getByRole("button", { name: "Review deposit" }));
   return user;
 }
+test.each([1, 2, 5])(
+  "reviews every investment wallet in a %i-wallet distribution with one confirmation",
+  async (count) => {
+    const raw = distributionDepositSnapshot(count);
+    raw.review.quotedAtMs = Date.now();
+    raw.review.expiresAtMs = Date.now() + 45000;
+    const distributed = parseDepositSnapshot(raw, { walletId: hoodIntent.walletId });
+    const { service } = setup({ prepare: jest.fn().mockResolvedValue(distributed) });
+    const user = await review();
+    expect(await screen.findByText(`Investment wallets: ${count}`)).toBeVisible();
+    for (const destination of distributed.destinations)
+      expect(screen.getByText(destination.address)).toBeVisible();
+    expect(screen.queryByText(/USDG held/)).toBeNull();
+    expect(screen.queryByText(/10% held/)).toBeNull();
+    await user.press(screen.getByRole("button", { name: "Confirm deposit" }));
+    expect(service.confirm).toHaveBeenCalledTimes(1);
+  },
+);
+test("changing an unsigned distribution amount explicitly discards its saved draft before preparing a new one", async () => {
+  const raw = distributionDepositSnapshot();
+  raw.review.quotedAtMs = Date.now();
+  raw.review.expiresAtMs = Date.now() + 45000;
+  const distributed = parseDepositSnapshot(raw, { walletId: hoodIntent.walletId });
+  const discardDraft = jest.fn().mockResolvedValue(undefined);
+  const { service } = setup({ prepare: jest.fn().mockResolvedValue(distributed), discardDraft });
+  const user = await review();
+  expect(screen.getByLabelText("USDC deposit amount")).toBeDisabled();
+  await user.press(screen.getByRole("button", { name: "Change amount" }));
+  expect(discardDraft).toHaveBeenCalledWith(
+    expect.objectContaining({ walletId: hoodIntent.walletId }),
+    distributed.journeyId,
+  );
+  expect(screen.getByLabelText("USDC deposit amount")).toBeEnabled();
+  await user.press(screen.getByRole("button", { name: "Review deposit" }));
+  expect(jest.mocked(service.prepare).mock.calls.at(-1)?.[3]).toBeUndefined();
+});
+test("a reopened expired distribution review refreshes using its saved budget", async () => {
+  const raw = distributionDepositSnapshot();
+  raw.review.quotedAtMs = Date.now() - 50000;
+  raw.review.expiresAtMs = Date.now() - 5000;
+  const distributed = parseDepositSnapshot(raw, { walletId: hoodIntent.walletId });
+  const { service } = setup(
+    { status: jest.fn().mockResolvedValue(distributed) },
+    distributed.journeyId,
+  );
+  await userEvent.press(await screen.findByRole("button", { name: "Refresh deposit review" }));
+  expect(service.prepare).toHaveBeenCalledWith(
+    expect.objectContaining({ walletId: hoodIntent.walletId }),
+    "robinhood-usdg",
+    "3000000",
+    distributed.journeyId,
+  );
+});
 test("amount, unsigned review, one confirm and verified investment have no child or withdrawal controls", async () => {
   const { service, snapshot } = setup();
   const user = await review();

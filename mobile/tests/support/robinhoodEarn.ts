@@ -1,6 +1,8 @@
 import type { EarnIntent } from "@/domain/earn/types";
 import { earnProfiles } from "@/domain/earn/types";
-export const hoodIntent: EarnIntent = {
+export const hoodIntent: EarnIntent & {
+  destinations: [EarnIntent["destinations"][0], EarnIntent["destinations"][0]];
+} = {
   status: "prepared",
   version: "gizu-earn-v1",
   intentId: "earn-hood",

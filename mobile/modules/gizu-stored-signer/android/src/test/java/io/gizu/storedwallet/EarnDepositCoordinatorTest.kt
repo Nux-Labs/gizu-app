@@ -94,55 +94,74 @@ class EarnDepositCoordinatorTest {
     var now = 1002L
     var onReconcile: (() -> Unit)? = null
     var holdPending = false
+    var pendingDepositSlot: Int? = null
+    var pendingPayoutSlot: Int? = null
+    var failDepositSlot: Int? = null
+    val signedDeposits = mutableListOf<Int>()
 
     override suspend fun registerFunding(row: JSONObject) =
       row.also { rows[it.getString("operationId")] = it }
 
     override suspend fun preparePayout(sourceId: String, leg: String) =
-      DepositFixtures.payout(record, leg).also {
-        val source = rows[sourceId]!!.getJSONObject("proposal")
-        val amount = source.getString("amountAtoms")
-        val offset =
-          rows.values
-            .filter { row ->
-              row.getJSONObject("proposal").getString("kind") == "sourceFunding" &&
-                row.getJSONObject("proposal").getInt("sourceAccountIndex") <
-                  source.getInt("sourceAccountIndex")
-            }
-            .fold(java.math.BigInteger.ZERO) { n, row ->
-              n + row.getJSONObject("proposal").getString("amountAtoms").toBigInteger()
-            }
-            .toString()
-        it
-          .getJSONObject("proposal")
-          .put("operationId", sourceId)
-          .put("sourceAccountIndex", source.getInt("sourceAccountIndex"))
-          .put("sourceOwner", source.getString("expectedFrom"))
-          .put("creditedAtoms", amount)
-          .put("splitOffsetAtoms", offset)
-          .put("amountAtoms", nativePayoutAmount(amount, offset, leg))
-          .put("minimumDestinationAtoms", nativePayoutAmount(amount, offset, leg))
-        it.put("operationId", "payout-$sourceId-$leg")
-        payoutCreates++
-        rows[it.getString("operationId")] = it
-      }
+      (savedCycleDistribution(record)?.let {
+          DistributionDepositFixtures.payout(record, distributionSlot(leg, it))
+        } ?: DepositFixtures.payout(record, leg))
+        .also {
+          val source = rows[sourceId]!!.getJSONObject("proposal")
+          val amount = source.getString("amountAtoms")
+          val offset =
+            rows.values
+              .filter { row ->
+                row.getJSONObject("proposal").getString("kind") == "sourceFunding" &&
+                  row.getJSONObject("proposal").getInt("sourceAccountIndex") <
+                    source.getInt("sourceAccountIndex")
+              }
+              .fold(java.math.BigInteger.ZERO) { n, row ->
+                n + row.getJSONObject("proposal").getString("amountAtoms").toBigInteger()
+              }
+              .toString()
+          it
+            .getJSONObject("proposal")
+            .put("operationId", sourceId)
+            .put("sourceAccountIndex", source.getInt("sourceAccountIndex"))
+            .put("sourceOwner", source.getString("expectedFrom"))
+            .put("creditedAtoms", amount)
+            .put("splitOffsetAtoms", offset)
+            .put(
+              "amountAtoms",
+              nativePayoutAmount(amount, offset, leg, savedCycleDistribution(record)),
+            )
+            .put(
+              "minimumDestinationAtoms",
+              nativePayoutAmount(amount, offset, leg, savedCycleDistribution(record)),
+            )
+          it.put("operationId", "payout-$sourceId-${leg.replace(':', '_')}")
+          payoutCreates++
+          rows[it.getString("operationId")] = it
+        }
 
-    override suspend fun prepareDeposit(id: String, attributedAtoms: String) =
-      DepositFixtures.deposit(record).put("operationId", id).also {
-        depositCreates++
-        it
-          .getJSONObject("proposal")
-          .put("operationId", id)
-          .put("budgetAtoms", attributedAtoms)
-          .put("amountAtoms", (attributedAtoms.toBigInteger() - 21000.toBigInteger()).toString())
-        if (excessBudget) it.getJSONObject("proposal").put("budgetAtoms", "999999999")
-        rows[id] = it
-      }
+    override suspend fun prepareDeposit(id: String, attributedAtoms: String, slot: Int?) =
+      (savedCycleDistribution(record)?.let {
+          DistributionDepositFixtures.deposit(record, id.substringAfterLast('_').toInt())
+        } ?: DepositFixtures.deposit(record))
+        .put("operationId", id)
+        .also {
+          depositCreates++
+          it
+            .getJSONObject("proposal")
+            .put("operationId", id)
+            .put("budgetAtoms", attributedAtoms)
+            .put("amountAtoms", (attributedAtoms.toBigInteger() - 21000.toBigInteger()).toString())
+          if (excessBudget) it.getJSONObject("proposal").put("budgetAtoms", "999999999")
+          rows[id] = it
+        }
 
     override fun child(stage: String, id: String) = rows[id] ?: error("Missing child journal")
 
     override suspend fun execute(stage: String, id: String, grant: EarnDepositApproval) {
       val row = child(stage, id)
+      val slot = row.getJSONObject("proposal").optInt("investmentSlot", -1)
+      if (stage == "deposit" && slot == failDepositSlot) error("Slot deposit terms changed")
       if (sponsorshipFailure) throw EarnRpcRejection("pm_getPaymasterData", -32000, "REJECTED")
       check(!failedSignatureCommit) { "Atomic child commit failed before submission" }
       grant.assertPrepared(
@@ -164,12 +183,22 @@ class EarnDepositCoordinatorTest {
               "status",
               if (investUnknown && row.getJSONObject("proposal").getString("leg") == "invest")
                 "submissionUnknown"
+              else if (
+                row.getJSONObject("proposal").getString("leg") == "invest:$pendingPayoutSlot"
+              )
+                "submitted"
               else if (holdPending && row.getJSONObject("proposal").getString("leg") == "hold")
                 "submitted"
               else "paid",
             )
             .put("receivedAtoms", row.getJSONObject("proposal").getString("amountAtoms"))
-        "deposit" -> row.put("status", "finalized").put("transactionHash", "0x" + "9".repeat(64))
+        "deposit" -> {
+          if (slot >= 0) signedDeposits.add(slot)
+          row
+            .put("signedUserOperation", "durable-$id")
+            .put("status", if (slot == pendingDepositSlot) "submitted" else "finalized")
+            .put("transactionHash", "0x" + "9".repeat(64))
+        }
       }
     }
 
@@ -481,6 +510,166 @@ class EarnDepositCoordinatorTest {
       assertEquals("1500001", j.publicSnapshot(id)["holdReceivedAtoms"])
       assertEquals("13500017", j.publicSnapshot(id)["investReceivedAtoms"])
       assertEquals("invested", j.publicSnapshot(id)["phase"])
+    }
+  }
+
+  @Test
+  fun distributionInvestsOneTwoAndFiveWalletsWithoutLegacyHoldingOrRepeat() = runBlocking {
+    for (weights in
+      listOf(listOf(10000), listOf(4000, 6000), listOf(1000, 1500, 2000, 2500, 3000))) {
+      DistributionDepositFixtures.record(weights).use { record ->
+        val journal = testDepositJournal()
+        val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+        val review = DistributionDepositFixtures.review(record).put("journeyId", id)
+        journal.saveReview(id, 1, review)
+        val grant =
+          EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+        val engines = Engines(record).apply { creditReady = true }
+        val coordinator = EarnDepositCoordinator(journal, engines)
+        coordinator.confirmed(id, 2, grant)
+        assertEquals("invested", journal.get(id).getString("phase"))
+        assertEquals(weights.size, engines.payoutCreates)
+        assertEquals(weights.size, engines.depositCreates)
+        assertEquals(1 + weights.size * 2, engines.signed)
+        val investments = journal.get(id).getJSONArray("investments").objects()
+        assertEquals(weights.indices.toList(), investments.map { it.getInt("slot") })
+        assertTrue(
+          investments.all { it.getString("status") == "invested" && it.has("transactionHash") }
+        )
+        assertEquals("990000", journal.get(id).getString("investReceivedAtoms"))
+        assertEquals("0", journal.get(id).getString("holdReceivedAtoms"))
+        if (weights.size > 1) assertFalse(journal.get(id).has("depositTransactionHash"))
+        coordinator.advance(id, null)
+        assertEquals(1 + weights.size * 2, engines.signed)
+      }
+    }
+  }
+
+  @Test
+  fun distributionKeepsCompletedSiblingsAndRetriesOnlyUnresolvedDeposit() = runBlocking {
+    DistributionDepositFixtures.record(listOf(3000, 3000, 4000)).use { record ->
+      val journal = testDepositJournal()
+      val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+      val review = DistributionDepositFixtures.review(record).put("journeyId", id)
+      journal.saveReview(id, 1, review)
+      val grant = EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+      val engines =
+        Engines(record).apply {
+          creditReady = true
+          failDepositSlot = 1
+        }
+      val coordinator = EarnDepositCoordinator(journal, engines)
+      coordinator.confirmed(id, 2, grant)
+      assertEquals("paused", journal.get(id).getString("phase"))
+      assertEquals(listOf(0), engines.signedDeposits)
+      assertEquals(
+        "invested",
+        journal.get(id).getJSONArray("investments").getJSONObject(0).getString("status"),
+      )
+      engines.failDepositSlot = null
+      val resumed =
+        EarnDepositApproval.fromRemainingReview(record, review, 1000).apply {
+          approveAfterPasskey(1000)
+        }
+      coordinator.resume(id, journal.get(id).getInt("revision"), resumed)
+      assertEquals(listOf(0, 1, 2), engines.signedDeposits)
+      assertEquals("invested", journal.get(id).getString("phase"))
+      assertEquals(3, engines.payoutCreates)
+    }
+  }
+
+  @Test
+  fun distributionUnknownDepositDoesNotBlockSiblingInvestmentOrAuthorizeReadOnlySpend() =
+    runBlocking {
+      DistributionDepositFixtures.record(listOf(3000, 3000, 4000)).use { record ->
+        val journal = testDepositJournal()
+        val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+        val review = DistributionDepositFixtures.review(record).put("journeyId", id)
+        journal.saveReview(id, 1, review)
+        val grant =
+          EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+        val engines =
+          Engines(record).apply {
+            creditReady = true
+            pendingDepositSlot = 1
+          }
+        val coordinator = EarnDepositCoordinator(journal, engines)
+        coordinator.confirmed(id, 2, grant)
+        assertEquals(
+          listOf("invested", "depositing", "invested"),
+          journal.get(id).getJSONArray("investments").objects().map { it.getString("status") },
+        )
+        assertEquals(listOf(0, 1, 2), engines.signedDeposits)
+        coordinator.cancel(id, journal.get(id).getInt("revision"))
+        engines.rows.getValue("vault_${id}_1").put("status", "finalized")
+        EarnDepositCoordinator(journal, engines).reconcile(id)
+        assertEquals("invested", journal.get(id).getString("phase"))
+        assertEquals(listOf(0, 1, 2), engines.signedDeposits)
+      }
+    }
+
+  @Test
+  fun distributionWaitsForEverySourceCreditAndUsesCumulativeRoundingAcrossSources() = runBlocking {
+    DistributionDepositFixtures.record(listOf(3333, 6667)).use { record ->
+      val journal = testDepositJournal()
+      val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+      val review =
+        DistributionDepositFixtures.review(record, listOf("7000009", "8000009"))
+          .put("journeyId", id)
+      journal.saveReview(id, 1, review)
+      val grant = EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+      val engines = Engines(record).apply { readySources.add("source1") }
+      val coordinator = EarnDepositCoordinator(journal, engines)
+      coordinator.confirmed(id, 2, grant)
+      assertEquals(0, engines.payoutCreates)
+      assertEquals(1, engines.signed)
+      engines.readySources.add("source0")
+      coordinator.advance(id, grant)
+      assertEquals("invested", journal.get(id).getString("phase"))
+      assertEquals(4, engines.payoutCreates)
+      val expected =
+        distributionAmounts(
+          checkNotNull(savedCycleDistribution(record)),
+          "15000018".toBigInteger(),
+          java.math.BigInteger.ZERO,
+        )
+      assertEquals(
+        expected.map { it.toString() },
+        journal.get(id).getJSONArray("investments").objects().map { it.getString("receivedAtoms") },
+      )
+      assertEquals(8, engines.signed)
+    }
+  }
+
+  @Test
+  fun distributionIndependentReceiptsCanInvestWhileSiblingPayoutIsPending() = runBlocking {
+    DistributionDepositFixtures.record().use { record ->
+      val journal = testDepositJournal()
+      val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+      val review = DistributionDepositFixtures.review(record).put("journeyId", id)
+      journal.saveReview(id, 1, review)
+      val grant = EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+      val engines =
+        Engines(record).apply {
+          creditReady = true
+          pendingPayoutSlot = 1
+        }
+      val coordinator = EarnDepositCoordinator(journal, engines)
+      coordinator.confirmed(id, 2, grant)
+      assertEquals(listOf(0), engines.signedDeposits)
+      assertEquals(
+        "invested",
+        journal.get(id).getJSONArray("investments").getJSONObject(0).getString("status"),
+      )
+      assertEquals(
+        "pending",
+        journal.get(id).getJSONArray("investments").getJSONObject(1).getString("status"),
+      )
+      engines.rows.getValue("payout-source0-invest_1").put("status", "paid")
+      coordinator.advance(id, grant)
+      assertEquals(listOf(0, 1), engines.signedDeposits)
+      assertEquals("invested", journal.get(id).getString("phase"))
+      assertEquals(5, engines.signed)
     }
   }
 }

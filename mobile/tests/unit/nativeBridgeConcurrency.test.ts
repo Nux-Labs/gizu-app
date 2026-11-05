@@ -16,6 +16,29 @@ afterEach(() => {
 const tick = async () => {
   for (let i = 0; i < 15; i++) await Promise.resolve();
 };
+test("an older native build can read saved deposits but cannot prepare a new distributed deposit", async () => {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+  Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
+  const native = {
+    getCapabilities: jest
+      .fn()
+      .mockResolvedValue({ contractVersion: 1, available: true, earnDepositJourney: true }),
+    prepareEarnDeposit: jest.fn(),
+    resumeEarnDeposit: jest.fn(),
+    confirmEarnDeposit: jest.fn(),
+    getEarnDepositStatus: jest.fn().mockResolvedValue({ phase: "paused" }),
+    cancelEarnDeposit: jest.fn(),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+  const signer = getStoredEarnDepositSigner()!;
+  await expect(signer.getEarnDepositStatus("wallet", "saved")).resolves.toEqual({
+    phase: "paused",
+  });
+  await expect(
+    signer.prepareEarnDeposit("wallet", "robinhood-usdg", "3000000", null),
+  ).rejects.toThrow(/updated native app/);
+  expect(native.prepareEarnDeposit).not.toHaveBeenCalled();
+});
 test("recovery snapshots stay readable during discovery and pause interrupts its native lane", async () => {
   Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
   Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
@@ -78,9 +101,12 @@ test("deposit progress reads run during preparation while other mutations stay s
     finish = resolve;
   });
   const native = {
-    getCapabilities: jest
-      .fn()
-      .mockResolvedValue({ contractVersion: 1, available: true, earnDepositJourney: true }),
+    getCapabilities: jest.fn().mockResolvedValue({
+      contractVersion: 1,
+      available: true,
+      earnDepositJourney: true,
+      earnDepositDistribution: true,
+    }),
     prepareEarnDeposit: jest.fn(() => pending),
     resumeEarnDeposit: jest.fn(),
     confirmEarnDeposit: jest.fn().mockResolvedValue({ phase: "funding" }),

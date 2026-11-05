@@ -55,9 +55,13 @@ private fun withdrawalIdentities(record: WalletRecord, index: Int): PayoutIdenti
     (0 until cycles.length()).map(cycles::getJSONObject).single {
       it.getInt("cycleIndex") == record.earnCycleIndex
     }
-  check(cycle.getInt("withdrawalIndex") == index)
+  val slot = selectedInvestmentSlot(record)
+  check(
+    (if (slot == null) cycle.getInt("withdrawalIndex")
+    else cycle.getJSONObject("withdrawalIndices").getInt(slot.toString())) == index
+  )
   return PayoutIdentities(
-    cycleAddresses(record)[1],
+    cycleInvestmentAddress(record),
     cycleConfidential(record),
     publicAccountAddress(record, index),
   )
@@ -170,11 +174,12 @@ internal class EarnWithdrawalEngine(
         nativeWithdrawalSource(
           returned,
           returned.getInt("revision"),
-          cycleAddresses(record)[1],
+          cycleInvestmentAddress(record),
           cycleConfidential(record),
           record.earnChain,
           record.earnCycleIndex,
         )
+        requireActiveEarnCycle(record, returned.getJSONObject("proposal"))
         store.reserveEarnWithdrawal(record)
       }
     val pair =
@@ -259,7 +264,10 @@ internal class EarnWithdrawalEngine(
         .put("quoteId", q.quoteId)
         .put("minimumDestinationAtoms", q.minimumDestinationAtoms)
         .put("deadlineMs", q.deadlineMs.toLong())
-    store.load().use { walletCheck(it, p) }
+    store.load().use {
+      attachInvestmentSlot(it, p)
+      walletCheck(it, p)
+    }
     currentCoroutineContext().ensureActive()
     val reservation =
       "0x" +

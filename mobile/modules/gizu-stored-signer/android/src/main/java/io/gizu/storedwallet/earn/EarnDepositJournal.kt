@@ -89,6 +89,7 @@ internal class EarnDepositJournal(
           record.earnChain == profile
       )
       val rows = all()
+      val distribution = savedCycleDistribution(record)
       val existing =
         if (draftId != null) rows.singleOrNull { it.getString("journeyId") == draftId }
         else rows.singleOrNull { it.getInt("cycleIndex") == record.earnCycleIndex }
@@ -97,6 +98,7 @@ internal class EarnDepositJournal(
           existing.getInt("cycleIndex") == record.earnCycleIndex &&
             existing.getInt("profileChainId") == profile
         )
+        check(nativeJsonEqual(existing.opt("distribution"), distribution))
         return@synchronized existing
       }
       check(rows.count(::journalEntryPending) < 256)
@@ -132,9 +134,10 @@ internal class EarnDepositJournal(
             JSONArray(
               cycleAddresses(record).mapIndexed { n, address ->
                 JSONObject()
-                  .put("role", if (n == 0) "hold" else "invest")
+                  .put("role", if (distribution != null || n > 0) "invest" else "hold")
                   .put("chainId", profile)
                   .put("address", address)
+                  .also { if (distribution != null) it.put("slot", n) }
               }
             ),
           )
@@ -148,6 +151,27 @@ internal class EarnDepositJournal(
           "depositedAtoms",
           "sharesAtoms",
         )) row.put(field, "0")
+      if (distribution != null) {
+        row.put("distribution", JSONObject(distribution.toString()))
+        allocated
+          ?.optString("distributionBudgetAtoms")
+          ?.takeIf { it.isNotBlank() }
+          ?.let { row.put("distributionBudgetAtoms", depositAtoms(it, true).toString()) }
+        row.put(
+          "investments",
+          JSONArray(
+            cycleAddresses(record).mapIndexed { slot, recipient ->
+              JSONObject()
+                .put("slot", slot)
+                .put("recipient", recipient)
+                .put("receivedAtoms", "0")
+                .put("depositedAtoms", "0")
+                .put("sharesAtoms", "0")
+                .put("status", "pending")
+            }
+          ),
+        )
+      }
       write(rows + row)
       row
     }
@@ -157,7 +181,9 @@ internal class EarnDepositJournal(
       val rows = all()
       val row = rows.single { it.getString("journeyId") == id }
       check(row.getInt("revision") == revision) { "Stale deposit journey" }
+      val distribution = row.optJSONObject("distribution")?.toString()
       action(row)
+      check(row.optJSONObject("distribution")?.toString() == distribution)
       row.put("revision", Math.addExact(revision, 1))
       write(rows)
       row
@@ -204,12 +230,14 @@ internal class EarnDepositJournal(
           review.getString("generation") == generation
       )
       check(review.getInt("cycleIndex") == row.getInt("cycleIndex"))
+      check(nativeJsonEqual(row.opt("distribution"), review.opt("distribution")))
       row.put("budgetAtoms", depositAtoms(review.getString("sourceBudgetAtoms"), true).toString())
       if (row.has("preparationBatchId"))
         check(
           row.getString("preparationBatchId") == review.getJSONObject("reservation").getString("id")
         )
       row.put("review", JSONObject(review.toString())).put("phase", "review")
+      row.optJSONArray("investments")?.objects()?.forEach { it.put("status", "pending") }
       row.remove("indicativeReview")
       row.remove("pauseReason")
       row.remove("message")
@@ -230,6 +258,8 @@ internal class EarnDepositJournal(
           "destinations",
           "sourceBudgetAtoms",
         )) check(nativeJsonEqual(old.get(field), review.get(field)))
+      check(nativeJsonEqual(old.opt("distribution"), review.opt("distribution")))
+      check(nativeJsonEqual(row.opt("distribution"), review.opt("distribution")))
       val before = old.getJSONArray("sources").objects()
       val after = review.getJSONArray("sources").objects()
       check(before.size == after.size)
@@ -245,7 +275,11 @@ internal class EarnDepositJournal(
   fun attachChild(id: String, revision: Int, stage: String, childId: String): JSONObject =
     update(id, revision) { row ->
       check(
-        stage in setOf("funding", "hold", "invest", "deposit") &&
+        (stage in
+          if (row.has("distribution"))
+            setOf("funding", "deposit") +
+              distributionWeights(row.getJSONObject("distribution")).indices.map { "invest:$it" }
+          else setOf("funding", "hold", "invest", "deposit")) &&
           childId.matches(Regex("[-a-zA-Z0-9_]{1,128}"))
       )
       val children = row.getJSONObject("children")
@@ -257,7 +291,12 @@ internal class EarnDepositJournal(
         }
       )
       val list = children.optJSONArray(stage) ?: JSONArray()
-      check(list.length() < if (stage == "deposit") 1 else 256)
+      check(
+        list.length() <
+          if (stage == "deposit")
+            row.optJSONObject("distribution")?.let { distributionWeights(it).size } ?: 1
+          else 256
+      )
       list.put(childId)
       children.put(stage, list)
     }
@@ -268,6 +307,9 @@ internal class EarnDepositJournal(
     return update(id, row.getInt("revision")) {
       if (it.getString("phase") != "invested") {
         it.put("phase", "paused").put("pauseReason", reason)
+        it.optJSONArray("investments")?.objects()?.forEach { investment ->
+          if (investment.getString("status") != "invested") investment.put("status", "paused")
+        }
         if (message != null) it.put("message", message.take(1024))
       }
     }
@@ -287,6 +329,7 @@ internal class EarnDepositJournal(
         "phase",
         "destinations",
         "budgetAtoms",
+        "distributionBudgetAtoms",
         "creditedAtoms",
         "holdReceivedAtoms",
         "investReceivedAtoms",
@@ -296,7 +339,35 @@ internal class EarnDepositJournal(
         "pauseReason",
         "message",
         "depositTransactionHash",
-      )) if (row.has(field)) public.put(field, row.get(field))
+      )) if (
+      row.has(field) &&
+        !(field == "depositTransactionHash" &&
+          row.optJSONObject("distribution")?.let { distributionWeights(it).size > 1 } == true)
+    )
+      public.put(field, row.get(field))
+    row.optJSONObject("distribution")?.let { distribution ->
+      distributionWeights(distribution)
+      public.put("distribution", JSONObject(distribution.toString()))
+      public.put(
+        "investments",
+        JSONArray(
+          row.getJSONArray("investments").objects().map { investment ->
+            JSONObject().also { out ->
+              for (field in
+                listOf(
+                  "slot",
+                  "recipient",
+                  "receivedAtoms",
+                  "depositedAtoms",
+                  "sharesAtoms",
+                  "status",
+                  "transactionHash",
+                )) if (investment.has(field)) out.put(field, investment.get(field))
+            }
+          }
+        ),
+      )
+    }
     row.optJSONObject("review")?.let { public.put("review", depositPublicReview(it)) }
     row.optJSONObject("indicativeReview")?.let { summary ->
       public.put(
@@ -337,6 +408,27 @@ internal fun depositPublicReview(review: JSONObject): JSONObject {
   fun pick(row: JSONObject, fields: List<String>) =
     JSONObject().also { out -> fields.forEach { out.put(it, row.get(it)) } }
   val out = pick(review, listOf("policyVersion", "quotedAtMs", "expiresAtMs", "sourceBudgetAtoms"))
+  review.optJSONObject("distribution")?.let {
+    distributionWeights(it)
+    out.put("distribution", JSONObject(it.toString()))
+  }
+  val legFields =
+    listOf(
+      "recipient",
+      "inputAtoms",
+      "estimatedOutputAtoms",
+      "minimumOutputAtoms",
+      "providerFeeBps",
+    )
+  val depositFields =
+    listOf(
+      "estimatedAssetsAtoms",
+      "minimumAssetsAtoms",
+      "minimumSharesAtoms",
+      "shareDecimals",
+      "maximumFeeAtoms",
+      "withdrawalReserveAtoms",
+    )
   out.put(
     "sources",
     JSONArray(
@@ -355,19 +447,29 @@ internal fun depositPublicReview(review: JSONObject): JSONObject {
             ),
           )
           .also {
-            for (leg in listOf("hold", "invest")) it.put(
-              leg,
-              pick(
-                s.getJSONObject(leg),
-                listOf(
-                  "recipient",
-                  "inputAtoms",
-                  "estimatedOutputAtoms",
-                  "minimumOutputAtoms",
-                  "providerFeeBps",
+            if (review.has("distribution")) {
+              it.put(
+                "allocations",
+                JSONArray(
+                  s.getJSONArray("allocations").objects().map { allocation ->
+                    pick(allocation, legFields)
+                  }
                 ),
-              ),
-            )
+              )
+            } else
+              for (leg in listOf("hold", "invest")) it.put(
+                leg,
+                pick(
+                  s.getJSONObject(leg),
+                  listOf(
+                    "recipient",
+                    "inputAtoms",
+                    "estimatedOutputAtoms",
+                    "minimumOutputAtoms",
+                    "providerFeeBps",
+                  ),
+                ),
+              )
           }
       }
     ),
@@ -386,6 +488,15 @@ internal fun depositPublicReview(review: JSONObject): JSONObject {
       ),
     ),
   )
+  if (review.has("distribution"))
+    out.put(
+      "deposits",
+      JSONArray(
+        review.getJSONArray("deposits").objects().map {
+          pick(it, depositFields + listOf("slot", "recipient"))
+        }
+      ),
+    )
   return out
 }
 

@@ -17,6 +17,7 @@ internal class NativeFundingPlanner(
     require(budgetAtoms.matches(Regex("[1-9][0-9]{0,19}")))
     check(record.verified && !record.earnRecoveryRequired)
     if (feature == "earn") {
+      requireDistributionBudget(record, budgetAtoms)
       requireSponsoredWallet(record, record.id)
       val funded =
         currentCycleRows(record, earnSponsoredJournal(context, record).all()).any {

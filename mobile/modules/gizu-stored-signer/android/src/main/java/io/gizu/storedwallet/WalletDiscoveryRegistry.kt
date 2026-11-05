@@ -168,22 +168,28 @@ internal class WalletDiscoveryRegistry(
       }
 }
 
-/**
- * Authenticated legacy metadata accounts for a found owner; distribution plans need their actual
- * allocation metadata.
- */
+/** Balance observations are owned only when the actual saved derivation metadata matches. */
+internal fun discoveredOwnerTracked(record: WalletRecord, descriptor: JSONObject): Boolean {
+  val row =
+    JSONArray(record.earnCycles).objects().singleOrNull {
+      it.getInt("chainId") == descriptor.getInt("chainId") &&
+        it.getInt("cycleIndex") == descriptor.getInt("cycleIndex")
+    } ?: return false
+  return when (descriptor.getString("derivation")) {
+    "legacy" -> descriptor.getString("role") == "confidential" || !row.has("distribution")
+    "distribution-v1" -> {
+      val plan = row.optJSONObject("distribution") ?: return false
+      descriptor.getString("role") == "invest" &&
+        descriptor.getInt("slot") in distributionWeights(plan).indices
+    }
+    else -> false
+  }
+}
+
 internal fun discoveredMetadataResolved(
   record: WalletRecord,
   descriptors: List<JSONObject>,
 ): Boolean {
   if (record.discoveryRecoveryRequired && descriptors.isEmpty()) return false
-  val cycles = JSONArray(record.earnCycles)
-  return descriptors.all { descriptor ->
-    descriptor.getString("derivation") == "legacy" &&
-      (0 until cycles.length()).any { index ->
-        val row = cycles.getJSONObject(index)
-        row.getInt("chainId") == descriptor.getInt("chainId") &&
-          row.getInt("cycleIndex") == descriptor.getInt("cycleIndex")
-      }
-  }
+  return descriptors.all { discoveredOwnerTracked(record, it) }
 }

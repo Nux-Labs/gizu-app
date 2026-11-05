@@ -4,7 +4,7 @@ import { Button } from "@/components/atoms/Button";
 import { formatUsdc } from "@/domain/wallet/amounts";
 import { earnProfiles, type EarnIntent } from "@/domain/earn/types";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
-import type { PayoutLeg } from "@/domain/earn/privatePayout";
+import { payoutLegs } from "@/domain/earn/distribution";
 import { useEarn } from "./EarnProvider";
 import { useEarnJournal } from "./useEarnJournal";
 export function PrivatePayoutPanel({
@@ -37,16 +37,16 @@ export function PrivatePayoutPanel({
           <View key={source?.operationId ?? "saved"} className="gap-2">
             {credit > 0n ? (
               <Typography>
-                Confirmed private credit allocation: {formatUsdc(hold.toString())} USDC for wallet 1
-                and {formatUsdc(invest.toString())} USDC for wallet 2. Each route receives its own
-                native quote and authorization.
+                {intent.distribution
+                  ? `Verified private credit is allocated across ${intent.distribution.weightsBps.length} investment wallets using the saved shares. Every wallet invests after its fees and reserve.`
+                  : `Confirmed private credit allocation: ${formatUsdc(hold.toString())} USDC for wallet 1 and ${formatUsdc(invest.toString())} USDC for wallet 2. Each route receives its own native quote and authorization.`}
               </Typography>
             ) : (
               <Typography>
                 Payouts wait for authenticated credit from this funding operation.
               </Typography>
             )}
-            {(["hold", "invest"] as PayoutLeg[]).map((leg, index) => (
+            {payoutLegs(intent).map((leg, index) => (
               <Button
                 key={leg}
                 label={`Review and authorize wallet ${index + 1} payout${accountLabel}`}
@@ -70,7 +70,13 @@ export function PrivatePayoutPanel({
       {v.rows.map((row) => (
         <View key={row.operationId} className="gap-2">
           <Typography>
-            Wallet {row.leg === "hold" ? 1 : 2} payout · {row.status}
+            Wallet{" "}
+            {row.leg.startsWith("invest:")
+              ? Number(row.leg.split(":")[1]) + 1
+              : row.leg === "hold"
+                ? 1
+                : 2}{" "}
+            payout · {row.status}
           </Typography>
           <Typography>
             Allocated input: {formatUsdc(row.amountAtoms)} USDC · minimum destination credit:{" "}
@@ -78,9 +84,11 @@ export function PrivatePayoutPanel({
           </Typography>
           {row.status === "paid" && (
             <Typography>
-              {row.leg === "hold"
-                ? "Wallet 1 funds remain separate."
-                : "Wallet 2 funding is verified. Review its investment fees."}{" "}
+              {intent.distribution
+                ? "Investment wallet funding is verified. Review its investment fees."
+                : row.leg === "hold"
+                  ? "Wallet 1 funds remain separate."
+                  : "Wallet 2 funding is verified. Review its investment fees."}{" "}
               Received {formatUsdc(row.receivedAtoms)} {symbol}.
             </Typography>
           )}
@@ -118,8 +126,9 @@ export function PrivatePayoutPanel({
         </View>
       ))}
       <Typography variant="caption">
-        The native dialog checks the exact 10/90 split, destination, qualified quote fees and
-        deadline. No joint wallet transaction or shared application fee is added.
+        {intent.distribution
+          ? "The native dialog checks the saved distribution, wallet slot, destination, qualified fees and deadline."
+          : "The native dialog checks the exact 10/90 split, destination, qualified quote fees and deadline. No joint wallet transaction or shared application fee is added."}
       </Typography>
       <Button
         label="Check saved payouts"

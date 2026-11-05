@@ -21,7 +21,7 @@ internal interface EarnDepositEngines {
 
   suspend fun preparePayout(sourceId: String, leg: String): JSONObject
 
-  suspend fun prepareDeposit(id: String, attributedAtoms: String): JSONObject
+  suspend fun prepareDeposit(id: String, attributedAtoms: String, slot: Int? = null): JSONObject
 
   fun child(stage: String, id: String): JSONObject
 
@@ -180,6 +180,10 @@ internal class EarnDepositCoordinator(
         return
       }
       saveAmounts(id) { it.put("completedSteps", JSONArray(listOf("funding", "credit"))) }
+      if (review.has("distribution")) {
+        advanceDistribution(id, review, sources, grant, retrySavedPayouts)
+        return
+      }
       setPhase(id, "payouts")
       val receipts = linkedMapOf<String, String>()
       // Like Swap, send every payout leg first, then verify receipts, so one leg's delivery
@@ -332,6 +336,178 @@ internal class EarnDepositCoordinator(
       activeGrant = null
       engines.useGrant(null)
     }
+  }
+
+  private fun saveInvestment(id: String, slot: Int, action: (JSONObject) -> Unit) {
+    saveAmounts(id) { row ->
+      val investments = row.getJSONArray("investments").objects()
+      val investment = investments.single { it.getInt("slot") == slot }
+      action(investment)
+      row.put("investments", JSONArray(investments))
+      for ((aggregate, field) in
+        listOf(
+          "investReceivedAtoms" to "receivedAtoms",
+          "depositedAtoms" to "depositedAtoms",
+          "sharesAtoms" to "sharesAtoms",
+        )) {
+        row.put(
+          aggregate,
+          investments
+            .fold(BigInteger.ZERO) { n, item -> n + depositAtoms(item.getString(field)) }
+            .toString(),
+        )
+      }
+      row.put("holdReceivedAtoms", "0")
+      if (investments.size > 1) row.remove("depositTransactionHash")
+    }
+  }
+
+  private suspend fun advanceDistribution(
+    id: String,
+    review: JSONObject,
+    sources: List<JSONObject>,
+    grant: EarnDepositApproval?,
+    retrySavedPayouts: Boolean,
+  ) {
+    val legs = depositReviewLegs(review)
+    val deposits = depositReviewDeposits(review)
+    val receipts = linkedMapOf<String, String>()
+    val sent = linkedMapOf<String, JSONObject>()
+    var needsApproval = false
+    setPhase(id, "payouts")
+    // All sources have authenticated credit before any payout can enter this branch.
+    for (source in sources) for (leg in legs) {
+      val sourceId = source.getString("operationId")
+      val refs = journal.get(id).getJSONObject("children").optJSONArray(leg)
+      var child =
+        refs?.let { array ->
+          (0 until array.length())
+            .map { engines.child("payouts", array.getString(it)) }
+            .singleOrNull { it.getJSONObject("proposal").getString("operationId") == sourceId }
+        }
+      if (child == null) {
+        if (grant == null) {
+          needsApproval = true
+          continue
+        }
+        child = engines.preparePayout(sourceId, leg)
+        check(
+          child.getJSONObject("proposal").getString("operationId") == sourceId &&
+            child.getJSONObject("proposal").getString("leg") == leg
+        )
+        attach(id, leg, child.getString("operationId"))
+      }
+      sent["$sourceId:$leg"] =
+        reconcileAndExecute("payouts", child.getString("operationId"), grant, retrySavedPayouts)
+    }
+    // An unresolved sibling must not hide an independently verified receipt.
+    for (source in sources) for (leg in legs) {
+      val sourceId = source.getString("operationId")
+      val child = sent["$sourceId:$leg"] ?: continue
+      val amount = engines.payoutReceipt(child) ?: continue
+      check(
+        depositAtoms(amount, true) >=
+          depositAtoms(
+            depositReviewBound(source, leg, review).getString("minimumOutputAtoms"),
+            true,
+          )
+      )
+      receipts["$sourceId:$leg"] = amount
+      grant?.recordPayout(sourceId, leg, amount)
+    }
+    val allPayouts = receipts.size == sources.size * legs.size
+    if (allPayouts)
+      saveAmounts(id) {
+        it.put("completedSteps", JSONArray(listOf("funding", "credit", "payouts")))
+      }
+    var completed = 0
+    var pendingDeposit = false
+    for ((slot, bound) in deposits.withIndex()) {
+      val leg = "invest:$slot"
+      val received =
+        sources.fold(BigInteger.ZERO) { n, source ->
+          n + depositAtoms(receipts[source.getString("operationId") + ":" + leg] ?: "0")
+        }
+      val ready = sources.all { receipts.containsKey(it.getString("operationId") + ":" + leg) }
+      saveInvestment(id, slot) { investment ->
+        check(investment.getString("recipient").equals(bound.getString("recipient"), true))
+        investment.put("receivedAtoms", received.toString())
+        if (investment.getString("status") !in setOf("invested", "depositing"))
+          investment.put("status", if (ready) "received" else "pending")
+      }
+      if (!ready) continue
+      val childId = depositChildId(id, slot)
+      val refs = journal.get(id).getJSONObject("children").optJSONArray("deposit")
+      val attached = refs != null && (0 until refs.length()).any { refs.getString(it) == childId }
+      if (!attached) {
+        if (grant == null) {
+          needsApproval = true
+          continue
+        }
+        val child = engines.prepareDeposit(childId, received.toString(), slot)
+        check(child.getString("operationId") == childId)
+        check(child.getJSONObject("proposal").getInt("investmentSlot") == slot)
+        check(
+          depositAtoms(child.getJSONObject("proposal").getString("budgetAtoms"), true) <= received
+        )
+        attach(id, "deposit", childId)
+      } else {
+        val existing = engines.child("deposit", childId)
+        check(existing.getJSONObject("proposal").getInt("investmentSlot") == slot)
+        if (
+          grant != null &&
+            !existing.sponsoredSpendSaved() &&
+            existing.getString("status") in setOf("planned", "authorizationSaved")
+        )
+          engines.prepareDeposit(childId, received.toString(), slot)
+      }
+      saveInvestment(id, slot) {
+        if (it.getString("status") != "invested") it.put("status", "depositing")
+      }
+      val settled = reconcileAndExecute("deposit", childId, grant)
+      val investment = engines.investment(settled)
+      if (investment == null) {
+        pendingDeposit = true
+        continue
+      }
+      check(
+        depositAtoms(investment.assets, true) >=
+          depositAtoms(bound.getString("minimumAssetsAtoms"), true) &&
+          depositAtoms(investment.assets) <= received
+      )
+      check(
+        depositAtoms(investment.shares, true) >=
+          depositAtoms(bound.getString("minimumSharesAtoms"), true)
+      )
+      earnHash(investment.transactionHash)
+      saveInvestment(id, slot) {
+        it
+          .put("depositedAtoms", investment.assets)
+          .put("sharesAtoms", investment.shares)
+          .put("transactionHash", investment.transactionHash)
+          .put("status", "invested")
+      }
+      completed++
+    }
+    if (completed == deposits.size) {
+      saveAmounts(id) {
+        it
+          .put("phase", "invested")
+          .put("completedSteps", JSONArray(listOf("funding", "credit", "payouts", "deposit")))
+        it.remove("pauseReason")
+        if (deposits.size == 1)
+          it.put(
+            "depositTransactionHash",
+            it.getJSONArray("investments").getJSONObject(0).getString("transactionHash"),
+          )
+      }
+      engines.invested(id)
+      grant?.invalidate()
+      activeGrant = null
+      engines.useGrant(null)
+    } else if (grant == null) {
+      journal.pause(id, if (needsApproval) "approvalExpired" else "submissionUnknown")
+    } else setPhase(id, if (allPayouts || pendingDeposit) "depositing" else "payouts")
   }
 
   suspend fun reconcile(journeyId: String): Map<String, Any> {

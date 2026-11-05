@@ -8,6 +8,68 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.NativeEarnPayoutJournalEvidence
 
+// Includes the escaping added when the exact journal JSON is embedded in a recovery snapshot.
+internal const val DISTRIBUTION_PAYOUT_STORAGE_BYTES = 1024 * 1024
+private const val DISTRIBUTION_PAYOUT_GROWTH_BYTES = 128 * 1024
+
+internal fun payoutRecoveryStorageBytes(row: JSONObject): Int =
+  JSONObject.quote(row.toString()).toByteArray().size
+
+internal fun requireDistributionPayoutStorage(row: JSONObject, unsigned: Boolean = false) {
+  if (!row.getJSONObject("proposal").has("distribution")) return
+  val reserve = if (unsigned) DISTRIBUTION_PAYOUT_GROWTH_BYTES else 0
+  check(payoutRecoveryStorageBytes(row) + reserve <= DISTRIBUTION_PAYOUT_STORAGE_BYTES) {
+    "Distribution payout exceeds its reserved encrypted recovery storage."
+  }
+}
+
+internal fun requireDistributionPayoutResponseStorage(
+  proposal: JSONObject,
+  field: String,
+  value: Any,
+) {
+  if (!proposal.has("distribution")) return
+  val limit =
+    when (field) {
+      "submission",
+      "receipt" -> 16 * 1024
+      "settlement" -> 32 * 1024
+      else -> error("Unexpected payout response field")
+    }
+  check(payoutRecoveryStorageBytes(JSONObject().put(field, value)) <= limit) {
+    "Distribution payout response exceeds its reserved encrypted recovery storage."
+  }
+}
+
+internal fun requireDistributionPayoutSigningStorage(
+  row: JSONObject,
+  payload: String,
+  review: String,
+  reviewHash: String,
+) {
+  if (!row.getJSONObject("proposal").has("distribution")) return
+  check(payload.toByteArray().size <= 4096)
+  // The native secp256k1 signature is fixed-width base58; 132 ASCII bytes is an upper bound.
+  val signed =
+    JSONObject()
+      .put("standard", "erc191")
+      .put("payload", payload)
+      .put("signature", "s".repeat(132))
+      .toString()
+  val candidate =
+    JSONObject(row.toString())
+      .put("signedData", signed)
+      .put("review", review)
+      .put("reviewHash", reviewHash)
+      .put("distributionStorageVersion", 1)
+      .put("status", "submissionUnknown")
+      .put("revision", Math.addExact(row.getInt("revision"), 1))
+  // 16KiB submission +32KiB settlement +16KiB receipt, plus keys/status/cursor/revision overhead.
+  check(payoutRecoveryStorageBytes(candidate) + 72 * 1024 <= DISTRIBUTION_PAYOUT_STORAGE_BYTES) {
+    "Distribution payout has no space to durably save its signature and settlement."
+  }
+}
+
 internal fun earnPayoutJournal(context: Context, record: WalletRecord): EarnPayoutJournal {
   requireSponsoredWallet(record, record.id)
   return EarnPayoutJournal(
@@ -90,7 +152,9 @@ internal class EarnPayoutJournal(
       val rows = read()
       val old = entries(rows)
       val leg = proposal.getString("leg")
-      check(leg in setOf("hold", "invest"))
+      if (proposal.has("distribution"))
+        distributionSlot(leg, proposal.getJSONObject("distribution"))
+      else check(leg in setOf("hold", "invest"))
       val funding = proposal.getString("operationId")
       val C = proposal.getString("expectedSigner")
       val tx = proposal.getString("sourceTransactionHash")
@@ -123,6 +187,8 @@ internal class EarnPayoutJournal(
           .put("status", "planned")
           .put("receivedAtoms", "0")
       if (sourceRequest != null) op.put("sourceRequest", sourceRequest)
+      if (proposal.has("distribution")) op.put("distributionStorageVersion", 1)
+      requireDistributionPayoutStorage(op, unsigned = true)
       write(rows.put(op))
       op
     }
@@ -185,6 +251,12 @@ internal class EarnPayoutJournal(
         )) check(old.opt(field) == proposal.opt(field)) {
         "Immutable payout funding or role changed"
       }
+      check(old.has("distribution") == proposal.has("distribution"))
+      if (old.has("distribution"))
+        check(
+          distributionWeights(old.getJSONObject("distribution")) ==
+            distributionWeights(proposal.getJSONObject("distribution"))
+        )
       val history = nonceHistory(op)
       if (nonce != op.getString("nonce"))
         check(
@@ -207,6 +279,8 @@ internal class EarnPayoutJournal(
         .put("nonceHistory", JSONArray(seen))
         .put("status", "planned")
         .put("revision", Math.addExact(revision, 1))
+      if (proposal.has("distribution")) op.put("distributionStorageVersion", 1)
+      requireDistributionPayoutStorage(op, unsigned = true)
       write(rows)
       op
     }
@@ -221,6 +295,7 @@ internal class EarnPayoutJournal(
           !op.optBoolean("signingAuthorizationPending", false) &&
           op.getString("status") == "planned"
       )
+      requireDistributionPayoutStorage(op, unsigned = true)
       NativeEarnPayoutJournalEvidence(
         p.getString("operationId"),
         p.getLong("revision").toULong(),
@@ -241,8 +316,11 @@ internal class EarnPayoutJournal(
       val rows = read()
       val op = entries(rows).single { matches(it, id, leg) }
       check(op.getInt("revision") == revision) { "Stale payout operation" }
+      val historicalSigned = op.has("signedData") && !op.has("distributionStorageVersion")
       action(op)
       op.put("revision", Math.addExact(revision, 1))
+      // Historical signed rows retain their exact reconciliation/retry path at every size.
+      if (!historicalSigned) requireDistributionPayoutStorage(op)
       write(rows)
       op
     }
@@ -261,6 +339,7 @@ internal class EarnPayoutJournal(
           !it.optBoolean("signingAuthorizationPending", false) &&
           it.getString("status") == "planned"
       )
+      if (it.getJSONObject("proposal").has("distribution")) it.put("distributionStorageVersion", 1)
       it
         .put("signedData", signedData)
         .put("review", review)
@@ -293,6 +372,14 @@ internal class EarnPayoutJournal(
       put("kind", "confidentialPayout")
       put("sourceOperationId", p.getString("operationId"))
       put("cycleIndex", p.optInt("cycleIndex", 0))
+      if (p.has("distribution"))
+        put(
+          "distribution",
+          mapOf(
+            "version" to 1,
+            "weightsBps" to distributionWeights(p.getJSONObject("distribution")),
+          ),
+        )
       put("leg", op.getString("leg"))
       put("chainId", p.getLong("profileChainId"))
       put("recipient", p.getString("expectedRecipient"))

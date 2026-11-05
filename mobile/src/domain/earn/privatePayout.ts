@@ -1,7 +1,8 @@
 import { earnAtoms, earnObject } from "./vaultExecution";
 import type { SponsoredOperation } from "./sourceFunding";
 import { earnProfiles, type EarnIntent } from "./types";
-export type PayoutLeg = "hold" | "invest";
+import { payoutDestination, payoutLegs, type DistributionPayoutLeg } from "./distribution";
+export type PayoutLeg = "hold" | "invest" | DistributionPayoutLeg;
 export type PayoutRequest = {
   cycleIndex?: number;
   walletId: string;
@@ -43,6 +44,7 @@ export function payoutRequest(
   source: SponsoredOperation,
   leg: PayoutLeg,
 ): PayoutRequest {
+  payoutDestination(intent, leg);
   if (
     intent.status !== "prepared" ||
     source.walletId !== intent.walletId ||
@@ -82,11 +84,10 @@ export function parsePayoutOperations(value: unknown, intent: EarnIntent): Payou
       seen.has(operationId) ||
       q.walletId !== intent.walletId ||
       q.kind !== "confidentialPayout" ||
-      !["hold", "invest"].includes(String(leg)) ||
+      !payoutLegs(intent).includes(leg as PayoutLeg) ||
       q.chainId !== earnProfiles[intent.profileId].chainId ||
       typeof q.recipient !== "string" ||
-      q.recipient.toLowerCase() !==
-        intent.destinations[leg === "hold" ? 0 : 1].address.toLowerCase() ||
+      q.recipient.toLowerCase() !== payoutDestination(intent, String(leg)).address.toLowerCase() ||
       typeof q.revision !== "number" ||
       !Number.isSafeInteger(q.revision) ||
       q.revision < 1 ||

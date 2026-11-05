@@ -83,7 +83,9 @@ export function ExitCompletionPanel({
   return (
     <View className="gap-2">
       <Typography>
-        Exit completion checks wallet 2 only. Wallet 1 holdings are intentionally excluded.
+        {intent.distribution
+          ? "Exit completion checks the selected investment wallet. Check each wallet to complete the whole investment exit."
+          : "Exit completion checks wallet 2 only. Wallet 1 holdings are intentionally excluded."}
       </Typography>
       <Button
         label={busy ? "Checking exit completion…" : "Check exit completion"}

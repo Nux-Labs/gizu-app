@@ -32,6 +32,7 @@ private val sponsoredOptionalFields =
     "confidentialAccount",
     "refundOwner",
     "cycleIndex",
+    "investmentSlot",
     "sourceAccountIndex",
     "fundingBatchId",
     "fundingBatchSize",
@@ -222,9 +223,10 @@ internal class EarnSponsoredEngine(
         if (chain == 143L) publicAccountAddress(record, incoming.optInt("sourceAccountIndex", 0))
         else {
           check(chain == 4663L && record.earnChain == 4663)
-          cycleAddresses(record)[1]
+          cycleInvestmentAddress(record)
         }
       val (p, op) = sponsoredPublicProposal(record.id, owner, record.earnChain, request)
+      if (chain == 143L) check(!p.has("investmentSlot")) else attachInvestmentSlot(record, p)
       requireActiveEarnCycle(record, p)
       if (p.getString("kind") in setOf("sourceFunding", "hoodTokenReturn")) {
         check(p.getString("confidentialAccount").equals(cycleConfidential(record), true))
@@ -304,6 +306,7 @@ internal class EarnSponsoredEngine(
       .put("cycleIndex", p.optInt("cycleIndex", 0))
       .also {
         if (state.chainId == 143uL) it.put("sourceAccountIndex", p.optInt("sourceAccountIndex", 0))
+        else if (p.has("investmentSlot")) it.put("investmentSlot", p.getInt("investmentSlot"))
       }
 
   suspend fun prepare(id: String, revision: Int): SponsoredReview {

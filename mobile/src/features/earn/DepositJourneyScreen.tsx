@@ -58,8 +58,10 @@ export function DepositJourneyScreen({
     invested = row?.phase === "invested",
     paused = row?.phase === "paused";
   const holdMinimum =
-    review?.sources.reduce((sum, s) => sum + BigInt(s.hold.minimumOutputAtoms), 0n).toString() ??
-    "0";
+    review?.sources
+      .reduce((sum, s) => sum + BigInt(s.hold?.minimumOutputAtoms ?? "0"), 0n)
+      .toString() ?? "0";
+  const distribution = row?.distribution;
   return (
     <Screen>
       <BackAction fallback="Vaults" />
@@ -90,7 +92,7 @@ export function DepositJourneyScreen({
               accessibilityLabel="USDC deposit amount"
               value={v.amount}
               onChangeText={v.setAmount}
-              editable={unsigned}
+              editable={unsigned && !distribution}
               keyboardType="decimal-pad"
               placeholder="0.00"
               placeholderTextColor={colors.fg[45]}
@@ -105,8 +107,9 @@ export function DepositJourneyScreen({
                   : `Available: ${v.balance} USDC`}
             </Typography>
             <Typography variant="caption">
-              Two fresh wallets are created for this investment. The 10/90 split applies to verified
-              private credit after source fees.
+              {row && !distribution
+                ? "Two fresh wallets are created for this investment. The 10/90 split applies to verified private credit after source fees."
+                : "Your amount determines a distribution across fresh investment wallets. Every selected wallet invests in this vault after routing fees, gas and its withdrawal reserve."}
             </Typography>
           </View>
         </Surface>
@@ -118,7 +121,10 @@ export function DepositJourneyScreen({
               {paused ? "Remaining deposit limits" : "Review deposit"}
             </Typography>
             <Typography>Source budget: {formatUsdc(review.sourceBudgetAtoms)} USDC</Typography>
-            <Typography>At least {formatUsdc(holdMinimum)} USDG held</Typography>
+            {!distribution && <Typography>At least {formatUsdc(holdMinimum)} USDG held</Typography>}
+            {distribution && (
+              <Typography>Investment wallets: {distribution.weightsBps.length}</Typography>
+            )}
             <Typography>
               At least {formatUsdc(review.deposit.minimumAssetsAtoms)} USDG invested
             </Typography>
@@ -129,12 +135,31 @@ export function DepositJourneyScreen({
               Withdrawal reserve: {formatUsdc(review.deposit.withdrawalReserveAtoms)} USDG
             </Typography>
             <Typography variant="caption">
-              The reserve stays liquid in wallet 2. It is not an already-paid fee.
+              {distribution
+                ? "Each wallet retains its own withdrawal reserve. It is not an already-paid fee."
+                : "The reserve stays liquid in wallet 2. It is not an already-paid fee."}
             </Typography>
             <Typography variant="caption">
               Minimum shares:{" "}
               {shareAmount(review.deposit.minimumSharesAtoms, review.deposit.shareDecimals)}
             </Typography>
+            {review.deposits?.map((deposit) => (
+              <View key={deposit.slot} className="gap-1 rounded-xl bg-well p-3">
+                <Typography variant="row">
+                  Wallet {deposit.slot + 1} · {distribution!.weightsBps[deposit.slot]! / 100}%
+                </Typography>
+                <Typography selectable variant="caption">
+                  {deposit.recipient}
+                </Typography>
+                <Typography>
+                  At least {formatUsdc(deposit.minimumAssetsAtoms)} USDG invested
+                </Typography>
+                <Typography variant="caption">
+                  Gas cap: {formatUsdc(deposit.maximumFeeAtoms)} USDG · withdrawal reserve:{" "}
+                  {formatUsdc(deposit.withdrawalReserveAtoms)} USDG
+                </Typography>
+              </View>
+            ))}
             <Typography variant="caption">
               {paused
                 ? "These are saved approval limits. Native review checks the remaining operations before signing."
@@ -147,11 +172,15 @@ export function DepositJourneyScreen({
         <Surface>
           <View className="gap-3 p-5" accessibilityLiveRegion="polite">
             <Typography variant="heading">Deposit estimate</Typography>
+            {!distribution && (
+              <Typography>
+                Estimated 10% held: {formatUsdc(row.indicativeReview.holdEstimatedAtoms)} USDG
+              </Typography>
+            )}
             <Typography>
-              Estimated 10% held: {formatUsdc(row.indicativeReview.holdEstimatedAtoms)} USDG
-            </Typography>
-            <Typography>
-              Estimated 90% before vault fees:{" "}
+              {distribution
+                ? "Estimated investment before vault fees: "
+                : "Estimated 90% before vault fees: "}
               {formatUsdc(row.indicativeReview.investEstimatedAtoms)} USDG
             </Typography>
             <Typography variant="caption">
@@ -174,7 +203,11 @@ export function DepositJourneyScreen({
                 </Typography>
               </View>
               <View className="rounded-full border border-cardEdge bg-well px-3 py-1.5">
-                <Typography variant="eyebrow">USDG · 10 / 90</Typography>
+                <Typography variant="eyebrow">
+                  {distribution
+                    ? `USDG · ${distribution.weightsBps.length} investment wallets`
+                    : "USDG · 10 / 90"}
+                </Typography>
               </View>
             </View>
             <Typography variant="heading" accessibilityLiveRegion="polite">
@@ -201,7 +234,13 @@ export function DepositJourneyScreen({
               </Typography>
             )}
             <View className="gap-4 rounded-2xl bg-well p-4">
-              {stages.map(([stage, label], index) => {
+              {stages.map(([stage, legacyLabel], index) => {
+                const label =
+                  distribution && stage === "payouts"
+                    ? "Route funds to investment wallets"
+                    : distribution && stage === "deposit"
+                      ? "Deposit every wallet into the vault"
+                      : legacyLabel;
                 const done = row.completedSteps.includes(stage),
                   active = !v.authorizing && !done && currentStage[row.phase] === stage;
                 return (
@@ -231,6 +270,32 @@ export function DepositJourneyScreen({
                 );
               })}
             </View>
+            {row.investments?.map((investment) => (
+              <View key={investment.slot} className="gap-1">
+                <Typography>
+                  Wallet {investment.slot + 1}:{" "}
+                  {investment.status === "invested"
+                    ? "Invested"
+                    : investment.status === "received"
+                      ? "Funding verified"
+                      : investment.status === "depositing"
+                        ? "Depositing"
+                        : investment.status === "paused"
+                          ? "Needs attention"
+                          : "Pending"}
+                </Typography>
+                {investment.status === "invested" && (
+                  <Typography variant="caption">
+                    {formatUsdc(investment.depositedAtoms)} USDG invested
+                  </Typography>
+                )}
+                {investment.transactionHash && (
+                  <Typography selectable variant="caption">
+                    {investment.transactionHash}
+                  </Typography>
+                )}
+              </View>
+            ))}
             <View className="gap-3 rounded-2xl bg-well p-4">
               <View className="flex-row items-center justify-between gap-3">
                 <Typography variant="rowTitle">Steps verified</Typography>
@@ -261,7 +326,9 @@ export function DepositJourneyScreen({
             )}
             {invested && (
               <>
-                <Typography>{formatUsdc(row.holdReceivedAtoms)} USDG held</Typography>
+                {!distribution && (
+                  <Typography>{formatUsdc(row.holdReceivedAtoms)} USDG held</Typography>
+                )}
                 <Typography>{formatUsdc(row.depositedAtoms)} USDG invested</Typography>
                 <Typography variant="caption">
                   Your investment remains in the vault until you choose to withdraw.
@@ -277,6 +344,14 @@ export function DepositJourneyScreen({
         </Typography>
       )}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
+      {v.canChangeAmount && (
+        <Button
+          label="Change amount"
+          variant="secondary"
+          disabled={v.busy}
+          onPress={() => void v.changeAmount()}
+        />
+      )}
       {row?.phase === "review" ? (
         <Button
           label="Confirm deposit"
@@ -343,14 +418,16 @@ export function DepositJourneyScreen({
       {v.details && row && (
         <Surface>
           <View className="gap-2 p-5">
-            <Typography variant="row">Wallet 1 · hold</Typography>
-            <Typography selectable variant="caption">
-              {row.destinations[0].address}
-            </Typography>
-            <Typography variant="row">Wallet 2 · invest</Typography>
-            <Typography selectable variant="caption">
-              {row.destinations[1].address}
-            </Typography>
+            {row.destinations.map((destination, slot) => (
+              <View key={destination.address} className="gap-1">
+                <Typography variant="row">
+                  Wallet {slot + 1} · {destination.role}
+                </Typography>
+                <Typography selectable variant="caption">
+                  {destination.address}
+                </Typography>
+              </View>
+            ))}
             <Typography variant="caption">Vault contract</Typography>
             <Typography selectable variant="caption">
               {profile.vault}

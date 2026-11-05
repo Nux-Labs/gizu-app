@@ -68,10 +68,16 @@ private constructor(
           depositCanonical(JSONObject(record.roleRegistry))
       )
       check(review.getString("confidentialAccount") == cycleConfidential(record))
+      val distribution = savedCycleDistribution(record)
+      check(nativeJsonEqual(review.opt("distribution"), distribution))
+      if (distribution == null) check(!review.has("deposits"))
       val addresses = cycleAddresses(record)
+      val legs = depositReviewLegs(review)
+      val deposits = depositReviewDeposits(review)
       check(
         review.getJSONArray("destinations").let {
-          it.length() == 2 && (0..1).all { n -> it.getString(n).equals(addresses[n], true) }
+          it.length() == addresses.size &&
+            addresses.indices.all { n -> it.getString(n).equals(addresses[n], true) }
         }
       )
       val quoted = review.getLong("quotedAtMs")
@@ -87,7 +93,7 @@ private constructor(
       check(rows.size == sources.size)
       var offset = BigInteger.ZERO
       var totalBudget = BigInteger.ZERO
-      var investMinimum = BigInteger.ZERO
+      val investMinimum = MutableList(deposits.size) { BigInteger.ZERO }
       for (s in sources.sortedBy { it.getInt("accountIndex") }) {
         val p =
           rows
@@ -119,32 +125,45 @@ private constructor(
             retained >= BigInteger.valueOf(10000) &&
             amount + fee + retained == budget
         )
-        val hold = (offset + credit) / BigInteger.TEN - offset / BigInteger.TEN
-        for ((n, leg) in listOf(0 to "hold", 1 to "invest")) {
-          val l = s.getJSONObject(leg)
+        if (distribution != null) {
+          check(!s.has("hold") && !s.has("invest"))
+          check(s.getJSONArray("allocations").length() == legs.size)
+        } else check(!s.has("allocations"))
+        for ((n, leg) in legs.withIndex()) {
+          val l = depositReviewBound(s, leg, review)
           check(l.getString("recipient").equals(addresses[n], true))
           check(
-            depositAtoms(l.getString("inputAtoms"), true) == if (n == 0) hold else credit - hold
+            l.getString("inputAtoms") ==
+              nativePayoutAmount(credit.toString(), offset.toString(), leg, distribution)
           )
           val minimum = depositAtoms(l.getString("minimumOutputAtoms"), true)
           check(minimum <= depositAtoms(l.getString("estimatedOutputAtoms"), true))
           check(l.getInt("providerFeeBps") in 0..100)
-          if (n == 1) investMinimum += minimum
+          if (distribution != null) investMinimum[n] += minimum
+          else if (leg == "invest") investMinimum[0] += minimum
         }
         offset += credit
         totalBudget += budget
       }
       check(totalBudget == depositAtoms(review.getString("sourceBudgetAtoms"), true))
-      val d = review.getJSONObject("deposit")
-      val minimum = depositAtoms(d.getString("minimumAssetsAtoms"), true)
-      check(minimum <= depositAtoms(d.getString("estimatedAssetsAtoms"), true))
-      check(
-        minimum +
-          depositAtoms(d.getString("maximumFeeAtoms"), true) +
-          depositAtoms(d.getString("withdrawalReserveAtoms"), true) <= investMinimum
-      )
-      check(d.getInt("shareDecimals") in 0..18)
-      depositAtoms(d.getString("minimumSharesAtoms"), true)
+      check(deposits.size == if (distribution == null) 1 else addresses.size)
+      for ((slot, d) in deposits.withIndex()) {
+        if (distribution != null) {
+          check(d.get("slot") is Number && d.getDouble("slot") == slot.toDouble())
+          check(d.getString("recipient").equals(addresses[slot], true))
+        }
+        val minimum = depositAtoms(d.getString("minimumAssetsAtoms"), true)
+        check(minimum <= depositAtoms(d.getString("estimatedAssetsAtoms"), true))
+        check(
+          minimum +
+            depositAtoms(d.getString("maximumFeeAtoms"), true) +
+            depositAtoms(d.getString("withdrawalReserveAtoms"), true) <= investMinimum[slot]
+        )
+        check(d.getInt("shareDecimals") in 0..18)
+        depositAtoms(d.getString("minimumSharesAtoms"), true)
+      }
+      if (distribution != null)
+        check(nativeJsonEqual(review.getJSONObject("deposit"), aggregateDepositBounds(deposits)))
       val reservation = review.getJSONObject("reservation")
       val funding =
         EarnFundingBatchApproval.createManifest(
@@ -194,6 +213,7 @@ private constructor(
         record.earnCycleIndex == cycle &&
         depositCanonical(JSONObject(record.roleRegistry)) == registry
     )
+    check(nativeJsonEqual(savedCycleDistribution(record), envelope.opt("distribution")))
     lastObservedAt = now
   }
 
@@ -233,8 +253,10 @@ private constructor(
           check(source != null)
           val sourceId = source.getString("operationId")
           val leg = p.getString("leg")
-          check(leg in setOf("hold", "invest"))
-          val bound = source.getJSONObject(leg)
+          check(leg in depositReviewLegs(envelope))
+          check(nativeJsonEqual(p.opt("distribution"), envelope.opt("distribution")))
+          check(!p.has("investmentSlot"))
+          val bound = depositReviewBound(source, leg, envelope)
           check(p.getString("expectedSigner") == review.getString("confidentialAccount"))
           check(
             p.getString("sourceOwner").equals(source.getString("address"), true) &&
@@ -250,7 +272,10 @@ private constructor(
               }
               .toString()
           check(p.getString("creditedAtoms") == credit && p.getString("splitOffsetAtoms") == offset)
-          check(p.getString("amountAtoms") == nativePayoutAmount(credit, offset, leg))
+          check(
+            p.getString("amountAtoms") ==
+              nativePayoutAmount(credit, offset, leg, envelope.optJSONObject("distribution"))
+          )
           check(
             depositAtoms(p.getString("minimumDestinationAtoms"), true) >=
               depositAtoms(bound.getString("minimumOutputAtoms"), true)
@@ -260,24 +285,41 @@ private constructor(
           "payouts:$sourceId:$leg"
         }
         else -> {
-          check(p.getString("kind") == "hoodDeposit" && payouts.size == sources.size * 2)
+          check(p.getString("kind") == "hoodDeposit")
+          val distribution = envelope.optJSONObject("distribution")
+          val slot =
+            if (distribution != null) {
+              val value = p.getInt("investmentSlot")
+              check(
+                p.get("investmentSlot") is Number &&
+                  p.getDouble("investmentSlot") == value.toDouble()
+              )
+              check(value in distributionWeights(distribution).indices)
+              value
+            } else {
+              check(!p.has("investmentSlot"))
+              null
+            }
+          val leg = slot?.let { "invest:$it" } ?: "invest"
+          check(sources.all { payouts.containsKey(it.getString("operationId") + ":" + leg) })
+          if (slot == null) check(payouts.size == sources.size * 2)
           check(
             p.getInt("chainId") == 4663 &&
               p.getString("expectedFrom")
-                .equals(review.getJSONArray("destinations").getString(1), true)
+                .equals(review.getJSONArray("destinations").getString(slot ?: 1), true)
           )
           check(
             p.getString("token").equals(HOOD_EARN_USDG, true) &&
               p.getString("vault").equals(HOOD_EARN_VAULT, true) &&
               p.getString("router").equals(HOOD_EARN_ROUTER, true)
           )
-          val bound = review.getJSONObject("deposit")
+          val bound = depositReviewDeposits(envelope)[slot ?: 0]
           val amount = depositAtoms(p.getString("amountAtoms"), true)
           val fee = depositAtoms(p.getString("maximumTokenFeeAtoms"), true)
           val reserve = depositAtoms(p.getString("withdrawalReserveAtoms"), true)
           val received =
             sources.fold(BigInteger.ZERO) { n, s ->
-              n + depositAtoms(checkNotNull(payouts[s.getString("operationId") + ":invest"]))
+              n + depositAtoms(checkNotNull(payouts[s.getString("operationId") + ":" + leg]))
             }
           check(amount >= depositAtoms(bound.getString("minimumAssetsAtoms"), true))
           check(
@@ -293,7 +335,7 @@ private constructor(
               depositAtoms(bound.getString("minimumSharesAtoms"), true)
           )
           check(p.getInt("slippageBps") == 10 && p.getLong("deadline") > now / 1000)
-          "deposit"
+          slot?.let { "deposit:$it" } ?: "deposit"
         }
       }
     val previous = logicalChildren[logical]
@@ -343,12 +385,15 @@ private constructor(
   /** Called only after the payout engine verifies the destination receipt. */
   @Synchronized
   fun recordPayout(sourceId: String, leg: String, atoms: String) {
-    check(credits.size == sources.size && leg in setOf("hold", "invest"))
+    check(credits.size == sources.size && leg in depositReviewLegs(envelope))
     val source = sources.singleOrNull { it.getString("operationId") == sourceId }
     check(source != null)
     check(
       depositAtoms(atoms, true) >=
-        depositAtoms(source.getJSONObject(leg).getString("minimumOutputAtoms"), true)
+        depositAtoms(
+          depositReviewBound(source, leg, envelope).getString("minimumOutputAtoms"),
+          true,
+        )
     )
     val key = "$sourceId:$leg"
     check(payouts[key] == null || payouts[key] == atoms)
@@ -427,3 +472,23 @@ internal fun vaultApprovalBounds(preview: JSONObject): JSONObject {
     .put("maximumFeeAtoms", (fee + (fee + BigInteger.valueOf(3)) / four).toString())
     .put("withdrawalReserveAtoms", (reserve * BigInteger.valueOf(3) / four).toString())
 }
+
+/**
+ * Shared interpretation of the versioned review; absent metadata is the original two-role policy.
+ */
+internal fun depositReviewLegs(review: JSONObject): List<String> =
+  review.optJSONObject("distribution")?.let {
+    distributionWeights(it).indices.map { slot -> "invest:$slot" }
+  } ?: listOf("hold", "invest")
+
+internal fun depositReviewBound(source: JSONObject, leg: String, review: JSONObject): JSONObject =
+  review.optJSONObject("distribution")?.let {
+    source.getJSONArray("allocations").getJSONObject(distributionSlot(leg, it))
+  } ?: source.getJSONObject(leg)
+
+internal fun depositReviewDeposits(review: JSONObject): List<JSONObject> =
+  if (review.has("distribution")) review.getJSONArray("deposits").objects()
+  else listOf(review.getJSONObject("deposit"))
+
+internal fun depositChildId(journeyId: String, slot: Int? = null): String =
+  if (slot == null) "vault_$journeyId" else "vault_${journeyId}_$slot"

@@ -1,5 +1,7 @@
 //! Native-private entropy derivation and transaction policy. Never export secrets to JS.
+mod earn_distribution;
 mod earn_fees;
+pub use earn_distribution::{derive_earn_distribution_addresses, earn_distribution_allocations};
 mod earn_values;
 pub use earn_values::*;
 mod portfolio;
@@ -251,4 +253,141 @@ pub(crate) fn earn_cycle_key(
             .map_err(|_| SignerError::InvalidInput)?,
     )
     .map_err(|_| SignerError::CryptoFailed)
+}
+
+#[cfg(test)]
+pub(crate) fn distribution_test_address(chain: u64, cycle: u32, slot: u32) -> String {
+    let seed = roles::seed_from_entropy(vec![0; 32]).unwrap();
+    let path: DerivationPath = format!("m/44'/60'/145'/{chain}'/{}", cycle * 8 + slot)
+        .parse()
+        .unwrap();
+    address(
+        XPrv::derive_from_path(&seed, &path)
+            .unwrap()
+            .private_key()
+            .verifying_key(),
+    )
+}
+
+#[cfg(test)]
+mod distribution_tests {
+    use super::*;
+    #[test]
+    fn distribution_domain_is_stable_distinct_and_bounded() {
+        let mut all = std::collections::HashSet::new();
+        for chain in [1, 4663] {
+            for cycle in [0, 1, 2, 268435455] {
+                let legacy = derive_earn_cycle_addresses(vec![0; 32], chain, cycle).unwrap();
+                let confidential =
+                    derive_earn_cycle_confidential_address(vec![0; 32], chain, cycle).unwrap();
+                let five =
+                    derive_earn_distribution_addresses(vec![0; 32], chain, cycle, 5).unwrap();
+                for count in [1, 2, 5] {
+                    assert_eq!(
+                        derive_earn_distribution_addresses(vec![0; 32], chain, cycle, count)
+                            .unwrap(),
+                        five[..count as usize]
+                    );
+                }
+                for (slot, addr) in five.iter().enumerate() {
+                    assert_eq!(*addr, distribution_test_address(chain, cycle, slot as u32));
+                    assert!(!legacy.contains(addr));
+                    assert_ne!(addr, &confidential);
+                    assert!(all.insert(addr.clone()));
+                }
+            }
+        }
+        for (chain, cycle, count) in [
+            (143, 0, 1),
+            (1, 0, 0),
+            (1, 0, 6),
+            (1, 268435456, 1),
+            (1, u32::MAX, 5),
+        ] {
+            assert!(derive_earn_distribution_addresses(vec![0; 32], chain, cycle, count).is_err());
+        }
+        assert!(derive_earn_distribution_addresses(vec![0; 31], 1, 0, 1).is_err());
+    }
+    #[test]
+    fn distribution_cumulative_allocations_conserve_and_ignore_fragmentation() {
+        for weights in [
+            vec![10000u32],
+            vec![3333, 6667],
+            vec![1000, 2000, 3000, 1500, 2500],
+        ] {
+            let plan = serde_json::json!({"version":1,"weightsBps":weights}).to_string();
+            let mut offset = 0u128;
+            let mut totals = vec![0u128; weights.len()];
+            for credit in [100003u128, 123457, 200001] {
+                let amounts = earn_distribution_allocations(
+                    plan.clone(),
+                    credit.to_string(),
+                    offset.to_string(),
+                )
+                .unwrap();
+                assert_eq!(
+                    amounts
+                        .iter()
+                        .map(|n| n.parse::<u128>().unwrap())
+                        .sum::<u128>(),
+                    credit
+                );
+                for (total, amount) in totals.iter_mut().zip(amounts) {
+                    *total += amount.parse::<u128>().unwrap();
+                }
+                offset += credit;
+            }
+            assert_eq!(
+                totals,
+                earn_distribution_allocations(plan, offset.to_string(), "0".into())
+                    .unwrap()
+                    .iter()
+                    .map(|n| n.parse::<u128>().unwrap())
+                    .collect::<Vec<_>>()
+            );
+        }
+        let maximum = alloy_primitives::U256::MAX.to_string();
+        assert_eq!(
+            earn_distribution_allocations(
+                r#"{"version":1,"weightsBps":[10000]}"#.into(),
+                maximum.clone(),
+                "0".into()
+            )
+            .unwrap(),
+            vec![maximum]
+        );
+    }
+    #[test]
+    fn distribution_rejects_malformed_uneconomic_or_overflowing_allocations() {
+        for plan in [
+            r#"{"version":2,"weightsBps":[10000]}"#,
+            r#"{"version":1,"weightsBps":[]}"#,
+            r#"{"version":1,"weightsBps":[0,10000]}"#,
+            r#"{"version":1,"weightsBps":[9999]}"#,
+            r#"{"version":1,"weightsBps":[1,1,1,1,1,9995]}"#,
+            r#"{"version":1,"weightsBps":[10000],"extra":1}"#,
+        ] {
+            assert!(
+                earn_distribution_allocations(plan.into(), "10000".into(), "0".into()).is_err()
+            );
+        }
+        for (credit, offset) in [("0", "0"), ("1", "0"), ("1", "3"), ("01", "0"), ("1", "-1")] {
+            assert!(
+                earn_distribution_allocations(
+                    r#"{"version":1,"weightsBps":[3333,3333,3334]}"#.into(),
+                    credit.into(),
+                    offset.into()
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            earn_distribution_allocations(
+                r#"{"version":1,"weightsBps":[10000]}"#.into(),
+                "1".into(),
+                alloy_primitives::U256::MAX.to_string()
+            )
+            .is_err()
+        );
+    }
 }

@@ -8,10 +8,29 @@ import { hoodIntent } from "../../support/robinhoodEarn";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
 import { depositSnapshot } from "../../support/depositJourney";
 import type { RootStackParamList } from "@/navigation/types";
+import type { EarnIntent } from "@/domain/earn/types";
 const Stack = createNativeStackNavigator<RootStackParamList>();
-function setup(foreign = false) {
-  const wallet = { ...hoodIntent, ...(foreign ? { walletId: "other" } : {}) };
+function setup(foreign = false, distribution = false) {
+  let wallet: EarnIntent = {
+    ...hoodIntent,
+    ...(foreign ? { walletId: "other" } : {}),
+    ...(distribution
+      ? {
+          distribution: { version: 1 as const, weightsBps: [4300, 5700] },
+          investmentSlot: 0,
+          destinations: hoodIntent.destinations.map((d, slot) => ({
+            ...d,
+            role: "invest" as const,
+            slot,
+          })) as EarnIntent["destinations"],
+        }
+      : {}),
+  };
   const select = jest.fn().mockResolvedValue(wallet);
+  const selectInvestmentSlot = jest.fn().mockImplementation(async (_owner, _id, slot) => {
+    wallet = { ...wallet, investmentSlot: slot };
+    return wallet;
+  });
   const deposit = {
     available: jest.fn().mockResolvedValue(true),
     prepare: jest.fn(),
@@ -47,9 +66,10 @@ function setup(foreign = false) {
     >
       <EarnProvider
         service={{
-          load: jest.fn().mockResolvedValue(wallet),
-          list: jest.fn().mockResolvedValue([wallet]),
+          load: jest.fn().mockImplementation(async () => wallet),
+          list: jest.fn().mockImplementation(async () => [wallet]),
           select,
+          selectInvestmentSlot,
           prepare: jest.fn(),
           cancel: jest.fn(),
         }}
@@ -67,7 +87,7 @@ function setup(foreign = false) {
       </EarnProvider>
     </MainnetWalletProvider>,
   );
-  return { select, deposit };
+  return { select, selectInvestmentSlot, deposit };
 }
 test("saved investment opens its existing native deposit and leaves withdrawal separate", async () => {
   const { deposit } = setup();
@@ -93,4 +113,15 @@ test("saved investment offers funding recovery without a new funding amount or r
   expect(screen.queryByLabelText("USDC funding budget") === null).toBe(true);
   expect(screen.queryByRole("button", { name: "Review USDC funding" }) === null).toBe(true);
   expect(screen.getByRole("button", { name: "Check saved funding" })).toBeVisible();
+});
+test("a saved distribution selects the exact investment wallet before exposing withdrawal controls", async () => {
+  const { selectInvestmentSlot } = setup(false, true);
+  expect(await screen.findByRole("button", { name: "Select wallet 1" })).toBeDisabled();
+  await userEvent.press(screen.getByRole("button", { name: "Select wallet 2" }));
+  expect(selectInvestmentSlot).toHaveBeenCalledWith(
+    expect.objectContaining({ walletId: hoodIntent.walletId }),
+    hoodIntent.intentId,
+    1,
+  );
+  expect(await screen.findByRole("button", { name: "Select wallet 2" })).toBeDisabled();
 });

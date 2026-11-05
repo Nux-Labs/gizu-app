@@ -110,6 +110,7 @@ pub struct NativeSignedEarnPayout {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Proposal {
     kind: String,
+    distribution: Option<crate::earn_distribution::EarnDistribution>,
     #[serde(default)]
     source_account_index: u32,
     #[serde(default = "zero_atoms")]
@@ -209,7 +210,6 @@ impl EarnPayoutOperation {
             || entropy.len() != 32
             || p.revision == 0
             || ![1, 4663].contains(&p.profile_chain_id)
-            || !["hold", "invest"].contains(&p.leg.as_str())
             || p.deadline_ms <= clock
             || p.deadline_ms > clock.checked_add(600000).ok_or(SignerError::InvalidInput)?
         {
@@ -222,17 +222,26 @@ impl EarnPayoutOperation {
         hash(&p.source_history_id)?;
         let credit = dec(&p.credited_atoms)?;
         let offset = dec(&p.split_offset_atoms)?;
-        let hold = offset
-            .checked_add(credit)
-            .ok_or(SignerError::InvalidInput)?
-            / U256::from(10)
-            - offset / U256::from(10);
-        let invest = credit - hold;
-        if hold == U256::ZERO
-            || invest == U256::ZERO
-            || dec(&p.amount_atoms)? != if p.leg == "hold" { hold } else { invest }
-            || dec(&p.minimum_destination_atoms)? == U256::ZERO
-        {
+        let slot = match &p.distribution {
+            Some(plan) => Some(plan.slot(&p.leg)?),
+            None if p.leg == "hold" || p.leg == "invest" => None,
+            None => return Err(SignerError::InvalidInput),
+        };
+        let amount = if let Some(plan) = &p.distribution {
+            plan.allocations(credit, offset)?[slot.ok_or(SignerError::InvalidInput)? as usize]
+        } else {
+            let hold = offset
+                .checked_add(credit)
+                .ok_or(SignerError::InvalidInput)?
+                / U256::from(10)
+                - offset / U256::from(10);
+            let invest = credit - hold;
+            if hold.is_zero() || invest.is_zero() {
+                return Err(SignerError::InvalidInput);
+            }
+            if p.leg == "hold" { hold } else { invest }
+        };
+        if dec(&p.amount_atoms)? != amount || dec(&p.minimum_destination_atoms)?.is_zero() {
             return Err(SignerError::InvalidInput);
         }
         let mnemonic = Mnemonic::from_entropy_in(Language::English, &entropy)
@@ -251,16 +260,22 @@ impl EarnPayoutOperation {
                 .private_key()
                 .verifying_key(),
         );
-        let recipient = address(
+        let recipient_key = if slot.is_some() {
+            crate::earn_distribution::earn_investment_key(
+                &seed,
+                p.profile_chain_id,
+                p.cycle_index,
+                slot,
+            )?
+        } else {
             child(
                 &seed,
                 p.profile_chain_id,
                 p.cycle_index,
                 u8::from(p.leg == "invest"),
             )?
-            .private_key()
-            .verifying_key(),
-        );
+        };
+        let recipient = address(recipient_key.private_key().verifying_key());
         if addr(&p.expected_signer)? != addr(&confidential)?
             || addr(&p.expected_recipient)? != addr(&recipient)?
         {
@@ -309,7 +324,7 @@ impl EarnPayoutOperation {
             return Err(SignerError::InvalidInput);
         }
         let review = format!(
-            "CONFIDENTIAL EARN PAYOUT · {} · profile chain {}\nFunding operation {} · revision {}\nSigner C {} · destination {}\nConfirmed Monad USDC source credit {} atoms · source quote {} · origin transaction {}\nVerified source history identity {}\nExact {} allocation {} source atoms (hold=floor10%, invest=remainder90%)\nQuote {} · minimum destination {} atoms · token {}\nConfidential deposit receiver {} · refund C {}\n{} · advanced confidentiality\nDeadline {} Unix milliseconds\nExact ERC191 payload hash {:#x} · local nonce reservation {}\nIndependent payout authorization for this funding operation and role. Native journal permits one signed child per role; uncertain submission stays locked. Retry only identical signed bytes. Signing does not prove destination receipt or vault deposit.",
+            "CONFIDENTIAL EARN PAYOUT · {} · profile chain {}\nFunding operation {} · revision {}\nSigner C {} · destination {}\nConfirmed Monad USDC source credit {} atoms · source quote {} · origin transaction {}\nVerified source history identity {}\nExact {} allocation {} source atoms ({})\nQuote {} · minimum destination {} atoms · token {}\nConfidential deposit receiver {} · refund C {}\n{} · advanced confidentiality\nDeadline {} Unix milliseconds\nExact ERC191 payload hash {:#x} · local nonce reservation {}\nIndependent payout authorization for this funding operation and role. Native journal permits one signed child per role; uncertain submission stays locked. Retry only identical signed bytes. Signing does not prove destination receipt or vault deposit.",
             s.p.leg,
             s.p.profile_chain_id,
             s.p.operation_id,
@@ -322,6 +337,10 @@ impl EarnPayoutOperation {
             s.p.source_history_id,
             s.p.leg,
             s.p.amount_atoms,
+            s.p.distribution
+                .as_ref()
+                .map(|p| p.review())
+                .unwrap_or_else(|| "hold=floor10%, invest=remainder90%".into()),
             s.p.quote_id,
             s.p.minimum_destination_atoms,
             quote.destination_token,
@@ -744,6 +763,7 @@ pub struct NativeEarnWithdrawalQuoteBinding {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WithdrawalProposal {
     kind: String,
+    investment_slot: Option<u32>,
     operation_id: String,
     revision: u64,
     profile_chain_id: u64,
@@ -816,6 +836,7 @@ impl ConfidentialEarnWithdrawalOperation {
         }
         let return_id = p.return_operation_id;
         let proposal = Proposal {
+            distribution: None,
             source_account_index: 0,
             split_offset_atoms: "0".into(),
             kind: p.kind,
@@ -838,9 +859,14 @@ impl ConfidentialEarnWithdrawalOperation {
         let inner = Arc::new(EarnPayoutOperation {
             state: Mutex::new(Inner {
                 expected_source_owner: address(
-                    crate::earn_cycle_key(&seed, p.profile_chain_id, p.cycle_index, 1)?
-                        .private_key()
-                        .verifying_key(),
+                    crate::earn_distribution::earn_investment_key(
+                        &seed,
+                        p.profile_chain_id,
+                        p.cycle_index,
+                        p.investment_slot,
+                    )?
+                    .private_key()
+                    .verifying_key(),
                 ),
                 proposal_hash: keccak256(proposal_json.as_bytes()),
                 withdrawal_return_id: Some(return_id),
@@ -1390,5 +1416,72 @@ mod tests {
                 .prepare(7, credit, quote, payload, journal)
                 .is_err()
         );
+    }
+    #[test]
+    fn distribution_payouts_conserve_full_credit_and_bind_each_slot() {
+        for chain in [1, 4663] {
+            for weights in [
+                vec![10000u64],
+                vec![3700, 6300],
+                vec![1000, 2000, 3000, 1500, 2500],
+            ] {
+                let mut allocated = 0;
+                for (slot, weight) in weights.iter().enumerate() {
+                    let amount = if slot + 1 == weights.len() {
+                        1000001 - allocated
+                    } else {
+                        1000001 * weight / 10000
+                    };
+                    allocated += amount;
+                    let mut p = proposal(chain, "invest");
+                    p["distribution"] = json!({"version":1,"weightsBps":weights});
+                    p["leg"] = json!(format!("invest:{slot}"));
+                    p["quoteId"] = json!(format!("quote-{slot}"));
+                    p["amountAtoms"] = json!(amount.to_string());
+                    p["expectedRecipient"] =
+                        json!(crate::distribution_test_address(chain, 0, slot as u32));
+                    let op = EarnPayoutOperation::new(p.to_string(), vec![0; 32]).unwrap();
+                    let (credit, mut quote, payload, journal) = evidence(&p);
+                    quote.quote_id = p["quoteId"].as_str().unwrap().into();
+                    quote.destination_recipient = p["expectedRecipient"].as_str().unwrap().into();
+                    let review = op
+                        .prepare(7, credit, quote, payload, journal.clone())
+                        .unwrap();
+                    assert!(review.contains("Distribution v1"));
+                    assert!(!review.contains("hold=floor10%"));
+                    for weight in &weights {
+                        assert!(review.contains(&format!("{weight} bps")));
+                    }
+                    op.approve(7, op.review_hash().unwrap()).unwrap();
+                    assert_eq!(op.sign(7, journal).unwrap().leg, format!("invest:{slot}"));
+                    let mut wrong = p.clone();
+                    wrong["expectedRecipient"] = json!(recipient(chain, "invest"));
+                    assert!(EarnPayoutOperation::new(wrong.to_string(), vec![0; 32]).is_err());
+                    wrong = p.clone();
+                    wrong["leg"] = json!("invest");
+                    assert!(EarnPayoutOperation::new(wrong.to_string(), vec![0; 32]).is_err());
+                    wrong = p.clone();
+                    wrong["amountAtoms"] = json!((amount + 1).to_string());
+                    assert!(EarnPayoutOperation::new(wrong.to_string(), vec![0; 32]).is_err());
+                }
+                assert_eq!(allocated, 1000001);
+            }
+        }
+    }
+    #[test]
+    fn distribution_withdrawal_binds_return_credit_to_selected_investor() {
+        let (mut p, mut credit, quote, payload, journal) = withdrawal_fixture(1, false);
+        p["investmentSlot"] = json!(3);
+        credit.credit.source_owner = crate::distribution_test_address(1, 2, 3);
+        let op = ConfidentialEarnWithdrawalOperation::new(
+            p.to_string(),
+            vec![0; 32],
+            crate::role_registry_covering(3).unwrap(),
+        )
+        .unwrap();
+        op.prepare(7, credit, quote, payload, journal.clone())
+            .unwrap();
+        op.approve(7, op.review_hash().unwrap()).unwrap();
+        assert_eq!(op.sign(7, journal).unwrap().leg, "withdrawal");
     }
 }

@@ -21,6 +21,39 @@ class WalletDiscoveryRegistryTest {
   }
 
   @Test
+  fun savedDistributionTracksEverySelectedSlotAndSharedConfidentialIdentityOnly() {
+    DistributionDepositFixtures.record(listOf(1000, 1500, 2000, 2500, 3000)).use { record ->
+      fun descriptor(derivation: String, role: String, slot: Int? = null) =
+        JSONObject()
+          .put("chainId", record.earnChain)
+          .put("cycleIndex", record.earnCycleIndex)
+          .put("derivation", derivation)
+          .put("role", role)
+          .also { if (slot != null) it.put("slot", slot) }
+      val owners =
+        (0..4).map { descriptor("distribution-v1", "invest", it) } +
+          descriptor("legacy", "confidential")
+      assertTrue(discoveredMetadataResolved(record, owners))
+      assertFalse(discoveredMetadataResolved(record, owners + descriptor("legacy", "invest")))
+      assertFalse(
+        discoveredMetadataResolved(record, listOf(descriptor("distribution-v1", "invest", 5)))
+      )
+      val wrongCycle = JSONObject(owners[0].toString()).put("cycleIndex", record.earnCycleIndex + 1)
+      assertFalse(discoveredMetadataResolved(record, listOf(wrongCycle)))
+    }
+    DistributionDepositFixtures.record(listOf(10000)).use { record ->
+      val extra =
+        JSONObject()
+          .put("chainId", record.earnChain)
+          .put("cycleIndex", record.earnCycleIndex)
+          .put("derivation", "distribution-v1")
+          .put("role", "invest")
+          .put("slot", 1)
+      assertFalse(discoveredMetadataResolved(record, listOf(extra)))
+    }
+  }
+
+  @Test
   fun boundedScanContinuationPromptsOnceAndRevokesOnPauseExpiryOrLargerBound() {
     val consent = WalletDiscoveryConsent()
     var prompts = 0

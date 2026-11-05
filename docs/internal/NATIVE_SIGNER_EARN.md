@@ -12,6 +12,14 @@ derivation and authorization design; it does not supersede later cycle allocatio
 
 ## Confidential Earn v1 boundary
 
+New distribution deposits use the versioned plan described in
+[Confidential Earn](CONFIDENTIAL_EARN.md). Distribution slots are derived at
+`m/44'/60'/145'/{chainId}'/{cycleIndex * 8 + slot}` for slots 0–4. Their payout legs
+are `invest:0` through `invest:4`; vault, delegation, liquidity and withdrawal
+proposals bind `investmentSlot` to the persisted native cycle. Missing distribution
+metadata retains the v1/v2 legacy role derivations below. Neither backend quotes
+nor JavaScript can choose an arbitrary signing account or change saved weights.
+
 The main application source is legacy account 0, viewed as Monad mainnet Circle USDC.
 The existing MON transfer policy remains chain 10143 only. The new Earn entry point
 is [documented separately](CONFIDENTIAL_EARN.md). Android supports the guarded Earn execution paths. iOS supports Ethereum vault execution; other Earn execution capabilities remain disabled.

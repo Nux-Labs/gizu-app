@@ -101,6 +101,7 @@ internal class RecoveredHistoryImporter(
         "chainId",
         "profileChainId",
         "cycleIndex",
+        "investmentSlot",
         "expectedFrom",
         "token",
         "slippageBps",
@@ -441,6 +442,11 @@ internal suspend fun reconcileRecoveredHistory(context: Context, store: WalletSt
           for (op in rows(prefix).filter { it.has("signedData") }) {
             val proposal = op.getJSONObject("proposal")
             store.selectEarnCycle(proposal.optInt("cycleIndex", 0))
+            if (proposal.has("investmentSlot"))
+              store.selectEarnInvestmentSlot(
+                proposal.optInt("cycleIndex", 0),
+                proposal.getInt("investmentSlot"),
+              )
             val destination: TransferRpc =
               when (proposal.getInt("profileChainId")) {
                 1 -> EthereumEarnRpc()
@@ -477,8 +483,10 @@ internal suspend fun reconcileRecoveredHistory(context: Context, store: WalletSt
           (0 until cycles.length()).any {
             cycles.getJSONObject(it).getInt("cycleIndex") == originalCycle
           }
-        )
+        ) {
           store.selectEarnCycle(originalCycle)
+          selectedInvestmentSlot(record)?.let { store.selectEarnInvestmentSlot(originalCycle, it) }
+        }
       }
       if (file("gizu-swap").exists()) {
         val clear =

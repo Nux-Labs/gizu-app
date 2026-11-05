@@ -19,7 +19,9 @@ import { deferred } from "../../support/renderApp";
 const walletId = "7aafcc2e-0891-4e31-a7d4-03780d7b4f12",
   address = "0x" + "1".repeat(40),
   invest = "0x" + "3".repeat(40);
-const intent: EarnIntent = {
+const intent: EarnIntent & {
+  destinations: [EarnIntent["destinations"][0], EarnIntent["destinations"][0]];
+} = {
   status: "prepared",
   version: "gizu-earn-v1",
   intentId: "earn-v1:wallet:ethereum-usdc",

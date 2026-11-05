@@ -1,5 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import pg from "pg";
+import { PgOperationCoordination } from "../../../src/adapters/postgres/pg-operation-coordination.ts";
+import { OperationCoordinator } from "../../../src/adapters/earn/operation-coordinator.ts";
 import { privateKeyToAccount } from "viem/accounts";
 import { hexToBytes, toHex, keccak256 } from "viem";
 import { base58 } from "@scure/base";
@@ -120,8 +124,9 @@ function fixture(
   profileChainId: 1 | 4663 = 1,
   recoveryKey: string | null = "11".repeat(32),
   coordination?: import("../../../src/adapters/earn/operation-coordinator.ts").OperationCoordinator,
+  initialClock = now,
 ) {
-  let clock = now;
+  let clock = initialClock;
   const calls: string[] = [];
   let quotes = 0;
   let lastRequest: any;
@@ -247,6 +252,281 @@ function fixture(
     clock: () => clock,
   };
 }
+async function distributionInput(
+  slot: 0 | 1 | 2 | 3 | 4 = 0,
+  weightsBps = [3333, 3333, 3334],
+) {
+  return {
+    ...(await input("invest")),
+    leg: `invest:${slot}` as `invest:${0 | 1 | 2 | 3 | 4}`,
+    recipient: "0x" + (slot + 6).toString(16).repeat(40),
+    distribution: { version: 1 as const, weightsBps },
+  };
+}
+test("distribution payouts conserve fragmented credits across one, two and five investment slots", async () => {
+  for (const [weights, expected] of [
+    [[10000], ["200018"]],
+    [
+      [3333, 6667],
+      ["66665", "133353"],
+    ],
+    [
+      [2000, 2000, 2000, 2000, 2000],
+      ["40003", "40003", "40003", "40003", "40006"],
+    ],
+  ] as const) {
+    const totals = weights.map(() => 0n);
+    for (const offset of ["0", "100009"]) {
+      const f = fixture((path, body) => {
+        if (path.includes("/account/history/"))
+          body.items[0].amountOutFormatted = "0.100009";
+      });
+      let sourceTotal = 0n;
+      for (let slot = 0; slot < weights.length; slot++) {
+        const request = await distributionInput(slot as 0 | 1 | 2 | 3 | 4, [
+          ...weights,
+        ]);
+        request.source.minimumCreditAtoms = "100000";
+        const plan = await f.gateway.prepare({
+          ...request,
+          splitOffsetAtoms: offset,
+        });
+        assert.deepEqual(plan.quote.distribution, request.distribution);
+        assert.equal(plan.quote.leg, `invest:${slot}`);
+        sourceTotal += BigInt(plan.quote.amountAtoms);
+        totals[slot]! += BigInt(plan.quote.amountAtoms);
+      }
+      assert.equal(sourceTotal, 100009n);
+    }
+    assert.deepEqual(totals.map(String), expected);
+  }
+});
+test("distribution sibling prepare, submit and restored retries retain independent identities", async () => {
+  const f = fixture();
+  const requests = [await distributionInput(0), await distributionInput(1)];
+  const plans = [];
+  for (const request of requests) plans.push(await f.gateway.prepare(request));
+  assert.notEqual(plans[0]!.quote.quoteId, plans[1]!.quote.quoteId);
+  assert.equal(
+    (await f.gateway.prepare(requests[0]!)).quote.quoteId,
+    plans[0]!.quote.quoteId,
+  );
+  const restarted = f.restart();
+  for (const plan of plans) {
+    const request = {
+      operationId: plan.quote.operationId,
+      revision: 1,
+      leg: plan.quote.leg as `invest:${0 | 1 | 2 | 3 | 4}`,
+      distribution: requests[0]!.distribution,
+      quoteId: plan.quote.quoteId,
+      recoveryEnvelope: plan.recoveryEnvelope,
+      signedData: {
+        ...plan.intent,
+        signature: await signature(plan.intent.payload),
+      },
+    };
+    const submitted = await restarted.submit(request);
+    assert.equal(submitted.leg, request.leg);
+    assert.deepEqual(submitted.distribution, request.distribution);
+    assert.deepEqual(await restarted.submit(request), submitted);
+    const settlement = await restarted.reconcile({
+      ...request,
+      signedData: await readAuth(),
+    });
+    assert.equal(settlement.leg, request.leg);
+    assert.deepEqual(settlement.distribution, request.distribution);
+    await assert.rejects(
+      restarted.submit({
+        ...request,
+        distribution: { version: 1, weightsBps: [2500, 2500, 5000] },
+      }),
+    );
+    await assert.rejects(
+      restarted.reconcile({
+        ...request,
+        signedData: await readAuth(),
+        distribution: { version: 1, weightsBps: [2500, 2500, 5000] },
+      }),
+    );
+    await assert.rejects(
+      restarted.submit({ ...request, distribution: undefined }),
+    );
+  }
+  assert.equal(
+    f.calls.filter((path) => path.includes("/submit-intent/")).length,
+    2,
+  );
+});
+test("distribution fanout has a separate bounded request budget while legacy retains thirty per minute", async () => {
+  const f = fixture();
+  const request = await distributionInput();
+  request.source = balanceAttestedSource(request.source);
+  const plan = await f.gateway.prepare(request, "shared-client");
+  const submission = {
+    operationId: request.operationId,
+    revision: 1,
+    leg: request.leg,
+    distribution: request.distribution,
+    quoteId: plan.quote.quoteId,
+    recoveryEnvelope: plan.recoveryEnvelope,
+    signedData: {
+      ...plan.intent,
+      signature: await signature(plan.intent.payload),
+    },
+  };
+  await f.gateway.submit(submission, "shared-client");
+  const settlement = {
+    ...submission,
+    signedData: await readAuth(),
+    submittedIntent: submission.signedData,
+  };
+  await f.gateway.reconcile(settlement, "shared-client");
+  // Prepare + submit + settlement and 147 exact retries exhaust a 30 * 5 slot budget.
+  for (let i = 0; i < 147; i++)
+    assert.equal(
+      (await f.gateway.submit(submission, "shared-client")).status,
+      "submitted",
+    );
+  await assert.rejects(
+    f.gateway.reconcile(settlement, "shared-client"),
+    /EARN_PAYOUT_RATE_LIMIT/,
+  );
+  await assert.rejects(
+    f.gateway.prepare(request, "shared-client"),
+    /EARN_PAYOUT_RATE_LIMIT/,
+  );
+  const legacy = await input();
+  legacy.operationId = "legacy_source";
+  legacy.source = balanceAttestedSource({
+    ...legacy.source,
+    operationId: legacy.operationId,
+    transactionHash: "0x" + "cd".repeat(32),
+  });
+  for (let i = 0; i < 30; i++)
+    assert.equal(
+      (await f.gateway.prepare(legacy, "shared-client")).quote.leg,
+      "hold",
+    );
+  await assert.rejects(
+    f.gateway.prepare(legacy, "shared-client"),
+    /EARN_PAYOUT_RATE_LIMIT/,
+  );
+  // Invalid metadata never enters either validated request budget.
+  for (let i = 0; i < 160; i++)
+    await assert.rejects(
+      f.gateway.prepare(
+        { ...request, distribution: { version: 1, weightsBps: [9999] } },
+        "shared-client",
+      ),
+      /INVALID_PAYOUT_REQUEST/,
+    );
+  f.advance(60000);
+  assert.equal(
+    (await f.gateway.submit(submission, "shared-client")).status,
+    "submitted",
+  );
+  assert.equal(
+    (await f.gateway.prepare(legacy, "shared-client")).quote.leg,
+    "hold",
+  );
+});
+test("distribution plans reject malformed weights, legacy legs, slot mismatches and changed saved plans", async () => {
+  const valid = await distributionInput();
+  for (const distribution of [
+    { version: 2, weightsBps: [10000] },
+    { version: 1, weightsBps: [] },
+    { version: 1, weightsBps: [10000, 0] },
+    { version: 1, weightsBps: [-1, 10001] },
+    { version: 1, weightsBps: [5000.5, 4999.5] },
+    { version: 1, weightsBps: [9999] },
+    { version: 1, weightsBps: [1000, 1000, 1000, 1000, 1000, 5000] },
+    { version: 1, weightsBps: [10000], extra: true },
+  ])
+    await assert.rejects(
+      fixture().gateway.prepare({ ...valid, distribution } as never),
+      /INVALID_PAYOUT_REQUEST/,
+    );
+  for (const invalid of [
+    { ...valid, leg: "invest" },
+    { ...valid, leg: "hold" },
+    { ...valid, leg: "invest:3" },
+    { ...valid, distribution: undefined },
+    { ...valid, recipient: sourceOwner },
+  ])
+    await assert.rejects(fixture().gateway.prepare(invalid as never));
+  const f = fixture();
+  await f.gateway.prepare(valid);
+  await assert.rejects(
+    f.gateway.prepare({
+      ...valid,
+      leg: "invest:1",
+      distribution: { version: 1, weightsBps: [2500, 2500, 5000] },
+    }),
+    /EARN_PAYOUT_CREDIT_BOUND/,
+  );
+  await assert.rejects(
+    f.gateway.prepare(await input()),
+    /EARN_PAYOUT_CREDIT_BOUND/,
+  );
+});
+test("distribution status reconciliation preserves the plan on subsequent signed retries", async () => {
+  const request = await distributionInput(0, [10000]);
+  const f = deliveredFixture((path, body) => {
+    if (
+      path.includes("/account/history/") &&
+      new URL(path).searchParams.get("depositAddress") === "payout-1.near"
+    ) {
+      body.items[0].recipient = request.recipient;
+      body.items[0].amountInFormatted = "0.995001";
+      body.items[0].amountOutFormatted = "0.995001";
+    }
+  });
+  const plan = await f.gateway.prepare(request);
+  const submission = {
+    operationId: request.operationId,
+    revision: 1,
+    leg: request.leg,
+    distribution: request.distribution,
+    quoteId: plan.quote.quoteId,
+    signedData: {
+      ...plan.intent,
+      signature: await signature(plan.intent.payload),
+    },
+  };
+  await f.gateway.submit(submission);
+  const result = await f.gateway.reconcile({
+    ...submission,
+    signedData: await readAuth(),
+  });
+  assert.equal(result.status, "awaitingDestinationConfirmation");
+  assert.deepEqual(result.distribution, request.distribution);
+  assert.deepEqual(
+    (await f.gateway.submit(submission)).distribution,
+    request.distribution,
+  );
+});
+test("distribution zero and decreasing remainder allocations fail before provider quote generation", async () => {
+  for (const [slot, weights, offset] of [
+    [0, [1, 9999], "0"],
+    [0, [3333, 3333, 3334], "3"],
+    [2, [3333, 3333, 3334], "3"],
+    [4, [2499, 2499, 2499, 2499, 4], "4"],
+  ] as const) {
+    const f = fixture((path, body) => {
+      if (path.includes("/account/history/"))
+        body.items[0].amountOutFormatted = "0.000001";
+    });
+    const request = await distributionInput(slot, [...weights]);
+    request.source.minimumCreditAtoms = "1";
+    await assert.rejects(
+      f.gateway.prepare({ ...request, splitOffsetAtoms: offset }),
+    );
+    assert.equal(
+      f.calls.some((path) => path.includes("/quote/")),
+      false,
+    );
+  }
+});
 test("payout preparation derives exact split from authenticated actual credit, validates generated transfer and is immutable", async () => {
   const f = fixture();
   const holdPlan = await f.gateway.prepare(await input());
@@ -422,7 +702,9 @@ function deliveredFixture(
           depositAddress: "payout-1.near",
           originAsset: monadUsdcAssetId,
           destinationAsset:
-            profileChainId === 4663 ? robinhoodUsdgAssetId : ethereumUsdcAssetId,
+            profileChainId === 4663
+              ? robinhoodUsdgAssetId
+              : ethereumUsdcAssetId,
           recipient: hold,
           refundTo: C,
           amountInFormatted: "0.0995",
@@ -1451,11 +1733,19 @@ test("Robinhood payouts are delivered from a canonical receipt before L1 finalit
   for (const chain of [4663, 1] as const) {
     // The finalized head (0x64) is behind the payout receipt block (0x65).
     const f = deliveredFixture((path, b, init) => {
-      if (path.includes("/account/history/")) throw Error("History unavailable");
+      if (path.includes("/account/history/"))
+        throw Error("History unavailable");
       if (path === "https://ethereum.test/") {
         const req = JSON.parse(String(init?.body));
-        if (req.method === "eth_getBlockByNumber" && req.params[0] === "finalized")
-          b.result = { ...b.result, number: "0x64", hash: "0x" + "dd".repeat(32) };
+        if (
+          req.method === "eth_getBlockByNumber" &&
+          req.params[0] === "finalized"
+        )
+          b.result = {
+            ...b.result,
+            number: "0x64",
+            hash: "0x" + "dd".repeat(32),
+          };
       }
     }, chain);
     const request = await input("hold", chain),
@@ -1470,7 +1760,10 @@ test("Robinhood payouts are delivered from a canonical receipt before L1 finalit
       quoteId: plan.quote.quoteId,
       recoveryEnvelope: plan.recoveryEnvelope,
       signedData: await readAuth(),
-      submittedIntent: { ...plan.intent, signature: await signature(plan.intent.payload) },
+      submittedIntent: {
+        ...plan.intent,
+        signature: await signature(plan.intent.payload),
+      },
       destinationTransactionHash: "0x" + "aa".repeat(32),
     });
     if (chain === 4663) {
@@ -1496,6 +1789,74 @@ test('shared payout guards survive replica restart, prevent rebinding and never 
   await assert.rejects(f.restart().prepare({...await input(),operationId:'another_child'}));
   assert.equal(JSON.stringify([...rows]).includes(C),false);
 });
+async function assertSharedDistributionGuards(coordination: OperationCoordinator, clock = now) {
+  const f = fixture(undefined, 1, "11".repeat(32), coordination, clock);
+  for (const slot of [0, 1, 2, 3, 4] as const) {
+    const request = { ...await distributionInput(slot, [2000, 2000, 2000, 2000, 2000]), signedData: await readAuth(clock) };
+    const prepared = await f.restart().prepare(request);
+    const submission = {
+      operationId: request.operationId,
+      revision: request.revision,
+      leg: request.leg,
+      distribution: request.distribution,
+      quoteId: prepared.quote.quoteId,
+      recoveryEnvelope: prepared.recoveryEnvelope,
+      signedData: { ...prepared.intent, signature: await signature(prepared.intent.payload) },
+    };
+    const results = await Promise.all([
+      f.restart().submit(submission),
+      f.restart().submit(submission),
+    ]);
+    assert.deepEqual(results.map((result) => result.status).sort(), ["submissionUnknown", "submitted"]);
+    for (const result of results) {
+      assert.equal(result.leg, request.leg);
+      assert.deepEqual(result.distribution, request.distribution);
+    }
+    const replay = await f.restart().submit(submission);
+    assert.equal(replay.status, "submissionUnknown");
+    assert.deepEqual(replay.distribution, request.distribution);
+    await assert.rejects(f.restart().prepare({
+      ...request,
+      recipient: "0x" + "ab".repeat(20),
+    }), (error: any) => error.code === "EARN_COORDINATION_CONFLICT");
+  }
+  assert.equal(f.calls.filter((path) => path.includes("/submit-intent/")).length, 5);
+  await assert.rejects(f.restart().prepare({
+    ...await distributionInput(0),
+    signedData: await readAuth(clock),
+    distribution: { version: 1, weightsBps: [5000, 5000] },
+  }), (error: any) => error.code === "EARN_COORDINATION_CONFLICT");
+}
+
+test("shared distribution guards preserve independent slots and recovered replay protection", async () => {
+  const rows = new Map<string, string>();
+  const coordination = new OperationCoordinator({
+    async bind(key, value, _expires, exclusive) {
+      const prior = rows.get(key);
+      if (prior) return !exclusive && prior === value;
+      rows.set(key, value);
+      return true;
+    },
+  }, "ab".repeat(32));
+  await assertSharedDistributionGuards(coordination);
+});
+
+test("PostgreSQL distribution guards preserve independent slots and recovered replay protection", {
+  skip: !process.env.TEST_DATABASE_URL,
+}, async () => {
+  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const schema = `payout_test_${randomBytes(8).toString("hex")}`;
+  const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, options: `-c search_path=${schema}` });
+  try {
+    await admin.query(`create schema ${schema}`);
+    await assertSharedDistributionGuards(new OperationCoordinator(new PgOperationCoordination(pool), "ab".repeat(32)), Math.floor(Date.now() / 1000) * 1000);
+  } finally {
+    await pool.end();
+    await admin.query(`drop schema if exists ${schema} cascade`);
+    await admin.end();
+  }
+});
+
 test('unauthenticated payout preparation cannot occupy durable funding roles',async()=>{
   const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
   const rows=new Map<string,string>();const coordination=new OperationCoordinator({async bind(key,value){rows.set(key,value);return true;}},'ab'.repeat(32));

@@ -333,6 +333,7 @@ class WalletRecoveredHistoryTest {
         .put("chainId", if (kind == "sourceFunding") 143 else 4663)
         .put("profileChainId", 4663)
         .put("cycleIndex", 2)
+        .put("investmentSlot", 1)
         .put("sourceAccountIndex", 3)
         .put("fundingBatchId", "batch1")
         .put("fundingBatchSize", 1)
@@ -404,7 +405,14 @@ class WalletRecoveredHistoryTest {
   fun sponsoredRefreshCannotChangeDelegationAllocationOrAlreadySignedSpendingProposal() {
     val (before, after) = refreshedSponsored()
     for (field in
-      listOf("expectedFrom", "cycleIndex", "budgetAtoms", "authorization", "signedUserOperation")) {
+      listOf(
+        "expectedFrom",
+        "cycleIndex",
+        "investmentSlot",
+        "budgetAtoms",
+        "authorization",
+        "signedUserOperation",
+      )) {
       files.clear()
       val original = JSONObject(before.toString())
       val newer = JSONObject(after.toString())
@@ -421,7 +429,8 @@ class WalletRecoveredHistoryTest {
           original.put("data", oldRoot.toString())
           currentOp.put("signedUserOperation", "exact-spending-bytes")
         }
-        "cycleIndex" -> currentOp.getJSONObject("proposal").put(field, 3)
+        "cycleIndex",
+        "investmentSlot" -> currentOp.getJSONObject("proposal").put(field, 3)
         else ->
           currentOp
             .getJSONObject("proposal")

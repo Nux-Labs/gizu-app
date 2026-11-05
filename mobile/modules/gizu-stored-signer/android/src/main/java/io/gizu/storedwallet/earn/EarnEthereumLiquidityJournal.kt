@@ -139,6 +139,8 @@ internal class EarnLiquidityJournal(
     put("kind", p.getString("kind"))
     put("chainId", 1)
     put("from", p.getString("expectedFrom"))
+    put("cycleIndex", p.optInt("cycleIndex", 0))
+    if (p.has("investmentSlot")) put("investmentSlot", p.getInt("investmentSlot"))
     put("amountAtoms", p.optString("amountAtoms", p.optString("inputAtoms")))
     put("blocked", op.liquidityBlocked())
     put(

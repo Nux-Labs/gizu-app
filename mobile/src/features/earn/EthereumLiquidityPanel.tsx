@@ -205,7 +205,10 @@ export function EthereumLiquidityPanel({
       {withdrawn && (
         <>
           <Typography>
-            Return USDC first, then quote the remaining ETH sweep. Wallet 1 stays separate.
+            Return USDC first, then quote the remaining ETH sweep.{" "}
+            {intent.distribution
+              ? "Other investment wallets keep their own progress."
+              : "Wallet 1 stays separate."}
           </Typography>
           <Button
             label="Review USDC return"

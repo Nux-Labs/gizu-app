@@ -15,7 +15,9 @@ jest.mock("@/services/wallet/nativeBridge", () => ({
 const now = 1000000,
   hash = "0x" + "a".repeat(64),
   replacementHash = "0x" + "b".repeat(64);
-const intent: EarnIntent = {
+const intent: EarnIntent & {
+  destinations: [EarnIntent["destinations"][0], EarnIntent["destinations"][0]];
+} = {
   status: "prepared",
   version: "gizu-earn-v1",
   intentId: "intent",

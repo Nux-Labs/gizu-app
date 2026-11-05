@@ -101,6 +101,90 @@ class BackupCodecV3Test {
   }
 
   @Test
+  fun distributionBackupRestoresEveryCycleSlotBudgetAndWithdrawalReceiverIntoFreshStorage() {
+    BackupCodec.decrypt(fixture(), prf).use { legacy ->
+      val cycles = JSONArray(legacy.earnCycles)
+      fun distributionCycle(index: Int, chain: Int, weights: List<Int>, slot: Int) =
+        JSONObject()
+          .put("cycleIndex", index)
+          .put("chainId", chain)
+          .put("intentId", "distribution-$index")
+          .put("distribution", JSONObject().put("version", 1).put("weightsBps", JSONArray(weights)))
+          .put("investmentSlot", slot)
+          .put("distributionBudgetAtoms", "100000000")
+      cycles.put(
+        distributionCycle(3, 1, listOf(1000, 1500, 2000, 2500, 3000), 4)
+          .put(
+            "withdrawalIndices",
+            JSONObject().put("0", 7).put("1", 8).put("2", 9).put("3", 10).put("4", 11),
+          )
+      )
+      cycles.put(distributionCycle(4, 4663, listOf(10000), 0))
+      cycles.put(distributionCycle(5, 1, listOf(4600, 5400), 1))
+      WalletRecord(
+          legacy.id,
+          legacy.credential,
+          legacy.entropy.copyOf(),
+          true,
+          legacy.journalId,
+          """{"version":1,"nextRecipient":12}""",
+          1,
+          false,
+          5,
+          cycles.toString(),
+        )
+        .use { original ->
+          fun catalogue(record: WalletRecord) =
+            JSONArray(record.earnCycles).objects().associate { row ->
+              row.getInt("cycleIndex") to
+                recordForCycle(record, row).use { cycleAddresses(it) to cycleConfidential(it) }
+            }
+          val expected = catalogue(original)
+          val envelope = BackupCodec.encrypt(original, prf)
+          val encoded = String(envelope)
+          for (privateField in
+            listOf(
+              "distribution",
+              "weightsBps",
+              "withdrawalIndices",
+              "distributionBudgetAtoms",
+            )) assertFalse(encoded.contains(privateField))
+          val destination = WalletStore(File(), Keys())
+          BackupCodec.decrypt(envelope, prf).use { decoded -> destination.restore(decoded) }
+          destination.load().use { restored ->
+            assertEquals(original.earnCycles, restored.earnCycles)
+            assertEquals(original.roleRegistry, restored.roleRegistry)
+            assertNotEquals(original.journalId, restored.journalId)
+            assertTrue(restored.earnRecoveryRequired)
+            assertEquals(expected, catalogue(restored))
+            assertEquals(listOf(5, 1, 2), listOf(3, 4, 5).map { expected.getValue(it).first.size })
+            assertEquals(setOf(3, 6, 7, 8, 9, 10, 11), earnWithdrawalIndices(restored))
+            for (index in 7..11) assertEquals(
+              publicAccountAddress(original, index),
+              publicAccountAddress(restored, index),
+            )
+            assertThrows(IllegalStateException::class.java) {
+              destination.reserveEarnWithdrawal(restored)
+            }
+          }
+          // Read-only selection remains available while restored spending requires reconciliation.
+          destination.selectEarnInvestmentSlot(3, 4)
+          destination.load().use { selected ->
+            assertEquals(expected.getValue(3).first[4], cycleInvestmentAddress(selected))
+            assertEquals(
+              "100000000",
+              savedEarnCycle(selected)!!.getString("distributionBudgetAtoms"),
+            )
+            assertEquals(
+              11,
+              savedEarnCycle(selected)!!.getJSONObject("withdrawalIndices").getInt("4"),
+            )
+          }
+        }
+    }
+  }
+
+  @Test
   fun historicalV2RegistryRemainsAuthenticatedAndEarnMetadataDefaultsToLegacy() {
     val header =
       JSONObject(String(fixture()))
