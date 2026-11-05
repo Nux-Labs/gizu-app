@@ -35,8 +35,8 @@ const snapshot: MainnetPortfolioSnapshot = {
     },
   ],
 };
-async function open() {
-  const read = jest.fn().mockResolvedValue(snapshot);
+async function open(value: MainnetPortfolioSnapshot = snapshot) {
+  const read = jest.fn().mockResolvedValue(value);
   const transfers = jest.spyOn(nativeBridge, "getStoredTransferSigner");
   jest
     .spyOn(nativeBridge, "getStoredSwapSigner")
@@ -112,6 +112,67 @@ test("Activity displays completed sale proceeds and no testnet transfer journal"
   expect(screen.getByText("Returned 2.5 USDC on Monad")).toBeVisible();
   expect(screen.queryByText(/Monad testnet/)).toBeNull();
 });
+test("Home opens the separate confidential cashout route without starting a transfer", async () => {
+  const { transfers } = await open();
+  fireEvent.press(screen.getByRole("button", { name: "Withdraw from Gizu" }));
+  expect(await screen.findByText("Confidential cash")).toBeVisible();
+  expect(
+    screen.getByText(
+      "Incoming and existing public USDC are not used. Native review verifies fresh private balances and any reserved funds.",
+    ),
+  ).toBeVisible();
+  expect(transfers).not.toHaveBeenCalled();
+});
+
+test("Activity distinguishes privately credited sales from legacy public proceeds", async () => {
+  await open({
+    ...snapshot,
+    history: [
+      {
+        ...snapshot.history[0]!,
+        completionTarget: "confidential",
+        privateCreditedAtoms: "2500000",
+      },
+    ],
+  });
+  fireEvent.press(screen.getByRole("button", { name: "View activity" }));
+  expect(await screen.findByText("Credited 2.5 USDC to confidential cash")).toBeVisible();
+  expect(screen.queryByText("Returned 2.5 USDC on Monad")).toBeNull();
+});
+test("private sale history requires a completed sale and the same verified private received amount", () => {
+  const privateSale = {
+    ...snapshot.history[0]!,
+    completionTarget: "confidential" as const,
+    privateCreditedAtoms: "2500000",
+  };
+  expect(validateMainnetPortfolio({ ...snapshot, history: [privateSale] }, walletId)).toBeDefined();
+  expect(
+    validateMainnetPortfolio(
+      {
+        ...snapshot,
+        history: [
+          { ...privateSale, phase: "CANCELLED", privateCreditedAtoms: "0", receivedAtoms: "0" },
+        ],
+      },
+      walletId,
+    ),
+  ).toBeDefined();
+  for (const change of [
+    { privateCreditedAtoms: undefined },
+    { privateCreditedAtoms: "0" },
+    { privateCreditedAtoms: "0.5" },
+    { privateCreditedAtoms: "2400000" },
+    { direction: "buy" },
+    { phase: "PAUSED" },
+    { completionTarget: "unknown" },
+  ])
+    expect(() =>
+      validateMainnetPortfolio(
+        { ...snapshot, history: [{ ...privateSale, ...change }] } as MainnetPortfolioSnapshot,
+        walletId,
+      ),
+    ).toThrow();
+});
 
 test("rejects cross-wallet/network snapshots, inconsistent sums and duplicate accounts", () => {
   expect(validateMainnetPortfolio(snapshot, walletId)).toBe(snapshot);
@@ -137,7 +198,7 @@ test("Swap shows the same total public USDC funding balance including receiving 
 test("Home balance shows observed performance and expands to a period chart", async () => {
   const day = 24 * 3_600_000;
   await AsyncStorage.setItem(
-    `gizu:balance-history:v1:${walletId}`,
+    `gizu:balance-history:v1:${encodeURIComponent(`${walletId}:portfolio-value-v1`)}`,
     JSON.stringify([{ at: snapshot.checkedAt - 20 * day, atoms: "2000000" }]),
   );
   await open();
@@ -150,4 +211,15 @@ test("Home balance shows observed performance and expands to a period chart", as
   fireEvent.press(screen.getByRole("radio", { name: "1Y" }));
   expect(screen.getByRole("radio", { name: "1Y", checked: true })).toBeVisible();
   expect(screen.getByLabelText("Balance past year: +$1.00 (+50%)")).toBeVisible();
+});
+
+test("Home does not compare portfolio value against older liquid-only history", async () => {
+  await AsyncStorage.setItem(
+    `gizu:balance-history:v1:${walletId}`,
+    JSON.stringify([{ at: snapshot.checkedAt - 20 * 24 * 3_600_000, atoms: "2000000" }]),
+  );
+  await open();
+  expect(screen.queryByText("+$1.00 (+50%) · past month")).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Balance details", expanded: false }));
+  expect(screen.getByLabelText("Balance history is not available yet")).toBeVisible();
 });

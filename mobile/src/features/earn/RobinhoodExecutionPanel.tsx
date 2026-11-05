@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { EarnInvestmentExitProof } from "@/domain/earn/investmentPositions";
 import { View } from "react-native";
 import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
@@ -16,10 +17,12 @@ export function RobinhoodExecutionPanel({
   intent,
   service,
   presentation = "legacy",
+  onWithdrawalComplete,
 }: {
   intent: EarnIntent;
   service: EarnRobinhoodService;
-  presentation?: "legacy" | "investment";
+  presentation?: "legacy" | "investment" | "withdrawal";
+  onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
 }) {
   const v = useEarnJournal(intent, service),
     [plan, setPlan] = useState<RobinhoodPlan | null>(null),
@@ -52,8 +55,9 @@ export function RobinhoodExecutionPanel({
     <Surface>
       <View className="gap-3 p-5">
         <Typography variant="row">
-          {intent.distribution ? `Wallet ${(intent.investmentSlot ?? 0) + 1}` : "Wallet 2"} ·
-          Robinhood USDG execution
+          {presentation === "withdrawal"
+            ? "Withdrawal and return"
+            : `${intent.distribution ? `Wallet ${(intent.investmentSlot ?? 0) + 1}` : "Wallet 2"} · Robinhood USDG execution`}
         </Typography>
         {v.loading ? (
           <Typography>Checking saved USDG progress…</Typography>
@@ -223,7 +227,13 @@ export function RobinhoodExecutionPanel({
             onPress={() => review("hoodTokenReturn")}
           />
         )}
-        {(withdrawn || returned) && <ExitCompletionPanel intent={intent} />}
+        {(withdrawn || returned) && (
+          <ExitCompletionPanel
+            intent={intent}
+            aggregate={presentation === "withdrawal"}
+            onWithdrawalComplete={onWithdrawalComplete}
+          />
+        )}
         <Button
           label="Check saved USDG progress"
           variant="secondary"

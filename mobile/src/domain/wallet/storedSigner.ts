@@ -32,6 +32,8 @@ export type StoredSignerCapabilities = {
   earnPrivatePayoutExecution?: boolean;
   earnDepositJourney?: boolean;
   earnDepositDistribution?: boolean;
+  confidentialWithdrawals?: boolean;
+  confidentialSaleProceeds?: boolean;
   earnBalanceDeltaSettlement?: boolean;
   reason?: "notImplemented" | "unsupportedPlatform" | "unsupportedProvider";
 };
@@ -73,6 +75,8 @@ export type StoredSwapView = {
   targetDecimals: number;
   sourceAtoms: string;
   creditedAtoms: string;
+  completionTarget?: "confidential" | "public";
+  privateCreditedAtoms?: string;
   payoutsSubmitted: number;
   ordersComplete: number;
   receivedTargetAtoms: string;
@@ -129,6 +133,8 @@ export type MainnetPortfolioSnapshot = {
   ownedAssets?: OwnedPortfolioAsset[];
   positions?: OwnedPortfolioPosition[];
   valuationComplete?: boolean;
+  /** Expiry of externally priced display values; never used for spending. */
+  valuationExpiresAt?: number;
   ownedBalanceComplete?: boolean;
   ownedStale?: boolean;
   ownedSyncPending?: boolean;
@@ -158,6 +164,8 @@ export type MainnetPortfolioSnapshot = {
     direction: "buy" | "sell";
     symbol: string;
     receivedAtoms: string;
+    completionTarget?: "confidential" | "public";
+    privateCreditedAtoms?: string;
     recordedAt: number;
   }[];
 };
@@ -200,6 +208,24 @@ export interface StoredSignerContract {
   resumeOperation(operationId: string, expectedRevision: number): Promise<StoredOperation>;
   cancelOperation(operationId: string): Promise<StoredOperation>;
   getMainnetPortfolio(): Promise<MainnetPortfolioSnapshot>;
+  getConfidentialWithdrawal?(walletId: string): Promise<unknown>;
+  prepareConfidentialWithdrawal?(request: {
+    walletId: string;
+    amountAtoms: string;
+  }): Promise<unknown>;
+  executeConfidentialWithdrawal?(request: {
+    walletId: string;
+    operationId: string;
+    revision: number;
+  }): Promise<unknown>;
+  resumeConfidentialWithdrawal?(request: {
+    walletId: string;
+    operationId: string;
+  }): Promise<unknown>;
+  cancelConfidentialWithdrawal?(request: {
+    walletId: string;
+    operationId: string;
+  }): Promise<unknown>;
   getSwapDeposit(): Promise<{ fundingAddress: string }>;
   startSwap(target: string, amountAtoms: string, gateway: string): Promise<StoredSwapView>;
   getSwapHoldings(target: string): Promise<SwapHoldingsSnapshot>;
@@ -237,6 +263,7 @@ export interface StoredSignerContract {
   ): Promise<unknown>;
   prepareNewEarnIntent?(walletId: string, profile: string): Promise<unknown>;
   listEarnIntents?(walletId: string): Promise<unknown>;
+  listEarnInvestmentPositions?(walletId: string): Promise<unknown>;
   selectEarnIntent?(walletId: string, intentId: string): Promise<unknown>;
   readEarnBalance?(walletId: string): Promise<unknown>;
   executeEarnVault?(

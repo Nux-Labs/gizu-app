@@ -172,7 +172,7 @@ test.each([
   },
 );
 
-test("iOS exposes holdings and explicit sell/recovery actions through native capability gates", async () => {
+test("iOS retains holdings and recovery while new private sales require the updated Android signer", async () => {
   const target = "0x" + "11".repeat(20);
   const gateway = "https://gizu-app.onrender.com";
   const native = {
@@ -193,16 +193,16 @@ test("iOS exposes holdings and explicit sell/recovery actions through native cap
   });
   expect(native.sellSwapHolding).not.toHaveBeenCalled();
   expect(native.startRecovery).not.toHaveBeenCalled();
-  await signer.sellSwapHolding(`${target}:3`, gateway);
+  await expect(signer.sellSwapHolding(`${target}:3`, gateway)).rejects.toThrow(/capabilities/);
   await signer.startRecovery(target, gateway);
   await signer.startPayout(target, gateway);
-  expect(native.sellSwapHolding).toHaveBeenCalledWith(`${target}:3`, gateway);
+  expect(native.sellSwapHolding).not.toHaveBeenCalled();
   expect(native.startRecovery).toHaveBeenCalledWith(target, gateway);
   expect(native.startPayout).toHaveBeenCalledWith(target, gateway);
   native.getCapabilities.mockResolvedValue({ contractVersion: 1, available: true, swaps: false });
   await expect(signer.sellSwapHolding(`${target}:3`, gateway)).rejects.toThrow(/capabilities/);
   await expect(signer.startRecovery(target, gateway)).rejects.toThrow(/capabilities/);
-  expect(native.sellSwapHolding).toHaveBeenCalledTimes(1);
+  expect(native.sellSwapHolding).not.toHaveBeenCalled();
   expect(native.startRecovery).toHaveBeenCalledTimes(1);
 });
 

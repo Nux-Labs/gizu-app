@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PropsWithChildren,
@@ -11,6 +12,11 @@ import {
 import type { MainnetWalletSession } from "@/services/access";
 import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
 import { getStoredSwapSigner } from "@/services/wallet/nativeBridge";
+import {
+  portfolioValuationService,
+  expirePortfolioValuation,
+  type PortfolioValuationService,
+} from "@/services/wallet/portfolioValuation";
 
 export function validateMainnetPortfolio(
   value: MainnetPortfolioSnapshot,
@@ -38,6 +44,22 @@ export function validateMainnetPortfolio(
     return sum + atoms(account.balanceAtoms);
   }, 0n);
   if (total !== atoms(value.totalAtoms)) throw new Error("Inconsistent account balances");
+  for (const item of value.history) {
+    if (
+      item.completionTarget !== undefined &&
+      item.completionTarget !== "public" &&
+      item.completionTarget !== "confidential"
+    )
+      throw new Error("Invalid sale completion target");
+    if (item.completionTarget !== "confidential") continue;
+    const credit = atoms(item.privateCreditedAtoms ?? "");
+    if (
+      item.direction !== "sell" ||
+      credit !== atoms(item.receivedAtoms) ||
+      (item.phase === "COMPLETE" ? credit <= 0n : item.phase !== "CANCELLED" || credit !== 0n)
+    )
+      throw new Error("Invalid private sale credit");
+  }
   const assets = [...(value.ownedAssets ?? []), ...(value.positions ?? [])];
   if (assets.length > 4096) throw new Error("Invalid owned portfolio size");
   for (const asset of assets) {
@@ -91,19 +113,29 @@ export function validateMainnetPortfolio(
 }
 
 export type MainnetPortfolioService = { getMainnetPortfolio(): Promise<MainnetPortfolioSnapshot> };
-function useMainnetState(session: MainnetWalletSession, service?: MainnetPortfolioService) {
+function useMainnetState(
+  session: MainnetWalletSession,
+  service?: MainnetPortfolioService,
+  valuation?: PortfolioValuationService,
+) {
   const [snapshot, setSnapshot] = useState<MainnetPortfolioSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const alive = useRef(true);
   const generation = useRef(0);
   const busy = useRef(false);
+  const controller = useRef<AbortController | null>(null);
+  const valuator = useMemo(
+    () => valuation ?? (service ? undefined : portfolioValuationService),
+    [valuation, service],
+  );
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
       busy.current = false;
       generation.current += 1;
+      controller.current?.abort();
     };
   }, []);
   const refresh = useCallback(async () => {
@@ -111,6 +143,8 @@ function useMainnetState(session: MainnetWalletSession, service?: MainnetPortfol
     busy.current = true;
     const requestGeneration = generation.current;
     const current = () => alive.current && generation.current === requestGeneration;
+    const abort = new AbortController();
+    controller.current = abort;
     setLoading(true);
     setError("");
     try {
@@ -120,6 +154,10 @@ function useMainnetState(session: MainnetWalletSession, service?: MainnetPortfol
       if (result.fundingAddress.toLowerCase() !== session.address.toLowerCase())
         throw new Error("Funding account mismatch");
       if (current()) setSnapshot(result);
+      if (valuator && current()) {
+        const valued = await valuator.value(result, abort.signal);
+        if (current()) setSnapshot(valued);
+      }
     } catch (cause) {
       if (current())
         setError(cause instanceof Error ? cause.message : "Mainnet balance unavailable. Retry.");
@@ -129,7 +167,23 @@ function useMainnetState(session: MainnetWalletSession, service?: MainnetPortfol
         setLoading(false);
       }
     }
-  }, [session.walletId, session.address, service]);
+  }, [session.walletId, session.address, service, valuator]);
+  useEffect(() => {
+    const expiresAt = snapshot?.valuationExpiresAt;
+    if (expiresAt === undefined) return;
+    const timer = setTimeout(
+      () => {
+        setSnapshot((previous) =>
+          previous?.valuationExpiresAt === expiresAt
+            ? expirePortfolioValuation(previous)
+            : previous,
+        );
+        if (AppState.currentState === "active") void refresh();
+      },
+      Math.max(0, expiresAt - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [snapshot?.valuationExpiresAt, refresh]);
   useEffect(() => {
     void Promise.resolve().then(() => {
       if (alive.current) return refresh();
@@ -146,13 +200,19 @@ export function MainnetWalletProvider({
   session,
   children,
   service,
-}: PropsWithChildren<{ session: MainnetWalletSession; service?: MainnetPortfolioService }>) {
+  valuation,
+}: PropsWithChildren<{
+  session: MainnetWalletSession;
+  service?: MainnetPortfolioService;
+  valuation?: PortfolioValuationService;
+}>) {
   // Changing wallets discards both the previous snapshot and its request ownership.
   return (
     <SessionPortfolioProvider
       key={`${session.walletId}:${session.address.toLowerCase()}`}
       session={session}
       service={service}
+      valuation={valuation}
     >
       {children}
     </SessionPortfolioProvider>
@@ -163,8 +223,13 @@ function SessionPortfolioProvider({
   session,
   children,
   service,
-}: PropsWithChildren<{ session: MainnetWalletSession; service?: MainnetPortfolioService }>) {
-  const value = useMainnetState(session, service);
+  valuation,
+}: PropsWithChildren<{
+  session: MainnetWalletSession;
+  service?: MainnetPortfolioService;
+  valuation?: PortfolioValuationService;
+}>) {
+  const value = useMainnetState(session, service, valuation);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function useMainnetWallet() {

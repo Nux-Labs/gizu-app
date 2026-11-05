@@ -31,6 +31,7 @@ class OwnedConfidentialPortfolioTest {
     val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
     var now = 100_000L
     var derives = 0
+    var outgoing = emptySet<String>()
     val record =
       WalletRecord(
         "00000000-0000-4000-8000-000000000001",
@@ -57,6 +58,7 @@ class OwnedConfidentialPortfolioTest {
           address(index.toLong() + 1)
         },
         clock = { now },
+        outgoing = { outgoing },
       )
 
     fun observation(target: NativeConfidentialTarget) =
@@ -68,6 +70,24 @@ class OwnedConfidentialPortfolioTest {
         "authenticated" to true,
         "operationScoped" to false,
       )
+  }
+
+  @Test
+  fun outgoingCashoutCannotReuseCompletePreDebitPrivateBalance() = runBlocking {
+    val f = Fixture(cycleCount = 1)
+    val cache = f.cache()
+    cache.refresh(f.record, true, { byteArrayOf(1, 2, 3, 4) }) { target, _ ->
+      f.observation(target)
+    }
+    assertEquals(true, cache.snapshot(f.record)["confidentialComplete"])
+    f.outgoing = setOf(address(200))
+    val pending = cache.snapshot(f.record)
+    assertEquals(false, pending["confidentialComplete"])
+    assertNull(asset(pending)["balanceAtoms"])
+    assertEquals("1000000", asset(pending)["observedAtoms"])
+    cache.invalidateSources(f.record, f.outgoing)
+    f.outgoing = emptySet()
+    assertEquals(false, cache.snapshot(f.record)["confidentialComplete"])
   }
 
   @Test

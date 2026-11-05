@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { EarnInvestmentExitProof } from "@/domain/earn/investmentPositions";
 import { View } from "react-native";
 import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
@@ -13,10 +14,14 @@ export function EthereumLiquidityPanel({
   intent,
   bootstrapPlan,
   withdrawn,
+  aggregate = false,
+  onWithdrawalComplete,
 }: {
   intent: EarnIntent;
   bootstrapPlan: VaultPlan | null;
   withdrawn: boolean;
+  aggregate?: boolean;
+  onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
 }) {
   const service = useEarn().liquidity,
     v = useEarnJournal(intent, service),
@@ -201,14 +206,22 @@ export function EthereumLiquidityPanel({
           )}
         </View>
       ))}
-      {withdrawn && <ExitCompletionPanel intent={intent} />}
+      {withdrawn && (
+        <ExitCompletionPanel
+          intent={intent}
+          aggregate={aggregate}
+          onWithdrawalComplete={onWithdrawalComplete}
+        />
+      )}
       {withdrawn && (
         <>
           <Typography>
             Return USDC first, then quote the remaining ETH sweep.{" "}
-            {intent.distribution
-              ? "Other investment wallets keep their own progress."
-              : "Wallet 1 stays separate."}
+            {aggregate
+              ? "Other portions keep their saved withdrawal progress."
+              : intent.distribution
+                ? "Other investment wallets keep their own progress."
+                : "Wallet 1 stays separate."}
           </Typography>
           <Button
             label="Review USDC return"

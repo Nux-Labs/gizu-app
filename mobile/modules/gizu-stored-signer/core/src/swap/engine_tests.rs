@@ -72,6 +72,8 @@ struct World {
     funded_at: HashMap<String, u64>,
     permits: HashMap<B256, Vec<u8>>,
     fills: HashMap<B256, (String, Address, U256, U256, Address, bool)>,
+    inbound_quotes: HashMap<String, (Value, u64)>,
+    partial_fill_once: bool,
     user_ops: usize,
     intents: usize,
     orders: usize,
@@ -105,6 +107,8 @@ impl World {
             funded_at: HashMap::new(),
             permits: HashMap::new(),
             fills: HashMap::new(),
+            inbound_quotes: HashMap::new(),
+            partial_fill_once: false,
             user_ops: 0,
             intents: 0,
             orders: 0,
@@ -193,6 +197,32 @@ impl World {
                     self.w.c
                 );
                 ok(json!({"accessToken": "token"}))
+            }
+            "/v1/swap/aurora/history" => {
+                assert_eq!(body["accessToken"], "token");
+                let deposit = body["depositAddress"].as_str().unwrap();
+                let Some((request, quoted)) = self.inbound_quotes.get(deposit) else {
+                    return ok(json!({"items":[]}));
+                };
+                let fills = self
+                    .fills
+                    .values()
+                    .filter(|(_, _, _, _, to, _)| {
+                        to.to_checksum(None).eq_ignore_ascii_case(deposit)
+                    })
+                    .collect::<Vec<_>>();
+                let input = fills
+                    .iter()
+                    .fold(U256::ZERO, |sum, (_, _, _, amount, _, _)| sum + *amount);
+                let output = input.saturating_sub(U256::from(20));
+                ok(
+                    json!({"items": if input.is_zero() { vec![] } else { vec![json!({
+                    "depositAddress": deposit, "status":"SUCCESS", "depositType":"ORIGIN_CHAIN", "recipientType":"CONFIDENTIAL_INTENTS", "refundType":"ORIGIN_CHAIN",
+                    "originAsset":DST, "destinationAsset":SRC, "recipient":request["recipient"], "refundTo":request["refundTo"], "depositMemo":null,
+                    "createdAt":iso_string(*quoted), "amountInFormatted":usdc(input), "amountOutFormatted":usdc(output),
+                    "quoteTransactions":fills.iter().map(|(hash,_,_,_,_,_)| json!({"sender":format!("{FUSION_SETTLEMENT:#x}"), "txHash":hash})).collect::<Vec<_>>()
+                })] }}),
+                )
             }
             "/v1/swap/aurora/balances" => ok(json!({"balances": [
                 {"tokenId": SRC, "available": self.credit.to_string(), "source": "private"},
@@ -333,12 +363,12 @@ impl World {
                 let topic = keccak256("Transfer(address,address,uint256)");
                 let pad = |a: Address| format!("{:#x}", B256::from(evm::word_address(a)));
                 if sell {
-                    json!({"status": "0x1", "logs": [
+                    json!({"status": "0x1", "transactionHash":tx, "blockHash":format!("{:#x}", keccak256(b"canonical")), "blockNumber":"0x100", "logs": [
                         {"address": format!("{AMZN:#x}"), "topics": [format!("{topic:#x}"), pad(maker), pad(FUSION_SETTLEMENT)], "data": word(making)},
                         {"address": format!("{ROBINHOOD_USDG:#x}"), "topics": [format!("{topic:#x}"), pad(FUSION_SETTLEMENT), pad(dest)], "data": word(taking)},
                     ]})
                 } else {
-                    json!({"status": "0x1", "logs": [
+                    json!({"status": "0x1", "transactionHash":tx, "blockHash":format!("{:#x}", keccak256(b"canonical")), "blockNumber":"0x100", "logs": [
                         {"address": format!("{ROBINHOOD_USDG:#x}"), "topics": [format!("{topic:#x}"), pad(maker), pad(FUSION_SETTLEMENT)], "data": word(making)},
                         {"address": format!("{AMZN:#x}"), "topics": [format!("{topic:#x}"), pad(FUSION_SETTLEMENT), pad(maker)], "data": word(taking)},
                     ]})
@@ -422,6 +452,10 @@ impl World {
             if destination && let Ok(to) = evm::addr(recipient) {
                 self.deposits
                     .insert(deposit.clone(), (to, amount, out, dest_usdg));
+            }
+            if request["originAsset"] == DST && request["recipientType"] == "CONFIDENTIAL_INTENTS" {
+                self.inbound_quotes
+                    .insert(deposit.clone(), (request.clone(), now));
             }
             (deposit, out)
         } else {
@@ -616,10 +650,14 @@ impl World {
             recover_raw(digest, &permit[160..224], words(4).to::<u8>() - 27),
             maker
         );
-        let (making, taking) = (
+        let (mut making, mut taking) = (
             evm::decimal(&order.making_amount).unwrap(),
             evm::decimal(&order.taking_amount).unwrap(),
         );
+        if token != ROBINHOOD_USDG && std::mem::take(&mut self.partial_fill_once) {
+            making /= U256::from(2);
+            taking /= U256::from(2);
+        }
         let dest = evm::addr(&order.receiver).unwrap();
         let sell = token != ROBINHOOD_USDG;
         if !self.fills.contains_key(&hash) {
@@ -2317,4 +2355,285 @@ fn sell_plans_validate_their_randomness_and_wallet_counts() {
     assert!(
         SwapOperation::start(pooled_plan(RANDOM), ENTROPY.to_vec(), GATEWAY.into(), T0).is_ok()
     );
+}
+
+fn confidential_sale_plan() -> String {
+    json!({"kind":"confidentialSell", "completionTarget":"confidential", "target":AMZN.to_checksum(None),
+        "holderIndices":[3,4,5], "recipientIndices":[3,4,5]}).to_string()
+}
+
+#[test]
+fn a_confidential_sale_finishes_at_verified_credit_without_spending_existing_private_cash() {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    world.credit = U256::from(900_000_000u64);
+    let initial = world.credit;
+    let sale = start_plan(confidential_sale_plan());
+    let review = review(&sale, &mut world, &mut now);
+    assert!(
+        review.contains("stop at verified private USDC credit"),
+        "{review}"
+    );
+    sale.approve(now).unwrap();
+    assert_eq!(drive(&sale, &mut world, &mut now), SwapStep::Finished);
+    let public = status(&sale);
+    let credited = evm::decimal(public["privateCreditedAtoms"].as_str().unwrap()).unwrap();
+    assert!(credited > U256::ZERO && credited < initial);
+    assert_eq!(public["completionTarget"], "confidential");
+    assert_eq!(public["payoutsSubmitted"], 0);
+    assert_eq!(public["ordersComplete"], 3);
+    assert_eq!(world.intents, 0);
+    assert!(
+        !world
+            .paths
+            .iter()
+            .any(|p| p.ends_with("/balances") || p.contains("intent"))
+    );
+    assert!(world.monad_usdc.is_empty());
+}
+
+#[test]
+fn confidential_sales_probe_authenticated_history_before_any_fusion_signature() {
+    for failure in [404, 503] {
+        let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+        let sale = start_plan(confidential_sale_plan());
+        let step = drive_until(&sale, &mut world, &mut now, |url| {
+            url.ends_with("/aurora/history")
+        });
+        assert_eq!(
+            world.orders, 0,
+            "missing history must be discovered before selling"
+        );
+        assert_eq!(status(&sale)["approved"], false);
+        let SwapStep::Request { id, .. } = step else {
+            panic!()
+        };
+        sale.on_response(id, failure, "{}".into(), now).unwrap();
+        assert!(matches!(
+            sale.next_step(now).unwrap(),
+            SwapStep::Paused { .. }
+        ));
+        assert_eq!(world.orders, 0);
+        let state: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+        assert!(
+            state["data"]["orders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["permit"].is_null() && row["signature"].is_null())
+        );
+    }
+}
+
+fn confidential_credit_request() -> (Arc<SwapOperation>, World, u64, SwapStep) {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    let sale = start_plan(confidential_sale_plan());
+    review(&sale, &mut world, &mut now);
+    sale.approve(now).unwrap();
+    let request = drive_until(&sale, &mut world, &mut now, |url| {
+        url.ends_with("/aurora/history")
+    });
+    (sale, world, now, request)
+}
+
+#[test]
+fn confidential_sale_rejects_foreign_duplicate_stale_or_malformed_credit() {
+    for tamper in 0..14 {
+        let (sale, mut world, now, request) = confidential_credit_request();
+        let SwapStep::Request { id, url, body, .. } = request else {
+            panic!()
+        };
+        let (_, response) = world.handle(&url, body.as_deref(), now);
+        let mut value: Value = serde_json::from_str(&response).unwrap();
+        match tamper {
+            0 => value["items"][0]["recipient"] = json!(format!("{:#x}", addr(20))),
+            1 => value["items"][0]["refundTo"] = json!(format!("{:#x}", addr(20))),
+            2 => value["items"][0]["originAsset"] = json!(SRC),
+            3 => value["items"][0]["destinationAsset"] = json!(DST),
+            4 => value["items"][0]["amountInFormatted"] = json!("1000000"),
+            5 => value["items"][0]["amountOutFormatted"] = json!("0.000001"),
+            6 => value["items"][0]["createdAt"] = json!(iso_string(T0 - 60_000)),
+            7 => value["items"][0]["createdAt"] = json!(iso_string(now + 60_000)),
+            8 => {
+                value["items"][0]["quoteTransactions"][0]["txHash"] =
+                    json!(format!("{:#x}", keccak256(b"foreign")))
+            }
+            9 => {
+                let duplicate = value["items"][0].clone();
+                value["items"].as_array_mut().unwrap().push(duplicate);
+            }
+            10 => {
+                let duplicate = value["items"][0]["quoteTransactions"][0].clone();
+                value["items"][0]["quoteTransactions"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(duplicate);
+            }
+            11 => value["items"][0]["depositMemo"] = json!("foreign memo"),
+            12 => value["items"][0]["status"] = json!("PENDING_DEPOSIT"),
+            _ => value["items"][0]["amountOutFormatted"] = json!("1e6"),
+        }
+        assert!(
+            sale.on_response(id, 200, value.to_string(), now).is_err(),
+            "tamper {tamper}"
+        );
+        assert_ne!(status(&sale)["phase"], "COMPLETE");
+        assert_eq!(status(&sale)["privateCreditedAtoms"], "0");
+        assert_eq!(world.intents, 0);
+    }
+}
+
+#[test]
+fn missing_private_credit_stays_pending_across_restore_without_repeating_sale() {
+    let (sale, mut world, mut now, request) = confidential_credit_request();
+    let SwapStep::Request { id, .. } = request else {
+        panic!()
+    };
+    sale.on_response(id, 200, json!({"items":[]}).to_string(), now)
+        .unwrap();
+    assert_ne!(status(&sale)["phase"], "COMPLETE");
+    let restored = SwapOperation::restore(sale.export_state().unwrap(), GATEWAY.into()).unwrap();
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!(world.orders, 3);
+    assert_eq!(world.intents, 0);
+}
+
+#[test]
+fn private_credit_auth_failure_never_falls_back_to_route_minimum_or_account_balance() {
+    let (sale, mut world, mut now, request) = confidential_credit_request();
+    let SwapStep::Request { id, .. } = request else {
+        panic!()
+    };
+    sale.on_response(id, 401, "{}".into(), now).unwrap();
+    assert_eq!(status(&sale)["pausedCode"], "PRIVATE_CREDIT_AUTH_REQUIRED");
+    assert_eq!(status(&sale)["privateCreditedAtoms"], "0");
+    let restored = SwapOperation::restore(sale.export_state().unwrap(), GATEWAY.into()).unwrap();
+    restored.retry();
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!((world.orders, world.intents), (3, 0));
+    assert!(!world.paths.iter().any(|path| path.ends_with("/balances")));
+}
+
+#[test]
+fn a_refunded_confidential_sale_requires_recovery_without_payout_or_completion() {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    let sale = start_plan(confidential_sale_plan());
+    review(&sale, &mut world, &mut now);
+    sale.approve(now).unwrap();
+    let SwapStep::Request { id, .. } = drive_until(&sale, &mut world, &mut now, |url| {
+        url.ends_with("/aurora/status")
+    }) else {
+        panic!()
+    };
+    sale.on_response(id, 200, json!({"status":"REFUNDED"}).to_string(), now)
+        .unwrap();
+    assert_eq!(status(&sale)["pausedCode"], "SALE_CREDIT_REFUNDED");
+    assert_ne!(status(&sale)["phase"], "COMPLETE");
+    assert_eq!(world.intents, 0);
+}
+
+#[test]
+fn confidential_policy_requires_existing_holder_slots_and_no_payout_randomness() {
+    for field in [
+        "recipientIndices",
+        "legsRandom",
+        "weights",
+        "completionTarget",
+        "kind",
+    ] {
+        let mut p: Value = serde_json::from_str(&confidential_sale_plan()).unwrap();
+        p[field] = match field {
+            "recipientIndices" => json!([6, 7, 8]),
+            "legsRandom" => json!(RANDOM),
+            "weights" => json!([3, 3, 4]),
+            "completionTarget" => json!("future"),
+            _ => json!("confidentialSwap"),
+        };
+        assert!(
+            SwapOperation::start(p.to_string(), ENTROPY.to_vec(), GATEWAY.into(), T0).is_err(),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn sub_usdc_sale_credit_is_verified_as_exact_six_decimal_atoms() {
+    let (mut world, mut now) = (pooled_world(400_000_000_000_000), T0);
+    let sale = start_plan(confidential_sale_plan());
+    review(&sale, &mut world, &mut now);
+    sale.approve(now).unwrap();
+    assert_eq!(drive(&sale, &mut world, &mut now), SwapStep::Finished);
+    assert!(
+        evm::decimal(status(&sale)["privateCreditedAtoms"].as_str().unwrap()).unwrap()
+            < U256::from(1_000_000)
+    );
+    assert_eq!(world.intents, 0);
+}
+
+#[test]
+fn partial_confidential_sale_keeps_every_inbound_across_restart_and_never_rerolls() {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    world.partial_fill_once = true;
+    let sale = start_plan(confidential_sale_plan());
+    review(&sale, &mut world, &mut now);
+    sale.approve(now).unwrap();
+    let SwapStep::Request { id, url, body, .. } = drive_until(&sale, &mut world, &mut now, |url| {
+        url.ends_with("/aurora/history")
+    }) else {
+        panic!()
+    };
+    let (status, reply) = world.handle(&url, body.as_deref(), now);
+    sale.on_response(id, status, reply, now).unwrap();
+    let first: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+    assert_eq!(first["data"]["saleInbounds"].as_array().unwrap().len(), 1);
+    assert_ne!(first["data"]["saleInbounds"][0]["credited"], json!("0x0"));
+    assert_eq!(world.orders, 1);
+    let restored = SwapOperation::restore(first.to_string(), GATEWAY.into()).unwrap();
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
+    let last: Value = serde_json::from_str(&restored.export_state().unwrap()).unwrap();
+    assert_eq!(last["plan"], first["plan"]);
+    assert_eq!(last["data"]["saleInbounds"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        last["data"]["saleInbounds"][0],
+        first["data"]["saleInbounds"][0]
+    );
+    assert_eq!((world.orders, world.intents), (4, 0));
+    assert_eq!(
+        status_private_amount(&restored),
+        last["data"]["saleInbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .fold(U256::ZERO, |sum, row| sum
+                + evm::quantity(row["credited"].as_str().unwrap()).unwrap())
+    );
+}
+
+fn status_private_amount(op: &SwapOperation) -> U256 {
+    evm::decimal(status(op)["privateCreditedAtoms"].as_str().unwrap()).unwrap()
+}
+
+#[test]
+fn confidential_sale_cancellation_never_discards_signed_or_credited_work() {
+    let (sale, mut world, mut now, request) = confidential_credit_request();
+    sale.cancel();
+    assert_ne!(status(&sale)["phase"], "CANCELLED");
+    assert_eq!(status(&sale)["pausedCode"], "SALE_PAUSED_SAVED_PROGRESS");
+    let SwapStep::Request { id, url, body, .. } = request else {
+        panic!()
+    };
+    let (_, reply) = world.handle(&url, body.as_deref(), now);
+    // The paused journal retains the pending read and every signed order.
+    sale.on_response(id, 200, reply, now).unwrap();
+    let restored = SwapOperation::restore(sale.export_state().unwrap(), GATEWAY.into()).unwrap();
+    restored.retry();
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
+    let credit = status(&restored)["privateCreditedAtoms"].clone();
+    restored.cancel();
+    assert_eq!(status(&restored)["phase"], "COMPLETE");
+    assert_eq!(status(&restored)["privateCreditedAtoms"], credit);
+    assert_eq!(world.orders, 3);
 }

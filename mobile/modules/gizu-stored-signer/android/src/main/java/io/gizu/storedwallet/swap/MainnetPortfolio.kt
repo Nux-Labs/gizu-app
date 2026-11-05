@@ -52,16 +52,7 @@ internal class MainnetPortfolio(private val context: Context) {
         )
       }
     val addresses = accounts.map { it.address }
-    val sync =
-      TokenBalanceSync(
-        AndroidWalletFile(context, "gizu-public-balances-${record.journalId}.enc", 4 * 1024 * 1024),
-        { checkNotNull(AndroidWalletKeys().existing()) },
-        record.id,
-        143,
-        USDC,
-        PortfolioReadBudget().wrap(NativePortfolioRpc("https://rpc.monad.xyz"), 143L),
-        ::decodePortfolioBalance,
-      )
+    val sync = publicUsdcSync(record)
     val snapshot =
       try {
         sync.read(addresses, System.currentTimeMillis())
@@ -87,7 +78,26 @@ internal class MainnetPortfolio(private val context: Context) {
     public.toPublicMap() + mapOf("history" to history) + owned.await()
   }
 
+  private fun publicUsdcSync(record: WalletRecord) =
+    mainnetUsdcBalanceSync(
+      AndroidWalletFile(context, "gizu-public-balances-${record.journalId}.enc", 4 * 1024 * 1024),
+      { checkNotNull(AndroidWalletKeys().existing()) },
+      record.id,
+      PortfolioReadBudget().wrap(NativePortfolioRpc("https://rpc.monad.xyz"), 143L),
+    )
+
+  /** Receiver credits and source debits must bypass the 30-second public USDC cache. */
+  fun invalidate(record: WalletRecord) = publicUsdcSync(record).invalidate()
+
   companion object {
     const val USDC = "0x754704bc059f8c67012fed69bc8a327a5aafb603"
   }
 }
+
+/** Shared by read/invalidate so the encrypted cache identity cannot diverge. */
+internal fun mainnetUsdcBalanceSync(
+  file: WalletFile,
+  key: () -> javax.crypto.SecretKey,
+  walletId: String,
+  rpc: PortfolioRpc,
+) = TokenBalanceSync(file, key, walletId, 143, MainnetPortfolio.USDC, rpc, ::decodePortfolioBalance)

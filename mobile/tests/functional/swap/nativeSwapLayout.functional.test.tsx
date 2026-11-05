@@ -61,6 +61,35 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
+test("new private sale completion shows verified confidential credit without public payout wallets", async () => {
+  readStatus.mockResolvedValue({
+    ...status,
+    phase: "COMPLETE",
+    direction: "sell",
+    completionTarget: "confidential",
+    privateCreditedAtoms: "7700000",
+    creditedAtoms: "7700000",
+    targetSymbol: "GOOGL",
+    holders: 3,
+    ordersComplete: 3,
+    payoutsSubmitted: 0,
+    returnAddresses: [],
+  });
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  fireEvent.press(await screen.findByRole("button", { name: "Last swap completed" }));
+  expect(await screen.findByText("Verified private USDC credit")).toBeVisible();
+  expect(screen.getByText("7.7 USDC")).toBeVisible();
+  expect(screen.queryByText("USDC sent to")).toBeNull();
+  expect(screen.queryByText("Paid out")).toBeNull();
+  expect(
+    screen.getByText("Proceeds remain confidential until you withdraw from Gizu."),
+  ).toBeVisible();
+});
+
 test("selects a searched token and reviews the exact amount without exposing technical details by default", async () => {
   render(
     <SafeAreaProvider>

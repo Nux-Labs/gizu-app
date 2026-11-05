@@ -22,7 +22,9 @@ const coalescedReads = new Set([
   "getSwapHoldings",
   "getSwapStatus",
   "getEarnDepositStatus",
+  "listEarnInvestmentPositions",
   "getWalletRecoveryStatus",
+  "getConfidentialWithdrawal",
 ]);
 function nativeModule(): StoredSignerContract | null {
   const native = supportedPlatform()
@@ -101,6 +103,9 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
         Platform.OS === "android" && result.earnBalanceDeltaSettlement === true,
       earnDepositJourney: Platform.OS === "android" && result.earnDepositJourney === true,
       earnDepositDistribution: Platform.OS === "android" && result.earnDepositDistribution === true,
+      confidentialWithdrawals: Platform.OS === "android" && result.confidentialWithdrawals === true,
+      confidentialSaleProceeds:
+        Platform.OS === "android" && result.confidentialSaleProceeds === true,
     };
   } catch {
     return unavailable;
@@ -129,7 +134,9 @@ async function checked(
     | "earnSponsoredExecution"
     | "earnEthereumLiquidityExecution"
     | "earnPrivatePayoutExecution"
-    | "earnDepositJourney",
+    | "earnDepositJourney"
+    | "confidentialWithdrawals"
+    | "confidentialSaleProceeds",
 ) {
   const generation = authorizationGeneration;
   const value = await native.getCapabilities();
@@ -299,6 +306,7 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
     },
     async sellSwapHolding(holdingId, gateway) {
       await checked(native, "swaps");
+      await checked(native, "confidentialSaleProceeds");
       if (typeof native.sellSwapHolding !== "function")
         throw new Error("Selling holdings is not available in this build.");
       return native.sellSwapHolding(holdingId, gateway);
@@ -312,6 +320,7 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
     },
     async startSell(gateway) {
       await checked(native, "swaps");
+      await checked(native, "confidentialSaleProceeds");
       return native.startSell(gateway);
     },
     async startPayout(target, gateway) {
@@ -508,6 +517,14 @@ export function getStoredEarnSigner() {
           async selectEarnInvestmentSlot(walletId: string, intentId: string, slot: number) {
             await checked(native, "earnWallets");
             return native.selectEarnInvestmentSlot!(walletId, intentId, slot);
+          },
+        }
+      : {}),
+    ...(native.listEarnInvestmentPositions
+      ? {
+          async listEarnInvestmentPositions(walletId: string) {
+            await checked(native, "earnWallets");
+            return readNative(() => native.listEarnInvestmentPositions!(walletId));
           },
         }
       : {}),
@@ -756,6 +773,41 @@ export function getStoredEarnWithdrawalSigner() {
     lock() {
       authorizationGeneration++;
       native.lock();
+    },
+  };
+}
+
+export function getStoredConfidentialWithdrawalSigner():
+  import("./confidentialWithdrawal").ConfidentialWithdrawalBridge | null {
+  const native = nativeModule();
+  if (
+    !native?.getConfidentialWithdrawal ||
+    !native.prepareConfidentialWithdrawal ||
+    !native.executeConfidentialWithdrawal ||
+    !native.resumeConfidentialWithdrawal ||
+    !native.cancelConfidentialWithdrawal
+  )
+    return null;
+  return {
+    async getConfidentialWithdrawal(walletId) {
+      await checked(native, "confidentialWithdrawals");
+      return readNative(() => native.getConfidentialWithdrawal!(walletId));
+    },
+    async prepareConfidentialWithdrawal(request) {
+      await checked(native, "confidentialWithdrawals");
+      return native.prepareConfidentialWithdrawal!(request);
+    },
+    async executeConfidentialWithdrawal(request) {
+      await checked(native, "confidentialWithdrawals");
+      return native.executeConfidentialWithdrawal!(request);
+    },
+    async resumeConfidentialWithdrawal(request) {
+      await checked(native, "confidentialWithdrawals");
+      return native.resumeConfidentialWithdrawal!(request);
+    },
+    async cancelConfidentialWithdrawal(request) {
+      await checked(native, "confidentialWithdrawals");
+      return native.cancelConfidentialWithdrawal!(request);
     },
   };
 }

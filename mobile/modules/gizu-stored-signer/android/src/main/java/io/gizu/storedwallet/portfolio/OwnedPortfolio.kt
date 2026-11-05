@@ -161,6 +161,52 @@ internal class NativeOwnedPortfolio(
     return result
   }
 
+  /** Invalidate affected assets only; old observations remain visible as stale. */
+  fun invalidateTokens(record: WalletRecord, chain: Long, tokens: Set<String>) {
+    require(chain in setOf(1L, 143L, 4663L) && tokens.size <= 256)
+    val normalized = tokens.map(String::lowercase).toSet()
+    require(normalized.all { it == "native" || it.matches(Regex("0x[0-9a-f]{40}")) })
+    if (normalized.isEmpty()) return
+    val root = load(record)
+    val catalogue = owners(record, root)
+    // Token groups are subsets of these owners. Invalidating all possible shards
+    // also covers grouped stable assets and vaults without exposing their owners.
+    val candidates =
+      addresses(catalogue.getJSONArray("public")) +
+        (catalogue.optJSONArray(chain.toString())?.let(::addresses) ?: emptyList())
+    val shardCount = maxOf(1, (candidates.distinct().size + 8191) / 8192)
+    for (token in normalized) {
+      if (token == "native") {
+        val native = root.getJSONObject("native")
+        native
+          .keys()
+          .asSequence()
+          .filter { it.startsWith("$chain:") }
+          .toList()
+          .forEach { native.getJSONObject(it).put("invalidated", true) }
+        continue
+      }
+      val id = groupKey(chain, token)
+      root
+        .getJSONObject("snapshots")
+        .optJSONObject(id)
+        ?.put("complete", false)
+        ?.put("syncPending", true)
+      for (index in 0 until shardCount) {
+        TokenBalanceSync(
+            file("gizu-owned-token-${record.journalId}-${digest(id)}-$index.enc"),
+            key,
+            record.journalId,
+            chain,
+            token,
+            rpc(chain),
+          )
+          .invalidate()
+      }
+    }
+    save(record, root)
+  }
+
   suspend fun read(record: WalletRecord): Map<String, Any?> {
     val now = clock()
     val root = load(record)
@@ -186,10 +232,16 @@ internal class NativeOwnedPortfolio(
     )
       groups.add(Group(4663, token, "Token ${token.takeLast(6)}", null, public))
     // Independent token cursors are rotated; opening a large catalogue does not rescan every asset.
-    val start = root.optInt("tokenOffset", 0).mod(groups.size)
-    val selected =
-      (0 until minOf(TOKEN_GROUP_BUDGET, groups.size)).map { (start + it) % groups.size }.toSet()
-    root.put("tokenOffset", (start + selected.size) % groups.size)
+    val activeVault =
+      groups.indexOfFirst { it.chain == record.earnChain.toLong() && it.underlying != null }
+    val initial =
+      if (JSONArray(record.earnCycles).length() > 0 && activeVault >= 0) activeVault else 0
+    val start = root.optInt("readOffset", initial).mod(groups.size)
+    val order = (groups.indices.drop(start) + groups.indices.take(start))
+    val selected = order.take(TOKEN_GROUP_BUDGET).toSet()
+    // Rotate work itself, including when every group fits the selection budget. A slow
+    // provider must not always consume the deadline before a later vault is observed.
+    root.put("readOffset", (start + 1) % groups.size)
     var calls = 0
     val rpcs = mutableMapOf<Long, PortfolioRpc>()
     val budget = rpcBudget()
@@ -210,7 +262,8 @@ internal class NativeOwnedPortfolio(
       }
     val assets = mutableListOf<Map<String, Any?>>()
     val positions = mutableListOf<Map<String, Any?>>()
-    for ((index, group) in groups.withIndex()) {
+    for (index in order) {
+      val group = groups[index]
       val id = groupKey(group.chain, group.token)
       val snapshot =
         tokenSnapshot(record, root, group, now, index in selected, chainRpc(group.chain))
@@ -309,6 +362,10 @@ internal class NativeOwnedPortfolio(
         positions.add(row)
       }
     }
+    val displayOrder =
+      groups.mapIndexed { index, group -> groupKey(group.chain, group.token) to index }.toMap()
+    assets.sortBy { displayOrder[it["assetId"]] }
+    positions.sortBy { displayOrder[it["assetId"]] }
     assets.addAll(nativeAssets(root, public, eth, hood, record.earnChain.toLong(), now, ::chainRpc))
     val all = assets + positions
     save(record, root)
@@ -575,7 +632,7 @@ internal class NativeOwnedPortfolio(
             !fresh(
               cache.optJSONObject(groupKey(a.first, a.second))?.optLong("checkedAt", 0) ?: 0,
               now,
-            )
+            ) || cache.optJSONObject(groupKey(a.first, a.second))?.optBoolean("invalidated") == true
           }
           .take(NATIVE_READ_BUDGET)
       root.put("nativeOffset", (offset + NATIVE_READ_BUDGET) % accounts.size)
@@ -649,7 +706,11 @@ internal class NativeOwnedPortfolio(
           "balanceAtoms" to observed.toString().takeIf { complete },
           "observedAtoms" to observed.toString(),
           "complete" to complete,
-          "stale" to (!complete || observations.any { !fresh(it.getLong("checkedAt"), now) }),
+          "stale" to
+            (!complete ||
+              observations.any {
+                it.optBoolean("invalidated") || !fresh(it.getLong("checkedAt"), now)
+              }),
           "checkedAt" to (observations.minOfOrNull { it.getLong("checkedAt") } ?: 0L),
           "valueUsdcAtoms" to null,
           "valuationUnavailable" to true,

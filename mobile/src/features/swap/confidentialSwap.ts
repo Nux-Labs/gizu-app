@@ -32,6 +32,24 @@ export function parseSwapView(value: unknown): StoredSwapView {
     typeof view.fundingAddress !== "string"
   )
     throw new Error("Invalid swap status");
+  if (
+    view.completionTarget !== undefined &&
+    view.completionTarget !== "confidential" &&
+    view.completionTarget !== "public"
+  )
+    throw new Error("Invalid sale completion policy");
+  if (
+    view.completionTarget === "confidential" &&
+    (view.direction !== "sell" ||
+      typeof view.privateCreditedAtoms !== "string" ||
+      !/^(0|[1-9][0-9]{0,77})$/.test(view.privateCreditedAtoms) ||
+      BigInt(view.privateCreditedAtoms) >= 1n << 256n ||
+      (view.phase === "COMPLETE" &&
+        (view.privateCreditedAtoms === "0" ||
+          view.payoutsSubmitted !== 0 ||
+          (Array.isArray(view.returnAddresses) && view.returnAddresses.length !== 0))))
+  )
+    throw new Error("Private sale credit requires native verification");
   return {
     operationId: view.operationId,
     phase: view.phase,
@@ -41,6 +59,9 @@ export function parseSwapView(value: unknown): StoredSwapView {
     targetDecimals: typeof view.targetDecimals === "number" ? view.targetDecimals : 0,
     sourceAtoms: typeof view.sourceAtoms === "string" ? view.sourceAtoms : "",
     creditedAtoms: typeof view.creditedAtoms === "string" ? view.creditedAtoms : "",
+    completionTarget: view.completionTarget as "confidential" | "public" | undefined,
+    privateCreditedAtoms:
+      typeof view.privateCreditedAtoms === "string" ? view.privateCreditedAtoms : undefined,
     payoutsSubmitted: typeof view.payoutsSubmitted === "number" ? view.payoutsSubmitted : 0,
     ordersComplete: typeof view.ordersComplete === "number" ? view.ordersComplete : 0,
     receivedTargetAtoms:

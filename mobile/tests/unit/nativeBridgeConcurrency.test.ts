@@ -16,6 +16,25 @@ afterEach(() => {
 const tick = async () => {
   for (let i = 0; i < 15; i++) await Promise.resolve();
 };
+test("old native builds can resume legacy sales but cannot start a public-payout sale under the private UI", async () => {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+  Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
+  const native = {
+    getCapabilities: jest
+      .fn()
+      .mockResolvedValue({ contractVersion: 1, available: true, swaps: true }),
+    startSell: jest.fn(),
+    sellSwapHolding: jest.fn(),
+    resumeSwap: jest.fn().mockResolvedValue({ phase: "PAUSED" }),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+  const signer = getStoredSwapSigner()!;
+  await expect(signer.startSell("https://backend.test")).rejects.toThrow();
+  await expect(signer.sellSwapHolding("saved-holding", "https://backend.test")).rejects.toThrow();
+  expect(native.startSell).not.toHaveBeenCalled();
+  expect(native.sellSwapHolding).not.toHaveBeenCalled();
+  await expect(signer.resumeSwap("https://backend.test")).resolves.toEqual({ phase: "PAUSED" });
+});
 test("an older native build can read saved deposits but cannot prepare a new distributed deposit", async () => {
   Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
   Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });

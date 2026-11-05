@@ -4,6 +4,13 @@ The supplied `research/confidential-earn/APP-INTEGRATION-HANDOVER.md` is the pro
 
 ## User actions
 
+New vault exits finish in confidential USDC. Making those funds public uses the
+separate **Withdraw from Gizu** flow, with its own native approval and fresh
+distributed receiving wallets. Saved legacy public payouts retain their original
+policy. See [confidential withdrawals](CONFIDENTIAL_WITHDRAWALS.md) for current
+sale/exit completion, recovery and deployment behavior; dated entries below
+preserve earlier implementation stages.
+
 **Earn ends at an invested vault position.** The initial fee calculation simulates a future full redemption in a disposable server-side fork only to estimate the withdrawal reserve. It never withdraws the live position. The user must click Withdraw later, review fresh fees, and authorize redemption separately. Aurora return quotes and operations follow that requested exit; their future executable costs are excluded from the initial deposit estimate.
 
 Funding uses Circle USDC `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` (six decimals) on Monad mainnet 143. Swap and Earn share native source selection across accounts 0, 1 and allocated public receiving accounts, with fresh balances and shared reservations. A sufficient single account is preferred; a larger budget can span multiple sources. One combined native review and passkey assertion authorizes the selected source funding operations. Each source retains its own fees, transaction and recovery journal. Changed terms or an interrupted/expired approval require a fresh review of the remaining sources.

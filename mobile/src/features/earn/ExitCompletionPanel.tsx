@@ -9,17 +9,25 @@ import type { EarnIntent } from "@/domain/earn/types";
 import type { EarnExitCompletionService, ExitCompletion } from "@/domain/earn/exitCompletion";
 import { createEarnExitCompletionService } from "@/services/earn/exitCompletion";
 import { formatUsdc } from "@/domain/wallet/amounts";
+import type { EarnInvestmentExitProof } from "@/domain/earn/investmentPositions";
+import { investmentDestination } from "@/domain/earn/distribution";
 import { useEarn } from "./EarnProvider";
+import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 export function ExitCompletionPanel({
   intent,
   service,
   withdrawal = earnWithdrawalService,
+  aggregate = false,
+  onWithdrawalComplete,
 }: {
   intent: EarnIntent;
   service?: EarnExitCompletionService;
   withdrawal?: EarnWithdrawalService;
+  aggregate?: boolean;
+  onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
 }) {
   const withdrawals = useEarnJournal(intent, withdrawal);
+  const portfolio = useOptionalMainnetWallet();
   const earn = useEarn(),
     checker = useMemo(
       () =>
@@ -60,6 +68,40 @@ export function ExitCompletionPanel({
     );
     return () => clearTimeout(timer);
   }, [result]);
+  useEffect(() => {
+    if (!onWithdrawalComplete) return;
+    const complete =
+      result?.complete === true &&
+      result.snapshot.expiresAtMs > Date.now() &&
+      result.snapshot.profileId === intent.profileId &&
+      result.snapshot.owner.toLowerCase() === investmentDestination(intent).address.toLowerCase() &&
+      !busy &&
+      !withdrawals.busy &&
+      !withdrawals.loading &&
+      withdrawals.available &&
+      !withdrawals.message &&
+      result.creditedReturnOperationIds.length > 0 &&
+      withdrawals.rows.every(
+        (row) => !row.blocked && (row.status === "paid" || row.status === "cancelled"),
+      );
+    onWithdrawalComplete({
+      walletId: intent.walletId,
+      intentId: intent.intentId,
+      profileId: intent.profileId,
+      ...(intent.investmentSlot !== undefined ? { investmentSlot: intent.investmentSlot } : {}),
+      expiresAtMs: complete ? result!.snapshot.expiresAtMs : null,
+    });
+  }, [
+    result,
+    intent,
+    busy,
+    withdrawals.rows,
+    withdrawals.busy,
+    withdrawals.loading,
+    withdrawals.available,
+    withdrawals.message,
+    onWithdrawalComplete,
+  ]);
   const check = async () => {
     if (active.current) return;
     const controller = new AbortController();
@@ -69,7 +111,11 @@ export function ExitCompletionPanel({
     setMessage("");
     try {
       const next = await checker.check(intent, controller.signal);
-      if (!controller.signal.aborted) setResult(next);
+      if (!controller.signal.aborted && withdrawals.available) await withdrawals.refresh();
+      if (!controller.signal.aborted) {
+        setResult(next);
+        void portfolio?.refresh();
+      }
     } catch (error) {
       if (!controller.signal.aborted)
         setMessage(error instanceof Error ? error.message : "Exit verification unavailable.");
@@ -83,9 +129,16 @@ export function ExitCompletionPanel({
   return (
     <View className="gap-2">
       <Typography>
-        {intent.distribution
-          ? "Exit completion checks the selected investment wallet. Check each wallet to complete the whole investment exit."
-          : "Exit completion checks wallet 2 only. Wallet 1 holdings are intentionally excluded."}
+        {aggregate
+          ? "Exit completion verifies this portion of your vault withdrawal before continuing to the next portion."
+          : intent.distribution
+            ? "Exit completion checks the selected investment wallet. Check each wallet to complete the whole investment exit."
+            : "Exit completion checks wallet 2 only. Wallet 1 holdings are intentionally excluded."}
+      </Typography>
+      <Typography variant="caption">
+        {withdrawals.rows.length === 0
+          ? "Proceeds stay in your confidential USDC balance. Withdraw from Gizu separately to make a public payout."
+          : "New proceeds stay confidential. Previously authorized public withdrawals keep their saved destinations and must be reconciled."}
       </Typography>
       <Button
         label={busy ? "Checking exit completion…" : "Check exit completion"}
@@ -109,28 +162,9 @@ export function ExitCompletionPanel({
           )}
         </>
       )}
-      {result?.creditedReturns?.map((row) => (
-        <Button
-          key={row.operationId}
-          label={`Review withdrawal to Monad receiving account · ${row.operationId}`}
-          variant="secondary"
-          disabled={
-            withdrawals.busy ||
-            withdrawals.loading ||
-            !withdrawals.available ||
-            withdrawals.rows.some((operation) => operation.returnOperationId === row.operationId)
-          }
-          onPress={() =>
-            void withdrawals.perform(
-              () => withdrawal.execute(intent, row.operationId, row.revision),
-              withdrawals.update,
-            )
-          }
-        />
-      ))}
       {withdrawals.rows.map((row) => (
         <View key={row.operationId} className="gap-2">
-          <Typography>Monad receiving withdrawal · {row.status}</Typography>
+          <Typography>Previously saved public withdrawal · {row.status}</Typography>
           <Typography selectable variant="caption">
             {row.recipient}
           </Typography>

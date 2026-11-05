@@ -71,7 +71,7 @@ const limitOrder = z.object({
 }).strict();
 
 type Gateway = {
-  aurora: Pick<AuroraIntents, "tokens" | "quote" | "generateIntent" | "submitIntent" | "status" | "authSalt" | "authenticate" | "balances">;
+  aurora: Pick<AuroraIntents, "tokens" | "quote" | "generateIntent" | "submitIntent" | "status" | "authSalt" | "authenticate" | "balances"> & Partial<Pick<AuroraIntents, "history">>;
   funding: Pick<PimlicoMonadFunding, "prepare" | "submit" | "receipt">;
   fusion: Pick<OneInchFusion, "preview" | "permitContext" | "createOrder" | "submit" | "status">;
 };
@@ -109,6 +109,10 @@ export function registerSwapRoutes(app: FastifyInstance, gateway: Gateway) {
     { schema: { body: z.object({ payload: z.string().min(2).max(2_000), signature: signedIntent.shape.signature }).strict() } },
     async (request) => gateway.aurora.authenticate(request.body.payload, request.body.signature),
   );
+  routes.post("/v1/swap/aurora/history", {schema: {body: z.object({accessToken: z.string().min(1).max(4000), depositAddress: auroraRecipient}).strict()}}, async (request, reply) => {
+    if (!gateway.aurora.history) return reply.code(503).send({code: "AUTHENTICATED_HISTORY_UNAVAILABLE"});
+    return gateway.aurora.history(request.body.accessToken, request.body.depositAddress);
+  });
   routes.post(
     "/v1/swap/aurora/balances",
     { schema: { body: z.object({ accessToken: z.string().min(1).max(4_000) }).strict() } },

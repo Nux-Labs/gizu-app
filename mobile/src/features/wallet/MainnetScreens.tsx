@@ -28,6 +28,9 @@ import { VaultPreview } from "@/features/investments/components/VaultPreview";
 import { SwapHoldingsSection, holdingAmount } from "@/features/swap/SwapHoldingsSection";
 import { useMainnetWallet } from "./MainnetWalletProvider";
 import { BalanceCard } from "./BalanceCard";
+import { VaultPositionCard } from "./VaultPositionCard";
+import { vaultPositionProfile } from "@/domain/wallet/portfolioValue";
+import type { EarnProfileId } from "@/domain/earn/types";
 
 function usePortfolio() {
   const wallet = useMainnetWallet();
@@ -166,7 +169,7 @@ function OwnedBalanceRow({
       : null
     : asset.observedAtoms;
   return (
-    <View className="gap-2 rounded-2xl bg-well p-4">
+    <View className="gap-2 border-b border-cardEdge py-3 last:border-b-0">
       <Typography variant="rowTitle">{asset.symbol}</Typography>
       {position && <Typography variant="micro">Vault position</Typography>}
       <Typography>
@@ -210,49 +213,70 @@ function OwnedBalanceRow({
     </View>
   );
 }
-function OwnedBalances() {
+function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) => void }) {
   const { snapshot, loading, refresh } = useMainnetWallet();
   if (!snapshot?.ownedAssets && !snapshot?.positions) return null;
+  const visible = (asset: OwnedPortfolioAsset) =>
+    !asset.complete || BigInt(asset.balanceAtoms ?? asset.observedAtoms) > 0n;
+  const assets = snapshot.ownedAssets?.filter(visible) ?? [];
+  const positions = snapshot.positions?.filter(visible) ?? [];
   return (
-    <Surface>
-      <View className="px-5 py-2">
-        <HoldingDetails
-          label="Tokens and vault positions"
-          accessibilityLabel="Tokens and vault positions"
-        >
-          {!loading && snapshot.confidentialReadState === "locked" && (
-            <Typography variant="micro">
-              Private USDC needs wallet unlock before refresh.
-            </Typography>
-          )}
-          {snapshot.ownedBalanceComplete === false && (
-            <Typography variant="micro">
-              {loading
-                ? "Checking owned token balances and positions…"
-                : "Some token balances or positions are unavailable. Refresh to retry."}
-            </Typography>
-          )}
-          {snapshot.ownedBalanceComplete === false && !loading && (
-            <Button
-              label="Retry token balances and positions"
-              variant="quiet"
-              onPress={() => void refresh()}
-            />
-          )}
-          {snapshot.valuationComplete === false && (
-            <Typography variant="micro">
-              Some assets have no verified USDC value. Token amounts are shown separately.
-            </Typography>
-          )}
-          {snapshot.ownedAssets?.map((asset) => (
-            <OwnedBalanceRow key={asset.assetId} asset={asset} loading={loading} />
-          ))}
-          {snapshot.positions?.map((asset) => (
-            <OwnedBalanceRow key={asset.assetId} asset={asset} position loading={loading} />
-          ))}
-        </HoldingDetails>
+    <View className="gap-5">
+      {positions.length > 0 && (
+        <View className="gap-3">
+          <Typography variant="section">Your vaults</Typography>
+          {positions.map((position) => {
+            const profileId = vaultPositionProfile(position);
+            return profileId ? (
+              <VaultPositionCard
+                key={position.assetId}
+                position={position}
+                profileId={profileId}
+                loading={loading}
+                onPress={() => onOpenVault(profileId)}
+              />
+            ) : (
+              <Surface key={position.assetId}>
+                <View className="px-5">
+                  <OwnedBalanceRow asset={position} position loading={loading} />
+                </View>
+              </Surface>
+            );
+          })}
+        </View>
+      )}
+      {assets.length > 0 && (
+        <View className="gap-3">
+          <Typography variant="section">Assets</Typography>
+          <Surface>
+            <View className="px-5">
+              {assets.map((asset) => (
+                <OwnedBalanceRow key={asset.assetId} asset={asset} loading={loading} />
+              ))}
+            </View>
+          </Surface>
+        </View>
+      )}
+      <View className="gap-2">
+        {!loading && snapshot.confidentialReadState === "locked" && (
+          <Typography variant="micro">Private USDC needs wallet unlock before refresh.</Typography>
+        )}
+        {snapshot.ownedBalanceComplete === false && (
+          <Typography variant="micro">
+            {loading
+              ? "Checking owned token balances and positions…"
+              : "Some token balances or positions are unavailable. Refresh to retry."}
+          </Typography>
+        )}
+        {snapshot.ownedBalanceComplete === false && !loading && (
+          <Button
+            label="Retry token balances and positions"
+            variant="quiet"
+            onPress={() => void refresh()}
+          />
+        )}
       </View>
-    </Surface>
+    </View>
   );
 }
 
@@ -313,7 +337,12 @@ export function MainnetPortfolioScreen({
         actions
       )}
       {/* Home Earn shortcut is temporarily hidden; the Earn flow remains available. */}
-      <OwnedBalances />
+      <Button
+        label="Withdraw from Gizu"
+        variant="secondary"
+        onPress={() => root.navigate("ConfidentialWithdrawal")}
+      />
+      <OwnedBalances onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })} />
       <SwapHoldingsSection
         onReviewSale={() => navigation.navigate("Exchange")}
         emptyContent={
@@ -398,7 +427,11 @@ export function MainnetActivity() {
             </Typography>
             <Typography>{item.phase === "COMPLETE" ? "Completed" : "Cancelled"}</Typography>
             {item.direction === "sell" && item.phase === "COMPLETE" ? (
-              <Typography>Returned {holdingAmount(item.receivedAtoms, 6)} USDC on Monad</Typography>
+              <Typography>
+                {item.completionTarget === "confidential"
+                  ? `Credited ${holdingAmount(item.privateCreditedAtoms ?? item.receivedAtoms, 6)} USDC to confidential cash`
+                  : `Returned ${holdingAmount(item.receivedAtoms, 6)} USDC on Monad`}
+              </Typography>
             ) : null}
             <Typography variant="micro">{new Date(item.recordedAt).toLocaleString()}</Typography>
           </View>

@@ -1,4 +1,6 @@
 //! Native-private entropy derivation and transaction policy. Never export secrets to JS.
+mod confidential_withdrawal;
+pub use confidential_withdrawal::*;
 mod earn_distribution;
 mod earn_fees;
 pub use earn_distribution::{derive_earn_distribution_addresses, earn_distribution_allocations};

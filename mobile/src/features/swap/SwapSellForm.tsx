@@ -76,7 +76,7 @@ export function SwapSellForm({ flip, onSettled }: { flip: ReactNode; onSettled: 
             <Typography variant="label11">You receive</Typography>
             <View className="flex-row items-center justify-between gap-3">
               <Typography variant="micro" className="flex-1">
-                Paid out to new Monad wallets
+                Kept in your confidential balance
               </Typography>
               <View className="flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2">
                 <Typography variant="rowTitle" className="!text-neon">
@@ -85,7 +85,9 @@ export function SwapSellForm({ flip, onSettled }: { flip: ReactNode; onSettled: 
                 <ChevronDown size={14} color={colors.fg["20"]} />
               </View>
             </View>
-            <Typography variant="micro">Monad network · the only sell destination</Typography>
+            <Typography variant="micro">
+              Confidential USDC · withdraw from Gizu separately
+            </Typography>
           </View>
         </View>
       </Surface>

@@ -148,6 +148,34 @@ class OwnedPortfolioTest {
   }
 
   @Test
+  fun tokenRefreshRotatesActualReadOrderWhileDisplayOrderStaysStable() = runBlocking {
+    val f = Fixture()
+    val record = f.record(count = 1, chain = 4663)
+    val first = f.observer().read(record)
+    val rpc = f.rpcs.getValue(4663)
+    assertEquals(HOOD_EARN_VAULT.lowercase(), rpc.observedOwners.keys.first())
+    rpc.observedOwners.clear()
+    f.now += 31_000
+    val second = f.observer().read(record)
+    assertEquals(HOOD_EARN_USDG.lowercase(), rpc.observedOwners.keys.first())
+    assertEquals(
+      rows(first, "positions").map { it["assetId"] },
+      rows(second, "positions").map { it["assetId"] },
+    )
+  }
+
+  @Test
+  fun firstObservationPrioritizesActiveVaultWhenOtherProviderStalls() = runBlocking {
+    val f = Fixture()
+    f.rpcs.getValue(4663).stalled = true
+    f.budgetMs = 40L
+    val record = f.record(count = 1)
+    val first = f.observer().read(record)
+    assertEquals("4000000", rows(first, "positions").single()["underlyingAtoms"])
+    assertTrue(f.rpcs.getValue(1).rates > 0)
+  }
+
+  @Test
   fun allCyclesShareOneCanonicalVaultRateAndMetadataAcrossRestarts() = runBlocking {
     val f = Fixture()
     val record = f.record()

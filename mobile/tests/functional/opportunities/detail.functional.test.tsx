@@ -8,6 +8,10 @@ import type { OpportunityDetail } from "@/domain/opportunities";
 import { OpportunityDetailScreen } from "@/features/opportunities/OpportunityDetailScreen";
 import { OpportunityServiceContext } from "@/features/opportunities/useOpportunities";
 import { EarnScreen } from "@/features/earn/EarnScreen";
+import { MainnetWalletProvider } from "@/features/wallet/MainnetWalletProvider";
+import { Typography } from "@/components/atoms/Typography";
+import { earnProfiles } from "@/domain/earn/types";
+import { mainnetPortfolio } from "../../support/mainnetWallet";
 import type { RootStackParamList } from "@/navigation/types";
 import { deferred } from "../../support/renderApp";
 import {
@@ -60,7 +64,7 @@ test("detail shows metrics and marks unsupported deposits before navigation", as
   for (const heading of ["About", "How to", "Tokens", "Details", "Campaigns"]) {
     expect(screen.queryByRole("header", { name: heading })).toBeNull();
   }
-  expect(screen.getByRole("button", { name: "Withdraw" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Withdraw" })).toBeDisabled();
   expect(service.detail).toHaveBeenCalledWith("op-1", expect.anything());
   expect(service.tvlRecords).toHaveBeenCalledWith("op-1", expect.anything());
 
@@ -129,6 +133,76 @@ test("featuring a supported vault preserves its existing deposit flow", async ()
   expect(await screen.findByLabelText("Pendle USDC")).toBeVisible();
   expect(screen.getByText("Featured vault")).toBeVisible();
   expect(screen.getByRole("button", { name: "Deposit" })).toBeEnabled();
+});
+
+test("a deposited vault shows its aggregate amount and routes Withdraw to that vault", async () => {
+  const service = mockOpportunityService();
+  const profile = earnProfiles["robinhood-usdg"];
+  const address = "0x" + "1".repeat(40);
+  const portfolio = mainnetPortfolio("owned-vault", address);
+  portfolio.positions = [
+    {
+      assetId: "hood-vault",
+      chainId: 4663,
+      token: profile.vault,
+      symbol: "USDG",
+      decimals: 6,
+      balanceAtoms: "3000000000000",
+      observedAtoms: "3000000000000",
+      shareAtoms: "3000000000000",
+      underlyingAtoms: "3000000",
+      valueUsdcAtoms: "2990000",
+      complete: true,
+      stale: false,
+      checkedAt: Date.now(),
+      valuationUnavailable: false,
+    },
+  ];
+  service.detail.mockResolvedValue({
+    ...opportunityDetail(1),
+    name: "Steakhouse USDG",
+    chainId: 4663,
+    chain: { name: "Robinhood" },
+    vaultAddress: profile.vault,
+    tokens: [],
+  });
+  render(
+    <SafeAreaProvider>
+      <MainnetWalletProvider
+        session={{
+          kind: "mainnet",
+          method: "Passkey",
+          accountId: address,
+          address,
+          accountIndex: 1,
+          chainId: 143,
+          walletId: "owned-vault",
+        }}
+        service={{ getMainnetPortfolio: async () => portfolio }}
+      >
+        <OpportunityServiceContext.Provider value={service}>
+          <NavigationContainer>
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
+              <Stack.Screen
+                name="OpportunityDetail"
+                component={OpportunityDetailScreen}
+                initialParams={{ id: "op-1" }}
+              />
+              <Stack.Screen name="VaultPosition">
+                {({ route }) => (
+                  <Typography>{`Withdrawal for ${route.params.profileId}`}</Typography>
+                )}
+              </Stack.Screen>
+            </Stack.Navigator>
+          </NavigationContainer>
+        </OpportunityServiceContext.Provider>
+      </MainnetWalletProvider>
+    </SafeAreaProvider>,
+  );
+  expect(await screen.findByText("3 USDG deposited")).toBeVisible();
+  expect(screen.getByText("≈ 2.99 USDC")).toBeVisible();
+  await userEvent.press(screen.getByRole("button", { name: "Withdraw" }));
+  expect(await screen.findByText("Withdrawal for robinhood-usdg")).toBeVisible();
 });
 
 test("detail failure can be retried and a failed history still shows a flat chart", async () => {

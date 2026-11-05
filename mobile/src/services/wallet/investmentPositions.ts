@@ -1,0 +1,62 @@
+import type { EarnOwner } from "@/domain/earn/types";
+import type {
+  EarnInvestmentPosition,
+  EarnInvestmentPositionsService,
+} from "@/domain/earn/investmentPositions";
+import { getStoredEarnSigner } from "./nativeBridge";
+
+type Bridge = { listEarnInvestmentPositions?(walletId: string): Promise<unknown> };
+export function createEarnInvestmentPositionsService(
+  getBridge: () => Bridge | null = getStoredEarnSigner,
+): EarnInvestmentPositionsService {
+  return {
+    async list(owner: EarnOwner) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(owner.walletId))
+        throw new Error("Verified source wallet required.");
+      const bridge = getBridge();
+      if (!bridge?.listEarnInvestmentPositions)
+        throw new Error("Saved vault withdrawal activity requires the updated native build.");
+      const result = await bridge.listEarnInvestmentPositions(owner.walletId);
+      if (!Array.isArray(result) || result.length > 1280)
+        throw new Error("Invalid saved vault activity.");
+      const seen = new Set<string>();
+      return result.map((value): EarnInvestmentPosition => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          throw new Error("Invalid saved vault activity.");
+        const row = value as Record<string, unknown>;
+        if (
+          (row.profileId !== "ethereum-usdc" && row.profileId !== "robinhood-usdg") ||
+          typeof row.cycleIndex !== "number" ||
+          !Number.isSafeInteger(row.cycleIndex) ||
+          row.cycleIndex < 0 ||
+          (row.investmentSlot !== undefined &&
+            (typeof row.investmentSlot !== "number" ||
+              !Number.isSafeInteger(row.investmentSlot) ||
+              row.investmentSlot < 0 ||
+              row.investmentSlot > 4)) ||
+          !["invested", "redeemed", "returned", "pending"].includes(String(row.activity)) ||
+          typeof row.recoveryRequired !== "boolean"
+        )
+          throw new Error("Invalid saved vault activity.");
+        const expected =
+          row.cycleIndex === 0
+            ? `earn-v1:${owner.walletId.toLowerCase()}:${row.profileId}`
+            : `earn-v2:${owner.walletId.toLowerCase()}:${row.profileId}:${row.cycleIndex}`;
+        const key = `${expected}:${row.investmentSlot ?? "legacy"}`;
+        if (row.intentId !== expected || seen.has(key))
+          throw new Error("Saved vault activity identity changed.");
+        seen.add(key);
+        return {
+          intentId: expected,
+          cycleIndex: row.cycleIndex,
+          profileId: row.profileId,
+          ...(row.investmentSlot !== undefined
+            ? { investmentSlot: row.investmentSlot as number }
+            : {}),
+          activity: row.activity as EarnInvestmentPosition["activity"],
+          recoveryRequired: row.recoveryRequired,
+        };
+      });
+    },
+  };
+}

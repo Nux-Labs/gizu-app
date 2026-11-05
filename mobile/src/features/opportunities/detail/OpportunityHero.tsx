@@ -8,6 +8,8 @@ import type { TvlLoad } from "../useTvlSeries";
 import { money, rate } from "../format";
 import { protocolLogo } from "../protocolLogos";
 import { TvlChart } from "./TvlChart";
+import type { OwnedPortfolioPosition } from "@/domain/wallet/storedSigner";
+import { VaultPositionSummary } from "@/features/wallet/VaultPositionCard";
 
 const tabular = { fontVariant: ["tabular-nums" as const] };
 
@@ -17,11 +19,13 @@ export function OpportunityHero({
   history,
   onDeposit,
   onWithdraw,
+  position,
 }: {
   opportunity: OpportunityDetail;
   history: TvlLoad;
   onDeposit: () => void;
   onWithdraw: () => void;
+  position?: OwnedPortfolioPosition | null;
 }) {
   // Remeasure native text after Dynamic Type changes.
   const { fontScale } = useWindowDimensions();
@@ -96,13 +100,24 @@ export function OpportunityHero({
           </View>
         </View>
         {showChart && <TvlChart history={history} />}
+        {position && (
+          <View className="gap-2 border-t border-cardEdge pt-4">
+            <Typography variant="label11">Your position</Typography>
+            <VaultPositionSummary position={position} />
+          </View>
+        )}
         {(!opportunity.featured || depositAvailable) && (
           <View className="flex-row gap-3">
             <View className="flex-1">
               <Button label="Deposit" disabled={!depositAvailable} onPress={onDeposit} />
             </View>
             <View className="flex-1">
-              <Button label="Withdraw" variant="secondary" onPress={onWithdraw} />
+              <Button
+                label="Withdraw"
+                variant="secondary"
+                disabled={!depositAvailable}
+                onPress={onWithdraw}
+              />
             </View>
           </View>
         )}

@@ -8,14 +8,17 @@ import io.gizu.storedwallet.NativeRpcTransport
 import io.gizu.storedwallet.RpcFailure
 import io.gizu.storedwallet.WalletRecord
 import io.gizu.storedwallet.WalletStore
+import io.gizu.storedwallet.assertPrivateExecutionAvailable
 import io.gizu.storedwallet.earnWithdrawalIndices
 import io.gizu.storedwallet.fundingReservations
+import io.gizu.storedwallet.portfolio.NativeOwnedConfidentialPortfolio
+import io.gizu.storedwallet.portfolio.NativeOwnedPortfolio
+import java.security.SecureRandom
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.SwapOperation
 import uniffi.gizu_stored_signer_core.SwapStep
-import java.security.SecureRandom
 import uniffi.gizu_stored_signer_core.allocateSwapRecipients
 import uniffi.gizu_stored_signer_core.allocateSwapRecipientsN
 import uniffi.gizu_stored_signer_core.chooseBuyLegs
@@ -43,6 +46,13 @@ internal class SwapEngine(
   private var displayedScope: SwapBatchApproval? = null
   private var displayedText: String? = null
   private var unlockedScopedOperation: String? = null
+  private var lastInvalidatedPrivateCredit: String? = null
+  private var lastInvalidatedPublicSaleProgress: String? = null
+
+  private fun assertExecutionAvailable(record: WalletRecord) {
+    check(record.verified && record.id == saved.walletId)
+    assertPrivateExecutionAvailable(saved.context, record)
+  }
 
   /** `confidentialPayout` buys from C's existing private balance and takes no amount. */
   suspend fun start(
@@ -53,6 +63,7 @@ internal class SwapEngine(
   ) {
     check(kind == "confidentialSwap" || (kind == "confidentialPayout" && amountAtoms == null))
     check(record.verified && record.id == saved.walletId)
+    assertExecutionAvailable(record)
     check(operation == null)
     saved.load()?.let { existing ->
       val previous = SwapOperation.restore(existing.getString("state"), gateway)
@@ -161,6 +172,7 @@ internal class SwapEngine(
   /** Temporary: finish Fusion buys for already allocated recipients that still hold USDG. */
   fun startRecovery(record: WalletRecord, target: String) {
     check(record.verified && record.id == saved.walletId)
+    assertExecutionAvailable(record)
     check(operation == null)
     saved.load()?.let { existing ->
       val previous = SwapOperation.restore(existing.getString("state"), gateway)
@@ -206,6 +218,7 @@ internal class SwapEngine(
       check(holdingId != null && sweepTo.matches(Regex("0x[0-9a-fA-F]{40}")))
     }
     check(record.verified && record.id == saved.walletId)
+    assertExecutionAvailable(record)
     check(operation == null)
     val existing = saved.load()
     if (existing != null) {
@@ -260,19 +273,9 @@ internal class SwapEngine(
       persist()
       return
     }
-    // Like a buy, a sell pays out to a randomly sized set of fresh wallets: reserve the most it
-    // can use and let the engine draw the count and shares once the sale is priced.
-    val reserved =
-      if (RANDOM_LEGS) allocateSwapRecipientsN(record.roleRegistry, MAX_SALE_PAYOUTS)
-      else allocateSwapRecipients(record.roleRegistry)
-    store.persistRegistry(record.id, reserved.registry)
-    val next =
-      JSONObject()
-        .put("kind", "confidentialSell")
-        .put("target", target)
-        .put("holderIndices", holders)
-        .put("recipientIndices", JSONArray(reserved.indices.map { it.toInt() }))
-    if (RANDOM_LEGS) next.put("legsRandom", randomBytes().joinToString("") { "%02x".format(it) })
+    // New sales stop privately. The core uses existing holder indices only as
+    // internal order slots; no public recipient roles or randomness are reserved.
+    val next = confidentialSalePlan(target, holders)
     fundingAddress = deriveAccountAddressRange(record.entropy, 1u, 1u).single()
     operation = SwapOperation.start(next.toString(), record.entropy, gateway, now())
     persist()
@@ -293,6 +296,7 @@ internal class SwapEngine(
    */
   suspend fun advance(onProgress: (Map<String, Any?>) -> Unit = {}): SwapUi {
     while (true) {
+      store.load().use { record -> assertExecutionAvailable(record) }
       var op = checkNotNull(operation)
       if (batch != null && !JSONObject(op.exportState()).isNull("approvedMs")) {
         if (!scopeAuthorized()) {
@@ -653,6 +657,7 @@ internal class SwapEngine(
   }
 
   fun approve() {
+    store.load().use { record -> assertExecutionAvailable(record) }
     batch?.let { funding ->
       val ledger = checkNotNull(reservations)
       val rows = ledger.batch(funding.id).getJSONArray("legs")
@@ -672,11 +677,13 @@ internal class SwapEngine(
 
   fun unlock(record: WalletRecord) {
     check(record.id == saved.walletId)
+    assertExecutionAvailable(record)
     checkNotNull(operation).unlock(record.entropy, now())
     persist()
   }
 
   fun retry() {
+    store.load().use { record -> assertExecutionAvailable(record) }
     operation?.retry()
   }
 
@@ -708,6 +715,10 @@ internal class SwapEngine(
       "receivedTargetAtoms" to status.optString("receivedTargetAtoms"),
       "direction" to status.optString("direction", "buy"),
       "kind" to status.optString("kind", ""),
+      "completionTarget" to status.optString("completionTarget", "public"),
+      "privateCreditedAtoms" to status.optString("privateCreditedAtoms", "0"),
+      "soldAtoms" to status.optString("soldAtoms", "0"),
+      "receivedUsdgAtoms" to status.optString("receivedUsdgAtoms", "0"),
       "legs" to status.optInt("legs", 3),
       "holders" to status.optInt("holders", status.optInt("legs", 3)),
       "approved" to status.optBoolean("approved"),
@@ -722,7 +733,11 @@ internal class SwapEngine(
   private fun returnAddresses(): List<String> {
     val root = saved.load() ?: return emptyList()
     val state = JSONObject(root.getString("state"))
-    if (state.optJSONObject("plan")?.optString("kind") != "confidentialSell") return emptyList()
+    if (
+      state.optJSONObject("plan")?.optString("kind") != "confidentialSell" ||
+        state.optJSONObject("plan")?.optString("completionTarget") == "confidential"
+    )
+      return emptyList()
     val recipients = state.optJSONArray("recipients") ?: return emptyList()
     return (0 until recipients.length()).map { recipients.getString(it) }
   }
@@ -732,6 +747,27 @@ internal class SwapEngine(
     val state = op.exportState()
     val status = op.publicStatus()
     batch?.record(state, status)
+    val current = JSONObject(status)
+    val sold = current.optString("soldAtoms", "0")
+    val credit = current.optString("privateCreditedAtoms", "0")
+    val progress = "$sold:$credit"
+    if (
+      current.optString("completionTarget") == "confidential" &&
+        (sold != "0" || credit != "0") &&
+        progress != lastInvalidatedPublicSaleProgress
+    ) {
+      // Dirty the origin observations before publishing newly verified private
+      // credit, so an interrupted refresh cannot retain both as fresh value.
+      store.load().use { record ->
+        NativeOwnedPortfolio(saved.context)
+          .invalidateTokens(
+            record,
+            4663,
+            setOf(JSONObject(state).getJSONObject("plan").getString("target")),
+          )
+      }
+      lastInvalidatedPublicSaleProgress = progress
+    }
     saved.save(batch?.id ?: op.operationId(), state, checkNotNull(fundingAddress), batch?.json)
     // Signatures are durably saved before the shared source reservation becomes signed.
     if (
@@ -741,6 +777,18 @@ internal class SwapEngine(
     )
       checkNotNull(reservations).markSigned(op.operationId())
     saved.portfolio.remember(state, aggregateStatus().toString())
+    if (
+      current.optString("completionTarget") == "confidential" &&
+        current.optString("privateCreditedAtoms", "0") != "0" &&
+        current.optString("privateCreditedAtoms") != lastInvalidatedPrivateCredit
+    ) {
+      store.load().use { record ->
+        val confidential = JSONObject(state).getString("confidential")
+        NativeOwnedConfidentialPortfolio(saved.context)
+          .invalidateSources(record, setOf(confidential))
+        lastInvalidatedPrivateCredit = current.optString("privateCreditedAtoms")
+      }
+    }
     diagnostic("persisted")
   }
 
@@ -939,14 +987,8 @@ private constructor(
   }
 }
 
-/**
- * New swaps draw their wallet count and shares at random (buy) or return to as many wallets as
- * they sell from (sell). Turning this off restores the fixed three-wallet 30/30/40 plan.
- */
+/** New purchases draw wallet count and shares once; false restores fixed three-wallet 30/30/40. */
 private const val RANDOM_LEGS = true
-
-/** Most return wallets a sell may pay out to; the engine uses only as many as it draws. */
-private const val MAX_SALE_PAYOUTS = 5u
 
 private fun randomBytes(): ByteArray = ByteArray(32).also { SecureRandom().nextBytes(it) }
 
@@ -968,3 +1010,22 @@ private fun swapBatchCanonical(value: Any?): String =
     is Number -> java.math.BigDecimal(value.toString()).stripTrailingZeros().toPlainString()
     else -> error("Invalid native swap manifest")
   }
+
+/** Private sale plans contain existing holders, never freshly allocated receivers. */
+internal fun confidentialSalePlan(target: String, holders: JSONArray): JSONObject {
+  require(target.matches(Regex("0x[0-9a-fA-F]{40}")))
+  require(holders.length() in 1..5)
+  val indices =
+    (0 until holders.length()).map { index ->
+      val value = holders.getInt(index)
+      require(holders.getDouble(index) == value.toDouble() && value >= 3)
+      value
+    }
+  require(indices.distinct().size == indices.size)
+  return JSONObject()
+    .put("kind", "confidentialSell")
+    .put("completionTarget", "confidential")
+    .put("target", target)
+    .put("holderIndices", JSONArray(indices))
+    .put("recipientIndices", JSONArray(indices))
+}

@@ -26,7 +26,7 @@ function setup() {
   };
   const withdrawal = {
     available: jest.fn().mockResolvedValue(true),
-    list: jest.fn().mockResolvedValue([]),
+    list: jest.fn().mockResolvedValue([submitted]),
     execute: jest.fn().mockResolvedValue(submitted),
     resume: jest.fn(),
     reconcile: jest.fn().mockResolvedValue({
@@ -77,23 +77,16 @@ function setup() {
   );
   return { withdrawal };
 }
-test("a verified return enables an explicit native receiving withdrawal and settlement check", async () => {
+test("a verified private return preserves settlement recovery for an already authorized public payout", async () => {
   const { withdrawal } = setup();
   expect(screen.queryByRole("button", { name: /Review withdrawal to Monad/ })).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Check exit completion" }));
-  const review = await screen.findByRole("button", {
-    name: "Review withdrawal to Monad receiving account · return_1",
-  });
+  expect(await screen.findByText("Previously saved public withdrawal · pending")).toBeVisible();
   expect(withdrawal.execute).not.toHaveBeenCalled();
-  await userEvent.press(review);
-  expect(withdrawal.execute).toHaveBeenCalledWith(hoodIntent, "return_1", 4);
-  expect(await screen.findByText("Monad receiving withdrawal · pending")).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Review withdrawal to Monad receiving account · return_1" }),
-  ).toBeDisabled();
+  expect(screen.queryByRole("button", { name: /Review withdrawal to Monad/ })).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Check Monad withdrawal settlement" }));
   expect(
     await screen.findByText("Received 0.89 USDC in the Monad receiving account."),
   ).toBeVisible();
-  expect(withdrawal.execute).toHaveBeenCalledTimes(1);
+  expect(withdrawal.execute).not.toHaveBeenCalled();
 });

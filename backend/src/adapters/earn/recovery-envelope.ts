@@ -16,6 +16,7 @@ export class EarnRecoveryEnvelope {
   seal(
     purpose:
       | "private-payout"
+      | "confidential-cashout"
       | "native-quote"
       | "fusion-order"
       | "private-balance"
@@ -40,6 +41,7 @@ export class EarnRecoveryEnvelope {
   open(
     purpose:
       | "private-payout"
+      | "confidential-cashout"
       | "native-quote"
       | "fusion-order"
       | "private-balance"
