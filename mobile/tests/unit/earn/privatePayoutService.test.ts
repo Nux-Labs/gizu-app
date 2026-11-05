@@ -8,7 +8,9 @@ jest.mock("@/services/wallet/nativeBridge", () => ({
   getStoredEarnPayoutSigner: jest.fn().mockReturnValue(null),
   getSignerCapabilities: jest.fn().mockResolvedValue({ earnPrivatePayoutExecution: true }),
 }));
-const intent: EarnIntent = {
+const intent: EarnIntent & {
+  destinations: [EarnIntent["destinations"][0], EarnIntent["destinations"][0]];
+} = {
   status: "prepared",
   version: "gizu-earn-v1",
   intentId: "intent",

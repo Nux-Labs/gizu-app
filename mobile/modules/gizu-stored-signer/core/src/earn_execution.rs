@@ -38,6 +38,7 @@ struct Proposal {
     kind: Kind,
     #[serde(default)]
     cycle_index: u32,
+    investment_slot: Option<u32>,
     operation_id: String,
     revision: u64,
     chain_id: u64,
@@ -201,7 +202,7 @@ impl EarnExecutionOperation {
         let seed = Zeroizing::new(mnemonic.to_seed(""));
         drop(mnemonic);
         drop(entropy);
-        let key = derive(&seed, p.cycle_index)?;
+        let key = derive(&seed, p.cycle_index, p.investment_slot)?;
         let from = address(key.private_key().verifying_key());
         if parse_address(&p.expected_from)? != parse_address(&from)? {
             return Err(SignerError::InvalidInput);
@@ -435,6 +436,7 @@ impl EarnExecutionOperation {
         let key = derive(
             s.seed.as_ref().ok_or(SignerError::InvalidInput)?,
             s.proposal.cycle_index,
+            s.proposal.investment_slot,
         )?;
         let (signature, recovery) = key
             .private_key()
@@ -489,8 +491,12 @@ fn now() -> Result<u64, SignerError> {
         .map(|d| d.as_secs())
         .map_err(|_| SignerError::InvalidInput)
 }
-fn derive(seed: &[u8; 64], cycle_index: u32) -> Result<XPrv, SignerError> {
-    crate::earn_cycle_key(seed, 1, cycle_index, 1)
+fn derive(
+    seed: &[u8; 64],
+    cycle_index: u32,
+    investment_slot: Option<u32>,
+) -> Result<XPrv, SignerError> {
+    crate::earn_distribution::earn_investment_key(seed, 1, cycle_index, investment_slot)
 }
 fn parse_address(s: &str) -> Result<Address, SignerError> {
     if s.len() != 42 || !s.starts_with("0x") {
@@ -1087,5 +1093,32 @@ mod tests {
         let key = VerifyingKey::recover_from_prehash(tx.tx().signature_hash().as_ref(), &sig, rec)
             .unwrap();
         assert_eq!(address(&key), selected);
+    }
+    #[test]
+    fn distribution_vault_deposit_and_redeem_sign_selected_slot() {
+        for kind in ["vaultDeposit", "vaultRedeemAll"] {
+            for slot in 0..5 {
+                let mut p: serde_json::Value = serde_json::from_str(&proposal(kind)).unwrap();
+                let selected = crate::distribution_test_address(1, 2, slot);
+                p["cycleIndex"] = json!(2);
+                p["investmentSlot"] = json!(slot);
+                p["expectedFrom"] = json!(selected);
+                let operation = EarnExecutionOperation::new(p.to_string(), vec![0; 32]).unwrap();
+                let mut current = state();
+                current.owner = selected.clone();
+                operation.prepare(7, current.clone()).unwrap();
+                assert!(operation.sign_next(7, current.clone()).is_err());
+                operation
+                    .approve(7, operation.review_hash().unwrap())
+                    .unwrap();
+                let signed = operation.sign_next(7, current).unwrap();
+                assert_eq!(
+                    recover(&signed.raw_transaction).1,
+                    selected.parse::<Address>().unwrap()
+                );
+                p["investmentSlot"] = json!((slot + 1) % 5);
+                assert!(EarnExecutionOperation::new(p.to_string(), vec![0; 32]).is_err());
+            }
+        }
     }
 }

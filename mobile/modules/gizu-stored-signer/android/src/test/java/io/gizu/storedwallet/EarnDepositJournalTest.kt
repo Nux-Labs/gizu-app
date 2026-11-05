@@ -6,6 +6,85 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EarnDepositJournalTest {
+  @Test
+  fun distributionJournalPersistsSlotsAndAllowsOnlyTheirIndependentChildren() {
+    distributionDepositRecord().use { record ->
+      val file = File()
+      val journal = journal(file)
+      val first = journal.loadOrCreate(record, 4663, null)
+      val id = first.getString("journeyId")
+      assertEquals(listOf(2500, 7500), distributionWeights(first.getJSONObject("distribution")))
+      assertEquals(
+        listOf(0, 1),
+        first.getJSONArray("destinations").objects().map { it.getInt("slot") },
+      )
+      assertTrue(
+        first.getJSONArray("destinations").objects().all { it.getString("role") == "invest" }
+      )
+      val public = JSONObject(journal.publicSnapshot(id))
+      assertEquals(
+        listOf("pending", "pending"),
+        public.getJSONArray("investments").objects().map { it.getString("status") },
+      )
+      for ((stage, child) in
+        listOf(
+          "invest:0" to "payout0",
+          "invest:1" to "payout1",
+          "deposit" to "vault0",
+          "deposit" to "vault1",
+        )) journal.attachChild(id, journal.get(id).getInt("revision"), stage, child)
+      assertThrows(IllegalStateException::class.java) {
+        journal.attachChild(id, journal.get(id).getInt("revision"), "hold", "legacy")
+      }
+      assertThrows(IllegalStateException::class.java) {
+        journal.attachChild(id, journal.get(id).getInt("revision"), "invest:2", "invalid")
+      }
+      assertThrows(IllegalStateException::class.java) {
+        journal.attachChild(id, journal.get(id).getInt("revision"), "deposit", "extra")
+      }
+      val restored = journal(file).get(id)
+      assertEquals(2, restored.getJSONObject("children").getJSONArray("deposit").length())
+      assertEquals(
+        first.getJSONObject("distribution").toString(),
+        restored.getJSONObject("distribution").toString(),
+      )
+    }
+  }
+
+  @Test
+  fun distributionPauseKeepsCompletedReceiptsAndExposesTheOriginalBudget() {
+    distributionDepositRecord(budgetAtoms = "1010000").use { record ->
+      val journal = journal(File())
+      val first = journal.loadOrCreate(record, 4663, null)
+      val id = first.getString("journeyId")
+      journal.update(id, first.getInt("revision")) {
+        val slots = it.getJSONArray("investments")
+        slots
+          .getJSONObject(0)
+          .put("status", "invested")
+          .put("receivedAtoms", "247500")
+          .put("depositedAtoms", "226500")
+          .put("sharesAtoms", "226500")
+          .put("transactionHash", "0x" + "a".repeat(64))
+          .put("privateProof", "secret")
+        slots.getJSONObject(1).put("status", "received").put("receivedAtoms", "742500")
+      }
+      journal.pause(id, "cancelled")
+      val public = JSONObject(journal.publicSnapshot(id))
+      assertEquals("1010000", public.getString("distributionBudgetAtoms"))
+      val investments = public.getJSONArray("investments")
+      assertEquals("invested", investments.getJSONObject(0).getString("status"))
+      assertEquals("226500", investments.getJSONObject(0).getString("depositedAtoms"))
+      assertEquals("0x" + "a".repeat(64), investments.getJSONObject(0).getString("transactionHash"))
+      assertEquals("paused", investments.getJSONObject(1).getString("status"))
+      assertEquals("742500", investments.getJSONObject(1).getString("receivedAtoms"))
+      assertFalse(public.toString().contains("secret"))
+      distributionDepositRecord(listOf(5000, 5000)).use { changed ->
+        assertThrows(IllegalStateException::class.java) { journal.loadOrCreate(changed, 4663, id) }
+      }
+    }
+  }
+
   private class File : WalletFile {
     var bytes: ByteArray? = null
     var fail = false

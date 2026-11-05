@@ -42,6 +42,38 @@ class EarnPayoutJournalTest {
     EarnPayoutJournal(file, { key }, wallet, generation)
 
   @Test
+  fun siblingInvestmentSlotsReserveIndependentlyAndCannotChangeSavedWeights() {
+    val j = journal(File())
+    val distribution =
+      JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(4000, 6000)))
+    val a =
+      proposal(leg = "invest:0").put("distribution", distribution).put("amountAtoms", "400000")
+    val b =
+      proposal(leg = "invest:1").put("distribution", distribution).put("amountAtoms", "600000")
+    val first = j.create(a, "body", "nonce0", hash, hash)
+    j.create(b, "body", "nonce1", hash, hash)
+    assertEquals(2, j.all().size)
+    assertThrows(IllegalStateException::class.java) { j.create(a, "body", "nonce2", hash, hash) }
+    val changed =
+      JSONObject(a.toString())
+        .put(
+          "distribution",
+          JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(3000, 7000))),
+        )
+    assertThrows(IllegalStateException::class.java) {
+      j.refreshUnsigned(first.getString("operationId"), 1, changed, "body", "nonce0", hash)
+    }
+    assertEquals(
+      listOf(4000, 6000),
+      distributionWeights(
+        j.get(first.getString("operationId"))
+          .getJSONObject("proposal")
+          .getJSONObject("distribution")
+      ),
+    )
+  }
+
+  @Test
   fun encryptedSignedBytesRemainPrivateAndImmutableAcrossRestart() {
     val file = File()
     val j = journal(file)

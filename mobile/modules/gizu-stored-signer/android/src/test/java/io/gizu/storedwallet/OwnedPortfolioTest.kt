@@ -30,6 +30,7 @@ class OwnedPortfolioTest {
     var decimals = 0
     var nativeReads = 0
     var balances = 0
+    val observedOwners = mutableMapOf<String, MutableSet<String>>()
     var failure = false
     var stalled = false
     var latestOnly = false
@@ -73,6 +74,9 @@ class OwnedPortfolioTest {
           val data = params.getJSONObject(0).getString("data")
           when (data.take(10)) {
             "0x70a08231" -> {
+              observedOwners
+                .getOrPut(params.getJSONObject(0).getString("to").lowercase()) { mutableSetOf() }
+                .add("0x" + data.takeLast(40).lowercase())
               balances++
               word(held)
             }
@@ -167,6 +171,131 @@ class OwnedPortfolioTest {
     assertEquals(1, f.rpcs.getValue(1).rates)
     assertTrue(f.files.values.all { it.bytes != null && !String(it.bytes!!).contains("cycle-") })
   }
+
+  @Test
+  fun restoredMixedCatalogueReadsEveryDistributionSlotOnBothChainsAndKeepsLegacyOwners() =
+    runBlocking {
+      val f = Fixture()
+      val cycles = JSONArray()
+      var index = 0
+      for (chain in listOf(1, 4663)) {
+        cycles.put(
+          JSONObject()
+            .put("cycleIndex", index++)
+            .put("chainId", chain)
+            .put("intentId", "legacy-$chain")
+        )
+        for (weights in
+          listOf(listOf(10000), listOf(3100, 6900), listOf(1000, 1500, 2000, 2500, 3000))) {
+          cycles.put(
+            JSONObject()
+              .put("cycleIndex", index++)
+              .put("chainId", chain)
+              .put("intentId", "distribution-$index")
+              .put(
+                "distribution",
+                JSONObject().put("version", 1).put("weightsBps", JSONArray(weights)),
+              )
+              .put("distributionBudgetAtoms", "100000000")
+              .put("investmentSlot", weights.lastIndex)
+          )
+        }
+      }
+      f.record(count = 0, chain = 4663).use { base ->
+        WalletRecord(
+            base.id,
+            base.credential,
+            base.entropy.copyOf(),
+            true,
+            base.journalId,
+            base.roleRegistry,
+            4663,
+            false,
+            7,
+            cycles.toString(),
+          )
+          .use { original ->
+            val expected =
+              listOf(1L, 4663L).associateWith { chain ->
+                cycles
+                  .objects()
+                  .filter { it.getLong("chainId") == chain }
+                  .flatMap { row ->
+                    if (row.has("distribution"))
+                      uniffi.gizu_stored_signer_core.deriveEarnDistributionAddresses(
+                        original.entropy,
+                        chain.toULong(),
+                        row.getInt("cycleIndex").toUInt(),
+                        row
+                          .getJSONObject("distribution")
+                          .getJSONArray("weightsBps")
+                          .length()
+                          .toUInt(),
+                      )
+                    else
+                      uniffi.gizu_stored_signer_core.deriveEarnCycleAddresses(
+                        original.entropy,
+                        chain.toULong(),
+                        row.getInt("cycleIndex").toUInt(),
+                      )
+                  }
+                  .map(String::lowercase)
+                  .toSet()
+              }
+            val restoredStore =
+              WalletStore(
+                File(),
+                object : WalletKeys {
+                  override fun existing() = f.key
+
+                  override fun create() = f.key
+
+                  override fun reset() = f.key
+                },
+              )
+            val prf = ByteArray(32) { 7 }
+            BackupCodec.decrypt(BackupCodec.encrypt(original, prf), prf).use {
+              restoredStore.restore(it)
+            }
+            fun observer() =
+              NativeOwnedPortfolio(
+                file = { f.files.getOrPut(it) { File() } },
+                key = { f.key },
+                rpc = { f.rpcs.getValue(it) },
+                derivePublic = ::publicAccountAddress,
+                targets = { emptyList() },
+                clock = { f.now },
+                selector = { "0x07a2d13a" },
+              )
+            restoredStore.load().use { restored ->
+              assertTrue(restored.earnRecoveryRequired)
+              val portfolio = observer().read(restored)
+              for ((chain, vault) in listOf(1L to ETH_EARN_VAULT, 4663L to HOOD_EARN_VAULT)) {
+                assertEquals(10, expected.getValue(chain).size)
+                assertEquals(
+                  expected.getValue(chain),
+                  f.rpcs.getValue(chain).observedOwners.getValue(vault.lowercase()),
+                )
+                val position =
+                  rows(portfolio, "positions").single {
+                    (it["chainId"] as Number).toLong() == chain
+                  }
+                assertEquals(true, position["complete"])
+                assertEquals("10000000000000000000", position["shareAtoms"])
+                assertEquals("20000000", position["underlyingAtoms"])
+              }
+              val reads = f.rpcs.values.sumOf { it.balances }
+              val cached = observer().read(restored)
+              assertEquals(rows(portfolio, "positions"), rows(cached, "positions"))
+              assertEquals(reads, f.rpcs.values.sumOf { it.balances })
+              for (owner in expected.values.flatten()) {
+                assertFalse(portfolio.toString().contains(owner))
+                assertTrue(f.files.values.all { !String(it.bytes!!).contains(owner) })
+              }
+            }
+          }
+      }
+    }
 
   @Test
   fun nativeReadsAreBoundedAndUnknownMarketPricesNeverProduceZeroValue() = runBlocking {

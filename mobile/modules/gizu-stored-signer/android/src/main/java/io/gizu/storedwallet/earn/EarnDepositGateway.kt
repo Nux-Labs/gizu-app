@@ -58,8 +58,11 @@ internal class EarnDepositGateway(
     leg: String,
     amount: String,
   ): JSONObject {
-    check(record.earnChain == 4663 && leg in setOf("hold", "invest"))
-    val recipient = cycleAddresses(record)[if (leg == "hold") 0 else 1]
+    check(record.earnChain == 4663 && leg in cyclePayoutLegs(record))
+    val recipient =
+      savedCycleDistribution(record)?.let {
+        cycleInvestmentAddress(record, distributionSlot(leg, it))
+      } ?: cycleAddresses(record)[if (leg == "hold") 0 else 1]
     val request =
       JSONObject()
         .put("profileChainId", 4663)
@@ -95,8 +98,9 @@ internal class EarnDepositGateway(
     revision: Int,
     expected: String,
     starting: String = "0",
+    slot: Int? = null,
   ): JSONObject {
-    val owner = cycleAddresses(record)[1]
+    val owner = cycleInvestmentAddress(record, slot)
     val request =
       JSONObject()
         .put("owner", owner)
@@ -134,8 +138,9 @@ internal class EarnDepositGateway(
     record: WalletRecord,
     id: String,
     attributed: String,
+    slot: Int? = null,
   ): Pair<JSONObject, JSONObject> {
-    val owner = cycleAddresses(record)[1]
+    val owner = cycleInvestmentAddress(record, slot)
     val row =
       JSONObject(
         post(
@@ -234,6 +239,33 @@ internal class EarnDepositGateway(
         .put("nonce", unsigned.getString("nonce"))
         .put("deadline", deadline)
         .put("slippageBps", 10)
+    if (slot != null) proposal.put("investmentSlot", slot)
     return proposal to unsigned
+  }
+}
+
+/** Display totals preserve each slot's independently reviewed fee, reserve and share floor. */
+internal fun aggregateDepositBounds(deposits: List<JSONObject>): JSONObject {
+  check(deposits.isNotEmpty())
+  val decimals = deposits.first().getInt("shareDecimals")
+  check(deposits.all { it.getInt("shareDecimals") == decimals })
+  return JSONObject().put("shareDecimals", decimals).also { aggregate ->
+    for (field in
+      listOf(
+        "estimatedAssetsAtoms",
+        "minimumAssetsAtoms",
+        "minimumSharesAtoms",
+        "maximumFeeAtoms",
+        "withdrawalReserveAtoms",
+      )) {
+      aggregate.put(
+        field,
+        deposits
+          .fold(BigInteger.ZERO) { sum, deposit ->
+            sum + depositAtoms(deposit.getString(field), true)
+          }
+          .toString(),
+      )
+    }
   }
 }

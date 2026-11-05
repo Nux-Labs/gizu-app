@@ -1,3 +1,4 @@
+import { investmentDestination } from "@/domain/earn/distribution";
 import { assertNotAborted } from "./abort";
 import {
   getSignerCapabilities,
@@ -84,7 +85,7 @@ export function createEarnLiquidityService(
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            owner: intent.destinations[1].address,
+            owner: investmentDestination(intent).address,
             confidentialAccount: intent.confidentialAddress,
             operationId,
             revision,

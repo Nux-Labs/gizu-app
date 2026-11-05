@@ -7,10 +7,17 @@ import {
   type EarnWalletState,
 } from "@/domain/earn/types";
 import { getStoredEarnSigner } from "./nativeBridge";
+import { parseEarnDistribution } from "@/domain/earn/distribution";
 type Bridge = {
   getEarnIntent(walletId: string): Promise<unknown>;
   prepareEarnIntent(walletId: string, profile: string): Promise<unknown>;
   prepareNewEarnIntent?(walletId: string, profile: string): Promise<unknown>;
+  prepareNewEarnDistributionIntent?(
+    walletId: string,
+    profile: string,
+    budgetAtoms: string,
+  ): Promise<unknown>;
+  selectEarnInvestmentSlot?(walletId: string, intentId: string, slot: number): Promise<unknown>;
   listEarnIntents?(walletId: string): Promise<unknown>;
   selectEarnIntent?(walletId: string, intentId: string): Promise<unknown>;
   lock(): void;
@@ -61,8 +68,32 @@ function decode(value: unknown, owner: EarnOwner, requested?: EarnProfileId): Ea
   )
     throw new Error("Native source or backup binding changed.");
   const destinations = row.destinations;
-  if (!Array.isArray(destinations) || destinations.length !== 2)
-    throw new Error("Exactly two native earn wallets required.");
+  const distribution =
+    row.distribution === undefined ? undefined : parseEarnDistribution(row.distribution);
+  if (
+    !Array.isArray(destinations) ||
+    destinations.length !== (distribution?.weightsBps.length ?? 2)
+  )
+    throw new Error("Native earn wallet count changed.");
+  const investmentSlot = row.investmentSlot;
+  if (
+    distribution &&
+    (typeof investmentSlot !== "number" ||
+      !Number.isSafeInteger(investmentSlot) ||
+      investmentSlot < 0 ||
+      investmentSlot >= distribution.weightsBps.length)
+  )
+    throw new Error("Invalid selected investment wallet.");
+  if (!distribution && investmentSlot !== undefined) throw new Error("Legacy wallet slot changed.");
+  const distributionBudgetAtoms = row.distributionBudgetAtoms;
+  if (
+    distributionBudgetAtoms !== undefined &&
+    (!distribution ||
+      typeof distributionBudgetAtoms !== "string" ||
+      !/^[1-9][0-9]{0,77}$/.test(distributionBudgetAtoms) ||
+      BigInt(distributionBudgetAtoms) >= 1n << 256n)
+  )
+    throw new Error("Invalid distribution budget.");
   if (
     !validAddress(row.confidentialAddress) ||
     row.confidentialAddress.toLowerCase() === row.sourceAddress.toLowerCase()
@@ -75,14 +106,20 @@ function decode(value: unknown, owner: EarnOwner, requested?: EarnProfileId): Ea
   const checked = destinations.map((value, index) => {
     const d = object(value);
     if (
-      d.role !== (index === 0 ? "hold" : "invest") ||
+      d.role !== (distribution ? "invest" : index === 0 ? "hold" : "invest") ||
+      (distribution && d.slot !== index) ||
       d.chainId !== earnProfiles[profile].chainId ||
       !validAddress(d.address) ||
       addresses.has(d.address.toLowerCase())
     )
       throw new Error("Invalid native earn destination.");
     addresses.add(d.address.toLowerCase());
-    return { role: d.role, address: d.address, chainId: d.chainId };
+    return {
+      role: d.role,
+      address: d.address,
+      chainId: d.chainId,
+      ...(distribution ? { slot: index } : {}),
+    };
   });
   return {
     status: row.status,
@@ -96,6 +133,15 @@ function decode(value: unknown, owner: EarnOwner, requested?: EarnProfileId): Ea
     confidentialAddress: row.confidentialAddress,
     backupCovered: true,
     destinations: checked as EarnIntent["destinations"],
+    ...(distribution
+      ? {
+          distribution,
+          investmentSlot: investmentSlot as number,
+          ...(distributionBudgetAtoms !== undefined
+            ? { distributionBudgetAtoms: distributionBudgetAtoms as string }
+            : {}),
+        }
+      : {}),
   };
 }
 export function createEarnWalletService(
@@ -155,6 +201,45 @@ export function createEarnWalletService(
       const value = await native.prepareNewEarnIntent(owner.walletId, profile);
       if (attempt !== generation) throw new Error("Earn wallet operation cancelled.");
       return decode(value, owner, profile) as EarnIntent;
+    },
+    async prepareDistribution(owner, profile, budgetAtoms) {
+      validateOwner(owner);
+      if (!/^[1-9][0-9]{0,77}$/.test(budgetAtoms) || BigInt(budgetAtoms) >= 1n << 256n)
+        throw new Error("Invalid deposit budget.");
+      const native = getBridge();
+      if (!native?.prepareNewEarnDistributionIntent)
+        throw new Error("Distributed deposits require the updated native build.");
+      const attempt = generation;
+      const value = await native.prepareNewEarnDistributionIntent(
+        owner.walletId,
+        profile,
+        budgetAtoms,
+      );
+      if (attempt !== generation) throw new Error("Earn wallet operation cancelled.");
+      const intent = decode(value, owner, profile) as EarnIntent;
+      if (!intent.distribution) throw new Error("Native distribution plan is unavailable.");
+      return intent;
+    },
+    async selectInvestmentSlot(owner, intentId, slot) {
+      validateOwner(owner);
+      if (!Number.isSafeInteger(slot) || slot < 0 || slot > 4)
+        throw new Error("Invalid investment wallet.");
+      const native = getBridge();
+      if (!native?.selectEarnInvestmentSlot)
+        throw new Error("Investment wallet selection requires the updated native build.");
+      const attempt = generation;
+      const intent = decode(
+        await native.selectEarnInvestmentSlot(owner.walletId, intentId, slot),
+        owner,
+      );
+      if (
+        attempt !== generation ||
+        !("intentId" in intent) ||
+        intent.intentId !== intentId ||
+        intent.investmentSlot !== slot
+      )
+        throw new Error("Selected investment wallet changed.");
+      return intent;
     },
     async select(owner, intentId) {
       validateOwner(owner);

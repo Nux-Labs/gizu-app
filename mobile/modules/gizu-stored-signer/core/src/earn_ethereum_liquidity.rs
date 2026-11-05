@@ -108,6 +108,7 @@ struct FusionOrder {
 }
 struct Authority {
     cycle_index: u32,
+    investment_slot: Option<u32>,
     seed: Option<Zeroizing<[u8; 64]>>,
     owner: String,
     confidential: String,
@@ -125,6 +126,7 @@ struct AuthorityConfig<'a> {
     revision: u64,
     chain: u64,
     cycle_index: u32,
+    investment_slot: Option<u32>,
     expected: &'a str,
     c: &'a str,
     deadline: u64,
@@ -136,6 +138,7 @@ impl Authority {
             revision,
             chain,
             cycle_index,
+            investment_slot,
             expected,
             c,
             deadline,
@@ -161,13 +164,18 @@ impl Authority {
         let seed = Zeroizing::new(mnemonic.to_seed(""));
         drop(mnemonic);
         drop(entropy);
-        let owner = address(derive(&seed, cycle_index, 1)?.private_key().verifying_key());
+        let owner = address(
+            crate::earn_distribution::earn_investment_key(&seed, 1, cycle_index, investment_slot)?
+                .private_key()
+                .verifying_key(),
+        );
         let confidential = address(derive(&seed, cycle_index, 2)?.private_key().verifying_key());
         if addr(expected)? != addr(&owner)? || addr(c)? != addr(&confidential)? {
             return Err(SignerError::InvalidInput);
         }
         Ok(Self {
             cycle_index,
+            investment_slot,
             seed: Some(seed),
             owner,
             confidential,
@@ -214,6 +222,7 @@ struct TransactionProposal {
     kind: String,
     #[serde(default)]
     cycle_index: u32,
+    investment_slot: Option<u32>,
     operation_id: String,
     revision: u64,
     chain_id: u64,
@@ -250,6 +259,7 @@ struct CancellationProposal {
     kind: String,
     #[serde(default)]
     cycle_index: u32,
+    investment_slot: Option<u32>,
     operation_id: String,
     revision: u64,
     chain_id: u64,
@@ -292,6 +302,7 @@ impl EthereumLiquidityCancellationOperation {
                 revision: p.revision,
                 chain: p.chain_id,
                 cycle_index: p.cycle_index,
+                investment_slot: p.investment_slot,
                 expected: &p.expected_from,
                 c: &p.confidential_account,
                 deadline: p.deadline,
@@ -453,7 +464,7 @@ impl EthereumLiquidityCancellationOperation {
         } else {
             s.tx.signature_hash()
         };
-        let signature = signature(&seed, s.a.cycle_index, digest)?;
+        let signature = signature(&seed, s.a.cycle_index, s.a.investment_slot, digest)?;
         let mut raw = Vec::new();
         if s.legacy {
             legacy(&s.tx)
@@ -550,6 +561,7 @@ impl EthereumLiquidityTransactionOperation {
                 revision: p.revision,
                 chain: p.chain_id,
                 cycle_index: p.cycle_index,
+                investment_slot: p.investment_slot,
                 expected: &p.expected_from,
                 c: &p.confidential_account,
                 deadline: p.deadline,
@@ -757,7 +769,12 @@ impl EthereumLiquidityTransactionOperation {
         }
         let seed = s.a.seed.take().ok_or(SignerError::InvalidInput)?;
         let tx = s.tx.as_ref().ok_or(SignerError::InvalidInput)?.clone();
-        let sig = signature(&seed, s.a.cycle_index, transaction_digest(&s.p, &tx))?;
+        let sig = signature(
+            &seed,
+            s.a.cycle_index,
+            s.a.investment_slot,
+            transaction_digest(&s.p, &tx),
+        )?;
         let mut raw = Vec::new();
         if s.p.kind == "returnEth" {
             legacy(&tx).into_signed(sig).eip2718_encode(&mut raw);
@@ -831,10 +848,16 @@ fn nonzero_hash(s: &str) -> Result<(), SignerError> {
 fn derive(seed: &[u8; 64], cycle_index: u32, role: u8) -> Result<XPrv, SignerError> {
     crate::earn_cycle_key(seed, 1, cycle_index, role)
 }
-fn signature(seed: &[u8; 64], cycle_index: u32, hash: B256) -> Result<Signature, SignerError> {
-    let (sig, id) = derive(seed, cycle_index, 1)?
-        .private_key()
-        .sign_prehash_recoverable(hash.as_ref());
+fn signature(
+    seed: &[u8; 64],
+    cycle_index: u32,
+    investment_slot: Option<u32>,
+    hash: B256,
+) -> Result<Signature, SignerError> {
+    let (sig, id) =
+        crate::earn_distribution::earn_investment_key(seed, 1, cycle_index, investment_slot)?
+            .private_key()
+            .sign_prehash_recoverable(hash.as_ref());
     if id.to_byte() > 1 {
         return Err(SignerError::CryptoFailed);
     }
@@ -845,9 +868,14 @@ fn signature(seed: &[u8; 64], cycle_index: u32, hash: B256) -> Result<Signature,
         id.is_y_odd(),
     ))
 }
-fn signature_hex(seed: &[u8; 64], cycle_index: u32, hash: B256) -> Result<String, SignerError> {
+fn signature_hex(
+    seed: &[u8; 64],
+    cycle_index: u32,
+    investment_slot: Option<u32>,
+    hash: B256,
+) -> Result<String, SignerError> {
     Ok(alloy_primitives::hex::encode_prefixed(
-        signature(seed, cycle_index, hash)?.as_bytes(),
+        signature(seed, cycle_index, investment_slot, hash)?.as_bytes(),
     ))
 }
 fn word(out: &mut Vec<u8>, v: U256) {
@@ -1141,6 +1169,7 @@ struct PermitProposal {
     kind: String,
     #[serde(default)]
     cycle_index: u32,
+    investment_slot: Option<u32>,
     operation_id: String,
     revision: u64,
     chain_id: u64,
@@ -1186,6 +1215,7 @@ impl EthereumFusionPermitOperation {
                 revision: p.revision,
                 chain: p.chain_id,
                 cycle_index: p.cycle_index,
+                investment_slot: p.investment_slot,
                 expected: &p.expected_from,
                 c: &p.confidential_account,
                 deadline: p.deadline,
@@ -1299,7 +1329,7 @@ impl EthereumFusionPermitOperation {
             dec(&s.p.nonce)?,
             s.a.deadline,
         );
-        let sig = signature_hex(&seed, s.a.cycle_index, digest)?;
+        let sig = signature_hex(&seed, s.a.cycle_index, s.a.investment_slot, digest)?;
         let b = bytes(&sig, 65)?;
         let mut data = Vec::new();
         aword(&mut data, addr(&s.a.owner)?);
@@ -1350,6 +1380,7 @@ struct OrderProposal {
     kind: String,
     #[serde(default)]
     cycle_index: u32,
+    investment_slot: Option<u32>,
     operation_id: String,
     revision: u64,
     chain_id: u64,
@@ -1399,6 +1430,7 @@ impl EthereumFusionOrderOperation {
                 revision: p.revision,
                 chain: p.chain_id,
                 cycle_index: p.cycle_index,
+                investment_slot: p.investment_slot,
                 expected: &p.expected_from,
                 c: &p.confidential_account,
                 deadline: p.deadline,
@@ -1520,7 +1552,7 @@ impl EthereumFusionOrderOperation {
             revision: s.a.revision,
             quote_id: s.p.quote_id.clone(),
             order_hash: format!("{digest:#x}"),
-            signature: signature_hex(&seed, s.a.cycle_index, digest)?,
+            signature: signature_hex(&seed, s.a.cycle_index, s.a.investment_slot, digest)?,
             unsigned_order: serde_json::to_string(&s.p.unsigned_order)
                 .map_err(|_| SignerError::InvalidInput)?,
             extension: s.p.extension.clone(),
@@ -2316,7 +2348,7 @@ mod tests {
                 value: U256::from(1),
                 input: Bytes::new(),
             };
-            let sig = signature(&seed, 0, tx.signature_hash()).unwrap();
+            let sig = signature(&seed, 0, None, tx.signature_hash()).unwrap();
             let mut raw = Vec::new();
             tx.into_signed(sig).eip2718_encode(&mut raw);
             raw
@@ -2332,7 +2364,7 @@ mod tests {
                 input: Bytes::from(vec![1, 2]),
                 access_list: Default::default(),
             };
-            let sig = signature(&seed, 0, tx.signature_hash()).unwrap();
+            let sig = signature(&seed, 0, None, tx.signature_hash()).unwrap();
             let mut raw = Vec::new();
             tx.into_signed(sig).eip2718_encode(&mut raw);
             raw
@@ -2460,5 +2492,152 @@ mod tests {
         order["expectedFrom"] = p["expectedFrom"].clone();
         order["confidentialAccount"] = p["confidentialAccount"].clone();
         assert!(EthereumFusionOrderOperation::new(order.to_string(), vec![0; 32]).is_ok());
+    }
+    #[test]
+    fn distribution_liquidity_return_signs_slot_key() {
+        let mut p = tx_proposal("returnUsdc");
+        p["cycleIndex"] = json!(2);
+        p["investmentSlot"] = json!(4);
+        let selected = crate::distribution_test_address(1, 2, 4);
+        p["expectedFrom"] = json!(selected);
+        p["refundOwner"] = json!(selected);
+        p["confidentialAccount"] =
+            json!(crate::derive_earn_cycle_confidential_address(vec![0; 32], 1, 2).unwrap());
+        let operation =
+            EthereumLiquidityTransactionOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        let mut current = return_state("returnUsdc");
+        current.owner = selected.clone();
+        let mut q = return_proof(&p);
+        q.refund_owner = selected.clone();
+        q.confidential_account = p["confidentialAccount"].as_str().unwrap().into();
+        operation
+            .prepare(7, current.clone(), None, Some(q))
+            .unwrap();
+        operation
+            .approve(7, operation.review_hash().unwrap())
+            .unwrap();
+        let signed = operation.sign(7, current).unwrap();
+        assert_eq!(signed.from, selected);
+        let raw = bytes(&signed.raw_transaction, 2048).unwrap();
+        let tx = alloy_consensus::Signed::<TxEip1559>::eip2718_decode(&mut raw.as_slice()).unwrap();
+        assert_eq!(
+            recover(
+                &alloy_primitives::hex::encode_prefixed(tx.signature().as_bytes()),
+                tx.tx().signature_hash()
+            ),
+            selected
+        );
+        let mut permit = permit_proposal(&active_order());
+        permit["cycleIndex"] = json!(2);
+        permit["investmentSlot"] = json!(4);
+        permit["expectedFrom"] = p["expectedFrom"].clone();
+        permit["confidentialAccount"] = p["confidentialAccount"].clone();
+        assert!(EthereumFusionPermitOperation::new(permit.to_string(), vec![0; 32]).is_ok());
+        let mut order = active_order();
+        order["cycleIndex"] = json!(2);
+        order["investmentSlot"] = json!(4);
+        order["expectedFrom"] = p["expectedFrom"].clone();
+        order["confidentialAccount"] = p["confidentialAccount"].clone();
+        assert!(EthereumFusionOrderOperation::new(order.to_string(), vec![0; 32]).is_ok());
+    }
+    #[test]
+    fn distribution_fusion_permit_and_order_recover_selected_wallet() {
+        for slot in [0, 4] {
+            let selected = crate::distribution_test_address(1, 2, slot);
+            let confidential =
+                crate::derive_earn_cycle_confidential_address(vec![0; 32], 1, 2).unwrap();
+            let mut p = active_order();
+            p["cycleIndex"] = json!(2);
+            p["investmentSlot"] = json!(slot);
+            p["expectedFrom"] = json!(selected);
+            p["confidentialAccount"] = json!(confidential);
+            p["unsignedOrder"]["maker"] = json!(selected);
+            let extension = p["extension"]
+                .as_str()
+                .unwrap()
+                .replace(&OWNER[2..].to_lowercase(), &selected[2..].to_lowercase());
+            let mask: U256 = (U256::from(1) << 160usize) - U256::from(1);
+            let salt: U256 = (U256::from(1) << 160usize)
+                | (U256::from_be_slice(keccak256(bytes(&extension, 4096).unwrap()).as_slice())
+                    & mask);
+            p["extension"] = json!(extension);
+            p["unsignedOrder"]["salt"] = json!(salt.to_string());
+            let mut proof = fusion_proof(&p);
+            proof.owner = selected.clone();
+            proof.confidential_account = confidential.clone();
+            let mut permit = permit_proposal(&p);
+            permit["cycleIndex"] = json!(2);
+            permit["investmentSlot"] = json!(slot);
+            permit["expectedFrom"] = json!(selected);
+            permit["confidentialAccount"] = json!(confidential);
+            let mut current = permit_state();
+            current.owner = selected.clone();
+            let op = EthereumFusionPermitOperation::new(permit.to_string(), vec![0; 32]).unwrap();
+            op.prepare(7, current.clone(), proof.clone()).unwrap();
+            assert!(op.sign(7, current.clone()).is_err());
+            op.approve(7, op.review_hash().unwrap()).unwrap();
+            let signed = op.sign(7, current).unwrap();
+            assert_eq!(
+                recover(&signed.signature, signed.signature_hash.parse().unwrap()),
+                selected
+            );
+            let mut current = state();
+            current.owner = selected.clone();
+            let op = EthereumFusionOrderOperation::new(p.to_string(), vec![0; 32]).unwrap();
+            op.prepare(7, current.clone(), proof, None).unwrap();
+            assert!(op.sign(7, current.clone()).is_err());
+            op.approve(7, op.review_hash().unwrap()).unwrap();
+            let signed = op.sign(7, current).unwrap();
+            assert_eq!(
+                recover(&signed.signature, signed.order_hash.parse().unwrap()),
+                selected
+            );
+            for bad_slot in [(slot + 1) % 5, 5, u32::MAX] {
+                p["investmentSlot"] = json!(bad_slot);
+                permit["investmentSlot"] = json!(bad_slot);
+                assert!(EthereumFusionOrderOperation::new(p.to_string(), vec![0; 32]).is_err());
+                assert!(
+                    EthereumFusionPermitOperation::new(permit.to_string(), vec![0; 32]).is_err()
+                );
+            }
+        }
+    }
+    #[test]
+    fn distribution_cancellation_keeps_the_original_slot_authority() {
+        let selected = crate::distribution_test_address(1, 2, 3);
+        let confidential =
+            crate::derive_earn_cycle_confidential_address(vec![0; 32], 1, 2).unwrap();
+        let mut p = tx_proposal("returnUsdc");
+        p["cycleIndex"] = json!(2);
+        p["investmentSlot"] = json!(3);
+        p["expectedFrom"] = json!(selected);
+        p["refundOwner"] = json!(selected);
+        p["confidentialAccount"] = json!(confidential);
+        let mut current = state();
+        current.owner = selected.clone();
+        let mut proof = return_proof(&p);
+        proof.refund_owner = selected.clone();
+        proof.confidential_account = confidential.clone();
+        let op = EthereumLiquidityTransactionOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        op.prepare(7, current.clone(), None, Some(proof)).unwrap();
+        op.approve(7, op.review_hash().unwrap()).unwrap();
+        let signed = op.sign(7, current.clone()).unwrap();
+        let mut p = json!({"kind":"cancelPendingLiquidity","operationId":"return1","revision":8,"chainId":1,"cycleIndex":2,"investmentSlot":3,"expectedFrom":selected,"confidentialAccount":confidential,"originalRawTransaction":signed.raw_transaction,"originalTransactionHash":signed.transaction_hash,"nonce":4,"deadline":now()+300,"gasLimit":21000,"maxFeePerGasWei":"11250000000","priorityFeePerGasWei":"1125000000","maximumGasCostWei":"236250000000000"});
+        let op = EthereumLiquidityCancellationOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        op.prepare(8, current.clone()).unwrap();
+        op.approve(8, op.review_hash().unwrap()).unwrap();
+        let signed = op.sign(8, current).unwrap();
+        let raw = bytes(&signed.raw_transaction, 2048).unwrap();
+        let tx = alloy_consensus::Signed::<TxEip1559>::eip2718_decode(&mut raw.as_slice()).unwrap();
+        assert_eq!(
+            recover(
+                &alloy_primitives::hex::encode_prefixed(tx.signature().as_bytes()),
+                tx.tx().signature_hash()
+            ),
+            selected
+        );
+        assert_eq!(tx.tx().to, TxKind::Call(addr(&selected).unwrap()));
+        p["investmentSlot"] = json!(2);
+        assert!(EthereumLiquidityCancellationOperation::new(p.to_string(), vec![0; 32]).is_err());
     }
 }

@@ -280,4 +280,62 @@ class EarnDepositApprovalTest {
       }
     }
   }
+
+  @Test
+  fun distributionGrantBindsSavedWeightsAndEveryWalletBudgetIndependently() {
+    for (weights in
+      listOf(listOf(10000), listOf(4000, 6000), listOf(1000, 1500, 2000, 2500, 3000))) {
+      DistributionDepositFixtures.record(weights).use { record ->
+        val review = DistributionDepositFixtures.review(record)
+        val grant =
+          EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+        grant.recordCredit("source0", "990000")
+        for (slot in weights.indices) {
+          val payout = DistributionDepositFixtures.payout(record, slot)
+          grant.assertPrepared(record, "payouts", payout, DepositFixtures.prepared(), 1002)
+          val changed = JSONObject(payout.toString())
+          changed
+            .getJSONObject("proposal")
+            .put(
+              "distribution",
+              JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(10000))),
+            )
+          if (weights.size > 1)
+            assertThrows(Exception::class.java) {
+              grant.assertPrepared(record, "payouts", changed, DepositFixtures.prepared(), 1002)
+            }
+          grant.recordPayout(
+            "source0",
+            "invest:$slot",
+            payout.getJSONObject("proposal").getString("amountAtoms"),
+          )
+          val deposit = DistributionDepositFixtures.deposit(record, slot)
+          val proof =
+            DepositFixtures.prepared()
+              .put("minimumSharesAtoms", deposit.getJSONObject("proposal").getString("amountAtoms"))
+          grant.assertPrepared(record, "deposit", deposit, proof, 1002)
+          val reused = JSONObject(deposit.toString()).put("operationId", "duplicate-$slot")
+          assertThrows(Exception::class.java) {
+            grant.assertPrepared(record, "deposit", reused, proof, 1002)
+          }
+          for (field in
+            listOf("investmentSlot", "expectedFrom", "maximumTokenFeeAtoms", "budgetAtoms")) {
+            val bad = JSONObject(deposit.toString())
+            bad
+              .getJSONObject("proposal")
+              .put(field, if (field == "investmentSlot") 5 else "999999999")
+            assertThrows(Exception::class.java) {
+              grant.assertPrepared(record, "deposit", bad, proof, 1002)
+            }
+          }
+        }
+        val changed = JSONObject(review.toString())
+        changed
+          .getJSONArray("deposits")
+          .getJSONObject(0)
+          .put("recipient", publicAccountAddress(record, 0))
+        assertThrows(Exception::class.java) { EarnDepositApproval.fromReview(record, changed) }
+      }
+    }
+  }
 }

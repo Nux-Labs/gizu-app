@@ -178,6 +178,7 @@ internal class EarnSponsoredJournal(
           "chainId",
           "profileChainId",
           "cycleIndex",
+          "investmentSlot",
           "sourceAccountIndex",
           "fundingBatchId",
           "fundingBatchSize",
@@ -229,6 +230,7 @@ internal class EarnSponsoredJournal(
           "chainId",
           "profileChainId",
           "cycleIndex",
+          "investmentSlot",
           "expectedFrom",
           "token",
           "vault",
@@ -309,6 +311,7 @@ internal class EarnSponsoredJournal(
       put("revision", op.getInt("revision"))
       put("kind", p.getString("kind"))
       put("cycleIndex", p.optInt("cycleIndex", 0))
+      if (p.has("investmentSlot")) put("investmentSlot", p.getInt("investmentSlot"))
       if (p.has("sourceAccountIndex")) put("sourceAccountIndex", p.getInt("sourceAccountIndex"))
       if (p.has("fundingBatchId")) {
         put("fundingBatchId", p.getString("fundingBatchId"))

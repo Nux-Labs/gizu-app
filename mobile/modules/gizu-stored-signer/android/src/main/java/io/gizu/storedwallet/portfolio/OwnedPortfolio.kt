@@ -11,6 +11,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.deriveEarnCycleAddresses
 
+internal fun ownedEarnCycleAddresses(record: WalletRecord, chain: Long, cycle: Int): List<String> {
+  val row =
+    JSONArray(record.earnCycles).objects().singleOrNull {
+      it.getInt("cycleIndex") == cycle && it.getLong("chainId") == chain
+    }
+  return if (row?.has("distribution") == true)
+    recordForCycle(record, row).use { cycleAddresses(it) }
+  else deriveEarnCycleAddresses(record.entropy, chain.toULong(), cycle.toUInt())
+}
+
 /**
  * Only aggregated public observations cross the native boundary. Owners and cursors stay encrypted.
  */
@@ -18,7 +28,7 @@ internal class NativeOwnedPortfolio(
   private val file: (String) -> WalletFile,
   private val key: () -> SecretKey,
   private val rpc: (Long) -> PortfolioRpc,
-  private val deriveCycle: (WalletRecord, Long, Int) -> List<String>,
+  private val deriveCycle: (WalletRecord, Long, Int) -> List<String> = ::ownedEarnCycleAddresses,
   private val derivePublic: (WalletRecord, Int) -> String,
   private val targets: (WalletRecord) -> List<String>,
   private val clock: () -> Long = System::currentTimeMillis,
@@ -40,9 +50,7 @@ internal class NativeOwnedPortfolio(
         }
       )
     },
-    deriveCycle = { record, chain, cycle ->
-      deriveEarnCycleAddresses(record.entropy, chain.toULong(), cycle.toUInt())
-    },
+    deriveCycle = ::ownedEarnCycleAddresses,
     derivePublic = ::publicAccountAddress,
     targets = { SwapPortfolioStore(context, it).targets() },
   )

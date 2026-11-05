@@ -9,6 +9,7 @@ import {
 import type { EarnProfileId } from "@/domain/earn/types";
 import { useFundingWallet } from "@/features/wallet/WalletProvider";
 import { useEarn } from "./EarnProvider";
+import { formatUsdc } from "@/domain/wallet/amounts";
 export const depositPauseCopy: Record<DepositPauseCode, string> = {
   quoteUnavailable: "The route is unavailable. Review again when the provider recovers.",
   previewUnavailable: "A fresh fee estimate is unavailable. No new spending can be approved.",
@@ -68,6 +69,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
       if (next.profileId !== profileId)
         throw new Error("The saved deposit belongs to a different vault.");
       saved.current = next;
+      if (next.distribution) setAmountText(formatUsdc(next.budgetAtoms));
       if (next.phase === "review") setClock(Date.now());
       setSnapshot((old) =>
         old && old.journeyId === next.journeyId && old.revision > next.revision ? old : next,
@@ -302,9 +304,49 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     details,
     setDetails,
     editable,
+    canChangeAmount:
+      editable &&
+      !!snapshot?.distribution &&
+      !!service.discardDraft &&
+      snapshot.completedSteps.length === 0 &&
+      snapshot.creditedAtoms === "0",
+    changeAmount: async () => {
+      const row = saved.current;
+      if (
+        !row?.distribution ||
+        !service.discardDraft ||
+        occupied.current ||
+        !foreground.current ||
+        !focused.current
+      )
+        return;
+      occupied.current = true;
+      setBusy(true);
+      setMessage("");
+      const attempt = ++request.current,
+        sessionEpoch = epoch.current;
+      try {
+        await service.discardDraft(owner, row.journeyId);
+        if (sessionEpoch === epoch.current && attempt === request.current) {
+          saved.current = null;
+          setSnapshot(null);
+          setDetails(false);
+        }
+      } catch (error) {
+        if (mounted.current && attempt === request.current)
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "Check saved deposit progress before changing the amount.",
+          );
+      } finally {
+        occupied.current = false;
+        if (mounted.current && attempt === request.current) setBusy(false);
+      }
+    },
     authorizing,
     setAmount: (text: string) => {
-      if (!editable) return;
+      if (!editable || saved.current?.distribution) return;
       ++request.current;
       setAmountText(text);
       setSnapshot(null);

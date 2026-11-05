@@ -10,8 +10,16 @@ import type { RootStackParamList } from "@/navigation/types";
 import type { EarnIntent } from "@/domain/earn/types";
 import { formatMon, formatUsdc } from "@/domain/wallet/amounts";
 import { useLegacyEthereumDeposit } from "./useLegacyEthereumDeposit";
-export function LegacyEthereumDepositScreen({ intent }: { intent: EarnIntent }) {
+import { useEarn } from "./EarnProvider";
+export function LegacyEthereumDepositScreen({
+  intent,
+  onViewInvestment,
+}: {
+  intent: EarnIntent;
+  onViewInvestment?: () => void;
+}) {
   const v = useLegacyEthereumDeposit(intent),
+    earn = useEarn(),
     navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   return (
     <Screen>
@@ -22,12 +30,42 @@ export function LegacyEthereumDepositScreen({ intent }: { intent: EarnIntent }) 
         Ethereum uses separate native approvals for funding, payouts, ETH liquidity and the vault.
         Each step keeps its saved progress.
       </Typography>
+      {intent.distribution && (
+        <>
+          <Typography>Investment wallets: {intent.distribution.weightsBps.length}</Typography>
+          <Typography>
+            Wallet {(intent.investmentSlot ?? 0) + 1} ·{" "}
+            {intent.distribution.weightsBps[intent.investmentSlot ?? 0]! / 100}% of verified private
+            credit
+          </Typography>
+        </>
+      )}
       {v.phase === "invested" ? (
         <>
-          <Typography variant="heading">Invested</Typography>
+          <Typography variant="heading">
+            {intent.distribution
+              ? `Wallet ${(intent.investmentSlot ?? 0) + 1} invested`
+              : "Invested"}
+          </Typography>
+          {intent.distribution &&
+            (intent.investmentSlot ?? 0) + 1 < intent.distribution.weightsBps.length && (
+              <Button
+                label={`Continue with wallet ${(intent.investmentSlot ?? 0) + 2}`}
+                disabled={earn.busy}
+                onPress={() =>
+                  void earn.selectInvestmentSlot?.(
+                    intent.intentId,
+                    (intent.investmentSlot ?? 0) + 1,
+                  )
+                }
+              />
+            )}
           <Button
             label="View investment"
-            onPress={() => navigation.navigate("EarnInvestment", { intentId: intent.intentId })}
+            onPress={
+              onViewInvestment ??
+              (() => navigation.navigate("EarnInvestment", { intentId: intent.intentId }))
+            }
           />
         </>
       ) : (
@@ -41,6 +79,7 @@ export function LegacyEthereumDepositScreen({ intent }: { intent: EarnIntent }) 
                   keyboardType="decimal-pad"
                   value={v.amount}
                   onChangeText={v.setAmount}
+                  editable={!intent.distributionBudgetAtoms}
                   className="min-h-14 rounded-xl bg-well px-4 py-3 text-text"
                   placeholder="USDC amount"
                 />

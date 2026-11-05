@@ -10,7 +10,9 @@ const owner = "0x" + "1".repeat(40),
   recipient = "0x" + "5".repeat(40),
   c = "0x" + "4".repeat(40),
   now = 1000000;
-const intent: EarnIntent = {
+const intent: EarnIntent & {
+  destinations: [EarnIntent["destinations"][0], EarnIntent["destinations"][0]];
+} = {
   status: "prepared",
   version: "gizu-earn-v1",
   intentId: "earn-wallet",

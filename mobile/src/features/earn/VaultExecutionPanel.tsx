@@ -205,8 +205,8 @@ export function VaultExecutionPanel({
             ) : (
               <>
                 <Typography>
-                  Redeem all wallet 2 shares. The asset amount depends on the vault at execution;
-                  there is no minimum-assets guard.
+                  Redeem all {intent.distribution ? "selected wallet" : "wallet 2"} shares. The
+                  asset amount depends on the vault at execution; there is no minimum-assets guard.
                 </Typography>
                 <Typography>
                   This withdrawal spends the retained gas reserve. The Aurora return requires its
@@ -320,8 +320,10 @@ export function VaultExecutionPanel({
         )}
         {withdrawn && (
           <Typography>
-            Wallet 1 remains separate. Returning wallet 2 assets needs zero shares, fresh quotes,
-            gas and authenticated confidential credit.
+            {intent.distribution
+              ? "Returning the selected wallet’s assets"
+              : "Wallet 1 remains separate. Returning wallet 2 assets"}{" "}
+            needs zero shares, fresh quotes, gas and authenticated confidential credit.
           </Typography>
         )}
         {intent.profileId === "ethereum-usdc" && (

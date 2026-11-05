@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { payoutLegSchema, type PayoutLeg } from "./distribution.ts";
 import { auroraApi } from "../aurora/http.ts";
 import { monadUsdcAssetId, robinhoodUsdgAssetId } from "../aurora/assets.ts";
 import {
@@ -12,7 +13,7 @@ type Input = {
   amountAtoms: string;
   operationId: string;
   revision: number;
-  leg: "hold" | "invest";
+  leg: PayoutLeg;
 };
 function object(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v))
@@ -44,7 +45,7 @@ export class EarnPayoutPreviewGateway {
       !/^[-a-zA-Z0-9_]{1,128}$/.test(input.operationId) ||
       !Number.isSafeInteger(input.revision) ||
       input.revision < 1 ||
-      !["hold", "invest"].includes(input.leg)
+      !payoutLegSchema.safeParse(input.leg).success
     )
       throw new Error("Invalid payout preview");
     for (const address of [input.recipient, input.confidentialAccount])

@@ -16,6 +16,22 @@ const qualification = {
   appFees: [{ recipient: "provider", fee: 2 as const }],
   referral: null,
 };
+test("payout previews accept all distribution investment slot identities", async () => {
+  const gateway = new EarnPayoutPreviewGateway(
+    { auroraApiKey: "test", auroraFeeQualification: qualification },
+    fetcher(),
+    () => now,
+  );
+  for (const leg of [
+    "invest:0",
+    "invest:1",
+    "invest:2",
+    "invest:3",
+    "invest:4",
+  ] as const)
+    assert.equal((await gateway.preview({ ...input, leg })).leg, leg);
+  await assert.rejects(gateway.preview({ ...input, leg: "invest:5" } as never));
+});
 function fetcher(change: Record<string, unknown> = {}): typeof fetch {
   return (async (_url, init) => {
     const request = JSON.parse(String(init?.body));

@@ -150,8 +150,14 @@ internal fun requireDepositCapacity(
 ) {
   val sources = review.getJSONArray("sources").objects().map { it.getString("operationId") }.toSet()
   val sponsoredIds = sponsored.map { it.getString("operationId") }.toSet()
-  val depositId = "vault_${review.getString("journeyId")}"
-  val newSponsored = sources.count { it !in sponsoredIds } + if (depositId in sponsoredIds) 0 else 1
+  val depositIds =
+    if (review.has("distribution"))
+      depositReviewDeposits(review).indices.map {
+        depositChildId(review.getString("journeyId"), it)
+      }
+    else listOf(depositChildId(review.getString("journeyId")))
+  val newSponsored =
+    sources.count { it !in sponsoredIds } + depositIds.count { it !in sponsoredIds }
   val existingPayouts =
     payouts
       .map {
@@ -161,7 +167,9 @@ internal fun requireDepositCapacity(
       }
       .toSet()
   val newPayouts =
-    sources.sumOf { source -> listOf("hold", "invest").count { "$source:$it" !in existingPayouts } }
+    sources.sumOf { source ->
+      depositReviewLegs(review).count { "$source:$it" !in existingPayouts }
+    }
   check(sponsored.size + newSponsored <= 256 && payouts.size + newPayouts <= 256) {
     "Saved history has no space for the complete deposit. Recover saved activity before funding."
   }

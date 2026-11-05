@@ -92,6 +92,7 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
       earnBalanceDeltaSettlement:
         Platform.OS === "android" && result.earnBalanceDeltaSettlement === true,
       earnDepositJourney: Platform.OS === "android" && result.earnDepositJourney === true,
+      earnDepositDistribution: Platform.OS === "android" && result.earnDepositDistribution === true,
     };
   } catch {
     return unavailable;
@@ -443,6 +444,28 @@ export function getStoredEarnSigner() {
   const get = native.getEarnIntent.bind(native);
   const prepare = native.prepareEarnIntent.bind(native);
   return {
+    ...(native.prepareNewEarnDistributionIntent
+      ? {
+          async prepareNewEarnDistributionIntent(
+            walletId: string,
+            profile: string,
+            budgetAtoms: string,
+          ) {
+            await checked(native, "earnWallets");
+            if (!(await getSignerCapabilities()).earnDepositDistribution)
+              throw new WalletUnavailableError();
+            return native.prepareNewEarnDistributionIntent!(walletId, profile, budgetAtoms);
+          },
+        }
+      : {}),
+    ...(native.selectEarnInvestmentSlot
+      ? {
+          async selectEarnInvestmentSlot(walletId: string, intentId: string, slot: number) {
+            await checked(native, "earnWallets");
+            return native.selectEarnInvestmentSlot!(walletId, intentId, slot);
+          },
+        }
+      : {}),
     ...(native.listEarnIntents
       ? {
           async listEarnIntents(walletId: string) {
@@ -514,6 +537,14 @@ export function getStoredEarnDepositSigner() {
     resume = native.resumeEarnDeposit.bind(native),
     cancel = native.cancelEarnDeposit.bind(native);
   return {
+    ...(native.discardEarnDepositDraft
+      ? {
+          async discardEarnDepositDraft(walletId: string, journeyId: string) {
+            await checked(native, "earnDepositJourney");
+            return native.discardEarnDepositDraft!(walletId, journeyId);
+          },
+        }
+      : {}),
     async prepareEarnDeposit(
       walletId: string,
       profileId: string,
@@ -521,6 +552,10 @@ export function getStoredEarnDepositSigner() {
       draftId: string | null,
     ) {
       await checked(native, "earnDepositJourney");
+      if (!(await getSignerCapabilities()).earnDepositDistribution)
+        throw new Error(
+          "New distributed deposits require the updated native app. Saved deposits remain available.",
+        );
       return prepare(walletId, profileId, budgetAtoms, draftId);
     },
     async confirmEarnDeposit(walletId: string, journeyId: string, revision: number) {

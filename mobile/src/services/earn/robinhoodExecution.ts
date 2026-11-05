@@ -1,3 +1,4 @@
+import { investmentDestination } from "@/domain/earn/distribution";
 import { assertNotAborted } from "./abort";
 import type { EarnIntent } from "@/domain/earn/types";
 import {
@@ -72,7 +73,7 @@ export function createEarnRobinhoodService(
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({
-                owner: intent.destinations[1].address,
+                owner: investmentDestination(intent).address,
                 operationId,
                 revision,
                 ...(kind === "hoodTokenReturn"

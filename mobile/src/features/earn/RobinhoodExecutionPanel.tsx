@@ -51,7 +51,10 @@ export function RobinhoodExecutionPanel({
   return (
     <Surface>
       <View className="gap-3 p-5">
-        <Typography variant="row">Wallet 2 · Robinhood USDG execution</Typography>
+        <Typography variant="row">
+          {intent.distribution ? `Wallet ${(intent.investmentSlot ?? 0) + 1}` : "Wallet 2"} ·
+          Robinhood USDG execution
+        </Typography>
         {v.loading ? (
           <Typography>Checking saved USDG progress…</Typography>
         ) : !v.available ? (
@@ -86,8 +89,9 @@ export function RobinhoodExecutionPanel({
             ) : plan.kind === "hoodRedeemAll" ? (
               <>
                 <Typography>
-                  Redeem all current wallet 2 shares. The asset amount depends on the vault at
-                  execution; there is no minimum-assets guard.
+                  Redeem all current {intent.distribution ? "selected wallet" : "wallet 2"} shares.
+                  The asset amount depends on the vault at execution; there is no minimum-assets
+                  guard.
                 </Typography>
                 <Typography>
                   This withdrawal uses the existing USDG reserve. A return needs its own fresh quote

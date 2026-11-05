@@ -1,3 +1,4 @@
+import { investmentDestination } from "@/domain/earn/distribution";
 import { assertNotAborted } from "./abort";
 import type { EarnIntent } from "@/domain/earn/types";
 import type { EarnLiquidityService } from "@/domain/earn/ethereumLiquidity";
@@ -34,7 +35,7 @@ export function createEarnExitCompletionService(
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             profileId: intent.profileId,
-            owner: intent.destinations[1].address,
+            owner: investmentDestination(intent).address,
           }),
           signal: controller.signal,
         });

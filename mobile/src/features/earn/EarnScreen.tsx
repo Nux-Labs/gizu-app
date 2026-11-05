@@ -6,7 +6,7 @@ import type {
   NativeStackNavigationProp,
   NativeStackScreenProps,
 } from "@react-navigation/native-stack";
-import { View } from "react-native";
+import { TextInput, View } from "react-native";
 import { Screen } from "@/components/templates/Screen";
 import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
@@ -24,6 +24,7 @@ import { SourceFundingPanel } from "./SourceFundingPanel";
 import type { RootStackParamList } from "@/navigation/types";
 import { useOpportunityDetail } from "@/features/opportunities/useOpportunityDetail";
 import { catalogEarnProfile } from "@/domain/earn/catalog";
+import { depositBudgetAtoms } from "./useDepositJourney";
 
 export function EarnScreen({ route }: NativeStackScreenProps<RootStackParamList, "Earn">) {
   return route.params?.opportunityId ? (
@@ -75,17 +76,24 @@ function CatalogEarnEntry({ opportunityId }: { opportunityId: string }) {
 /** Each new catalog Deposit request starts a fresh cycle; existing investments stay intact. */
 function CatalogEarnStart({ profile }: { profile: EarnProfileId }) {
   const earn = useEarn();
+  const [amount, setAmount] = useState("");
   const [initialIntentId, setInitialIntentId] = useState<string | null>(null);
   const [requested, setRequested] = useState(false);
   const intent = earn.state && "intentId" in earn.state ? earn.state : null;
   if (requested && intent && intent.intentId !== initialIntentId && intent.profileId === profile)
-    return <LegacyEthereumDepositScreen intent={intent} />;
+    return (
+      <LegacyEthereumDepositScreen
+        key={`${intent.intentId}:${intent.investmentSlot ?? "legacy"}`}
+        intent={intent}
+      />
+    );
   const canStart =
     !!earn.state &&
     !earn.loading &&
     !earn.busy &&
     earn.state.status !== "recoveryRequired" &&
-    (!intent || !!earn.prepareNew);
+    !!earn.prepareDistribution &&
+    !!depositBudgetAtoms(amount);
   return (
     <Screen>
       <BackAction fallback="Vaults" />
@@ -95,9 +103,18 @@ function CatalogEarnStart({ profile }: { profile: EarnProfileId }) {
         {earnProfiles[profile].vault}
       </Typography>
       <Typography>
-        Prepare a new earn cycle for this vault, then review fees and funding before authorizing
-        spending.
+        Choose an amount to create a saved distribution of fresh investment wallets. Every wallet
+        invests in this vault after its fees and withdrawal reserve.
       </Typography>
+      <TextInput
+        accessibilityLabel="USDC deposit amount"
+        value={amount}
+        onChangeText={setAmount}
+        keyboardType="decimal-pad"
+        placeholder="USDC amount"
+        className="min-h-14 rounded-xl bg-well px-4 py-3 text-text"
+        editable={!earn.busy && !requested}
+      />
       {earn.state?.status === "recoveryRequired" && (
         <Typography accessibilityRole="alert">
           Recover your existing earn activity before starting another deposit.
@@ -110,8 +127,8 @@ function CatalogEarnStart({ profile }: { profile: EarnProfileId }) {
         onPress={() => {
           setInitialIntentId(intent?.intentId ?? null);
           setRequested(true);
-          if (intent) void earn.prepareNew?.(profile);
-          else void earn.prepare(profile);
+          const budget = depositBudgetAtoms(amount);
+          if (budget) void earn.prepareDistribution?.(profile, budget);
         }}
       />
       {earn.message !== "" && <Typography accessibilityRole="alert">{earn.message}</Typography>}
@@ -131,9 +148,16 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
   const wallet = useFundingWallet();
   const earn = useEarn();
   const [selected, setSelected] = useState<EarnProfileId>(profile ?? "ethereum-usdc");
+  const [newDeposit, setNewDeposit] = useState<EarnProfileId | null>(null);
   const profiles = profile ? [profile] : (Object.keys(earnProfiles) as EarnProfileId[]);
   const intent = earn.state && "intentId" in earn.state ? earn.state : null;
   const recovery = earn.state?.status === "recoveryRequired";
+  if (newDeposit)
+    return newDeposit === "robinhood-usdg" ? (
+      <DepositJourneyScreen profileId={newDeposit} />
+    ) : (
+      <CatalogEarnStart profile={newDeposit} />
+    );
   return (
     <Screen>
       <BackAction fallback="Home" />
@@ -184,16 +208,24 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
                   variant="secondary"
                   label={`Start new ${earnProfiles[profile].name} cycle`}
                   disabled={earn.busy}
-                  onPress={() => void earn.prepareNew?.(profile)}
+                  onPress={() =>
+                    earn.prepareDistribution
+                      ? setNewDeposit(profile)
+                      : void earn.prepareNew?.(profile)
+                  }
                 />
               ))}
             </View>
           )}
           {intent.destinations.map((destination, i) => (
-            <Surface key={destination.role}>
+            <Surface key={destination.address}>
               <View className="gap-2 p-5">
                 <Typography variant="row">
-                  {i === 0 ? "Wallet 1 · Hold 10%" : "Wallet 2 · Invest 90%"}
+                  {intent.distribution
+                    ? `Investment wallet ${i + 1} · ${intent.distribution.weightsBps[i]! / 100}%`
+                    : i === 0
+                      ? "Wallet 1 · Hold 10%"
+                      : "Wallet 2 · Invest 90%"}
                 </Typography>
                 <Typography selectable variant="caption">
                   {destination.address}
@@ -205,12 +237,14 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
             </Surface>
           ))}
           <Typography>
-            Both wallets are covered by your verified source wallet backup and the same passkey.
-            Reopening this intent keeps the same pair.
+            {intent.distribution
+              ? "The selected investment wallets are covered by your verified backup. Reopening keeps the same wallets and allocation."
+              : "Both wallets are covered by your verified source wallet backup and the same passkey. Reopening this intent keeps the same pair."}
           </Typography>
           <Typography>
-            The split uses confirmed confidential credit after source fees. Each payout has separate
-            fees; only wallet 2 invests.
+            {intent.distribution
+              ? "Every selected wallet invests its allocated confirmed credit after its payout fees, gas and withdrawal reserve."
+              : "The split uses confirmed confidential credit after source fees. Each payout has separate fees; only wallet 2 invests."}
           </Typography>
           {recovery && (
             <Typography accessibilityRole="alert">
@@ -270,11 +304,12 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
             ))}
           </View>
           <Typography>
-            Prepare two wallets when you decide to invest. Wallet 1 holds 10%; wallet 2 invests 90%
-            after fees. This does not transfer any funds.
+            {earn.prepareDistribution && !recovery
+              ? "Choose a deposit amount next. The algorithm selects fresh investment wallets and saves their shares before you approve any funding."
+              : "Prepare two wallets when you decide to invest. Wallet 1 holds 10%; wallet 2 invests 90% after fees. This does not transfer any funds."}
           </Typography>
           <Typography variant="caption">
-            Each earn cycle keeps its own destination pair and saved operations.
+            Each earn cycle keeps its own destinations and saved operations.
           </Typography>
           <Button
             label={
@@ -286,7 +321,11 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
             }
             loading={earn.busy}
             disabled={earn.loading || !earn.state}
-            onPress={() => void earn.prepare(selected)}
+            onPress={() =>
+              !recovery && earn.prepareDistribution
+                ? setNewDeposit(selected)
+                : void earn.prepare(selected)
+            }
           />
         </>
       )}

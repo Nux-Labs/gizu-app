@@ -90,7 +90,9 @@ internal class EarnPayoutJournal(
       val rows = read()
       val old = entries(rows)
       val leg = proposal.getString("leg")
-      check(leg in setOf("hold", "invest"))
+      if (proposal.has("distribution"))
+        distributionSlot(leg, proposal.getJSONObject("distribution"))
+      else check(leg in setOf("hold", "invest"))
       val funding = proposal.getString("operationId")
       val C = proposal.getString("expectedSigner")
       val tx = proposal.getString("sourceTransactionHash")
@@ -185,6 +187,12 @@ internal class EarnPayoutJournal(
         )) check(old.opt(field) == proposal.opt(field)) {
         "Immutable payout funding or role changed"
       }
+      check(old.has("distribution") == proposal.has("distribution"))
+      if (old.has("distribution"))
+        check(
+          distributionWeights(old.getJSONObject("distribution")) ==
+            distributionWeights(proposal.getJSONObject("distribution"))
+        )
       val history = nonceHistory(op)
       if (nonce != op.getString("nonce"))
         check(
@@ -293,6 +301,14 @@ internal class EarnPayoutJournal(
       put("kind", "confidentialPayout")
       put("sourceOperationId", p.getString("operationId"))
       put("cycleIndex", p.optInt("cycleIndex", 0))
+      if (p.has("distribution"))
+        put(
+          "distribution",
+          mapOf(
+            "version" to 1,
+            "weightsBps" to distributionWeights(p.getJSONObject("distribution")),
+          ),
+        )
       put("leg", op.getString("leg"))
       put("chainId", p.getLong("profileChainId"))
       put("recipient", p.getString("expectedRecipient"))

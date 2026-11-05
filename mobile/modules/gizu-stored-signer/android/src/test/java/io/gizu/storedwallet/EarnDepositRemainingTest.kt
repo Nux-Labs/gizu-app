@@ -7,6 +7,144 @@ import org.junit.Test
 
 class EarnDepositRemainingTest {
   @Test
+  fun distributionRefreshPreservesCompletedSlotAndOnlyPreviewsItsUnfinishedSibling() = runBlocking {
+    distributionDepositRecord().use { record ->
+      val journal = testDepositJournal()
+      val root = journal.loadOrCreate(record, 4663, null)
+      val id = root.getString("journeyId")
+      val original =
+        DepositFixtures.record()
+          .use { DepositFixtures.review(it) }
+          .put("journeyId", id)
+          .put("distribution", savedCycleDistribution(record))
+          .put("destinations", org.json.JSONArray(cycleAddresses(record)))
+      val source = original.getJSONArray("sources").getJSONObject(0)
+      source.remove("hold")
+      source.remove("invest")
+      source.put(
+        "allocations",
+        org.json.JSONArray(
+          listOf("247500", "742500").mapIndexed { slot, amount ->
+            JSONObject()
+              .put("recipient", cycleInvestmentAddress(record, slot))
+              .put("inputAtoms", amount)
+              .put("minimumOutputAtoms", amount)
+              .put("estimatedOutputAtoms", amount)
+              .put("providerFeeBps", 4)
+          }
+        ),
+      )
+      val deposits =
+        listOf("226500", "721500").mapIndexed { slot, assets ->
+          JSONObject()
+            .put("slot", slot)
+            .put("recipient", cycleInvestmentAddress(record, slot))
+            .put("estimatedAssetsAtoms", assets)
+            .put("minimumAssetsAtoms", assets)
+            .put("minimumSharesAtoms", assets)
+            .put("maximumFeeAtoms", "10000")
+            .put("withdrawalReserveAtoms", "11000")
+            .put("shareDecimals", 18)
+        }
+      original
+        .put("deposits", org.json.JSONArray(deposits))
+        .put("deposit", aggregateDepositBounds(deposits))
+      journal.saveReview(id, root.getInt("revision"), original)
+      for ((stage, child) in
+        listOf("invest:0" to "paid0", "invest:1" to "paid1", "deposit" to "completed0")) journal
+        .attachChild(id, journal.get(id).getInt("revision"), stage, child)
+      journal.pause(id, "termsChanged")
+      val completed =
+        JSONObject()
+          .put("status", "finalized")
+          .put("signedUserOperation", "immutable")
+          .put(
+            "proposal",
+            JSONObject()
+              .put("investmentSlot", 0)
+              .put("expectedFrom", cycleInvestmentAddress(record, 0)),
+          )
+      val requests = mutableListOf<JSONObject>()
+      val gateway =
+        EarnDepositGateway(
+          { path, text ->
+            check(path == "/robinhood/deposit-preview")
+            val request = JSONObject(text)
+            requests.add(request)
+            JSONObject()
+              .put("kind", "preview")
+              .put("readOnly", true)
+              .put("executionAvailable", false)
+              .put("assumption", "hypothetical-USDG-funding-isolated-fork")
+              .put("operationId", request.getString("operationId"))
+              .put("revision", request.getInt("revision"))
+              .put("quotedAtMs", 100000)
+              .put("expiresAtMs", 145000)
+              .put("profileId", "robinhood-usdg")
+              .put("chainId", 4663)
+              .put("owner", request.getString("owner"))
+              .put("token", HOOD_EARN_USDG)
+              .put("vault", HOOD_EARN_VAULT)
+              .put("expectedUsdgAtoms", request.getString("expectedUsdgAtoms"))
+              .put("startingUsdgAtoms", request.getString("startingUsdgAtoms"))
+              .put("policyVersion", "robinhood-v1")
+              .put("depositAmount", "712500")
+              .put("depositFeeBudget", "15000")
+              .put("withdrawalReserve", "15000")
+              .put("previewShares", "712500")
+              .put("maxSharePrice", "1000000000000000000000000000")
+              .put("shareDecimals", 18)
+              .toString()
+          },
+          { 100000 },
+          { 4 },
+        )
+      val funding =
+        original
+          .getJSONArray("fundingRows")
+          .getJSONObject(0)
+          .put("signedUserOperation", "immutable")
+      val refresh =
+        EarnDepositRemaining(
+          journal,
+          gateway,
+          { DepositRemainingSource(funding, "990000") },
+          { childId ->
+            val slot = childId.removePrefix("paid").toInt()
+            val amount = if (slot == 0) "247500" else "742500"
+            JSONObject()
+              .put("operationId", childId)
+              .put("status", "paid")
+              .put("receivedAtoms", amount)
+              .put("signedData", "immutable")
+              .put(
+                "proposal",
+                JSONObject()
+                  .put("operationId", "source0")
+                  .put("leg", "invest:$slot")
+                  .put("amountAtoms", amount),
+              )
+          },
+          { it.getString("receivedAtoms") },
+          { original.getJSONObject("reservation") },
+          { completed },
+          { 100000 },
+        )
+      val next = refresh.refresh(record, id, journal.get(id).getInt("revision"))
+      assertEquals(1, requests.size)
+      assertEquals(cycleInvestmentAddress(record, 1), requests.single().getString("owner"))
+      assertEquals("742500", requests.single().getString("startingUsdgAtoms"))
+      val reviewed = next.getJSONObject("review").getJSONArray("deposits")
+      assertTrue(nativeJsonEqual(deposits[0], reviewed.getJSONObject(0)))
+      assertEquals("705000", reviewed.getJSONObject(1).getString("minimumAssetsAtoms"))
+      assertEquals(
+        "completed0",
+        next.getJSONObject("children").getJSONArray("deposit").getString(0),
+      )
+    }
+  }
+
+  @Test
   fun aReferencedSourceCannotBeReconstructedFromAnUnsignedPreview() {
     DepositFixtures.record().use { r ->
       val original = DepositFixtures.funding(r)

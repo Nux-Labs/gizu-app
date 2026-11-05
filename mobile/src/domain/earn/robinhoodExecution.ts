@@ -1,3 +1,4 @@
+import { investmentDestination, investmentSlotField } from "@/domain/earn/distribution";
 import { parseEarnFeeProof, type EarnFeeProof } from "./policy";
 import { earnProfiles, type EarnIntent } from "./types";
 import { ceilDiv } from "./policy";
@@ -45,6 +46,7 @@ export type RobinhoodRequest = {
   walletId: string;
   proposal: {
     cycleIndex?: number;
+    investmentSlot?: number;
     kind: RobinhoodKind;
     operationId: string;
     revision: number;
@@ -108,11 +110,11 @@ function owner(intent: EarnIntent) {
   if (
     intent.status !== "prepared" ||
     intent.profileId !== "robinhood-usdg" ||
-    intent.destinations[1].role !== "invest" ||
-    intent.destinations[1].chainId !== 4663
+    investmentDestination(intent).role !== "invest" ||
+    investmentDestination(intent).chainId !== 4663
   )
     throw new Error("Robinhood execution requires a prepared native intent.");
-  return address(intent.destinations[1].address);
+  return address(investmentDestination(intent).address);
 }
 function unsigned(value: unknown, expected: string) {
   const raw = earnObject(value),
@@ -408,6 +410,7 @@ export function robinhoodProposal(
     walletId: intent.walletId,
     proposal: {
       ...(intent.cycleIndex ? { cycleIndex: intent.cycleIndex } : {}),
+      ...investmentSlotField(intent),
       kind: plan.kind,
       operationId: id(plan.operationId),
       revision: integer(plan.revision, 1),

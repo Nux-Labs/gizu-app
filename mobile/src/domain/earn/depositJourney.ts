@@ -1,4 +1,5 @@
 import { earnProfiles, type EarnDestination, type EarnOwner, type EarnProfileId } from "./types";
+import { distributionAmounts, parseEarnDistribution, type EarnDistribution } from "./distribution";
 
 export type DepositPhase =
   | "draft"
@@ -41,8 +42,19 @@ export type DepositSourceReview = {
   maximumFeeAtoms: string;
   retainedAtoms: string;
   minimumCreditAtoms: string;
-  hold: DepositLegReview;
-  invest: DepositLegReview;
+  hold?: DepositLegReview;
+  invest?: DepositLegReview;
+  allocations?: DepositLegReview[];
+};
+export type DepositWalletReview = {
+  slot: number;
+  recipient: string;
+  estimatedAssetsAtoms: string;
+  minimumAssetsAtoms: string;
+  minimumSharesAtoms: string;
+  shareDecimals: number;
+  maximumFeeAtoms: string;
+  withdrawalReserveAtoms: string;
 };
 export type DepositReview = {
   policyVersion: string;
@@ -50,6 +62,7 @@ export type DepositReview = {
   expiresAtMs: number;
   sourceBudgetAtoms: string;
   sources: DepositSourceReview[];
+  deposits?: DepositWalletReview[];
   deposit: {
     estimatedAssetsAtoms: string;
     minimumAssetsAtoms: string;
@@ -74,7 +87,17 @@ export type DepositSnapshot = {
   intentId: string;
   profileId: EarnProfileId;
   phase: DepositPhase;
-  destinations: [EarnDestination, EarnDestination];
+  destinations: [EarnDestination, ...EarnDestination[]];
+  distribution?: EarnDistribution;
+  investments?: {
+    slot: number;
+    recipient: string;
+    receivedAtoms: string;
+    depositedAtoms: string;
+    sharesAtoms: string;
+    status: "pending" | "received" | "depositing" | "invested" | "paused";
+    transactionHash?: string;
+  }[];
   budgetAtoms: string;
   creditedAtoms: string;
   holdReceivedAtoms: string;
@@ -100,6 +123,7 @@ export interface EarnDepositService {
   status(owner: EarnOwner, journeyId: string): Promise<DepositSnapshot>;
   resume(owner: EarnOwner, journeyId: string, revision: number): Promise<DepositSnapshot>;
   cancel(owner: EarnOwner, journeyId: string, revision: number): Promise<DepositSnapshot>;
+  discardDraft?(owner: EarnOwner, journeyId: string): Promise<void>;
 }
 const phases: DepositPhase[] = [
   "draft",
@@ -173,6 +197,7 @@ function leg(value: unknown, recipient: string, expectedInput: bigint): DepositL
   return result;
 }
 function review(value: unknown, snapshot: DepositSnapshot): DepositReview {
+  if (snapshot.distribution) return distributionReview(value, snapshot);
   const r = object(value),
     d = object(r.deposit),
     sources = r.sources;
@@ -219,7 +244,7 @@ function review(value: unknown, snapshot: DepositSnapshot): DepositReview {
       retainedAtoms: atoms(s.retainedAtoms),
       minimumCreditAtoms: credit.toString(),
       hold: leg(s.hold, snapshot.destinations[0].address, hold),
-      invest: leg(s.invest, snapshot.destinations[1].address, credit - hold),
+      invest: leg(s.invest, snapshot.destinations[1]!.address, credit - hold),
     };
     if (
       ids.has(source.operationId) ||
@@ -239,8 +264,8 @@ function review(value: unknown, snapshot: DepositSnapshot): DepositReview {
     addresses.add(source.address.toLowerCase());
     offset += credit;
     budget += BigInt(source.budgetAtoms);
-    minimumInvest += BigInt(source.invest.minimumOutputAtoms);
-    estimatedInvest += BigInt(source.invest.estimatedOutputAtoms);
+    minimumInvest += BigInt(source.invest!.minimumOutputAtoms);
+    estimatedInvest += BigInt(source.invest!.estimatedOutputAtoms);
     result.sources.push(source);
   }
   const costs =
@@ -254,26 +279,170 @@ function review(value: unknown, snapshot: DepositSnapshot): DepositReview {
     fail();
   return result;
 }
+
+function distributionReview(value: unknown, snapshot: DepositSnapshot): DepositReview {
+  const r = object(value),
+    plan = snapshot.distribution!;
+  const sources = r.sources,
+    deposits = r.deposits;
+  if (
+    !Array.isArray(sources) ||
+    sources.length < 1 ||
+    sources.length > 256 ||
+    !Array.isArray(deposits) ||
+    deposits.length !== plan.weightsBps.length
+  )
+    fail();
+  const quotedAtMs = integer(r.quotedAtMs),
+    expiresAtMs = integer(r.expiresAtMs);
+  if (
+    expiresAtMs <= quotedAtMs ||
+    expiresAtMs > quotedAtMs + 60000 ||
+    r.sourceBudgetAtoms !== snapshot.budgetAtoms
+  )
+    fail();
+  let offset = 0n,
+    budget = 0n;
+  const ids = new Set<string>(),
+    indices = new Set<number>(),
+    addresses = new Set<string>();
+  const minimum = plan.weightsBps.map(() => 0n),
+    estimated = [...minimum];
+  const checkedSources = sources.map((raw): DepositSourceReview => {
+    const s = object(raw),
+      credit = BigInt(atoms(s.minimumCreditAtoms, true));
+    if (
+      !Array.isArray(s.allocations) ||
+      s.allocations.length !== plan.weightsBps.length ||
+      s.hold !== undefined ||
+      s.invest !== undefined
+    )
+      fail();
+    const inputs = distributionAmounts(credit, plan, offset);
+    const allocations = s.allocations.map((raw, slot) =>
+      leg(raw, snapshot.destinations[slot]!.address, inputs[slot]!),
+    );
+    const source: DepositSourceReview = {
+      operationId: text(s.operationId),
+      accountIndex: integer(s.accountIndex, 0, 2147483647),
+      address: address(s.address),
+      budgetAtoms: atoms(s.budgetAtoms, true),
+      amountAtoms: atoms(s.amountAtoms, true),
+      maximumFeeAtoms: atoms(s.maximumFeeAtoms, true),
+      retainedAtoms: atoms(s.retainedAtoms),
+      minimumCreditAtoms: credit.toString(),
+      allocations,
+    };
+    if (
+      ids.has(source.operationId) ||
+      indices.has(source.accountIndex) ||
+      addresses.has(source.address.toLowerCase()) ||
+      snapshot.destinations.some((d) => d.address.toLowerCase() === source.address.toLowerCase()) ||
+      credit > BigInt(source.amountAtoms) ||
+      BigInt(source.retainedAtoms) < 10000n ||
+      BigInt(source.amountAtoms) + BigInt(source.maximumFeeAtoms) + BigInt(source.retainedAtoms) !==
+        BigInt(source.budgetAtoms)
+    )
+      fail();
+    ids.add(source.operationId);
+    indices.add(source.accountIndex);
+    addresses.add(source.address.toLowerCase());
+    allocations.forEach((a, slot) => {
+      minimum[slot] = minimum[slot]! + BigInt(a.minimumOutputAtoms);
+      estimated[slot] = estimated[slot]! + BigInt(a.estimatedOutputAtoms);
+    });
+    offset += credit;
+    budget += BigInt(source.budgetAtoms);
+    return source;
+  });
+  const checkedDeposits = deposits.map((raw, slot): DepositWalletReview => {
+    const d = object(raw);
+    const result: DepositWalletReview = {
+      slot: integer(d.slot, 0, 4),
+      recipient: address(d.recipient),
+      estimatedAssetsAtoms: atoms(d.estimatedAssetsAtoms, true),
+      minimumAssetsAtoms: atoms(d.minimumAssetsAtoms, true),
+      minimumSharesAtoms: atoms(d.minimumSharesAtoms, true),
+      shareDecimals: integer(d.shareDecimals, 0, 18),
+      maximumFeeAtoms: atoms(d.maximumFeeAtoms, true),
+      withdrawalReserveAtoms: atoms(d.withdrawalReserveAtoms, true),
+    };
+    const costs = BigInt(result.maximumFeeAtoms) + BigInt(result.withdrawalReserveAtoms);
+    if (
+      result.slot !== slot ||
+      result.recipient.toLowerCase() !== snapshot.destinations[slot]!.address.toLowerCase() ||
+      BigInt(result.minimumAssetsAtoms) > BigInt(result.estimatedAssetsAtoms) ||
+      BigInt(result.minimumAssetsAtoms) + costs > minimum[slot]! ||
+      BigInt(result.estimatedAssetsAtoms) > estimated[slot]!
+    )
+      fail();
+    return result;
+  });
+  const aggregate = object(r.deposit);
+  const sum = (
+    key:
+      | "estimatedAssetsAtoms"
+      | "minimumAssetsAtoms"
+      | "minimumSharesAtoms"
+      | "maximumFeeAtoms"
+      | "withdrawalReserveAtoms",
+  ) => checkedDeposits.reduce((n, d) => n + BigInt(d[key]), 0n).toString();
+  const deposit: DepositReview["deposit"] = {
+    estimatedAssetsAtoms: sum("estimatedAssetsAtoms"),
+    minimumAssetsAtoms: sum("minimumAssetsAtoms"),
+    minimumSharesAtoms: sum("minimumSharesAtoms"),
+    shareDecimals: checkedDeposits[0]!.shareDecimals,
+    maximumFeeAtoms: sum("maximumFeeAtoms"),
+    withdrawalReserveAtoms: sum("withdrawalReserveAtoms"),
+  };
+  if (
+    budget !== BigInt(snapshot.budgetAtoms) ||
+    checkedDeposits.some((d) => d.shareDecimals !== deposit.shareDecimals) ||
+    Object.entries(deposit).some(([key, v]) => aggregate[key] !== v)
+  )
+    fail();
+  return {
+    policyVersion: text(r.policyVersion),
+    quotedAtMs,
+    expiresAtMs,
+    sourceBudgetAtoms: snapshot.budgetAtoms,
+    sources: checkedSources,
+    deposits: checkedDeposits,
+    deposit,
+  };
+}
 /** Public results are decoded by allowlist; native-private payloads never enter screen state. */
 export function parseDepositSnapshot(value: unknown, owner: EarnOwner): DepositSnapshot {
   const row = object(value),
     profileId = row.profileId;
+  const distribution =
+    row.distribution === undefined ? undefined : parseEarnDistribution(row.distribution);
   if (
     row.version !== 1 ||
     row.walletId !== owner.walletId ||
     (profileId !== "robinhood-usdg" && profileId !== "ethereum-usdc") ||
     !phases.includes(row.phase as DepositPhase) ||
     !Array.isArray(row.destinations) ||
-    row.destinations.length !== 2
+    row.destinations.length !== (distribution?.weightsBps.length ?? 2)
   )
     fail();
   const destinations = row.destinations.map((value, i) => {
     const d = object(value);
-    if (d.role !== (i === 0 ? "hold" : "invest") || d.chainId !== earnProfiles[profileId].chainId)
+    if (
+      d.role !== (distribution ? "invest" : i === 0 ? "hold" : "invest") ||
+      d.chainId !== earnProfiles[profileId].chainId ||
+      (distribution && d.slot !== i)
+    )
       fail();
-    return { role: d.role, chainId: d.chainId, address: address(d.address) } as EarnDestination;
-  }) as [EarnDestination, EarnDestination];
-  if (destinations[0].address.toLowerCase() === destinations[1].address.toLowerCase()) fail();
+    return {
+      role: d.role,
+      chainId: d.chainId,
+      address: address(d.address),
+      ...(distribution ? { slot: i } : {}),
+    } as EarnDestination;
+  }) as [EarnDestination, ...EarnDestination[]];
+  if (new Set(destinations.map((d) => d.address.toLowerCase())).size !== destinations.length)
+    fail();
   if (
     !Array.isArray(row.completedSteps) ||
     row.completedSteps.some((s) => !stages.includes(s as DepositStage)) ||
@@ -289,6 +458,7 @@ export function parseDepositSnapshot(value: unknown, owner: EarnOwner): DepositS
     profileId,
     phase: row.phase as DepositPhase,
     destinations,
+    ...(distribution ? { distribution } : {}),
     budgetAtoms: atoms(row.budgetAtoms, true),
     creditedAtoms: atoms(row.creditedAtoms),
     holdReceivedAtoms: atoms(row.holdReceivedAtoms),
@@ -303,7 +473,7 @@ export function parseDepositSnapshot(value: unknown, owner: EarnOwner): DepositS
     const indicative: DepositIndicativeReview = {
       quotedAtMs: integer(i.quotedAtMs),
       sourceBudgetAtoms: atoms(i.sourceBudgetAtoms, true),
-      holdEstimatedAtoms: atoms(i.holdEstimatedAtoms, true),
+      holdEstimatedAtoms: atoms(i.holdEstimatedAtoms, !distribution),
       investEstimatedAtoms: atoms(i.investEstimatedAtoms, true),
       sourceMaximumFeeAtoms: atoms(i.sourceMaximumFeeAtoms),
     };
@@ -322,13 +492,59 @@ export function parseDepositSnapshot(value: unknown, owner: EarnOwner): DepositS
   if (row.message !== undefined) result.message = text(row.message, /^[\s\S]{0,1024}$/);
   if (row.depositTransactionHash)
     result.depositTransactionHash = text(row.depositTransactionHash, /^0x[0-9a-f]{64}$/i);
+  if (distribution && row.investments !== undefined) {
+    if (!Array.isArray(row.investments) || row.investments.length !== destinations.length) fail();
+    result.investments = row.investments.map((raw, slot) => {
+      const w = object(raw),
+        status = w.status;
+      if (
+        w.slot !== slot ||
+        w.recipient !== destinations[slot]!.address ||
+        !["pending", "received", "depositing", "invested", "paused"].includes(String(status))
+      )
+        fail();
+      const investment: NonNullable<DepositSnapshot["investments"]>[number] = {
+        slot,
+        recipient: destinations[slot]!.address,
+        receivedAtoms: atoms(w.receivedAtoms),
+        depositedAtoms: atoms(w.depositedAtoms),
+        sharesAtoms: atoms(w.sharesAtoms),
+        status: status as NonNullable<DepositSnapshot["investments"]>[number]["status"],
+      };
+      if (w.transactionHash !== undefined)
+        investment.transactionHash = text(w.transactionHash, /^0x[0-9a-f]{64}$/i);
+      if (
+        BigInt(investment.depositedAtoms) > BigInt(investment.receivedAtoms) ||
+        (status === "invested" &&
+          (!investment.transactionHash ||
+            BigInt(investment.depositedAtoms) === 0n ||
+            BigInt(investment.sharesAtoms) === 0n))
+      )
+        fail();
+      return investment;
+    });
+  }
+  if (
+    distribution &&
+    (result.holdReceivedAtoms !== "0" ||
+      (result.indicativeReview && result.indicativeReview.holdEstimatedAtoms !== "0"))
+  )
+    fail();
   if (result.phase === "paused" && !result.pauseReason) fail();
   if (
     result.phase === "invested" &&
-    (!result.depositTransactionHash ||
+    ((!distribution && !result.depositTransactionHash) ||
+      (distribution &&
+        (!result.investments ||
+          result.investments.some((w) => w.status !== "invested") ||
+          (["receivedAtoms", "depositedAtoms", "sharesAtoms"] as const).some(
+            (field) =>
+              result.investments!.reduce((sum, w) => sum + BigInt(w[field]), 0n) !==
+              BigInt(result[field === "receivedAtoms" ? "investReceivedAtoms" : field]),
+          ))) ||
       result.completedSteps.length !== 4 ||
       [
-        result.holdReceivedAtoms,
+        ...(distribution ? [] : [result.holdReceivedAtoms]),
         result.investReceivedAtoms,
         result.depositedAtoms,
         result.sharesAtoms,

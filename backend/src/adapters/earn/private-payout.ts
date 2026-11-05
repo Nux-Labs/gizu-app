@@ -1,5 +1,13 @@
 import { qualifyAuroraFees, type AuroraFeeProof } from "./fee-policy.ts";
 import { z } from "zod";
+import {
+  distributionSchema,
+  payoutLegSchema,
+  validDistributionLeg,
+  distributionAmount,
+  type Distribution,
+  type PayoutLeg,
+} from "./distribution.ts";
 import { EarnRecoveryEnvelope } from "./recovery-envelope.ts";
 import { base58 } from "@scure/base";
 import {
@@ -72,12 +80,13 @@ const source = z
     settlementEnvelope: z.string().min(1).max(131072).optional(),
   })
   .strict();
-export const payoutPrepareInput = z
+const payoutPrepareBase = z
   .object({
     operationId: id,
     revision: rev,
     profileChainId: z.union([z.literal(1), z.literal(4663)]),
-    leg: z.enum(["hold", "invest"]),
+    leg: payoutLegSchema,
+    distribution: distributionSchema.optional(),
     recipient: addr,
     sourceAccountIndex: z.number().int().min(0).max(2147483647).default(0),
     cycleIndex: z.number().int().min(0).max(715827881).default(0),
@@ -92,21 +101,23 @@ export const payoutPrepareInput = z
     replaceExpiredUnsigned: z.boolean().optional(),
   })
   .strict();
-export const payoutSubmitInput = z
+const payoutSubmitBase = z
   .object({
     operationId: id,
     revision: rev,
-    leg: z.enum(["hold", "invest"]),
+    leg: payoutLegSchema,
+    distribution: distributionSchema.optional(),
     quoteId: hash,
     signedData: auth,
     recoveryEnvelope: recoveryEnvelope.optional(),
   })
   .strict();
-export const payoutSettlementInput = z
+const payoutSettlementBase = z
   .object({
     operationId: id,
     revision: rev,
-    leg: z.enum(["hold", "invest"]),
+    leg: payoutLegSchema,
+    distribution: distributionSchema.optional(),
     quoteId: hash,
     signedData: auth,
     destinationTransactionHash: hash.optional(),
@@ -114,6 +125,11 @@ export const payoutSettlementInput = z
     recoveryEnvelope: recoveryEnvelope.optional(),
   })
   .strict();
+export const payoutPrepareInput =
+  payoutPrepareBase.refine(validDistributionLeg);
+export const payoutSubmitInput = payoutSubmitBase.refine(validDistributionLeg);
+export const payoutSettlementInput =
+  payoutSettlementBase.refine(validDistributionLeg);
 const returnedSource = source
   .extend({
     routeKind: z.enum(["returnUsdc", "returnEth", "hoodTokenReturn"]),
@@ -124,11 +140,12 @@ const returnedSource = source
     ]),
   })
   .strict();
-export const withdrawalPrepareInput = payoutPrepareInput
-  .omit({ leg: true, source: true })
+export const withdrawalPrepareInput = payoutPrepareBase
+  .omit({ leg: true, source: true, distribution: true })
   .extend({
     cycleIndex: z.number().int().min(0).max(715827881),
     source: returnedSource,
+    distribution: z.undefined().optional(),
   })
   .strict();
 const internalWithdrawalPrepare = withdrawalPrepareInput.extend({
@@ -138,10 +155,12 @@ const internalPrepareInput = z.union([
   payoutPrepareInput,
   internalWithdrawalPrepare,
 ]);
-export const withdrawalSubmitInput = payoutSubmitInput.extend({
+export const withdrawalSubmitInput = payoutSubmitBase.extend({
+  distribution: z.undefined().optional(),
   leg: z.literal("withdrawal"),
 });
-export const withdrawalSettlementInput = payoutSettlementInput.extend({
+export const withdrawalSettlementInput = payoutSettlementBase.extend({
+  distribution: z.undefined().optional(),
   leg: z.literal("withdrawal"),
 });
 const internalSubmitInput = z.union([payoutSubmitInput, withdrawalSubmitInput]);
@@ -352,7 +371,8 @@ export interface PayoutQuoteBinding {
   operationId: string;
   revision: number;
   profileChainId: 1 | 4663;
-  leg: "hold" | "invest" | "withdrawal";
+  leg: PayoutLeg | "withdrawal";
+  distribution?: Distribution;
   quoteId: Hex;
   depositId: string;
   confidentialAccount: Address;
@@ -406,7 +426,7 @@ const omitRead = {
   replaceExpiredUnsigned: true,
 } as const;
 const sourceRequestSchema = z.union([
-  payoutPrepareInput.omit(omitRead),
+  payoutPrepareBase.omit(omitRead).refine(validDistributionLeg),
   internalWithdrawalPrepare.omit(omitRead),
 ]);
 function sourceRequest(
@@ -433,7 +453,8 @@ interface RecordEntry {
 export interface PayoutSubmission {
   operationId: string;
   revision: number;
-  leg: "hold" | "invest" | "withdrawal";
+  leg: PayoutLeg | "withdrawal";
+  distribution?: Distribution;
   quoteId: Hex;
   status: "submitted" | "submissionUnknown";
   intentHash?: string;
@@ -459,12 +480,16 @@ export class PrivatePayoutGateway {
     { fingerprint: string; creditedAtoms: string }
   >();
   private rates = new Map<string, { started: number; count: number }>();
-  private checkRate(client: string) {
+  private checkRate(client: string, distribution?: Distribution) {
     for (const [key, row] of this.rates)
       if (row.started + 60000 <= this.now()) this.rates.delete(key);
-    const key = client.slice(0, 128),
+    // Only schema-validated distribution requests reach this method. Five independently
+    // quoted/submitted/reconciled slots need up to five legacy request budgets; both
+    // namespaces retain the same one-minute window and shared 512-entry capacity bound.
+    const maximum = distribution ? 150 : 30;
+    const key = `${distribution ? "distribution" : "legacy"}:${client.slice(0, 128)}`,
       row = this.rates.get(key);
-    if ((row && row.count >= 30) || (!row && this.rates.size >= 512))
+    if ((row && row.count >= maximum) || (!row && this.rates.size >= 512))
       throw new NativeGatewayError(429, "EARN_PAYOUT_RATE_LIMIT");
     this.rates.set(
       key,
@@ -516,6 +541,7 @@ export class PrivatePayoutGateway {
       revision: number;
       leg: string;
       quoteId?: string;
+      distribution?: Distribution;
     },
   ): RecordEntry {
     try {
@@ -540,6 +566,10 @@ export class PrivatePayoutGateway {
         q.operationId !== request.operationId ||
         q.revision !== request.revision ||
         q.leg !== request.leg ||
+        JSON.stringify(request.distribution) !==
+          JSON.stringify(identity.distribution) ||
+        JSON.stringify(q.distribution) !==
+          JSON.stringify(request.distribution) ||
         q.profileChainId !== request.profileChainId ||
         !same(q.confidentialAccount, request.source.confidentialAccount) ||
         !same(q.destinationRecipient, request.recipient) ||
@@ -600,6 +630,7 @@ export class PrivatePayoutGateway {
           sourceAccountIndex: request.sourceAccountIndex,
           cycleIndex: request.cycleIndex,
           splitOffsetAtoms: request.splitOffsetAtoms,
+          distribution: request.distribution,
         }),
         cycle = this.cycles.get(fundingScope);
       if (
@@ -717,7 +748,7 @@ export class PrivatePayoutGateway {
     i: z.output<typeof internalPrepareInput>,
     client: string,
   ): Promise<PreparedPrivatePayout> {
-    this.checkRate(client);
+    this.checkRate(client, i.distribution);
     if (!this.recovery.configured)
       throw new NativeGatewayError(503, "EARN_PAYOUT_RECOVERY_UNCONFIGURED");
     if (!this.config.auroraApiKey || !this.fees)
@@ -725,7 +756,8 @@ export class PrivatePayoutGateway {
     // One current-leg recipient only; native role derivation guards sibling identity.
     if (
       same(i.recipient, i.source.confidentialAccount) ||
-      (i.leg === "invest" && same(i.recipient, i.source.sourceOwner))
+      ((i.leg === "invest" || i.distribution) &&
+        same(i.recipient, i.source.sourceOwner))
     )
       throw new NativeGatewayError(400, "INVALID_PAYOUT_IDENTITIES");
     if (
@@ -747,6 +779,7 @@ export class PrivatePayoutGateway {
       sourceAccountIndex: i.sourceAccountIndex,
       cycleIndex: i.cycleIndex,
       splitOffsetAtoms: i.splitOffsetAtoms,
+      distribution: i.distribution,
     });
     const cycle = this.cycles.get(fundingScope);
     if (cycle && cycle.fingerprint !== cycleFingerprint)
@@ -818,7 +851,8 @@ export class PrivatePayoutGateway {
         const verified = await this.settlement.read(i.signedData, expectation);
         if (
           verified.status !== "credited" ||
-          BigInt(verified.creditedAtoms) < (i.leg === "withdrawal" ? 1n : 10n)
+          BigInt(verified.creditedAtoms) <
+            (i.leg === "withdrawal" || i.distribution ? 1n : 10n)
         )
           throw new Error("Actual source credit required");
         const settledCycle = this.cycles.get(fundingScope);
@@ -837,8 +871,9 @@ export class PrivatePayoutGateway {
         const credited = BigInt(verified.creditedAtoms),
           offset = BigInt(i.splitOffsetAtoms),
           hold = (offset + credited) / 10n - offset / 10n,
-          amount =
-            i.leg === "withdrawal"
+          amount = i.distribution
+            ? distributionAmount(i.distribution, i.leg, offset, credited)
+            : i.leg === "withdrawal"
               ? credited
               : i.leg === "hold"
                 ? hold
@@ -1082,6 +1117,7 @@ export class PrivatePayoutGateway {
           revision: i.revision,
           leg: i.leg,
           splitOffsetAtoms: i.splitOffsetAtoms,
+          distribution: i.distribution,
           sourceAccountIndex: i.sourceAccountIndex,
           cycleIndex: i.cycleIndex,
           ...(i.leg === "withdrawal"
@@ -1099,6 +1135,7 @@ export class PrivatePayoutGateway {
           revision: i.revision,
           profileChainId: i.profileChainId,
           leg: i.leg,
+          ...(i.distribution ? { distribution: i.distribution } : {}),
           quoteId,
           depositId: q.depositAddress,
           confidentialAccount: i.source.confidentialAccount,
@@ -1181,11 +1218,14 @@ export class PrivatePayoutGateway {
     leg: string;
     quoteId: string;
     recoveryEnvelope?: string;
+    distribution?: Distribution;
   }): RecordEntry {
     if (i.recoveryEnvelope) return this.restore(i.recoveryEnvelope, i);
     const entry = this.records.get(this.key(i));
     if (
       !entry ||
+      JSON.stringify(entry.request.distribution) !==
+        JSON.stringify(i.distribution) ||
       entry.retireAt <= this.now() ||
       !same(entry.prepared.quote.quoteId, i.quoteId)
     )
@@ -1241,7 +1281,7 @@ export class PrivatePayoutGateway {
     i: z.output<typeof internalSubmitInput>,
     client: string,
   ): Promise<PayoutSubmission> {
-    this.checkRate(client);
+    this.checkRate(client, i.distribution);
     const entry = this.entry(i),
       q = entry.prepared.quote;
     await this.verifySignedIntent(entry, i.signedData);
@@ -1268,6 +1308,7 @@ export class PrivatePayoutGateway {
           operationId: i.operationId,
           revision: i.revision,
           leg: i.leg,
+          ...(q.distribution ? { distribution: q.distribution } : {}),
           quoteId: q.quoteId,
           status: "submitted",
           intentHash: intentHash(result.intentHash),
@@ -1278,6 +1319,7 @@ export class PrivatePayoutGateway {
           operationId: i.operationId,
           revision: i.revision,
           leg: i.leg,
+          ...(q.distribution ? { distribution: q.distribution } : {}),
           quoteId: q.quoteId,
           status: "submissionUnknown",
           signedBodyHash: signedHash,
@@ -1389,6 +1431,7 @@ export class PrivatePayoutGateway {
       operationId: i.operationId,
       revision: i.revision,
       leg: i.leg,
+      ...(q.distribution ? { distribution: q.distribution } : {}),
       quoteId: q.quoteId,
       confidentialAccount: q.confidentialAccount,
       destinationChainId: q.destinationChainId,
@@ -1448,7 +1491,7 @@ export class PrivatePayoutGateway {
     i: z.output<typeof internalSettlementInput>,
     client: string,
   ) {
-    this.checkRate(client);
+    this.checkRate(client, i.distribution);
     const entry = this.entry(i),
       q = entry.prepared.quote;
     if (!entry.signedHash && !entry.restored)
@@ -1498,6 +1541,7 @@ export class PrivatePayoutGateway {
           operationId: i.operationId,
           revision: i.revision,
           leg: i.leg,
+          ...(q.distribution ? { distribution: q.distribution } : {}),
           quoteId: q.quoteId,
           confidentialAccount: q.confidentialAccount,
           destinationChainId: q.destinationChainId,
@@ -1547,6 +1591,7 @@ export class PrivatePayoutGateway {
             operationId: i.operationId,
             revision: i.revision,
             leg: i.leg,
+            ...(q.distribution ? { distribution: q.distribution } : {}),
             quoteId: q.quoteId,
             status: "submitted" as const,
             intentHash: actualIntent,

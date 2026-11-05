@@ -1,7 +1,9 @@
 import { parseVaultPlan, vaultProposal, parseVaultOperations } from "@/domain/earn/vaultExecution";
 import { earnProfiles, type EarnIntent } from "@/domain/earn/types";
 const owner = "0x" + "3".repeat(40);
-export const intent: EarnIntent = {
+export const intent: EarnIntent & {
+  destinations: [EarnIntent["destinations"][0], EarnIntent["destinations"][0]];
+} = {
   status: "prepared",
   version: "gizu-earn-v1",
   intentId: "earn-v1:test",

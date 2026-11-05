@@ -1,5 +1,6 @@
 import type { EarnIntent } from "./types";
 import { earnAtoms, earnObject } from "./vaultExecution";
+import { assertInvestmentSlot } from "./distribution";
 export type EarnWithdrawalOperation = {
   operationId: string;
   walletId: string;
@@ -50,6 +51,7 @@ export function parseEarnWithdrawals(
     .filter((value) => (earnObject(value).cycleIndex ?? 0) === (intent.cycleIndex ?? 0))
     .map((value) => {
       const row = earnObject(value);
+      assertInvestmentSlot(row, intent);
       if (
         typeof row.operationId !== "string" ||
         !/^[-a-zA-Z0-9_]{1,128}$/.test(row.operationId) ||

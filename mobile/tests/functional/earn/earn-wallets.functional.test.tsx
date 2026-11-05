@@ -41,6 +41,18 @@ const intent = {
     import("@/domain/earn/types").EarnDestination,
   ],
 };
+const distributionIntent = {
+  ...intent,
+  version: "gizu-earn-v2" as const,
+  cycleIndex: 1,
+  intentId: `earn-v2:${walletId}:ethereum-usdc:1`,
+  distribution: { version: 1 as const, weightsBps: [10000] },
+  distributionBudgetAtoms: "3000000",
+  investmentSlot: 0,
+  destinations: [{ ...intent.destinations[1], role: "invest" as const, slot: 0 }] as [
+    (typeof intent.destinations)[0],
+  ],
+};
 beforeEach(() => {
   jest.spyOn(Linking, "getInitialURL").mockResolvedValue(null);
   jest.spyOn(Linking, "addEventListener");
@@ -64,6 +76,8 @@ function setup(catalog?: OpportunityDetail) {
   const earn = {
     load: jest.fn().mockResolvedValue({ status: "absent" }),
     prepare: jest.fn().mockResolvedValue(intent),
+    prepareDistribution:
+      catalog?.chainId === 1 ? jest.fn().mockResolvedValue(distributionIntent) : undefined,
     cancel: jest.fn(),
   };
   const privateBalance = {
@@ -300,9 +314,15 @@ test("catalog Deposit uses the exact supported vault and allocates only after ex
   await userEvent.press(await screen.findByRole("button", { name: "Deposit" }));
   expect(await screen.findByText("Ethereum · Pendle")).toBeVisible();
   expect(earn.prepare).not.toHaveBeenCalled();
+  await userEvent.type(screen.getByLabelText("USDC deposit amount"), "3");
   await userEvent.press(screen.getByRole("button", { name: "Prepare deposit wallets" }));
   expect(await screen.findByText("Pendle USDC")).toBeVisible();
-  expect(earn.prepare).toHaveBeenCalledWith({ walletId, address }, "ethereum-usdc");
+  expect(earn.prepareDistribution).toHaveBeenCalledWith(
+    { walletId, address },
+    "ethereum-usdc",
+    "3000000",
+  );
+  expect(earn.prepare).not.toHaveBeenCalled();
 });
 
 test("catalog Deposit starts a fresh cycle rather than reusing an existing investment", async () => {
@@ -314,22 +334,27 @@ test("catalog Deposit starts a fresh cycle rather than reusing an existing inves
   const { earn } = setup(vault);
   earn.load.mockResolvedValue(intent);
   const next = {
-    ...intent,
+    ...distributionIntent,
     version: "gizu-earn-v2" as const,
     cycleIndex: 1,
     intentId: `earn-v2:${walletId}:ethereum-usdc:1`,
   };
   const pending = deferred<typeof next>();
-  const prepareNew = jest.fn().mockReturnValue(pending.promise);
-  Object.assign(earn, { prepareNew });
+  const prepareDistribution = jest.fn().mockReturnValue(pending.promise);
+  Object.assign(earn, { prepareDistribution });
   await screen.findByRole("button", { name: "Continue with passkey" });
   await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
   await userEvent.press(await screen.findByRole("button", { name: `View ${vault.name}` }));
   await userEvent.press(await screen.findByRole("button", { name: "Deposit" }));
+  await userEvent.type(await screen.findByLabelText("USDC deposit amount"), "3");
   await userEvent.press(await screen.findByRole("button", { name: "Prepare deposit wallets" }));
   expect(screen.queryByText("Wallet 1 · Hold 10%")).toBeNull();
   expect(screen.getByRole("button", { name: "Prepare deposit wallets" })).toBeDisabled();
-  expect(prepareNew).toHaveBeenCalledWith({ walletId, address }, "ethereum-usdc");
+  expect(prepareDistribution).toHaveBeenCalledWith(
+    { walletId, address },
+    "ethereum-usdc",
+    "3000000",
+  );
   await act(async () => pending.resolve(next));
   expect(await screen.findByText("Pendle USDC")).toBeVisible();
   expect(earn.prepare).not.toHaveBeenCalled();

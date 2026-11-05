@@ -1,3 +1,4 @@
+import { investmentDestination, assertInvestmentSlot } from "@/domain/earn/distribution";
 import { parseEarnFeeProof, type EarnFeeProof } from "./policy";
 import { earnObject, earnAtoms } from "./vaultExecution";
 import type { EarnIntent } from "./types";
@@ -369,6 +370,7 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
       throw new Error("Native sponsorship journal changed.");
     seen.add(r.operationId);
     const source = kind === "sourceFunding";
+    if (!source) assertInvestmentSlot(r, intent);
     const selectedSource = r.sourceAccountIndex !== undefined;
     if (selectedSource && (!integer(r.sourceAccountIndex) || !address(r.from)))
       throw new Error("Invalid native funding account.");
@@ -379,7 +381,7 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
           ? (r.from as string)
           : source
             ? intent.sourceAddress
-            : intent.destinations[1].address,
+            : investmentDestination(intent).address,
       chainId = source ? 143 : 4663;
     if (
       r.chainId !== chainId ||

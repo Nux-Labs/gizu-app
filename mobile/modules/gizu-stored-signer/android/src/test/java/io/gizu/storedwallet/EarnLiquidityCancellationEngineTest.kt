@@ -349,6 +349,15 @@ class EarnLiquidityCancellationEngineTest {
     }
 
   @Test
+  fun distributionCancellationRetainsOriginalCycleAndInvestmentSlot() {
+    val op = setup().get("return-1").put("raw", "0x02original")
+    op.getJSONObject("signingProposal").put("cycleIndex", 7).put("investmentSlot", 3)
+    val proposal = nativeLiquidityCancellationProposal(op, state(), 100)
+    assertEquals(7, proposal.getInt("cycleIndex"))
+    assertEquals(3, proposal.getInt("investmentSlot"))
+  }
+
+  @Test
   fun eip1559CancellationBumpsBothFeesAndPreservesNonceAcrossFurtherApprovedBumps() {
     val op = setup().get("return-1").put("raw", "0x02original")
     op.getJSONObject("signingProposal").put("priorityFeePerGasWei", "2")

@@ -33,6 +33,9 @@ internal class EarnDepositRemaining(
     check(root.getInt("revision") == revision && root.getString("phase") == "paused")
     val old = root.getJSONObject("review")
     val refs = root.getJSONObject("children")
+    savedCycleDistribution(record)?.let { distribution ->
+      return refreshDistribution(record, root, old, refs, distribution, id, revision)
+    }
     val depositRef = refs.optJSONArray("deposit")
     if (depositRef != null && deposit(depositRef.getString(0)).sponsoredSpendSaved()) return root
     val next = JSONObject(old.toString())
@@ -126,6 +129,159 @@ internal class EarnDepositRemaining(
       .put("reservation", reservation())
       .put("policyVersion", preview.getString("policyVersion"))
     next.put("deposit", vaultApprovalBounds(preview))
+    EarnDepositApproval.fromReview(record, next).invalidate()
+    return journal.saveRemainingReview(id, revision, next)
+  }
+
+  private suspend fun refreshDistribution(
+    record: WalletRecord,
+    root: JSONObject,
+    old: JSONObject,
+    refs: JSONObject,
+    distribution: JSONObject,
+    id: String,
+    revision: Int,
+  ): JSONObject {
+    check(nativeJsonEqual(distribution, old.getJSONObject("distribution")))
+    val weights = distributionWeights(distribution)
+    val rows = JSONArray()
+    val sources = JSONArray()
+    val minimums = MutableList(weights.size) { BigInteger.ZERO }
+    val paid = MutableList(weights.size) { BigInteger.ZERO }
+    var offset = BigInteger.ZERO
+    var expiry = Long.MAX_VALUE
+    for (previous in old.getJSONArray("sources").objects().sortedBy { it.getInt("accountIndex") }) {
+      val sourceId = previous.getString("operationId")
+      val updated =
+        source(
+          old.getJSONArray("fundingRows").objects().single {
+            it.getString("operationId") == sourceId
+          }
+        )
+      val proposal = updated.row.getJSONObject("proposal")
+      val credit = depositAtoms(updated.minimumCredit, true)
+      val amounts = distributionAmounts(distribution, credit, offset)
+      val current =
+        JSONObject(previous.toString())
+          .put("amountAtoms", proposal.getString("amountAtoms"))
+          .put("maximumFeeAtoms", proposal.getString("maximumTokenFeeAtoms"))
+          .put("minimumCreditAtoms", credit.toString())
+          .put(
+            "retainedAtoms",
+            (depositAtoms(proposal.getString("budgetAtoms")) -
+                depositAtoms(proposal.getString("amountAtoms")) -
+                depositAtoms(proposal.getString("maximumTokenFeeAtoms")))
+              .toString(),
+          )
+      val allocations = JSONArray()
+      for (slot in weights.indices) {
+        val leg = "invest:$slot"
+        val input = amounts[slot].toString()
+        val child =
+          refs.optJSONArray(leg)?.let { references ->
+            (0 until references.length())
+              .map { payout(references.getString(it)) }
+              .singleOrNull { it.getJSONObject("proposal").getString("operationId") == sourceId }
+          }
+        if (child != null) check(child.getJSONObject("proposal").getString("leg") == leg)
+        val settled = child?.let(receipt)
+        val bound =
+          JSONObject(previous.getJSONArray("allocations").getJSONObject(slot).toString())
+            .put("inputAtoms", input)
+        check(bound.getString("recipient").equals(cycleInvestmentAddress(record, slot), true))
+        if (settled != null) {
+          check(child!!.getJSONObject("proposal").getString("amountAtoms") == input)
+          bound.put("minimumOutputAtoms", settled).put("estimatedOutputAtoms", settled)
+          paid[slot] += depositAtoms(settled, true)
+        } else if (child?.has("signedData") == true) {
+          val fixed = child.getJSONObject("proposal")
+          check(fixed.getString("amountAtoms") == input)
+          val minimum = depositAtoms(fixed.getString("minimumDestinationAtoms"), true)
+          bound
+            .put("minimumOutputAtoms", minimum.toString())
+            .put(
+              "estimatedOutputAtoms",
+              maxOf(minimum, depositAtoms(bound.getString("estimatedOutputAtoms"))).toString(),
+            )
+        } else {
+          val preview =
+            gateway.payoutPreview(record, sourceId, proposal.getInt("revision"), leg, input)
+          bound
+            .put("minimumOutputAtoms", preview.getString("minimumOutputAtoms"))
+            .put("estimatedOutputAtoms", preview.getString("estimatedOutputAtoms"))
+            .put("providerFeeBps", preview.getInt("providerFeeBps"))
+          expiry = minOf(expiry, preview.getLong("expiresAtMs"))
+        }
+        minimums[slot] += depositAtoms(bound.getString("minimumOutputAtoms"), true)
+        allocations.put(bound)
+      }
+      current.put("allocations", allocations)
+      rows.put(updated.row)
+      sources.put(current)
+      offset += credit
+      if (!updated.row.sponsoredSpendSaved())
+        expiry = minOf(expiry, Math.multiplyExact(proposal.getLong("deadline"), 1000))
+    }
+    val depositRows =
+      refs.optJSONArray("deposit")?.let { references ->
+        (0 until references.length()).map { deposit(references.getString(it)) }
+      } ?: emptyList()
+    check(depositRows.size <= weights.size)
+    val depositSlots = depositRows.map { it.getJSONObject("proposal").getInt("investmentSlot") }
+    check(
+      depositSlots.distinct().size == depositSlots.size &&
+        depositSlots.all { it in weights.indices }
+    )
+    val deposits =
+      weights.indices.map { slot ->
+        val child =
+          depositRows.singleOrNull { it.getJSONObject("proposal").getInt("investmentSlot") == slot }
+        val previous = old.getJSONArray("deposits").getJSONObject(slot)
+        check(
+          previous.getInt("slot") == slot &&
+            previous.getString("recipient").equals(cycleInvestmentAddress(record, slot), true)
+        )
+        if (child != null)
+          check(
+            child
+              .getJSONObject("proposal")
+              .getString("expectedFrom")
+              .equals(cycleInvestmentAddress(record, slot), true)
+          )
+        val invested =
+          root.getJSONArray("investments").getJSONObject(slot).getString("status") == "invested"
+        check(!invested || child?.sponsoredSpendSaved() == true) {
+          "Missing completed investment child"
+        }
+        if (child?.sponsoredSpendSaved() == true) JSONObject(previous.toString())
+        else {
+          val preview =
+            gateway.depositPreview(
+              record,
+              id,
+              root.getInt("revision"),
+              minimums[slot].toString(),
+              paid[slot].toString(),
+              slot,
+            )
+          check(preview.getString("policyVersion") == old.getString("policyVersion"))
+          expiry = minOf(expiry, preview.getLong("expiresAtMs"))
+          vaultApprovalBounds(preview)
+            .put("slot", slot)
+            .put("recipient", cycleInvestmentAddress(record, slot))
+        }
+      }
+    check(expiry > now())
+    val next =
+      JSONObject(old.toString())
+        .put("roleRegistry", JSONObject(record.roleRegistry))
+        .put("quotedAtMs", now())
+        .put("expiresAtMs", minOf(expiry, now() + 45000))
+        .put("sources", sources)
+        .put("fundingRows", rows)
+        .put("reservation", reservation())
+        .put("deposits", JSONArray(deposits))
+        .put("deposit", aggregateDepositBounds(deposits))
     EarnDepositApproval.fromReview(record, next).invalidate()
     return journal.saveRemainingReview(id, revision, next)
   }

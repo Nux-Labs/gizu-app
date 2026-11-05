@@ -7,11 +7,15 @@ import type { LiquidityOperation, LiquidityPlan } from "@/domain/earn/ethereumLi
 import { useFundingWallet } from "@/features/wallet/WalletProvider";
 import { useEarn } from "./EarnProvider";
 import { depositBudgetAtoms } from "./useDepositJourney";
+import { payoutLegs } from "@/domain/earn/distribution";
+import { formatUsdc } from "@/domain/wallet/amounts";
 /** Ethereum keeps its existing per-stage approvals, payload validation and durable engines. */
 export function useLegacyEthereumDeposit(intent: EarnIntent) {
   const { sourceFunding: source, payout, liquidity, vaultExecution: vault } = useEarn(),
     wallet = useFundingWallet();
-  const [amount, setAmount] = useState(""),
+  const [amount, setAmount] = useState(
+      intent.distributionBudgetAtoms ? formatUsdc(intent.distributionBudgetAtoms) : "",
+    ),
     [fundings, setFundings] = useState<SponsoredOperation[]>([]),
     [payouts, setPayouts] = useState<PayoutOperation[]>([]),
     [fills, setFills] = useState<LiquidityOperation[]>([]),
@@ -106,7 +110,7 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
   const nextPayout = allCredit
     ? active
         .flatMap((s) =>
-          (["hold", "invest"] as const).map((leg) => ({
+          payoutLegs(intent).map((leg) => ({
             source: s,
             leg,
             existing: payouts.find((p) => p.sourceOperationId === s.operationId && p.leg === leg),
@@ -160,7 +164,9 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
   else if (stage === "payouts")
     label = nextPayout?.existing
       ? "Check payout progress"
-      : `Review and authorize ${nextPayout?.leg === "hold" ? "10% hold" : "90% investment"} payout`;
+      : intent.distribution
+        ? `Review and authorize wallet ${Number(nextPayout?.leg.split(":")[1] ?? 0) + 1} payout`
+        : `Review and authorize ${nextPayout?.leg === "hold" ? "10% hold" : "90% investment"} payout`;
   else if (stage === "liquidity") label = "Check ETH funding progress";
   else if (stage === "vault")
     label = positions.some((p) => p.blocked) ? "Review saved vault step" : "Review vault deposit";

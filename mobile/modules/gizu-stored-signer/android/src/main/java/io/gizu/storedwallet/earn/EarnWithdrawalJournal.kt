@@ -178,6 +178,7 @@ internal class EarnWithdrawalJournal(
           "revision",
           "profileChainId",
           "cycleIndex",
+          "investmentSlot",
           "recipientIndex",
           "returnOperationId",
           "returnTransactionHash",
@@ -304,6 +305,7 @@ internal class EarnWithdrawalJournal(
       put("chainId", 143L)
       put("profileChainId", p.getLong("profileChainId"))
       put("cycleIndex", p.optInt("cycleIndex", 0))
+      if (p.has("investmentSlot")) put("investmentSlot", p.getInt("investmentSlot"))
       put("returnOperationId", p.getString("returnOperationId"))
       put("recipient", p.getString("expectedRecipient"))
       put("amountAtoms", p.getString("amountAtoms"))

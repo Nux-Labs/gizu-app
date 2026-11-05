@@ -1,6 +1,8 @@
 import { createEarnPrivateBalanceService } from "@/services/earn/privateBalance";
 import type { EarnIntent } from "@/domain/earn/types";
-const intent: EarnIntent = {
+const intent: EarnIntent & {
+  destinations: [EarnIntent["destinations"][0], EarnIntent["destinations"][0]];
+} = {
   status: "prepared",
   version: "gizu-earn-v1",
   intentId: "earn-v1:test",

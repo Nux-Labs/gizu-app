@@ -108,6 +108,19 @@ export function createEarnDepositService(
         statusResult(owner, id, bridge().resumeEarnDeposit(owner.walletId, id, revision)),
       ),
     status,
+    async discardDraft(owner, id) {
+      if (occupied.has(owner.walletId)) throw new Error("A deposit action is already running.");
+      const native = bridge();
+      if (!native.discardEarnDepositDraft)
+        throw new Error("Changing this draft requires the updated native build.");
+      occupied.add(owner.walletId);
+      try {
+        await native.discardEarnDepositDraft(owner.walletId, id);
+        uncertain.delete(owner.walletId);
+      } finally {
+        occupied.delete(owner.walletId);
+      }
+    },
     async cancel(owner, id, revision) {
       const saved = parseDepositSnapshot(
         await bridge().cancelEarnDeposit(owner.walletId, id, revision),

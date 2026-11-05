@@ -1,3 +1,4 @@
+import { investmentDestination } from "@/domain/earn/distribution";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { Button } from "@/components/atoms/Button";
@@ -29,7 +30,7 @@ export function PreflightPanel({ intent }: { intent: EarnIntent }) {
     try {
       const next = await preflight.check(
         intent.profileId,
-        intent.destinations[1].address,
+        investmentDestination(intent).address,
         controller.signal,
       );
       if (!controller.signal.aborted) setState(next);
@@ -46,8 +47,8 @@ export function PreflightPanel({ intent }: { intent: EarnIntent }) {
       <View className="gap-3 p-5">
         <Typography variant="row">Vault readiness</Typography>
         <Typography variant="caption">
-          Check wallet 2 and the selected vault before planning fees. This check does not authorize
-          an investment.
+          Check {intent.distribution ? "the selected investment wallet" : "wallet 2"} and the
+          selected vault before planning fees. This check does not authorize an investment.
         </Typography>
         <Button
           label="Check vault readiness"
@@ -59,8 +60,8 @@ export function PreflightPanel({ intent }: { intent: EarnIntent }) {
           <>
             <Typography>Vault asset verified · {earnProfiles[intent.profileId].symbol}</Typography>
             <Typography variant="caption">
-              Wallet 2 balance: {formatUsdc(state.tokenBalance)}{" "}
-              {earnProfiles[intent.profileId].symbol}
+              {intent.distribution ? "Selected wallet" : "Wallet 2"} balance:{" "}
+              {formatUsdc(state.tokenBalance)} {earnProfiles[intent.profileId].symbol}
             </Typography>
             <Typography variant="caption">
               {state.newCycleReady
