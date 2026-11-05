@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OperationCoordinator, CoordinationError } from "./operation-coordinator.ts";
 import { EarnRecoveryEnvelope } from "./recovery-envelope.ts";
 import { getAddress, keccak256, toHex, recoverTypedDataAddress } from "viem";
 import type { Address, Hex } from "viem";
@@ -113,6 +114,7 @@ export interface NativeSettlementQuote extends NativeVerifiedQuote {
 /** Fee admission binds observed route-specific service charges and the configured
  * zero Gizu/integrator fee. It does not infer collector ownership from a quote. */
 export interface NativeGatewayConfiguration {
+  coordination?: OperationCoordinator;
   recoveryKey?: string;
   pimlicoApiKey?: string;
   auroraApiKey?: string;
@@ -409,6 +411,7 @@ export class NativeEarnGateway {
         cached.quote.expiresAt <= this.now() / 1000
       )
         throw new NativeGatewayError(409, "EARN_QUOTE_BINDING_CHANGED");
+      await this.config.coordination?.bind("native-quote", key, fingerprint, cached.retireAt);
       return cached.quote;
     }
     const pending = this.inflight.get(key);
@@ -425,6 +428,10 @@ export class NativeEarnGateway {
       throw new NativeGatewayError(503, "EARN_QUOTE_CAPACITY");
     const promise = this.limited(client, async () => {
       try {
+        if (this.config.coordination) {
+          await this.config.coordination.bind("native-quote", key, fingerprint, this.now()+86400000);
+          if (!await this.config.coordination.claim("native-quote-issue", key, fingerprint, this.now()+86400000)) throw new CoordinationError();
+        }
         const isSource = kind === "source",
           isEth = input.profileChainId === 1;
         const originAsset = isSource
@@ -567,13 +574,14 @@ export class NativeEarnGateway {
           destinationAsset: monadUsdcAssetId,
           quoteCreatedAt: time(body.timestamp),
         });
+        await this.config.coordination?.bind("native-recipient", quote.recipient.toLowerCase(), key, this.now()+86400000);
         const saved = { quote, settlement, fingerprint, retireAt: this.now() + 86400000 };
         const envelope = this.recovery.seal("native-quote", saved);
         const portable = Object.freeze({ ...quote, recoveryEnvelope: envelope });
         this.quotes.set(key, { ...saved, quote: portable });
         return portable;
       } catch (error) {
-        if (error instanceof NativeGatewayError) throw error;
+        if (error instanceof NativeGatewayError || error instanceof CoordinationError) throw error;
         throw new NativeGatewayError(502, "EARN_NATIVE_QUOTE_UNAVAILABLE");
       }
     });
@@ -795,6 +803,14 @@ export class NativeEarnGateway {
     }
     if (!this.config.pimlicoApiKey)
       throw new NativeGatewayError(503, "EARN_BUNDLER_UNCONFIGURED");
+    if (req.method === "eth_sendUserOperation" && this.config.coordination) {
+      const op=opSchema.parse(req.params[0]);
+      const identity=[chain,op.sender.toLowerCase(),op.nonce];
+      const signed={...op,signature:op.signature.toLowerCase()};
+      // An uncertain first send is reconciled by userOp hash; never broadcast twice.
+      if (!await this.config.coordination.claim("bundler-send",identity,signed,this.now()+7*86400000))
+        return {jsonrpc:"2.0",id:req.id,error:{code:-32001,message:"Submission already attempted; reconcile by operation hash."}};
+    }
     return (async () => {
       try {
         const response = await this.fetcher(

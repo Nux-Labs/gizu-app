@@ -26,6 +26,8 @@ internal class WalletRecord(
   val earnRecoveryRequired: Boolean = false,
   val earnCycleIndex: Int = 0,
   val earnCycles: String = "[]",
+  val discoveryHighWater: Int = -1,
+  val discoveryRecoveryRequired: Boolean = false,
 ) : AutoCloseable {
   init {
     UUID.fromString(id)
@@ -34,8 +36,9 @@ internal class WalletRecord(
     require(credential.publicKeyX.size == 32 && credential.publicKeyY.size == 32)
     requireRoleRegistry(roleRegistry)
     require(earnChain in listOf(0, 1, 4663) && earnCycleIndex in 0..1_000_000)
+    require(discoveryHighWater in -1..1_000_000)
     val rows = JSONArray(earnCycles)
-    require(rows.length() <= 256 && earnCycles.length <= 48_000)
+    require(earnCycles.toByteArray().size <= 8 * 1024 * 1024)
     val seen = mutableSetOf<Int>()
     for (i in 0 until rows.length()) {
       val row = rows.getJSONObject(i)
@@ -74,7 +77,10 @@ internal interface WalletKeys {
 
 internal class WalletStore(private val file: WalletFile, private val keys: WalletKeys) {
   private val aad = "io.gizu.storedwallet.v1:wallet:gizu.io:gizu-stored-evm-v1".toByteArray()
-  private val lock = Any()
+
+  companion object {
+    private val lock = Any()
+  }
 
   fun exists() = file.exists()
 
@@ -89,11 +95,11 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
     check(exists())
     val key = keys.existing() ?: error("Missing storage key")
     val encrypted = file.read()
-    require(encrypted.size in 1..65536)
+    require(encrypted.size in 1..16 * 1024 * 1024)
     val clear = CryptoEnvelope.decrypt(key, encrypted, aad)
     try {
       val version = DataInputStream(ByteArrayInputStream(clear)).readInt()
-      require(version in 1..5)
+      require(version in 1..6)
       // Two released development branches used version 4 for different layouts.
       // Validate the entire record before accepting either historical encoding.
       if (version == 4) {
@@ -132,8 +138,14 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           if (v >= 5 || v == 4 && !earnLayout) input.readUTF() else INITIAL_ROLE_REGISTRY
         val cycle = if (v >= 5) input.readInt() else 0
         val cycles =
-          if (v >= 5) input.readUTF()
+          if (v >= 6) {
+            val n = input.readInt()
+            require(n in 2..8 * 1024 * 1024)
+            String(ByteArray(n).also(input::readFully), Charsets.UTF_8)
+          } else if (v >= 5) input.readUTF()
           else if (chain > 0) JSONArray().put(cycleRow(id, 0, chain)).toString() else "[]"
+        val highWater = if (v >= 6) input.readInt() else -1
+        val discoveryRecovery = if (v >= 6) input.readBoolean() else false
         require(input.available() == 0)
         WalletRecord(
           id,
@@ -146,6 +158,8 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           recovery,
           cycle,
           cycles,
+          highWater,
+          discoveryRecovery,
         )
       } catch (e: Exception) {
         entropy.fill(0)
@@ -167,6 +181,8 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
     recovery: Boolean = current.earnRecoveryRequired,
     cycle: Int = current.earnCycleIndex,
     cycles: String = current.earnCycles,
+    highWater: Int = current.discoveryHighWater,
+    discoveryRecovery: Boolean = current.discoveryRecoveryRequired,
   ) =
     WalletRecord(
       current.id,
@@ -179,6 +195,8 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
       recovery,
       cycle,
       cycles,
+      highWater,
+      discoveryRecovery,
     )
 
   private fun checkIdentity(current: WalletRecord, expected: WalletRecord) {
@@ -225,13 +243,14 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
         checkIdentity(current, expected)
         check(current.verified && !current.earnRecoveryRequired)
         val rows = JSONArray(current.earnCycles)
-        check(rows.length() < 256)
+        check(current.earnCycleIndex < 1_000_000)
         if (rows.length() == 0 && current.earnChain > 0)
           rows.put(cycleRow(current.id, 0, current.earnChain))
         val next =
           (0 until rows.length())
             .maxOfOrNull { rows.getJSONObject(it).getInt("cycleIndex") }
-            ?.plus(1) ?: 1
+            ?.let { maxOf(it, current.discoveryHighWater) + 1 }
+            ?: maxOf(1, current.discoveryHighWater + 1)
         rows.put(cycleRow(current.id, next, chain))
         replacement(current, chain = chain, cycle = next, cycles = rows.toString()).use { save(it) }
       }
@@ -273,13 +292,14 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           }
           return@synchronized existing.getString("depositJourneyId")
         }
-        check(rows.length() < 255)
+        check(current.earnCycleIndex < 1_000_000)
         if (rows.length() == 0 && current.earnChain > 0)
           rows.put(cycleRow(current.id, 0, current.earnChain))
         val next =
           (0 until rows.length())
             .maxOfOrNull { rows.getJSONObject(it).getInt("cycleIndex") }
-            ?.let { Math.addExact(it, 1) } ?: 1
+            ?.let { Math.addExact(maxOf(it, current.discoveryHighWater), 1) }
+            ?: maxOf(1, current.discoveryHighWater + 1)
         val id = "deposit_" + UUID.randomUUID().toString().replace("-", "")
         rows.put(
           cycleRow(current.id, next, chain)
@@ -352,6 +372,8 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           true,
           record.earnCycleIndex,
           record.earnCycles,
+          record.discoveryHighWater,
+          record.discoveryRecoveryRequired,
         )
         .use { save(it, key) }
     }
@@ -366,6 +388,95 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
               JSONObject(current.roleRegistry).getInt("nextRecipient")
         )
         replacement(current, registry = registry).use { save(it) }
+      }
+    }
+
+  /** Metadata only. A remote history never restores authorization or clears uncertainty. */
+  fun mergeRecovery(metadata: JSONObject) =
+    synchronized(lock) {
+      load().use { current ->
+        val remote = JSONArray(metadata.getString("earnCycles"))
+        val local = JSONArray(current.earnCycles)
+        val merged = sortedMapOf<Int, JSONObject>()
+        for (source in listOf(local, remote)) for (i in 0 until source.length()) {
+          val row = source.getJSONObject(i)
+          val index = row.getInt("cycleIndex")
+          val existing = merged[index]
+          if (existing == null) merged[index] = JSONObject(row.toString())
+          else
+            for (field in row.keys()) {
+              if (
+                existing.has(field) && existing.get(field).toString() != row.get(field).toString()
+              ) {
+                // Completion is monotonic; all identity/recipient conflicts fail closed.
+                check(field == "depositFinished") { "RECOVERY_METADATA_CONFLICT" }
+                existing.put(field, existing.getBoolean(field) || row.getBoolean(field))
+              } else existing.put(field, row.get(field))
+            }
+        }
+        val registry = JSONObject(current.roleRegistry)
+        registry.put(
+          "nextRecipient",
+          maxOf(
+            registry.getInt("nextRecipient"),
+            JSONObject(metadata.getString("roleRegistry")).getInt("nextRecipient"),
+          ),
+        )
+        val next =
+          maxOf(
+            current.earnCycleIndex,
+            metadata.getInt("earnCycleIndex"),
+            merged.keys.maxOrNull() ?: 0,
+          )
+        val chain = merged[next]?.getInt("chainId") ?: current.earnChain
+        replacement(
+            current,
+            registry = registry.toString(),
+            chain = chain,
+            recovery = true,
+            cycle = next,
+            cycles = JSONArray(merged.values.toList()).toString(),
+            highWater =
+              maxOf(current.discoveryHighWater, metadata.optInt("discoveryHighWater", -1)),
+            discoveryRecovery =
+              current.discoveryRecoveryRequired || metadata.optBoolean("discoveryRecoveryRequired"),
+          )
+          .use { save(it) }
+      }
+    }
+
+  fun recordDiscovered(expected: WalletRecord, cycle: Int, untracked: Boolean) =
+    synchronized(lock) {
+      require(cycle in 0..1_000_000)
+      load().use { current ->
+        checkIdentity(current, expected)
+        replacement(
+            current,
+            highWater = maxOf(current.discoveryHighWater, cycle),
+            recovery = current.earnRecoveryRequired || untracked,
+            discoveryRecovery = current.discoveryRecoveryRequired || untracked,
+          )
+          .use { save(it) }
+      }
+    }
+
+  fun markRecoveryRequired(expected: WalletRecord) =
+    synchronized(lock) {
+      load().use { current ->
+        checkIdentity(current, expected)
+        replacement(current, recovery = true).use { save(it) }
+      }
+    }
+
+  /**
+   * Only the native restored-history verifier may call this after every uncertainty is resolved.
+   */
+  fun completeRecovery(expected: WalletRecord, discoveryResolved: Boolean = false) =
+    synchronized(lock) {
+      load().use { current ->
+        checkIdentity(current, expected)
+        if (!current.discoveryRecoveryRequired || discoveryResolved)
+          replacement(current, recovery = false, discoveryRecovery = false).use { save(it) }
       }
     }
 
@@ -386,7 +497,7 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
       ByteArrayOutputStream()
         .apply {
           DataOutputStream(this).use { out ->
-            out.writeInt(5)
+            out.writeInt(6)
             out.writeBoolean(record.verified)
             out.writeUTF(record.id)
             out.writeUTF(record.journalId)
@@ -405,7 +516,11 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           DataOutputStream(this).use { out ->
             out.writeUTF(record.roleRegistry)
             out.writeInt(record.earnCycleIndex)
-            out.writeUTF(record.earnCycles)
+            val cycles = record.earnCycles.toByteArray()
+            out.writeInt(cycles.size)
+            out.write(cycles)
+            out.writeInt(record.discoveryHighWater)
+            out.writeBoolean(record.discoveryRecoveryRequired)
           }
         }
         .toByteArray()

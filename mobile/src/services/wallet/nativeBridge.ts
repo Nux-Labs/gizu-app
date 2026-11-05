@@ -22,6 +22,7 @@ const coalescedReads = new Set([
   "getSwapHoldings",
   "getSwapStatus",
   "getEarnDepositStatus",
+  "getWalletRecoveryStatus",
 ]);
 function nativeModule(): StoredSignerContract | null {
   const native = supportedPlatform()
@@ -48,13 +49,18 @@ function nativeModule(): StoredSignerContract | null {
         if (
           property === "cancelSwap" ||
           property === "cancelOperation" ||
-          property === "cancelEarnDeposit"
+          property === "cancelEarnDeposit" ||
+          property === "cancelWalletDiscovery"
         )
           return calls.interrupt(work);
         const readKey = coalescedReads.has(property)
           ? JSON.stringify([property, ...args])
           : undefined;
-        if (property === "getEarnDepositStatus" && readKey) return calls.snapshot(work, readKey);
+        if (
+          (property === "getEarnDepositStatus" || property === "getWalletRecoveryStatus") &&
+          readKey
+        )
+          return calls.snapshot(work, readKey);
         return calls.run(work, readKey);
       };
     },
@@ -84,6 +90,8 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
       backup: result.backup === true,
       transfers: result.transfers === true,
       swaps: result.swaps === true,
+      walletRecovery: Platform.OS === "android" && result.walletRecovery === true,
+      walletDiscovery: Platform.OS === "android" && result.walletDiscovery === true,
       earnWallets: result.earnWallets === true,
       earnVaultExecution: result.earnVaultExecution === true,
       earnSponsoredExecution: result.earnSponsoredExecution === true,
@@ -113,6 +121,8 @@ async function checked(
     | "backup"
     | "transfers"
     | "swaps"
+    | "walletRecovery"
+    | "walletDiscovery"
     | "earnWallets"
     | "earnVaultExecution"
     | "earnSponsoredExecution"
@@ -129,6 +139,41 @@ async function checked(
 // Scheduling occurs at the native boundary so reads also coordinate with user actions.
 function readNative<T>(work: () => Promise<T>): Promise<T> {
   return work();
+}
+export type StoredWalletRecoveryBridge = {
+  getWalletRecoveryStatus(walletId: string): Promise<unknown>;
+  syncWalletRecovery(walletId: string): Promise<unknown>;
+  restoreWalletRecovery(walletId: string): Promise<unknown>;
+  discoverWallets(walletId: string, throughCycle: number): Promise<unknown>;
+  cancelWalletDiscovery(walletId: string): Promise<unknown>;
+};
+export function getStoredWalletRecoverySigner(): StoredWalletRecoveryBridge | null {
+  const native = nativeModule();
+  if (!native || Platform.OS !== "android") return null;
+  async function invoke(
+    method: keyof StoredWalletRecoveryBridge,
+    walletId: string,
+    throughCycle?: number,
+  ) {
+    await checked(
+      native!,
+      method === "discoverWallets" || method === "cancelWalletDiscovery"
+        ? "walletDiscovery"
+        : "walletRecovery",
+    );
+    const action = native![method];
+    if (typeof action !== "function") throw new WalletUnavailableError();
+    return method === "discoverWallets"
+      ? native!.discoverWallets!(walletId, throughCycle!)
+      : (action as (id: string) => Promise<unknown>)(walletId);
+  }
+  return {
+    getWalletRecoveryStatus: (id) => invoke("getWalletRecoveryStatus", id),
+    syncWalletRecovery: (id) => invoke("syncWalletRecovery", id),
+    restoreWalletRecovery: (id) => invoke("restoreWalletRecovery", id),
+    discoverWallets: (id, bound) => invoke("discoverWallets", id, bound),
+    cancelWalletDiscovery: (id) => invoke("cancelWalletDiscovery", id),
+  };
 }
 export function getStoredSigner(): StoredWalletBridge | null {
   const native = nativeModule();

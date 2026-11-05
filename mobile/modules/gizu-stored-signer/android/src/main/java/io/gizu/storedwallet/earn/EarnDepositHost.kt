@@ -162,7 +162,20 @@ internal fun requireDepositCapacity(
       .toSet()
   val newPayouts =
     sources.sumOf { source -> listOf("hold", "invest").count { "$source:$it" !in existingPayouts } }
-  check(sponsored.size + newSponsored <= 256 && payouts.size + newPayouts <= 256) {
-    "Saved history has no space for the complete deposit. Recover saved activity before funding."
+  check(
+    sponsored.count(::journalEntryPending) + newSponsored <= 256 &&
+      payouts.count(::journalEntryPending) + newPayouts <= 256
+  ) {
+    "Pending activity has no space for the complete deposit. Reconcile saved activity before funding."
+  }
+  // Reserve the bounded provider envelope, signature and JSON overhead for every future child.
+  val reservePerChild = 2L * 1024 * 1024
+  check(
+    org.json.JSONArray(sponsored).toString().toByteArray().size + newSponsored * reservePerChild <=
+      15L * 1024 * 1024 &&
+      org.json.JSONArray(payouts).toString().toByteArray().size + newPayouts * reservePerChild <=
+        15L * 1024 * 1024
+  ) {
+    "Encrypted recovery storage has no space for the complete deposit. No funding was authorized."
   }
 }

@@ -287,6 +287,9 @@ class TransferActivity : Activity() {
             check(it.verified && it.id == engine!!.journal.walletId)
             it.id to it.credential
           }
+        withContext(Dispatchers.IO) {
+          WalletRecoveryRuntime.beforeFreshFunding(applicationContext, identity.first)
+        }
         val digest =
           MessageDigest.getInstance("SHA-256").digest(review.text.toByteArray()).joinToString("") {
             "%02x".format(it)

@@ -83,7 +83,7 @@ class BackupActivity : Activity() {
   private companion object {
     const val SAVE_BACKUP_REQUEST = 1
     const val OPEN_BACKUP_REQUEST = 2
-    const val MAX_BACKUP_BYTES = 65536
+    const val MAX_BACKUP_BYTES = 16 * 1024 * 1024
     const val FOCUS_TIMEOUT_MS = 10000L
     const val FOCUS_POLL_INTERVAL_MS = 50L
   }
@@ -512,6 +512,12 @@ class BackupActivity : Activity() {
               restored.credential,
               restored.entropy.copyOf(),
               roleRegistry = registry,
+              earnChain = restored.earnChain,
+              earnRecoveryRequired = restored.earnRecoveryRequired,
+              earnCycleIndex = restored.earnCycleIndex,
+              earnCycles = restored.earnCycles,
+              discoveryHighWater = restored.discoveryHighWater,
+              discoveryRecoveryRequired = restored.discoveryRecoveryRequired,
             )
             .use { recovered ->
               if (!restore)

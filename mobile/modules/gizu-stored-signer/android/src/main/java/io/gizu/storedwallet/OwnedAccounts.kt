@@ -68,6 +68,8 @@ internal fun recordForCycle(record: WalletRecord, cycle: JSONObject) =
     record.earnRecoveryRequired,
     cycle.getInt("cycleIndex"),
     record.earnCycles,
+    record.discoveryHighWater,
+    record.discoveryRecoveryRequired,
   )
 
 internal fun earnWithdrawalIndices(record: WalletRecord): Set<Int> {

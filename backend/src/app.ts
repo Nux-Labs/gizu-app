@@ -1,3 +1,9 @@
+import { PgRecoveryUploadAdmission, recoveryAdmissionDefaults } from "./adapters/postgres/pg-recovery-upload-admission.ts";
+import { PgWalletRecovery } from "./adapters/postgres/pg-wallet-recovery.ts";
+import { PgOperationCoordination } from "./adapters/postgres/pg-operation-coordination.ts";
+import { OperationCoordinator } from "./adapters/earn/operation-coordinator.ts";
+import { registerWalletRecoveryRoutes } from "./http/routes/wallet-recovery.routes.ts";
+import { privateHttpOptions, registerPrivateHttp } from "./http/private-http.ts";
 import { observedAuroraFeeQualification } from "./adapters/earn/fee-policy.ts";
 import Fastify, {
   type FastifyInstance,
@@ -78,6 +84,7 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   }
 
   const app = Fastify({
+    ...privateHttpOptions,
     logger: loggerOptions,
     // Render terminates public traffic at a reverse proxy.
     trustProxy: (_address, hop) => secret.NODE_ENV === "production" && hop < 1,
@@ -86,7 +93,20 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
+  registerPrivateHttp(app);
   const pgPool = createPgPool(secret.DATABASE_URL);
+  const coordinationStore = new PgOperationCoordination(pgPool);
+  const coordination = new OperationCoordinator(coordinationStore,secret.EARN_GATEWAY_RECOVERY_KEY);
+  const recoveryAdmission=new PgRecoveryUploadAdmission(pgPool,secret.EARN_GATEWAY_RECOVERY_KEY,{
+    callsPerMinute:secret.RECOVERY_UPLOAD_CALLS_PER_MINUTE??recoveryAdmissionDefaults.callsPerMinute,
+    bytesPerMinute:secret.RECOVERY_UPLOAD_BYTES_PER_MINUTE??recoveryAdmissionDefaults.bytesPerMinute,
+    bytesPerDay:secret.RECOVERY_UPLOAD_BYTES_PER_DAY??recoveryAdmissionDefaults.bytesPerDay,
+    maxClients:secret.RECOVERY_UPLOAD_MAX_CLIENTS??recoveryAdmissionDefaults.maxClients,
+  });
+  registerWalletRecoveryRoutes(app,new PgWalletRecovery(pgPool,{
+    ...(secret.RECOVERY_STORAGE_MAX_BYTES===undefined?{}:{globalMaxCiphertextBytes:secret.RECOVERY_STORAGE_MAX_BYTES}),
+    ...(secret.RECOVERY_STORAGE_MAX_OBJECTS===undefined?{}:{globalMaxObjects:secret.RECOVERY_STORAGE_MAX_OBJECTS}),
+  }),recoveryAdmission);
   const healthController = new HealthController(
     new CheckDatabaseHealthUseCase(new PgDatabaseProbe(pgPool)),
   );
@@ -99,19 +119,19 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
     funding: new PimlicoMonadFunding(secret.PIMLICO_API_KEY),
     fusion: new OneInchFusion(secret.ONEINCH_API_KEY),
   });
-  registerEarnRoutes(app, new EarnPreflight(), new ConfidentialBalance(secret.AURORA_API_KEY,fetch,Date.now,(event)=>app.log.info(event,"earn private balance read failed")));
+  registerEarnRoutes(app, new EarnPreflight(), new ConfidentialBalance(secret.AURORA_API_KEY,fetch,Date.now,(event)=>app.log.info({event:event.event,code:"EARN_PRIVATE_BALANCE_UNAVAILABLE",status:event.httpStatus},"earn private balance read failed")));
   const ethereumPlannerConfig={rpcUrl:secret.ETHEREUM_RPC_URL??"https://ethereum-rpc.publicnode.com",oneInchApiKey:secret.ONEINCH_API_KEY,anvilPath:secret.EARN_ANVIL_PATH};
   const auroraFeeQualification=secret.EARN_AURORA_FEE_QUALIFICATION_JSON?parseAuroraFeeQualification(secret.EARN_AURORA_FEE_QUALIFICATION_JSON):observedAuroraFeeQualification;
-  registerEarnSettlementRoutes(app,new ConfidentialSettlement(secret.AURORA_API_KEY,fetch,Date.now,secret.EARN_GATEWAY_RECOVERY_KEY,(event)=>app.log.info(event,"earn settlement check")));
-  const nativeGateway=new NativeEarnGateway({auroraHistoryQualified:secret.EARN_AURORA_HISTORY_QUALIFIED==="true",recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,pimlicoApiKey:secret.PIMLICO_API_KEY,auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification});
+  registerEarnSettlementRoutes(app,new ConfidentialSettlement(secret.AURORA_API_KEY,fetch,Date.now,secret.EARN_GATEWAY_RECOVERY_KEY,(event)=>app.log.info({event:event.event,code:"EARN_SETTLEMENT_OBSERVATION"},"earn settlement check")));
+  const nativeGateway=new NativeEarnGateway({coordination,auroraHistoryQualified:secret.EARN_AURORA_HISTORY_QUALIFIED==="true",recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,pimlicoApiKey:secret.PIMLICO_API_KEY,auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification});
   const hoodConfig={rpcUrl:secret.ROBINHOOD_RPC_URL??"https://rpc.mainnet.chain.robinhood.com",pimlicoApiKey:secret.PIMLICO_API_KEY,anvilPath:secret.EARN_ANVIL_PATH,auroraApiKey:secret.AURORA_API_KEY};
   registerEarnPreviewRoutes(app,new RobinhoodDepositPreviewPlanner(hoodConfig),new EarnPayoutPreviewGateway({auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification}));
   registerEarnPlanningRoutes(app,new EthereumDepositPlanner(ethereumPlannerConfig),new MonadFundingPlanner(secret.PIMLICO_API_KEY),new EthereumWithdrawalPlanner(ethereumPlannerConfig),new RobinhoodDepositPlanner(hoodConfig),new RobinhoodWithdrawalPlanner(hoodConfig),new RobinhoodReturnPlanner(hoodConfig,nativeGateway));
   registerEarnNativeRoutes(app,nativeGateway);
   registerEarnReturnRoutes(app,new EthereumReturnPlanner(ethereumPlannerConfig,{quote:r=>nativeGateway.returnQuote(r)}));
-  registerEarnFusionRoutes(app,new FusionNativeGateway({recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,apiKey:secret.ONEINCH_API_KEY,rpcUrl:ethereumPlannerConfig.rpcUrl}));
+  registerEarnFusionRoutes(app,new FusionNativeGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,apiKey:secret.ONEINCH_API_KEY,rpcUrl:ethereumPlannerConfig.rpcUrl}));
   registerEarnExitRoutes(app, new EarnExitSnapshot({ethereumRpcUrl:ethereumPlannerConfig.rpcUrl,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL,auroraApiKey:secret.AURORA_API_KEY}));
-  registerEarnPayoutRoutes(app,new PrivatePayoutGateway({recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification,ethereumRpcUrl:ethereumPlannerConfig.rpcUrl,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL??"https://rpc.mainnet.chain.robinhood.com"}));
+  registerEarnPayoutRoutes(app,new PrivatePayoutGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification,ethereumRpcUrl:ethereumPlannerConfig.rpcUrl,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL??"https://rpc.mainnet.chain.robinhood.com"}));
   const chains = resolveCatalogChains(secret);
   const vaults = resolveCatalogVaults(secret, chains);
   const namespace = `catalog:v4:${createHash("sha256")
@@ -137,6 +157,8 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
 
   const purgeExpiredCache = new PurgeExpiredCacheUseCase(cache);
   const purgeTimer = setInterval(() => {
+    void recoveryAdmission.purgeExpired().catch(()=>app.log.error({code:"RECOVERY_ADMISSION_PURGE_FAILED"},"recovery admission purge failed"));
+    void coordinationStore.purgeExpired().catch(()=>app.log.error({code:"EARN_COORDINATION_PURGE_FAILED"},"coordination purge failed"));
     void purgeExpiredCache
       .execute()
       .then((deleted) => {
@@ -144,8 +166,8 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
           app.log.info({ deleted }, "purged expired cache rows");
         }
       })
-      .catch((err: unknown) => {
-        app.log.error(err, "cache purge failed");
+      .catch(() => {
+        app.log.error({code:"CACHE_PURGE_FAILED"}, "cache purge failed");
       });
   }, CACHE_PURGE_INTERVAL_MS);
   purgeTimer.unref();

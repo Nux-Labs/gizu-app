@@ -46,7 +46,7 @@ internal class EarnVaultJournal(
     try {
       val root = JSONObject(String(clear, Charsets.UTF_8))
       check(root.getInt("version") == 1 && root.getString("walletId") == walletId)
-      return root.getJSONArray("operations").also { check(it.length() <= 256) }
+      return root.getJSONArray("operations").also { check(it.length() <= 100_000) }
     } finally {
       clear.fill(0)
     }
@@ -61,7 +61,7 @@ internal class EarnVaultJournal(
         .toString()
         .toByteArray()
     try {
-      check(clear.size <= 3 * 1024 * 1024)
+      check(clear.size <= 15 * 1024 * 1024)
       file.write(CryptoEnvelope.encrypt(key(), clear, aad))
     } finally {
       clear.fill(0)
@@ -76,7 +76,7 @@ internal class EarnVaultJournal(
   fun create(proposal: JSONObject): JSONObject {
     val existing = all()
     check(
-      existing.size < 256 &&
+      existing.count(::journalEntryPending) < 256 &&
         existing.none {
           it.earnBlocked() &&
             it

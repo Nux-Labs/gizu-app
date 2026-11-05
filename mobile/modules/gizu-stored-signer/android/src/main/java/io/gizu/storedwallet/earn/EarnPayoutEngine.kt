@@ -216,8 +216,14 @@ internal class EarnPayoutEngine(
   private var signer: NativePayoutSigner? = null
   private var displayed: EarnPayoutReview? = null
 
-  private fun walletCheck(record: WalletRecord, proposal: JSONObject? = null) {
-    requireSponsoredWallet(record, journal.walletId)
+  private fun walletCheck(
+    record: WalletRecord,
+    proposal: JSONObject? = null,
+    recoveryRead: Boolean = false,
+  ) {
+    if (recoveryRead)
+      check(record.id == journal.walletId && record.verified && record.earnChain in setOf(1, 4663))
+    else requireSponsoredWallet(record, journal.walletId)
     check(record.journalId == journal.generation)
     if (proposal != null) {
       check(proposal.getInt("profileChainId") == record.earnChain)
@@ -607,7 +613,7 @@ internal class EarnPayoutEngine(
     val op = journal.get(id)
     check(op.getInt("revision") == revision && op.has("signedData"))
     val p = op.getJSONObject("proposal")
-    store.load().use { walletCheck(it, p) }
+    store.load().use { walletCheck(it, p, recoveryRead = true) }
     val auth = readAuth()
     currentCoroutineContext().ensureActive()
     val signedData =

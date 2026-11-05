@@ -119,6 +119,7 @@ function fixture(
   mutate?: (path: string, body: any, init?: RequestInit) => void,
   profileChainId: 1 | 4663 = 1,
   recoveryKey: string | null = "11".repeat(32),
+  coordination?: import("../../../src/adapters/earn/operation-coordinator.ts").OperationCoordinator,
 ) {
   let clock = now;
   const calls: string[] = [];
@@ -232,6 +233,7 @@ function fixture(
         robinhoodRpcUrl: "https://ethereum.test",
         monadRpcUrl: "https://ethereum.test",
         recoveryKey: recoveryKey ?? undefined,
+        coordination,
       },
       { fetcher, now: () => clock },
     );
@@ -1477,4 +1479,63 @@ test("Robinhood payouts are delivered from a canonical receipt before L1 finalit
       assert.equal(result.receivedAtoms, "99500");
     } else await assert.rejects(settle);
   }
+});
+
+test('shared payout guards survive replica restart, prevent rebinding and never resend uncertain authority',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  const rows=new Map<string,string>();const store={async bind(key:string,value:string,_expires:number,exclusive:boolean){const old=rows.get(key);if(old)return !exclusive&&old===value;rows.set(key,value);return true;}};
+  const coordination=new OperationCoordinator(store,'ab'.repeat(32));
+  const f=fixture(undefined,1,'11'.repeat(32),coordination);
+  const prepared=await f.gateway.prepare(await input());
+  const signedData={...prepared.intent,signature:await signature(prepared.intent.payload)};
+  const req={operationId:'source_1',revision:1,leg:'hold' as const,quoteId:prepared.quote.quoteId,signedData,recoveryEnvelope:prepared.recoveryEnvelope};
+  const results=await Promise.all([f.gateway.submit(req),f.restart().submit(req)]);
+  assert.equal(results.filter(r=>r.status==='submitted').length,1);
+  assert.equal((await f.restart().submit(req)).status,'submissionUnknown');
+  assert.equal(f.calls.filter(p=>p.includes('/submit-intent/')).length,1);
+  await assert.rejects(f.restart().prepare({...await input(),operationId:'another_child'}));
+  assert.equal(JSON.stringify([...rows]).includes(C),false);
+});
+test('unauthenticated payout preparation cannot occupy durable funding roles',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  const rows=new Map<string,string>();const coordination=new OperationCoordinator({async bind(key,value){rows.set(key,value);return true;}},'ab'.repeat(32));
+  const f=fixture(undefined,1,'11'.repeat(32),coordination),r=await input();
+  await assert.rejects(f.gateway.prepare({...r,signedData:{...r.signedData,signature:'secp256k1:'+base58.encode(Buffer.alloc(65,1))}}));
+  assert.equal(rows.size,0,'only authenticated actual credit may create persistent bindings');
+});
+test('temporary shared-store outage blocks payout sends and permits an untouched signed record after recovery',async()=>{
+  const {OperationCoordinator}=await import('../../../src/adapters/earn/operation-coordinator.ts');
+  let down=false;const rows=new Map<string,string>();
+  const coordination=new OperationCoordinator({async bind(key,value,_expires,exclusive){if(down)throw new Error('private database detail');const old=rows.get(key);if(old)return !exclusive&&old===value;rows.set(key,value);return true;}},'ab'.repeat(32));
+  const f=fixture(undefined,1,'11'.repeat(32),coordination),p=await f.gateway.prepare(await input());
+  const req={operationId:p.quote.operationId,revision:1,leg:'hold' as const,quoteId:p.quote.quoteId,signedData:{...p.intent,signature:await signature(p.intent.payload)}};
+  down=true;await assert.rejects(f.gateway.submit(req),(error:any)=>error.statusCode===503);
+  assert.equal(f.calls.filter(p=>p.includes('/submit-intent/')).length,0);
+  down=false;assert.equal((await f.gateway.submit(req)).status,'submitted');
+  assert.equal(f.calls.filter(p=>p.includes('/submit-intent/')).length,1);
+});
+
+test('expired payout caches reclaim role, credit and nonce bindings while native envelopes remain recoverable',async()=>{
+  const f=fixture((path,body)=>{if(path.includes('/generate-intent/')){const message=JSON.parse(body.intent.payload);message.nonce=Buffer.alloc(32,1).toString('base64');body.intent.payload=JSON.stringify(message);}});const original=await input(),first=await f.gateway.prepare(original);
+  f.advance(86401000);
+  const next=await input();next.signedData=await readAuth(f.clock());
+  // The provider repeats its first nonce under a fresh process: expired local
+  // nonce and role state must not create a lifetime allocation limit.
+  const prepared=await f.gateway.prepare({...next,cycleIndex:1,sourceAccountIndex:1});
+  assert.notEqual(prepared.quote.quoteId,first.quote.quoteId);
+  await assert.rejects(f.gateway.submit({operationId:first.quote.operationId,revision:1,leg:'hold',quoteId:first.quote.quoteId,signedData:{...first.intent,signature:await signature(first.intent.payload)}}));
+});
+
+test('payout admission reclaims all 512 expired operation slots and their credit associations',async()=>{
+  let counter=0;let transaction=sourceTx;
+  const f=fixture((path,body)=>{
+    if(path.includes('/account/history/'))body.items[0].quoteTransactions[0].txHash=transaction;
+    if(path.includes('/generate-intent/')){const message=JSON.parse(body.intent.payload),nonce=Buffer.alloc(32);nonce.writeUInt32LE(counter);message.nonce=nonce.toString('base64');body.intent.payload=JSON.stringify(message);}
+  });
+  const base=await input();
+  const next=()=>{transaction='0x'+counter.toString(16).padStart(64,'0');const operationId='capacity_'+counter;return{...base,operationId,source:{...base.source,operationId,transactionHash:transaction}};};
+  for(counter=0;counter<512;counter++)await f.gateway.prepare(next(),'capacity-client-'+Math.floor(counter/20));
+  await assert.rejects(f.gateway.prepare(next(),'capacity-extra'),(error:any)=>error.code==='EARN_PAYOUT_CAPACITY');
+  f.advance(86401000);base.signedData=await readAuth(f.clock());
+  const reclaimed=await f.gateway.prepare(next(),'capacity-extra');assert.equal(reclaimed.quote.operationId,'capacity_512');
 });

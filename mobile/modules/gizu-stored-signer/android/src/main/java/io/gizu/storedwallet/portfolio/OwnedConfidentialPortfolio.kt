@@ -36,6 +36,7 @@ internal class NativeOwnedConfidentialPortfolio(
   private val deriveSwap: (WalletRecord) -> String,
   private val deriveEarn: (WalletRecord, Int, Int) -> String,
   private val clock: () -> Long = System::currentTimeMillis,
+  private val discovered: (WalletRecord) -> List<NativeConfidentialTarget> = { emptyList() },
 ) {
   constructor(
     context: Context
@@ -45,6 +46,20 @@ internal class NativeOwnedConfidentialPortfolio(
     deriveSwap = { deriveAccountAddresses(it.entropy)[2] },
     deriveEarn = { record, chain, cycle ->
       deriveEarnCycleConfidentialAddress(record.entropy, chain.toULong(), cycle.toUInt())
+    },
+    discovered = { record ->
+      listOf(1, 4663).flatMap { chain ->
+        WalletDiscoveryRegistry(context, record).owners(chain, true).map { (descriptor, address) ->
+          NativeConfidentialTarget(
+            record.id,
+            record.journalId,
+            address,
+            "earn",
+            chain,
+            descriptor.getInt("cycleIndex"),
+          )
+        }
+      }
     },
   )
 
@@ -80,37 +95,42 @@ internal class NativeOwnedConfidentialPortfolio(
     val rows = (0 until cycles.length()).map { cycles.getJSONObject(it) }.toMutableList()
     if (rows.isEmpty() && record.earnChain > 0)
       rows.add(JSONObject().put("chainId", record.earnChain).put("cycleIndex", 0))
-    val descriptor = rows.joinToString("|") { "${it.getInt("chainId")}:${it.getInt("cycleIndex")}" }
+    val recovered = discovered(record)
+    val descriptor =
+      recovered.joinToString { it.address } +
+        rows.joinToString("|") { "${it.getInt("chainId")}:${it.getInt("cycleIndex")}" }
     val fingerprint =
       MessageDigest.getInstance("SHA-256").digest(descriptor.toByteArray()).joinToString("") {
         "%02x".format(it)
       }
     if (root.optString("catalogue") != fingerprint) {
       val all =
-        listOf(
-          NativeConfidentialTarget(
-            record.id,
-            record.journalId,
-            deriveSwap(record).lowercase(),
-            "swap",
-            0,
-            0,
-          )
-        ) +
-          rows.map { row ->
-            val chain = row.getInt("chainId")
-            val cycle = row.getInt("cycleIndex")
+        (listOf(
             NativeConfidentialTarget(
               record.id,
               record.journalId,
-              deriveEarn(record, chain, cycle).lowercase(),
-              "earn",
-              chain,
-              cycle,
+              deriveSwap(record).lowercase(),
+              "swap",
+              0,
+              0,
             )
-          }
+          ) +
+            rows.map { row ->
+              val chain = row.getInt("chainId")
+              val cycle = row.getInt("cycleIndex")
+              NativeConfidentialTarget(
+                record.id,
+                record.journalId,
+                deriveEarn(record, chain, cycle).lowercase(),
+                "earn",
+                chain,
+                cycle,
+              )
+            } +
+            recovered)
+          .distinctBy { it.address }
       require(
-        all.size <= 257 &&
+        all.size <= 100_000 &&
           all.map { it.address }.distinct().size == all.size &&
           all.all { it.address.matches(Regex("0x[0-9a-f]{40}")) }
       )
@@ -130,7 +150,7 @@ internal class NativeOwnedConfidentialPortfolio(
         )
     }
     val saved = root.getJSONArray("targets")
-    require(saved.length() in 1..257)
+    require(saved.length() in 1..100_000)
     return (0 until saved.length()).map { index ->
       val row = saved.getJSONObject(index)
       NativeConfidentialTarget(

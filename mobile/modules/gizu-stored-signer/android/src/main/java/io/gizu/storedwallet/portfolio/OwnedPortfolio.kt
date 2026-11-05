@@ -24,6 +24,7 @@ internal class NativeOwnedPortfolio(
   private val clock: () -> Long = System::currentTimeMillis,
   private val selector: (String) -> String = { earnEventTopic(it).take(10) },
   private val rpcBudget: () -> PortfolioReadBudget = { PortfolioReadBudget() },
+  private val discoveredOwners: (WalletRecord, Long) -> List<String> = { _, _ -> emptyList() },
 ) {
   constructor(
     context: Context
@@ -45,6 +46,9 @@ internal class NativeOwnedPortfolio(
     },
     derivePublic = ::publicAccountAddress,
     targets = { SwapPortfolioStore(context, it).targets() },
+    discoveredOwners = { record, chain ->
+      WalletDiscoveryRegistry(context, record).owners(chain.toInt(), false).map { it.second }
+    },
   )
 
   private data class Group(
@@ -119,7 +123,7 @@ internal class NativeOwnedPortfolio(
   private fun owners(record: WalletRecord, root: JSONObject): JSONObject {
     val fingerprint =
       digest(
-        "${record.roleRegistry}|${record.earnCycles}|${record.earnChain}|${record.earnCycleIndex}"
+        "${record.roleRegistry}|${record.earnCycles}|${record.earnChain}|${record.earnCycleIndex}|${listOf(1L, 4663L).flatMap { discoveredOwners(record, it) }}"
       )
     if (root.optString("catalogue") == fingerprint) return root.getJSONObject("owners")
     val cycles = JSONArray(record.earnCycles)
@@ -136,9 +140,10 @@ internal class NativeOwnedPortfolio(
         )
     for (chain in listOf(1L, 4663L)) {
       val all =
-        ordered
-          .filter { it.getLong("chainId") == chain }
-          .flatMap { deriveCycle(record, chain, it.getInt("cycleIndex")) }
+        (ordered
+            .filter { it.getLong("chainId") == chain }
+            .flatMap { deriveCycle(record, chain, it.getInt("cycleIndex")) } +
+            discoveredOwners(record, chain))
           .map(String::lowercase)
           .distinct()
       require(all.all { it.matches(Regex("0x[0-9a-f]{40}")) })

@@ -29,6 +29,12 @@ const apiEnvSchema = z
       .string()
       .regex(/^[0-9a-f]{64}$/i)
       .optional(),
+    RECOVERY_UPLOAD_CALLS_PER_MINUTE:z.coerce.number().int().positive().max(100000).optional(),
+    RECOVERY_UPLOAD_BYTES_PER_MINUTE:z.coerce.number().int().positive().max(1024*1024*1024).optional(),
+    RECOVERY_UPLOAD_BYTES_PER_DAY:z.coerce.number().int().positive().max(1024*1024*1024*1024).optional(),
+    RECOVERY_UPLOAD_MAX_CLIENTS:z.coerce.number().int().positive().max(1000000).optional(),
+    RECOVERY_STORAGE_MAX_BYTES:z.coerce.number().int().positive().max(1024*1024*1024*1024).optional(),
+    RECOVERY_STORAGE_MAX_OBJECTS:z.coerce.number().int().positive().max(10000000).optional(),
     // Legacy client admission only; new native settlement uses balance snapshots.
     EARN_AURORA_HISTORY_QUALIFIED: z.enum(["true", "false"]).optional(),
     EARN_ANVIL_PATH: z.string().min(1).optional(),

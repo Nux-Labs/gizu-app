@@ -1,3 +1,4 @@
+import { CoordinationError } from "./operation-coordinator.ts";
 import { qualifyAuroraFees, type AuroraFeeProof } from "./fee-policy.ts";
 import { z } from "zod";
 import { EarnRecoveryEnvelope } from "./recovery-envelope.ts";
@@ -459,7 +460,24 @@ export class PrivatePayoutGateway {
     { fingerprint: string; creditedAtoms: string }
   >();
   private rates = new Map<string, { started: number; count: number }>();
+  private prune() {
+    // Provider work is bounded; keep all associations while preparation or a
+    // submission is in flight. Native envelopes and PG commitments outlive caches.
+    if(this.active>0||this.pending.size>0)return;
+    for(const [key,entry] of this.records)if(entry.retireAt<=this.now())this.records.delete(key);
+    for(const [role,row] of this.roles)if(!this.records.has(row.key))this.roles.delete(role);
+    const scopes=new Set<string>(),nonces=new Set<string>();
+    for(const entry of this.records.values()){
+      const source=entry.request.source;
+      scopes.add([source.confidentialAccount,source.depositAddress,source.transactionHash].map(v=>v.toLowerCase()).join(":"));
+      const message=messageSchema.parse(strictJson(entry.prepared.intent.payload));
+      nonces.add(source.confidentialAccount.toLowerCase()+":"+message.nonce);
+    }
+    for(const scope of this.cycles.keys())if(!scopes.has(scope))this.cycles.delete(scope);
+    this.nonces=nonces;
+  }
   private checkRate(client: string) {
+    this.prune();
     for (const [key, row] of this.rates)
       if (row.started + 60000 <= this.now()) this.rates.delete(key);
     const key = client.slice(0, 128),
@@ -811,7 +829,7 @@ export class PrivatePayoutGateway {
     }
     if (this.records.size + this.pending.size >= 512)
       throw new NativeGatewayError(503, "EARN_PAYOUT_CAPACITY");
-    this.roles.set(role, { key, fingerprint });
+    this.roles.set(role, {key,fingerprint});
     const promise = this.bounded(async () => {
       try {
         const { quoteId: sourceQuoteId, ...expectation } = i.source;
@@ -821,6 +839,7 @@ export class PrivatePayoutGateway {
           BigInt(verified.creditedAtoms) < (i.leg === "withdrawal" ? 1n : 10n)
         )
           throw new Error("Actual source credit required");
+        await this.config.coordination?.bind("payout-role", role, {key,fingerprint}, this.now()+86400000);
         const settledCycle = this.cycles.get(fundingScope);
         if (
           settledCycle &&
@@ -830,6 +849,7 @@ export class PrivatePayoutGateway {
           throw new NativeGatewayError(409, "EARN_PAYOUT_CREDIT_BOUND");
         if (!settledCycle && this.cycles.size >= 512)
           throw new NativeGatewayError(503, "EARN_PAYOUT_CAPACITY");
+        await this.config.coordination?.bind("payout-credit",fundingScope,{fingerprint:cycleFingerprint,creditedAtoms:verified.creditedAtoms},this.now()+86400000);
         this.cycles.set(fundingScope, {
           fingerprint: cycleFingerprint,
           creditedAtoms: verified.creditedAtoms,
@@ -1035,6 +1055,7 @@ export class PrivatePayoutGateway {
           i.source.confidentialAccount.toLowerCase() + ":" + message.nonce;
         if (this.nonces.has(nonceKey))
           throw new Error("Repeated private nonce");
+        await this.config.coordination?.bind("payout-nonce",nonceKey,{key,payload:intent.payload},this.now()+86400000);
         const sourceHistoryId = digest({
           confidentialAccount: verified.confidentialAddress,
           depositAddress: verified.depositAddress,
@@ -1163,7 +1184,7 @@ export class PrivatePayoutGateway {
         this.nonces.add(nonceKey);
         return prepared;
       } catch (error) {
-        if (error instanceof NativeGatewayError) throw error;
+        if (error instanceof NativeGatewayError || error instanceof CoordinationError) throw error;
         throw new NativeGatewayError(502, "EARN_PRIVATE_PAYOUT_UNAVAILABLE");
       }
     });
@@ -1173,6 +1194,7 @@ export class PrivatePayoutGateway {
     } finally {
       this.pending.delete(key);
       if (!this.records.has(key)) this.roles.delete(role);
+      this.prune();
     }
   }
   private entry(i: {
@@ -1256,6 +1278,16 @@ export class PrivatePayoutGateway {
       throw new NativeGatewayError(409, "EARN_PAYOUT_EXPIRED");
     entry.signedHash = signedHash;
     entry.submission = this.bounded(async () => {
+      if(this.config.coordination){
+        const request=entry.request,key=this.key(request);
+        const fundingScope=[request.source.confidentialAccount,request.source.depositAddress,request.source.transactionHash].map(v=>v.toLowerCase()).join(":");
+        const role=`${fundingScope}:${request.leg}`,expires=q.expiresAtMs+86400000;
+        await this.config.coordination.bind("payout-role",role,{key,fingerprint:entry.fingerprint},expires);
+        const cycleFingerprint=JSON.stringify({source:request.source,profileChainId:request.profileChainId,sourceAccountIndex:request.sourceAccountIndex,cycleIndex:request.cycleIndex,splitOffsetAtoms:request.splitOffsetAtoms});
+        await this.config.coordination.bind("payout-credit",fundingScope,{fingerprint:cycleFingerprint,creditedAtoms:entry.prepared.sourceCredit.creditedAtoms},expires);
+        if(!await this.config.coordination.claim("payout-send",role,{signedHash},expires))
+          return freeze({operationId:i.operationId,revision:i.revision,leg:i.leg,quoteId:q.quoteId,status:"submissionUnknown" as const,signedBodyHash:signedHash});
+      }
       let outcome: PayoutSubmission;
       try {
         const result = await auroraApi(
@@ -1286,7 +1318,8 @@ export class PrivatePayoutGateway {
       entry.outcome = freeze(outcome);
       return entry.outcome;
     });
-    return entry.submission;
+    try { return await entry.submission; }
+    catch(error) { entry.submission=undefined; throw error; }
   }
   async reconcile(value: PayoutSettlementInput, client = "internal") {
     let input: z.output<typeof payoutSettlementInput>;
@@ -1579,7 +1612,7 @@ export class PrivatePayoutGateway {
           }),
         };
       } catch (error) {
-        if (error instanceof NativeGatewayError) throw error;
+        if (error instanceof NativeGatewayError || error instanceof CoordinationError) throw error;
         throw new NativeGatewayError(502, "EARN_PAYOUT_SETTLEMENT_UNAVAILABLE");
       }
     });

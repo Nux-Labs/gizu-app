@@ -26,7 +26,7 @@ internal class EarnQuoteJournal(
     if (!file.exists()) return JSONArray()
     val clear = CryptoEnvelope.decrypt(key(), file.read(), aad)
     try {
-      return JSONArray(String(clear, Charsets.UTF_8)).also { check(it.length() <= 256) }
+      return JSONArray(String(clear, Charsets.UTF_8)).also { check(it.length() <= 100_000) }
     } finally {
       clear.fill(0)
     }
@@ -57,11 +57,11 @@ internal class EarnQuoteJournal(
       }
       return
     }
-    check(rows.length() < 256)
+    check(rows.length() < 100_000)
     rows.put(JSONObject(quote.toString()))
     val clear = rows.toString().toByteArray()
     try {
-      check(clear.size <= 3 * 1024 * 1024)
+      check(clear.size <= 15 * 1024 * 1024)
       file.write(CryptoEnvelope.encrypt(key(), clear, aad))
     } finally {
       clear.fill(0)

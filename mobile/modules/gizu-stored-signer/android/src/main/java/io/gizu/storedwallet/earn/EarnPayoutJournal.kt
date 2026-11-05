@@ -41,7 +41,7 @@ internal class EarnPayoutJournal(
     try {
       val root = JSONObject(String(clear, Charsets.UTF_8))
       check(root.getInt("version") == 1 && root.getString("walletId") == walletId)
-      return root.getJSONArray("operations").also { check(it.length() <= 256) }
+      return root.getJSONArray("operations").also { check(it.length() <= 100_000) }
     } finally {
       clear.fill(0)
     }
@@ -56,7 +56,7 @@ internal class EarnPayoutJournal(
         .toString()
         .toByteArray()
     try {
-      check(clear.size <= 3 * 1024 * 1024)
+      check(clear.size <= 15 * 1024 * 1024)
       file.write(CryptoEnvelope.encrypt(key(), clear, aad))
     } finally {
       clear.fill(0)
@@ -95,7 +95,7 @@ internal class EarnPayoutJournal(
       val C = proposal.getString("expectedSigner")
       val tx = proposal.getString("sourceTransactionHash")
       check(
-        old.size < 256 &&
+        old.count(::journalEntryPending) < 256 &&
           old.none { op ->
             val p = op.getJSONObject("proposal")
             (op.getString("leg") == leg &&
