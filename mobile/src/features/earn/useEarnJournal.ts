@@ -30,7 +30,11 @@ export function useEarnJournal<Row extends { operationId: string }>(
       }
     } catch (error) {
       if (attempt === generation.current)
-        setMessage(error instanceof Error ? error.message : "Saved Earn progress is unavailable.");
+        setMessage(
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : "Saved Earn progress is unavailable. Please try again.",
+        );
     } finally {
       if (attempt === generation.current) setLoading(false);
     }
@@ -65,9 +69,9 @@ export function useEarnJournal<Row extends { operationId: string }>(
         await reload();
         if (attempt === generation.current)
           setMessage(
-            error instanceof Error
+            error instanceof Error && error.message.trim()
               ? error.message
-              : "Earn action stopped. Check saved progress before retrying.",
+              : "We could not complete this step. Check your connection and try again. Your saved progress will be checked before continuing.",
           );
       }
     } finally {

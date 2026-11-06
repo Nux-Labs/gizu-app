@@ -13,7 +13,23 @@ import type {
 } from "@/domain/earn/robinhoodExecution";
 import { useEarnJournal } from "./useEarnJournal";
 import { ExitCompletionPanel } from "./ExitCompletionPanel";
+import { RobinhoodWithdrawalPanel } from "./RobinhoodWithdrawalPanel";
 export function RobinhoodExecutionPanel({
+  presentation = "legacy",
+  ...props
+}: {
+  intent: EarnIntent;
+  service: EarnRobinhoodService;
+  presentation?: "legacy" | "investment" | "withdrawal";
+  onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
+}) {
+  return presentation === "withdrawal" ? (
+    <RobinhoodWithdrawalPanel {...props} />
+  ) : (
+    <LegacyRobinhoodExecutionPanel {...props} presentation={presentation} />
+  );
+}
+function LegacyRobinhoodExecutionPanel({
   intent,
   service,
   presentation = "legacy",

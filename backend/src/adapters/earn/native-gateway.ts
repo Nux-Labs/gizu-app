@@ -222,22 +222,27 @@ const byHashSchema = z.object({
   blockNumber: qty.nullable().optional(),
   transactionHash: hash.nullable().optional(),
 });
-// Pimlico's ByHash returns 7702 chainId/nonce/yParity as JSON numbers, while signed
-// requests carry hex quantities (yParity as the native signer's one-byte "0x00"/"0x01").
-// Canonicalize only that provider field before strict checks.
-function hexAuthorizationQuantities(result: unknown): unknown {
-  const op = object(object(result).userOperation);
-  if (!op.eip7702Auth) return result;
-  const auth = { ...object(op.eip7702Auth) };
-  for (const k of ["chainId", "nonce", "yParity"])
-    if (typeof auth[k] === "number") {
-      if (!Number.isSafeInteger(auth[k]) || (auth[k] as number) < 0)
-        throw new Error("Invalid authorization quantity");
-      auth[k] = toHex(auth[k] as number, k === "yParity" ? { size: 1 } : {});
-    }
+// Historical provider responses use null for absent deployment fields and JSON
+// numbers for 7702 quantities. Normalize that representation before the same
+// strict schema, signature and hash checks. Signed submission requests never use this path.
+function normalizeHistoricalOperation(result: unknown): unknown {
+  const envelope = object(result);
+  const op = { ...object(envelope.userOperation) };
+  for (const k of ["factory", "factoryData", "eip7702Auth"])
+    if (op[k] === null) delete op[k];
+  if (op.eip7702Auth) {
+    const auth = { ...object(op.eip7702Auth) };
+    for (const k of ["chainId", "nonce", "yParity"])
+      if (typeof auth[k] === "number") {
+        if (!Number.isSafeInteger(auth[k]) || (auth[k] as number) < 0)
+          throw new Error("Invalid authorization quantity");
+        auth[k] = toHex(auth[k] as number, k === "yParity" ? { size: 1 } : {});
+      }
+    op.eip7702Auth = auth;
+  }
   return {
-    ...object(result),
-    userOperation: { ...op, eip7702Auth: auth },
+    ...envelope,
+    userOperation: op,
   };
 }
 function object(value: unknown): Record<string, unknown> {
@@ -946,7 +951,7 @@ export class NativeEarnGateway {
               throw new Error("Receipt mismatch");
             return { jsonrpc: "2.0", id: req.id, result: r };
           }
-          const r = byHashSchema.parse(hexAuthorizationQuantities(result));
+          const r = byHashSchema.parse(normalizeHistoricalOperation(result));
           if (!same(r.entryPoint, entryPoint08Address))
             throw new Error("Entry point mismatch");
           const historical = await this.validateOperation(
