@@ -13,6 +13,12 @@ Incoming public USDC and the existing public funding paths remain unchanged.
   terms; native cancellation must succeed first. Signed or uncertain transactions
   retain their saved recovery path. Expired on-screen reviews refresh before
   approval, and final private credit is verified before continuing to another part.
+  Full native financial reviews have a separate five-minute reading window that
+  starts when shown, rather than sharing the preparation timeout. Outside taps
+  do not dismiss them, and the screen stays awake during review. Cancel, Back,
+  screen lock and app departure still cancel approval. Reading time never extends
+  signing terms: exact details, current state and expiry are checked again before
+  signing. Network work before and after review retains its own timeout.
 - New token sales finish with confidential USDC. Completion requires authenticated
   credit for each inbound route, including partial fills; an aggregate private
   balance or a successful route status alone does not prove sale-specific credit.

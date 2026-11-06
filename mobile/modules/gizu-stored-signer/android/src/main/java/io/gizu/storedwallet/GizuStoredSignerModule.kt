@@ -47,6 +47,7 @@ class GizuStoredSignerModule : Module() {
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private var task: Job? = null
+  private var ceremonySession: NativeCeremonySession? = null
   private var dialog: Dialog? = null
   private var awaitingProvider = false
   private var foreground = true
@@ -163,12 +164,25 @@ class GizuStoredSignerModule : Module() {
         val walletId = walletStore(activity).load().use { it.id }
         WalletRecoveryRuntime.beforeFreshFunding(activity, walletId)
       }
+    val session = ceremonySession
+    if (fullReview && session != null)
+      session.review { showConfirmation(activity, title, message, fullReview) }
+    else showConfirmation(activity, title, message, fullReview)
+  }
+
+  private suspend fun showConfirmation(
+    activity: Activity,
+    title: String,
+    message: String,
+    fullReview: Boolean,
+  ) {
     suspendCancellableCoroutine<Unit> { continuation ->
       val alert = Dialog(activity)
       alert.requestWindowFeature(Window.FEATURE_NO_TITLE)
-      // Same dismissal semantics as the former AlertDialog: back and outside touch cancel.
+      // Back and Cancel remain explicit dismissal paths. A stray outside tap
+      // must not discard a financial review while the user is reading it.
       alert.setCancelable(true)
-      alert.setCanceledOnTouchOutside(true)
+      alert.setCanceledOnTouchOutside(!fullReview)
       alert.setOnCancelListener { continuation.cancel() }
       alert.setContentView(
         confirmationView(
@@ -189,6 +203,7 @@ class GizuStoredSignerModule : Module() {
       dialog = alert
       alert.window?.apply {
         addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        if (fullReview) addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (Build.VERSION.SDK_INT >= 31) setHideOverlayWindows(true)
         setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
@@ -216,6 +231,14 @@ class GizuStoredSignerModule : Module() {
         setPadding(dp(24), dp(24), dp(24), dp(20))
         filterTouchesWhenObscured = true
         addView(NativeStyle.title(activity, title, 22f))
+        if (fullReview)
+          addView(
+            NativeStyle.body(
+              activity,
+              "You have 5 minutes to review. Continue opens secure approval.",
+            ),
+            NativeStyle.fullWidth(activity, 10),
+          )
         if (fullReview)
           addView(
             ScrollView(activity).apply {
@@ -268,23 +291,22 @@ class GizuStoredSignerModule : Module() {
         return@launch
       }
       task = coroutineContext[Job]
+      val session = NativeCeremonySession(timeoutMs)
+      ceremonySession = session
       try {
         WalletRecoveryRuntime.initialize(activity!!.applicationContext)
         requireForeground(activity)
         check(depositHost?.busy != true) {
           "A native deposit is running. Check its progress or stop its remaining approval first."
         }
-        val result =
-          withTimeout(timeoutMs) { block(activity, walletStore(activity.applicationContext)) }
+        val result = session.run { block(activity, walletStore(activity.applicationContext)) }
         currentCoroutineContext().ensureActive()
         requireForeground(activity)
         promise.resolve(result)
       } catch (error: CancellationException) {
-        promise.reject(
-          "CANCELLED",
-          "Wallet operation cancelled or expired. Check wallet state before retrying creation.",
-          null,
-        )
+        val (code, location) = depositFailureDiagnostic(error)
+        android.util.Log.w("GizuWallet", "$code at $location")
+        promise.reject("CANCELLED", nativeWalletFailureMessage(error), null)
       } catch (error: EarnGatewayFailure) {
         promise.reject(error.code, error.message ?: "Earn provider request is unavailable.", null)
       } catch (error: Exception) {
@@ -293,9 +315,8 @@ class GizuStoredSignerModule : Module() {
         val (code, location) = depositFailureDiagnostic(error)
         android.util.Log.w("GizuWallet", "$code at $location")
         promise.reject(
-          "WALLET_FAILED",
-          error.message?.takeIf { it.isNotBlank() }
-            ?: "Wallet operation could not be verified. Refresh saved progress and try again.",
+          if (error is EarnRpcRejection) "EARN_RPC_UNAVAILABLE" else "WALLET_FAILED",
+          nativeWalletFailureMessage(error),
           null,
         )
       } finally {
@@ -303,6 +324,7 @@ class GizuStoredSignerModule : Module() {
         dialog = null
         awaitingProvider = false
         task = null
+        ceremonySession = null
         ceremony.unlock()
       }
     }
