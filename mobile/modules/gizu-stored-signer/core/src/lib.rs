@@ -67,6 +67,8 @@ mod swap;
 pub use earn_auth::*;
 mod earn_payout;
 pub use earn_payout::*;
+mod private_earn_payout;
+pub use private_earn_payout::*;
 mod earn_ethereum_liquidity;
 pub use earn_ethereum_liquidity::*;
 mod earn_sponsored;

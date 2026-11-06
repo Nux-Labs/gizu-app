@@ -259,11 +259,18 @@ internal fun assertNoPendingPrivateWork(operations: List<JSONObject>, deposits: 
   }
 }
 
-internal fun assertCashoutInactive(context: Context, record: WalletRecord) {
+internal fun assertCashoutInactive(
+  context: Context,
+  record: WalletRecord,
+  deposit: Boolean = false,
+) {
   check(confidentialWithdrawalJournal(context, record).active() == null) {
     "Resume or cancel Withdraw from Gizu before starting another investment operation"
   }
+  if (!deposit) assertNoPrivateDeposit(context, record)
 }
 
-internal fun assertPrivateExecutionAvailable(context: Context, record: WalletRecord) =
+internal fun assertPrivateExecutionAvailable(context: Context, record: WalletRecord) {
   assertCashoutInactive(context, record)
+  assertNoPrivateDeposit(context, record)
+}

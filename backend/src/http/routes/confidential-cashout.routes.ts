@@ -8,9 +8,10 @@ const signed = z
     signature: z.string().regex(/^secp256k1:[1-9A-HJ-NP-Za-km-z]{86,90}$/),
   })
   .strict();
-export function registerConfidentialCashoutRoutes(
+function registerConfidentialPayoutRoutes(
   app: FastifyInstance,
   gateway: Pick<ConfidentialCashoutGateway, "prepare" | "status">,
+  purpose: "cashout" | "private-funding",
 ) {
   const prepare = z
     .object({
@@ -37,22 +38,47 @@ export function registerConfidentialCashoutRoutes(
     ["status", status],
   ] as const)
     app.post(
-      "/v1/earn/native/cashout/" + method,
+      "/v1/earn/native/" + purpose + "/" + method,
       { bodyLimit: 196608, logLevel: "silent" },
       async (request, reply) => {
         reply.header("Cache-Control", "no-store");
         const parsed = schema.safeParse(request.body);
         if (!parsed.success)
-          return reply.code(400).send({ code: "INVALID_CASHOUT_REQUEST" });
+          return reply
+            .code(400)
+            .send({
+              code:
+                purpose === "cashout"
+                  ? "INVALID_CASHOUT_REQUEST"
+                  : "INVALID_PRIVATE_FUNDING_REQUEST",
+            });
         try {
           return await gateway[method](parsed.data);
         } catch {
           return reply.code(503).send({
-            code: "CONFIDENTIAL_CASHOUT_UNAVAILABLE",
+            code:
+              purpose === "cashout"
+                ? "CONFIDENTIAL_CASHOUT_UNAVAILABLE"
+                : "CONFIDENTIAL_PRIVATE_FUNDING_UNAVAILABLE",
             message:
-              "Fresh authenticated cashout evidence is unavailable. Resume the saved native withdrawal.",
+              purpose === "cashout"
+                ? "Fresh authenticated cashout evidence is unavailable. Resume the saved native withdrawal."
+                : "Fresh authenticated private funding evidence is unavailable. Resume the saved native deposit.",
           });
         }
       },
     );
+}
+
+export function registerConfidentialCashoutRoutes(
+  app: FastifyInstance,
+  gateway: Pick<ConfidentialCashoutGateway, "prepare" | "status">,
+) {
+  registerConfidentialPayoutRoutes(app, gateway, "cashout");
+}
+export function registerConfidentialPrivateFundingRoutes(
+  app: FastifyInstance,
+  gateway: Pick<ConfidentialCashoutGateway, "prepare" | "status">,
+) {
+  registerConfidentialPayoutRoutes(app, gateway, "private-funding");
 }

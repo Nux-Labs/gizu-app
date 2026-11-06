@@ -447,6 +447,7 @@ internal fun depositPublicReview(review: JSONObject): JSONObject {
             ),
           )
           .also {
+            if (s.optString("kind") == "private") it.put("kind", "private").put("address", "")
             if (review.has("distribution")) {
               it.put(
                 "allocations",

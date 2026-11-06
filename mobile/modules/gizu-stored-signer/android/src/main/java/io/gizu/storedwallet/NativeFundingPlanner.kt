@@ -7,17 +7,24 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.planPublicSourceAllocation
 
+internal class PublicFundingMinimum(val minimumAtoms: String) :
+  IllegalStateException("Public funding must cover fees, reserve and a usable transfer")
+
 /** Fresh native state and per-owner research sponsorship caps feed the shared integer planner. */
 internal class NativeFundingPlanner(
   private val context: Context,
   private val record: WalletRecord,
 ) {
-  suspend fun plan(budgetAtoms: String, feature: String = "earn"): Map<String, Any?> {
+  suspend fun plan(
+    budgetAtoms: String,
+    feature: String = "earn",
+    depositBudgetAtoms: String = budgetAtoms,
+  ): Map<String, Any?> {
     require(feature in setOf("swap", "earn"))
     require(budgetAtoms.matches(Regex("[1-9][0-9]{0,19}")))
     check(record.verified && !record.earnRecoveryRequired)
     if (feature == "earn") {
-      requireDistributionBudget(record, budgetAtoms)
+      requireDistributionBudget(record, depositBudgetAtoms)
       requireSponsoredWallet(record, record.id)
       val funded =
         currentCycleRows(record, earnSponsoredJournal(context, record).all()).any {
@@ -121,6 +128,15 @@ internal class NativeFundingPlanner(
     check(available >= budget) {
       if (probed >= 128) "Account discovery is still syncing. Refresh before funding."
       else "Available USDC does not cover this budget after reservations"
+    }
+    if (feature == "earn") {
+      val minimum =
+        sources.objects().minOf { source ->
+          depositAtoms(source.getString("fundingFeeAtoms")) +
+            depositAtoms(source.getString("executionReserveAtoms")) +
+            PRIVATE_DEPOSIT_MINIMUM
+        }
+      if (budget < minimum) throw PublicFundingMinimum(minimum.toString())
     }
     val result =
       JSONObject(planPublicSourceAllocation(record.roleRegistry, budgetAtoms, sources.toString()))

@@ -19,12 +19,76 @@ internal fun nativeDepositPreparer(
   context: Context,
   record: WalletRecord,
   journal: EarnDepositJournal,
+  privateReadAuthority: () -> Unit = {},
 ) =
   EarnDepositPreparer(
     journal,
     EarnDepositGateway(),
     { current, budget ->
-      val plan = JSONObject(NativeFundingPlanner(context, current).plan(budget))
+      val own = journal.all().single { it.getInt("cycleIndex") == current.earnCycleIndex }
+      var private =
+        if (savedCycleDistribution(current) != null) {
+          assertNoPrivateDeposit(context, current, own.getString("journeyId"))
+          assertCashoutCanStart(context, current, own.getString("journeyId"))
+          selectPrivateDepositSources(budget, privateDepositCandidates(context, current)) { source
+            ->
+            readPrivateDepositBalance(current, source, privateReadAuthority)
+              .getValue("available")
+              .toString()
+          }
+        } else PrivateDepositSelection(emptyList(), budget)
+      fun sourceRows() =
+        private.sources.mapIndexed { index, source ->
+          val id = "private_" + UUID.randomUUID().toString().replace("-", "")
+          JSONObject()
+            .put("walletId", current.id)
+            .put("operationId", id)
+            .put("revision", 1)
+            .put("status", "privateReserved")
+            .put(
+              "proposal",
+              JSONObject()
+                .put("kind", "privateEarnFunding")
+                .put("operationId", id)
+                .put("revision", 1)
+                .put("profileChainId", 4663)
+                .put("cycleIndex", current.earnCycleIndex)
+                .put("sourceAccountIndex", -(index + 1))
+                .put("expectedFrom", source.getString("address"))
+                .put("confidentialAccount", cycleConfidential(current))
+                .put("source", source)
+                .put("token", MONAD_EARN_USDC)
+                .put("budgetAtoms", source.getString("amountAtoms"))
+                .put("amountAtoms", source.getString("amountAtoms"))
+                .put("maximumTokenFeeAtoms", "0")
+                .put("deadline", System.currentTimeMillis() / 1000 + 180),
+            )
+        }
+      var privateRows = sourceRows()
+      if (private.publicBudget == "0")
+        return@EarnDepositPreparer DepositSourceDraft(
+          privateRows,
+          JSONObject().put("id", "private_" + own.getString("journeyId")),
+          privateRows.associate {
+            it.getString("operationId") to it.getJSONObject("proposal").getString("amountAtoms")
+          },
+        )
+      var planned: JSONObject? = null
+      repeat(3) {
+        if (planned == null) {
+          try {
+            planned =
+              JSONObject(
+                NativeFundingPlanner(context, current)
+                  .plan(private.publicBudget, depositBudgetAtoms = budget)
+              )
+          } catch (minimum: PublicFundingMinimum) {
+            private = rebalancePrivateDepositSources(private, minimum.minimumAtoms)
+            privateRows = sourceRows()
+          }
+        }
+      }
+      val plan = checkNotNull(planned) { "Public funding fees changed; review the amount again" }
       val ledger = fundingReservations(context, current)
       val batchId = plan.getString("fundingBatchId")
       try {
@@ -80,15 +144,19 @@ internal fun nativeDepositPreparer(
             original.put("proposal", p).put("unsignedUserOperation", unsigned)
           }
         ledger.commitBatch(batchId)
-        DepositSourceDraft(rows, ledger.batch(batchId), credits)
+        privateRows.forEach {
+          credits[it.getString("operationId")] =
+            it.getJSONObject("proposal").getString("amountAtoms")
+        }
+        DepositSourceDraft(privateRows + rows, ledger.batch(batchId), credits)
       } catch (failure: Exception) {
         ledger.cancelBatchUnsigned(batchId)
         throw failure
       }
     },
     { review ->
-      fundingReservations(context, record)
-        .cancelBatchUnsigned(review.getJSONObject("reservation").getString("id"))
+      val id = review.getJSONObject("reservation").getString("id")
+      if (!id.startsWith("private_")) fundingReservations(context, record).cancelBatchUnsigned(id)
     },
     reportFailure = { stage, code, location ->
       android.util.Log.w(
@@ -235,9 +303,7 @@ internal class EarnDepositPreparer(
             "sourceMaximumFeeAtoms",
             sources
               .objects()
-              .fold(BigInteger.ZERO) { n, s ->
-                n + depositAtoms(s.getString("maximumFeeAtoms"), true)
-              }
+              .fold(BigInteger.ZERO) { n, s -> n + depositAtoms(s.getString("maximumFeeAtoms")) }
               .toString(),
           )
           it.put("indicativeReview", amounts)
@@ -415,6 +481,7 @@ internal class EarnDepositPreparer(
               }
             ),
           )
+      if (isPrivateDepositSource(child)) source.put("kind", "private")
       readPayouts(source, proposal.getInt("revision"))
       sources.put(source)
       sourceExpiry = minOf(sourceExpiry, Math.multiplyExact(proposal.getLong("deadline"), 1000))
@@ -433,7 +500,7 @@ internal class EarnDepositPreparer(
             }
         val fees =
           sources.objects().fold(BigInteger.ZERO) { sum, source ->
-            sum + depositAtoms(source.getString("maximumFeeAtoms"), true)
+            sum + depositAtoms(source.getString("maximumFeeAtoms"))
           }
         it.put(
           "indicativeReview",

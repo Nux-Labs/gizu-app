@@ -157,14 +157,15 @@ internal class EarnPayoutJournal(
       else check(leg in setOf("hold", "invest"))
       val funding = proposal.getString("operationId")
       val C = proposal.getString("expectedSigner")
-      val tx = proposal.getString("sourceTransactionHash")
+      val tx = proposal.optString("sourceTransactionHash")
       check(
         old.count(::journalEntryPending) < 256 &&
           old.none { op ->
             val p = op.getJSONObject("proposal")
             (op.getString("leg") == leg &&
               (p.getString("operationId") == funding ||
-                p.getString("sourceTransactionHash").equals(tx, true) &&
+                tx.isNotBlank() &&
+                  p.optString("sourceTransactionHash").equals(tx, true) &&
                   p.getString("expectedSigner").equals(C, true) &&
                   p.optInt("sourceAccountIndex", 0) == proposal.optInt("sourceAccountIndex", 0))) ||
               p.getString("expectedSigner").equals(C, true) && nonceHistory(op).contains(nonce)
@@ -221,8 +222,9 @@ internal class EarnPayoutJournal(
           val p = row.getJSONObject("proposal")
           row.getString("leg") == op.getString("leg") &&
             (p.getString("operationId") == old.getString("operationId") ||
-              p.getString("sourceTransactionHash")
-                .equals(old.getString("sourceTransactionHash"), true) &&
+              old.optString("sourceTransactionHash").isNotBlank() &&
+                p.optString("sourceTransactionHash")
+                  .equals(old.optString("sourceTransactionHash"), true) &&
                 p.getString("expectedSigner").equals(old.getString("expectedSigner"), true) &&
                 p.optInt("sourceAccountIndex", 0) == old.optInt("sourceAccountIndex", 0))
         }
@@ -252,6 +254,8 @@ internal class EarnPayoutJournal(
         "Immutable payout funding or role changed"
       }
       check(old.has("distribution") == proposal.has("distribution"))
+      check(nativeJsonEqual(old.opt("source"), proposal.opt("source")))
+      check(old.optString("kind") == proposal.optString("kind"))
       if (old.has("distribution"))
         check(
           distributionWeights(old.getJSONObject("distribution")) ==

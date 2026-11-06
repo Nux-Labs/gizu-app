@@ -1,12 +1,19 @@
 import {
   parseDepositSnapshot,
+  parseDepositFundingBalance,
   type EarnDepositService,
   type DepositSnapshot,
 } from "@/domain/earn/depositJourney";
 import type { EarnOwner } from "@/domain/earn/types";
 import { getStoredEarnDepositSigner } from "@/services/wallet/nativeBridge";
+type DepositBridge = Omit<
+  NonNullable<ReturnType<typeof getStoredEarnDepositSigner>>,
+  "readEarnDepositFundingBalance"
+> & {
+  readEarnDepositFundingBalance?: (request: { walletId: string }) => Promise<unknown>;
+};
 export function createEarnDepositService(
-  bridgeFactory = getStoredEarnDepositSigner,
+  bridgeFactory: () => DepositBridge | null = getStoredEarnDepositSigner,
 ): EarnDepositService {
   const occupied = new Set<string>(),
     uncertain = new Map<string, string>();
@@ -47,6 +54,12 @@ export function createEarnDepositService(
   return {
     async available() {
       return bridgeFactory() !== null;
+    },
+    async fundingBalance(owner) {
+      const native = bridge();
+      if (!native.readEarnDepositFundingBalance) return null;
+      const result = await native.readEarnDepositFundingBalance({ walletId: owner.walletId });
+      return result === null ? null : parseDepositFundingBalance(result);
     },
     prepare: (owner, profile, budget, draftId) =>
       mutation(owner, async () => {

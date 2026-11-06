@@ -14,7 +14,7 @@ private constructor(
   private val cycle: Int,
   private val registry: String,
   review: JSONObject,
-  private val funding: EarnFundingBatchApproval,
+  private val funding: EarnFundingBatchApproval?,
 ) {
   private val envelope = JSONObject(review.toString())
   val review: JSONObject
@@ -99,10 +99,26 @@ private constructor(
           rows
             .single { it.getString("operationId") == s.getString("operationId") }
             .getJSONObject("proposal")
-        check(
-          s.getString("address")
-            .equals(publicAccountAddress(record, s.getInt("accountIndex")), true)
-        )
+        val private = s.optString("kind") == "private"
+        if (private) {
+          check(distribution != null && p.getString("kind") == "privateEarnFunding")
+          check(s.getInt("accountIndex") < 0)
+          val source = p.getJSONObject("source")
+          check(s.getString("address").equals(privateDepositAddress(record, source), true))
+          check(source.getString("amountAtoms") == s.getString("amountAtoms"))
+          check(
+            sources
+              .filter { it.optString("kind") == "private" }
+              .count { it.getString("address").equals(s.getString("address"), true) } == 1
+          )
+        } else {
+          check(!s.has("kind") || s.getString("kind") == "public")
+          check(p.getString("kind") == "sourceFunding")
+          check(
+            s.getString("address")
+              .equals(publicAccountAddress(record, s.getInt("accountIndex")), true)
+          )
+        }
         check(addresses.none { it.equals(s.getString("address"), true) })
         check(
           p.getString("token").equals(MONAD_EARN_USDC, true) &&
@@ -117,14 +133,18 @@ private constructor(
           )) check(s.getString(bound) == p.getString(proposal))
         val amount = depositAtoms(s.getString("amountAtoms"), true)
         val credit = depositAtoms(s.getString("minimumCreditAtoms"), true)
-        val fee = depositAtoms(s.getString("maximumFeeAtoms"), true)
+        val fee = depositAtoms(s.getString("maximumFeeAtoms"))
         val retained = depositAtoms(s.getString("retainedAtoms"))
         val budget = depositAtoms(s.getString("budgetAtoms"), true)
-        check(
-          credit <= amount &&
-            retained >= BigInteger.valueOf(10000) &&
-            amount + fee + retained == budget
-        )
+        if (private)
+          check(amount == credit && amount == budget && fee.signum() == 0 && retained.signum() == 0)
+        else
+          check(
+            credit <= amount &&
+              fee.signum() > 0 &&
+              retained >= BigInteger.valueOf(10000) &&
+              amount + fee + retained == budget
+          )
         if (distribution != null) {
           check(!s.has("hold") && !s.has("invest"))
           check(s.getJSONArray("allocations").length() == legs.size)
@@ -165,17 +185,22 @@ private constructor(
       if (distribution != null)
         check(nativeJsonEqual(review.getJSONObject("deposit"), aggregateDepositBounds(deposits)))
       val reservation = review.getJSONObject("reservation")
+      val publicRows = rows.filterNot(::isPrivateDepositSource)
       val funding =
-        EarnFundingBatchApproval.createManifest(
-          rows,
-          record.id,
-          record.journalId,
-          record.earnCycleIndex,
-          reservation.getString("id"),
-          record.roleRegistry,
-          reservation,
-          allowUnsignedRefresh = review.optBoolean("sourceRefreshWithinLimits", false),
-        )
+        if (publicRows.isEmpty()) {
+          check(reservation.getString("id").startsWith("private_"))
+          null
+        } else
+          EarnFundingBatchApproval.createManifest(
+            publicRows,
+            record.id,
+            record.journalId,
+            record.earnCycleIndex,
+            reservation.getString("id"),
+            record.roleRegistry,
+            reservation,
+            allowUnsignedRefresh = review.optBoolean("sourceRefreshWithinLimits", false),
+          )
       return EarnDepositApproval(
         record.id,
         record.journalId,
@@ -193,7 +218,7 @@ private constructor(
     val expiry = remainingApprovalAt?.let { it + 45000 } ?: review.getLong("expiresAtMs")
     check(!invalidated && approvedAt == null && now >= start && now < expiry)
     check(now <= Long.MAX_VALUE - 900000)
-    funding.approveAfterPasskey(now)
+    funding?.approveAfterPasskey(now)
     approvedAt = now
     lastObservedAt = now
   }
@@ -242,12 +267,15 @@ private constructor(
     val logical =
       when (stage) {
         "funding" -> {
-          funding.assertAuthorized(record, child, now)
+          checkNotNull(funding).assertAuthorized(record, child, now)
           check(p.getLong("deadline") > now / 1000)
           "funding:$id"
         }
         "payouts" -> {
-          check(p.getString("kind") == "confidentialPayout" && credits.size == sources.size)
+          check(
+            p.getString("kind") in setOf("confidentialPayout", "privateEarnPayout") &&
+              credits.size == sources.size
+          )
           val source =
             sources.singleOrNull { it.getString("operationId") == p.getString("operationId") }
           check(source != null)
@@ -257,11 +285,30 @@ private constructor(
           check(nativeJsonEqual(p.opt("distribution"), envelope.opt("distribution")))
           check(!p.has("investmentSlot"))
           val bound = depositReviewBound(source, leg, envelope)
-          check(p.getString("expectedSigner") == review.getString("confidentialAccount"))
-          check(
-            p.getString("sourceOwner").equals(source.getString("address"), true) &&
-              p.getInt("sourceAccountIndex") == source.getInt("accountIndex")
-          )
+          if (source.optString("kind") == "private") {
+            check(p.getString("kind") == "privateEarnPayout")
+            val original =
+              envelope.getJSONArray("fundingRows").objects().single {
+                it.getString("operationId") == sourceId
+              }
+            check(
+              nativeJsonEqual(
+                p.getJSONObject("source"),
+                original.getJSONObject("proposal").getJSONObject("source"),
+              )
+            )
+            check(
+              p.getString("expectedSigner")
+                .equals(privateDepositAddress(record, p.getJSONObject("source")), true)
+            )
+          } else {
+            check(p.getString("kind") == "confidentialPayout")
+            check(p.getString("expectedSigner") == review.getString("confidentialAccount"))
+            check(
+              p.getString("sourceOwner").equals(source.getString("address"), true) &&
+                p.getInt("sourceAccountIndex") == source.getInt("accountIndex")
+            )
+          }
           check(p.getString("expectedRecipient").equals(bound.getString("recipient"), true))
           val credit = checkNotNull(credits[sourceId])
           val offset =
@@ -415,7 +462,7 @@ private constructor(
   fun invalidate() {
     invalidated = true
     approvedAt = null
-    funding.invalidate()
+    funding?.invalidate()
   }
 }
 

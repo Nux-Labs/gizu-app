@@ -18,9 +18,17 @@ internal interface CashoutGateway {
 internal class NativeCashoutGateway(
   private val auth: suspend (JSONObject) -> JSONObject,
   private val rpc: TransferRpc = EarnSponsoredChainRpc(143),
+  private val route: String = "cashout",
+  private val transport: suspend (String, JSONObject) -> JSONObject = { path, body ->
+    JSONObject(NativeRpcTransport(path).post(body.toString()))
+  },
 ) : CashoutGateway {
+  init {
+    check(route in setOf("cashout", "private-funding"))
+  }
+
   private suspend fun post(path: String, body: JSONObject) =
-    JSONObject(NativeRpcTransport("$EARN_NATIVE_BACKEND/cashout/$path").post(body.toString()))
+    transport("$EARN_NATIVE_BACKEND/$route/$path", body)
 
   override suspend fun prepare(
     operationId: String,
@@ -38,7 +46,7 @@ internal class NativeCashoutGateway(
       )
       .also {
         check(it.toString().toByteArray().size <= 262144)
-        it.put("leg", "withdrawal")
+        if (route == "cashout") it.put("leg", "withdrawal")
       }
 
   override suspend fun submit(signed: String) =
@@ -79,6 +87,7 @@ internal class NativeCashoutGateway(
           excludedTransactions = usedReceipts,
         )
       if (scan.transactionHash != null) {
+        request.put("signedData", auth(source))
         request.put("destinationTransactionHash", scan.transactionHash)
         result = post("status", request)
       } else result.put("nextScanBlock", scan.nextBlock)

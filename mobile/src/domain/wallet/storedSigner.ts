@@ -32,6 +32,7 @@ export type StoredSignerCapabilities = {
   earnPrivatePayoutExecution?: boolean;
   earnDepositJourney?: boolean;
   earnDepositDistribution?: boolean;
+  earnDepositPrivateFunding?: boolean;
   confidentialWithdrawals?: boolean;
   confidentialSaleProceeds?: boolean;
   earnBalanceDeltaSettlement?: boolean;
@@ -189,6 +190,7 @@ export interface StoredSignerContract {
     budgetAtoms: string,
     draftId: string | null,
   ): Promise<unknown>;
+  readEarnDepositFundingBalance?(request: { walletId: string }): Promise<unknown>;
   confirmEarnDeposit?(walletId: string, journeyId: string, revision: number): Promise<unknown>;
   getEarnDepositStatus?(walletId: string, journeyId: string): Promise<unknown>;
   resumeEarnDeposit?(walletId: string, journeyId: string, revision: number): Promise<unknown>;

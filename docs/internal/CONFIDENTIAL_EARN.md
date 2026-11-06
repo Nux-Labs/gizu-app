@@ -13,7 +13,43 @@ preserve earlier implementation stages.
 
 **Earn ends at an invested vault position.** The initial fee calculation simulates a future full redemption in a disposable server-side fork only to estimate the withdrawal reserve. It never withdraws the live position. The user must click Withdraw later, review fresh fees, and authorize redemption separately. Aurora return quotes and operations follow that requested exit; their future executable costs are excluded from the initial deposit estimate.
 
-Funding uses Circle USDC `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` (six decimals) on Monad mainnet 143. Swap and Earn share native source selection across accounts 0, 1 and allocated public receiving accounts, with fresh balances and shared reservations. A sufficient single account is preferred; a larger budget can span multiple sources. One combined native review and passkey assertion authorizes the selected source funding operations. Each source retains its own fees, transaction and recovery journal. Changed terms or an interrupted/expired approval require a fresh review of the remaining sources.
+New guided Android deposits show **available private USDC + public USDC**, with a
+breakdown of both. Private USDC means the Monad-origin USDC asset in the wallet's
+native confidential account catalogue; vault shares, USDG, other tokens and other
+chains' USDC are not counted as available deposit cash. A read-only native
+authentication checks these accounts, with four concurrent reads and at most 128
+catalogue accounts per review. Failed, incomplete or expired reads block review
+instead of treating private funds as zero. Native capabilities keep older builds
+on their supported public-only path. The funding snapshot returns aggregate atom
+strings to JavaScript; private identities remain native.
+
+Native preparation rechecks eligible private accounts and selects them first.
+Their USDC goes directly through an advanced-confidentiality, exact-input route
+to the saved Robinhood investment wallets as USDG, without a public Monad
+cashout first. Public USDC covers any remaining budget through the existing
+funding path. Private account dust below 0.01 USDC remains untouched and is
+excluded from available deposit cash; this prevents zero allocations under any
+valid basis-point distribution. Every selected source is checked again before
+signing, and the native grant binds its identity, input, saved allocation,
+recipient and minimum output. Saved deposits retain their original funding
+policy. Private-only deposits do not create public funding transactions or need
+a public funding gas reserve.
+
+Public funding uses Circle USDC `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` (six decimals) on Monad mainnet 143. Swap and Earn share native public source selection across accounts 0, 1 and allocated public receiving accounts, with fresh balances and shared reservations. A sufficient single account is preferred; a larger budget can span multiple sources. One combined native review and passkey assertion authorizes the selected source funding operations. Each source retains its own fees, transaction and recovery journal. Changed terms or an interrupted/expired approval require a fresh review of the remaining sources.
+
+Private funding uses `/v1/earn/native/private-funding/prepare` and `/status` with
+the existing authenticated read and signed intent boundaries. The server fixes
+the destination to Robinhood USDG; the Rust signer derives the source and saved
+investment recipient independently. Encrypted native journals retain exact
+signed bytes before submission. Lost responses preserve reservations and permit
+an explicit exact-byte retry; authenticated history and a finalized canonical
+destination transfer are required before vault funding is attributed. A
+marker-only interrupted local signing attempt can be resumed under a fresh
+grant because submission is unreachable until signed bytes are durably saved.
+Other private spending is blocked while the deposit owns its sources. The
+backend retains only opaque coordination commitments, without an address
+catalogue. Deploy these backend routes before using the new Android build with
+private funds; this implementation does not deploy Render automatically.
 
 New Android deposits use the existing Swap wallet-count and weight algorithm, saved natively before destination quotes. Every selected wallet invests in the chosen vault. The source budget selects one wallet below 5 USDC, two for 5–20, two or three above 20–100, three or four above 100–1,000, and four or five above 1,000. Weights total 10,000 basis points and stay within 70–130% of an equal share. These shares allocate verified confidential credit; independent payout fees, vault gas and each wallet's retained withdrawal reserve reduce the invested amounts. Multiple funding sources use cumulative rounding so the allocated input is conserved.
 

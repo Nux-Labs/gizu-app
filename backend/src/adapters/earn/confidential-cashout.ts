@@ -1,5 +1,8 @@
 import type { OperationCoordinator } from "./operation-coordinator.ts";
-import { boundUnsignedPayoutDeadline } from "./private-payout.ts";
+import {
+  boundUnsignedPayoutDeadline,
+  validatePrivatePayoutIntent,
+} from "./private-payout.ts";
 import { base58 } from "@scure/base";
 import {
   bytesToHex,
@@ -10,13 +13,13 @@ import {
   erc20Abi,
 } from "viem";
 import type { Address, Hex } from "viem";
-import { monadUsdcAssetId } from "../aurora/assets.ts";
+import { monadUsdcAssetId, robinhoodUsdgAssetId } from "../aurora/assets.ts";
 import { auroraApi } from "../aurora/http.ts";
 import {
   authenticateEarnRead,
   ConfidentialBalance,
 } from "../aurora/confidential-balance.ts";
-import type { ReadAuthentication } from "../aurora/confidential-balance.ts";
+import { ROBINHOOD_PROFILE } from "./robinhood-vault.ts";
 import { EarnRecoveryEnvelope } from "./recovery-envelope.ts";
 const USDC = "0x754704Bc059F8C67012fEd69BC8A327a5aafb603" as Address;
 const obj = (v: any): any => {
@@ -53,17 +56,27 @@ export interface CashoutProviders {
   reference(recipient: string): Promise<any>;
   confirm(quote: any, tx: string, amount: string): Promise<any>;
 }
-/** Encrypted per-child recovery transport with durable opaque receipt-event commitments. */
-export class ConfidentialCashoutGateway {
+interface ConfidentialPayoutConfiguration {
+  auroraApiKey?: string;
+  recoveryKey?: string;
+  coordination?: Pick<OperationCoordinator, "bind">;
+  robinhoodRpcUrl?: string;
+}
+interface PayoutDestination {
+  purpose: "confidential-cashout" | "confidential-private-funding";
+  chainId: 143 | 4663;
+  token: Address;
+  assetId: string;
+  rpcUrl: string;
+}
+/** Fixed server-selected payout domains; callers cannot choose destination chains/assets. */
+class ConfidentialPayoutGateway {
   private envelope: EarnRecoveryEnvelope;
   private providers: CashoutProviders;
   private coordination: Pick<OperationCoordinator, "bind"> | undefined;
   constructor(
-    config: {
-      auroraApiKey?: string;
-      recoveryKey?: string;
-      coordination?: Pick<OperationCoordinator, "bind">;
-    },
+    config: ConfidentialPayoutConfiguration,
+    private destination: PayoutDestination,
     providers?: CashoutProviders,
     private now = Date.now,
   ) {
@@ -74,14 +87,16 @@ export class ConfidentialCashoutGateway {
       return auroraApi(config.auroraApiKey, fetch, path, body, token);
     };
     const client = createPublicClient({
-      transport: http("https://rpc.monad.xyz", {
+      cacheTime: 0,
+      transport: http(destination.rpcUrl, {
         timeout: 12000,
         retryCount: 0,
       }),
     });
     this.providers = providers ?? {
       authenticate: (a) => authenticateEarnRead(a, this.now),
-      balance: (a) => new ConfidentialBalance(config.auroraApiKey).read(a),
+      balance: (a) =>
+        new ConfidentialBalance(config.auroraApiKey, fetch, this.now).read(a),
       quote: (r) => api("quote/{key}", r),
       intent: (signerId, depositAddress) =>
         api("generate-intent/{key}", {
@@ -147,7 +162,8 @@ export class ConfidentialCashoutGateway {
         return r.items;
       },
       reference: async (recipient) => {
-        if ((await client.getChainId()) !== 143) throw Error("Wrong chain");
+        if ((await client.getChainId()) !== destination.chainId)
+          throw Error("Wrong chain");
         const b = await client.getBlock({ blockTag: "finalized" });
         if (!b.hash) throw Error("Missing reference");
         return {
@@ -155,7 +171,7 @@ export class ConfidentialCashoutGateway {
           referenceHash: b.hash,
           initialDestinationAtoms: (
             await client.readContract({
-              address: USDC,
+              address: destination.token,
               abi: erc20Abi,
               functionName: "balanceOf",
               args: [recipient as Address],
@@ -165,7 +181,7 @@ export class ConfidentialCashoutGateway {
         };
       },
       confirm: async (q, hash, received) => {
-        if ((await client.getChainId()) !== 143)
+        if ((await client.getChainId()) !== destination.chainId)
           throw Error("Wrong destination chain");
         if (!/^0x[0-9a-f]{64}$/i.test(hash)) throw Error("Invalid receipt");
         const r = await client.getTransactionReceipt({ hash: hash as Hex }),
@@ -173,9 +189,17 @@ export class ConfidentialCashoutGateway {
           f = await client.getBlock({ blockTag: "finalized" });
         if (
           r.status !== "success" ||
+          !same(r.transactionHash, hash) ||
+          (await client.getBlock({ blockNumber: BigInt(q.referenceBlock) }))
+            .hash !== q.referenceHash ||
           r.blockNumber <= BigInt(q.referenceBlock) ||
           r.blockHash !== b.hash ||
-          f.number < r.blockNumber
+          f.number === null ||
+          f.number < r.blockNumber ||
+          (destination.purpose === "confidential-private-funding" &&
+            (!Number.isSafeInteger(Number(b.timestamp) * 1000) ||
+              Number(b.timestamp) * 1000 < q.observedAtMs - 1000 ||
+              Number(b.timestamp) * 1000 > this.now() + 5000))
         )
           throw Error("Unconfirmed receipt");
         const logs = parseEventLogs({
@@ -185,7 +209,8 @@ export class ConfidentialCashoutGateway {
           strict: true,
         }).filter(
           (l) =>
-            same(l.address, USDC) && same(l.args.to, q.destinationRecipient),
+            same(l.address, destination.token) &&
+            same(l.args.to, q.destinationRecipient),
         );
         if (logs.length !== 1 || logs[0]!.args.value !== atoms(received))
           throw Error("Changed receipt");
@@ -238,7 +263,7 @@ export class ConfidentialCashoutGateway {
       refundType: "CONFIDENTIAL_INTENTS",
       refundTo: C,
       originAsset: monadUsdcAssetId,
-      destinationAsset: monadUsdcAssetId,
+      destinationAsset: this.destination.assetId,
       amount: input.amountAtoms,
       slippageTolerance: 100,
       confidentiality: "advanced",
@@ -248,10 +273,41 @@ export class ConfidentialCashoutGateway {
       echo = obj(response.quoteRequest);
     for (const k of Object.keys(request))
       if (
-        String(echo[k]).toLowerCase() !==
-        String((request as any)[k]).toLowerCase()
+        this.destination.purpose === "confidential-private-funding"
+          ? ["recipient", "refundTo"].includes(k)
+            ? !same(echo[k], (request as any)[k])
+            : echo[k] !== (request as any)[k]
+          : String(echo[k]).toLowerCase() !==
+            String((request as any)[k]).toLowerCase()
       )
         throw Error("Changed quote");
+    if (this.destination.purpose === "confidential-private-funding") {
+      for (const row of [response, echo, q])
+        if (
+          (row.appFees != null &&
+            (!Array.isArray(row.appFees) || row.appFees.length)) ||
+          (row.feeBps != null && row.feeBps !== 0) ||
+          (row.connectedWallets != null &&
+            (!Array.isArray(row.connectedWallets) ||
+              row.connectedWallets.length))
+        )
+          throw Error("Private funding additional fees or wallets");
+      for (const row of [echo, q])
+        for (const key of [
+          "depositMemo",
+          "chainDepositAddresses",
+          "virtualChainRecipient",
+          "virtualChainRefundRecipient",
+          "customRecipientMsg",
+        ])
+          if (row[key] != null)
+            throw Error("Private funding additional quote effects");
+      if (
+        typeof q.depositAddress !== "string" ||
+        !/^[-a-zA-Z0-9_.:]{1,256}$/.test(q.depositAddress)
+      )
+        throw Error("Invalid private funding deposit");
+    }
     if (
       typeof response.signature !== "string" ||
       !response.signature ||
@@ -270,13 +326,48 @@ export class ConfidentialCashoutGateway {
       intent.payload.length > 8000
     )
       throw Error("Invalid intent");
+    let expiresAtMs = Math.min(this.now() + 60000, Date.parse(q.deadline));
+    if (this.destination.purpose === "confidential-private-funding") {
+      validatePrivatePayoutIntent(intent.payload, {
+        signer: C,
+        depositId: q.depositAddress,
+        amountAtoms: input.amountAtoms,
+      });
+      intent.payload = boundUnsignedPayoutDeadline(
+        intent.payload,
+        Math.min(this.now() + 60000, Date.parse(q.deadline)),
+        this.now(),
+      );
+      const { nonce, deadlineMs } = validatePrivatePayoutIntent(
+        intent.payload,
+        {
+          signer: C,
+          depositId: q.depositAddress,
+          amountAtoms: input.amountAtoms,
+        },
+      );
+      expiresAtMs = Math.min(expiresAtMs, deadlineMs);
+      await this.coordination.bind(
+        "payout-nonce",
+        C.toLowerCase() + ":" + nonce,
+        {
+          key: this.destination.purpose + ":" + input.operationId,
+          payload: intent.payload,
+        },
+        this.now() + 86400000,
+      );
+    }
     const prepared = {
       operationId: input.operationId,
       confidentialAccount: C,
       destinationRecipient: input.recipient,
-      destinationToken: USDC,
-      destinationChainId: 143,
+      destinationToken: this.destination.token,
+      destinationChainId: this.destination.chainId,
       assetId: monadUsdcAssetId,
+      destinationAssetId: this.destination.assetId,
+      ...(this.destination.purpose === "confidential-private-funding"
+        ? { providerFeeBps: 0 }
+        : {}),
       amountAtoms: input.amountAtoms,
       minimumDestinationAtoms: q.minAmountOut,
       depositId: q.depositAddress,
@@ -285,18 +376,32 @@ export class ConfidentialCashoutGateway {
       intent,
       balance,
       observedAtMs: this.now(),
-      expiresAtMs: Math.min(this.now() + 60000, Date.parse(q.deadline)),
+      expiresAtMs,
       ...(await this.providers.reference(input.recipient)),
     };
     return {
       ...prepared,
-      recoveryEnvelope: this.envelope.seal("confidential-cashout", prepared),
+      recoveryEnvelope: this.envelope.seal(this.destination.purpose, prepared),
     };
   }
   async status(input: any): Promise<any> {
     const q = obj(
-      this.envelope.open("confidential-cashout", input.recoveryEnvelope),
+      this.envelope.open(this.destination.purpose, input.recoveryEnvelope),
     );
+    if (
+      q.destinationChainId !== this.destination.chainId ||
+      !same(q.destinationToken, this.destination.token) ||
+      q.assetId !== monadUsdcAssetId ||
+      (q.destinationAssetId ?? q.assetId) !== this.destination.assetId ||
+      q.quoteRequest?.destinationAsset !== this.destination.assetId
+    )
+      throw Error("Changed payout destination");
+    if (this.destination.purpose === "confidential-private-funding")
+      validatePrivatePayoutIntent(q.intent.payload, {
+        signer: q.confidentialAccount,
+        depositId: q.depositId,
+        amountAtoms: q.amountAtoms,
+      });
     const C = await this.providers.authenticate(input.signedData);
     if (
       !same(C, q.confidentialAccount) ||
@@ -313,6 +418,10 @@ export class ConfidentialCashoutGateway {
       operationId: q.operationId,
       confidentialAccount: C,
       destinationRecipient: q.destinationRecipient,
+      destinationChainId: this.destination.chainId,
+      destinationToken: this.destination.token,
+      assetId: monadUsdcAssetId,
+      destinationAssetId: this.destination.assetId,
       amountAtoms: q.amountAtoms,
       minimumDestinationAtoms: q.minimumDestinationAtoms,
       authenticated: true,
@@ -328,7 +437,7 @@ export class ConfidentialCashoutGateway {
       r.recipientType !== "DESTINATION_CHAIN" ||
       r.refundType !== "CONFIDENTIAL_INTENTS" ||
       r.originAsset !== q.assetId ||
-      r.destinationAsset !== q.assetId ||
+      r.destinationAsset !== (q.destinationAssetId ?? q.assetId) ||
       !same(r.recipient, q.destinationRecipient) ||
       !same(r.refundTo, C) ||
       decimal(r.amountInFormatted) !== atoms(q.amountAtoms) ||
@@ -369,12 +478,15 @@ export class ConfidentialCashoutGateway {
     await this.coordination.bind(
       "confidential-cashout-receipt",
       {
-        chainId: 143,
-        token: USDC,
+        chainId: this.destination.chainId,
+        token: this.destination.token,
         transactionHash: receipt.transactionHash.toLowerCase(),
         logIndex: receipt.logIndex,
       },
       {
+        ...(this.destination.purpose === "confidential-private-funding"
+          ? { purpose: this.destination.purpose }
+          : {}),
         operationId: q.operationId,
         source: C,
         recipient: q.destinationRecipient,
@@ -390,5 +502,49 @@ export class ConfidentialCashoutGateway {
       intentHash: transactions[0].txHash,
       receipt,
     };
+  }
+}
+
+/** Cashout always pays public Monad USDC; request data cannot select another route. */
+export class ConfidentialCashoutGateway extends ConfidentialPayoutGateway {
+  constructor(
+    config: ConfidentialPayoutConfiguration,
+    providers?: CashoutProviders,
+    now = Date.now,
+  ) {
+    super(
+      config,
+      {
+        purpose: "confidential-cashout",
+        chainId: 143,
+        token: USDC,
+        assetId: monadUsdcAssetId,
+        rpcUrl: "https://rpc.monad.xyz",
+      },
+      providers,
+      now,
+    );
+  }
+}
+/** Private Earn funding pays the exact native-selected investment recipient in Robinhood USDG. */
+export class ConfidentialPrivateFundingGateway extends ConfidentialPayoutGateway {
+  constructor(
+    config: ConfidentialPayoutConfiguration,
+    providers?: CashoutProviders,
+    now = Date.now,
+  ) {
+    super(
+      config,
+      {
+        purpose: "confidential-private-funding",
+        chainId: 4663,
+        token: ROBINHOOD_PROFILE.token,
+        assetId: robinhoodUsdgAssetId,
+        rpcUrl:
+          config.robinhoodRpcUrl ?? "https://rpc.mainnet.chain.robinhood.com",
+      },
+      providers,
+      now,
+    );
   }
 }

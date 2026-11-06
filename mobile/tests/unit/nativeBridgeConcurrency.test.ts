@@ -58,6 +58,40 @@ test("an older native build can read saved deposits but cannot prepare a new dis
   ).rejects.toThrow(/updated native app/);
   expect(native.prepareEarnDeposit).not.toHaveBeenCalled();
 });
+test("private deposit funding reads require the native capability and its matching method", async () => {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+  Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
+  const capabilities = {
+    contractVersion: 1,
+    available: true,
+    earnDepositJourney: true,
+    earnDepositPrivateFunding: false,
+  };
+  const native = {
+    getCapabilities: jest.fn(async () => capabilities),
+    prepareEarnDeposit: jest.fn(),
+    resumeEarnDeposit: jest.fn(),
+    confirmEarnDeposit: jest.fn(),
+    getEarnDepositStatus: jest.fn(),
+    cancelEarnDeposit: jest.fn(),
+    readEarnDepositFundingBalance: jest.fn().mockResolvedValue({ totalAtoms: "5000000" }),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+  const signer = getStoredEarnDepositSigner()!;
+  await expect(signer.readEarnDepositFundingBalance({ walletId: "wallet" })).resolves.toBeNull();
+  expect(native.readEarnDepositFundingBalance).not.toHaveBeenCalled();
+  capabilities.earnDepositPrivateFunding = true;
+  await expect(signer.readEarnDepositFundingBalance({ walletId: "wallet" })).resolves.toEqual({
+    totalAtoms: "5000000",
+  });
+  expect(native.readEarnDepositFundingBalance).toHaveBeenCalledWith({ walletId: "wallet" });
+  jest
+    .mocked(requireOptionalNativeModule)
+    .mockReturnValue({ ...native, readEarnDepositFundingBalance: undefined });
+  await expect(
+    getStoredEarnDepositSigner()!.readEarnDepositFundingBalance({ walletId: "wallet" }),
+  ).rejects.toThrow(/updated native app/);
+});
 test("recovery snapshots stay readable during discovery and pause interrupts its native lane", async () => {
   Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
   Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
