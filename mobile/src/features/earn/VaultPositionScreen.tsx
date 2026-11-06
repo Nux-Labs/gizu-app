@@ -64,9 +64,8 @@ export function VaultPositionScreen({
         </View>
       </Surface>
       <Typography>
-        Return the full vault position to confidential USDC. Each redemption and return requires its
-        own native review and authorization. Your proceeds stay private until you withdraw from
-        Gizu.
+        Withdraw to your private USDC balance in Gizu. First release your funds from the vault, then
+        approve their return. We will guide you through each part.
       </Typography>
       {v.loading && (
         <Typography accessibilityLiveRegion="polite">
@@ -104,8 +103,8 @@ export function VaultPositionScreen({
         ))}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
       <Button
-        label="Check vault withdrawal progress"
-        variant="secondary"
+        label={v.readyToContinue ? "Continue withdrawal" : "Refresh position"}
+        variant={v.readyToContinue ? "primary" : "quiet"}
         disabled={v.loading || earn.busy}
         onPress={refresh}
       />

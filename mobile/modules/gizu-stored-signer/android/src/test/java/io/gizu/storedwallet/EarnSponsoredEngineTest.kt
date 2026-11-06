@@ -382,6 +382,30 @@ class EarnSponsoredEngineTest {
   }
 
   @Test
+  fun savedVaultV2RedemptionRetryUsesExactSharesInsteadOfZeroMaxRedeemView() {
+    val p =
+      setup()
+        .get("hood-1")
+        .getJSONObject("proposal")
+        .put("kind", "hoodRedeemAll")
+        .put("amountAtoms", "2000000")
+    val current = state().copy(shares = "2000000", maxRedeemShares = "0")
+    val signed = JSONObject().put("maxFeePerGas", "0xa").put("maxPriorityFeePerGas", "0x1")
+    val op =
+      JSONObject()
+        .put("proposal", p)
+        .put("signedUserOperation", signed.toString())
+        .put("stateBinding", sponsoredStateBinding(current))
+    checkSponsoredRetry(op, current)
+    assertThrows(IllegalStateException::class.java) {
+      checkSponsoredRetry(op, current.copy(shares = "1999999"))
+    }
+    assertThrows(IllegalStateException::class.java) {
+      checkSponsoredRetry(op, current.copy(tokenBalanceAtoms = "1"))
+    }
+  }
+
+  @Test
   fun savedRetryRejectsExpiredDeadlineHigherGasAndUnfundedReserve() {
     val p = setup().get("hood-1").getJSONObject("proposal")
     val signed = JSONObject().put("maxFeePerGas", "0xa").put("maxPriorityFeePerGas", "0x1")

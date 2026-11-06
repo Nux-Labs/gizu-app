@@ -130,7 +130,7 @@ export function ExitCompletionPanel({
     <View className="gap-2">
       <Typography>
         {aggregate
-          ? "Exit completion verifies this portion of your vault withdrawal before continuing to the next portion."
+          ? "Verify that this part has reached your private balance before continuing."
           : intent.distribution
             ? "Exit completion checks the selected investment wallet. Check each wallet to complete the whole investment exit."
             : "Exit completion checks wallet 2 only. Wallet 1 holdings are intentionally excluded."}
@@ -141,8 +141,14 @@ export function ExitCompletionPanel({
           : "New proceeds stay confidential. Previously authorized public withdrawals keep their saved destinations and must be reconciled."}
       </Typography>
       <Button
-        label={busy ? "Checking exit completion…" : "Check exit completion"}
-        variant="secondary"
+        label={
+          busy
+            ? "Checking balance…"
+            : aggregate
+              ? "Verify private balance"
+              : "Check exit completion"
+        }
+        variant={aggregate ? (result?.complete ? "quiet" : "primary") : "secondary"}
         disabled={busy}
         loading={busy}
         onPress={() => void check()}
@@ -150,11 +156,15 @@ export function ExitCompletionPanel({
       {result && (
         <>
           <Typography>
-            {result.complete
-              ? "Investment exit complete: zero shares, residual value below 0.50 USDC, and every submitted return has authenticated credit."
-              : "Investment exit incomplete: shares or asset value remain above the exit threshold."}
+            {aggregate
+              ? result.complete
+                ? "Private return verified for this part."
+                : "Some funds are still in the vault or waiting to return. Refresh the activity to continue."
+              : result.complete
+                ? "Investment exit complete: zero shares, residual value below 0.50 USDC, and every submitted return has authenticated credit."
+                : "Investment exit incomplete: shares or asset value remain above the exit threshold."}
           </Typography>
-          <Typography>
+          <Typography variant="caption">
             Current residual value: {formatUsdc(result.snapshot.residualUsdcAtoms)} USDC
           </Typography>
           {result.snapshot.balances.wrappedWei !== "0" && (
@@ -215,7 +225,7 @@ export function ExitCompletionPanel({
           )}
         </View>
       ))}
-      {withdrawals.available && (
+      {withdrawals.available && (!aggregate || withdrawals.rows.length > 0) && (
         <Button
           label="Check saved Monad withdrawals"
           variant="secondary"

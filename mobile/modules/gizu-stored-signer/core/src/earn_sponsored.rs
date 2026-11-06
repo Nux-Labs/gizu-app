@@ -453,9 +453,10 @@ impl SponsoredEarnOperation {
                 amount,
             )?);
         } else {
-            if s.p.kind == "hoodRedeemAll"
-                && (dec(&current.shares)? != amount || dec(&current.max_redeem_shares)? < amount)
-            {
+            // The pinned Morpho Vault V2 intentionally returns zero from
+            // maxRedeem. It is not a liquidity limit. Bind the complete live
+            // share balance; the exact router call enforces redemption onchain.
+            if s.p.kind == "hoodRedeemAll" && dec(&current.shares)? != amount {
                 return Err(SignerError::InvalidInput);
             }
             let price = if s.p.kind == "hoodDeposit" {
@@ -1696,6 +1697,26 @@ mod tests {
         // A price drop beyond the 10 bps bound, or a plan already below the live price, fails.
         assert!(prepare("1002000").is_err());
         assert!(prepare("998000").is_err());
+    }
+    #[test]
+    fn hood_v2_full_redemption_accepts_zero_max_redeem_and_still_binds_all_shares() {
+        let p = hood_proposal("hoodRedeemAll");
+        let rpc = hood_op(&p);
+        let mut current = state(4663);
+        // Morpho Vault V2's maxRedeem view is always zero, including when a
+        // canonical redeem succeeds. The actual owned shares remain exact.
+        current.max_redeem_shares = "0".into();
+        let o = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        o.prepare(7, rpc.to_string(), current.clone(), None, None)
+            .unwrap();
+        o.approve(7, o.review_hash().unwrap()).unwrap();
+        assert!(!o.sign(7, current.clone()).unwrap().signature.is_empty());
+        for changed_shares in ["1999999", "2000001"] {
+            let o = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+            let mut changed = current.clone();
+            changed.shares = changed_shares.into();
+            assert!(o.prepare(7, rpc.to_string(), changed, None, None).is_err());
+        }
     }
     #[test]
     fn hood_deposit_full_redemption_and_canonical_sdk_router_are_pinned() {

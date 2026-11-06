@@ -293,14 +293,21 @@ function unsignedOperation() {
     signature: "0x",
   };
 }
-async function signedOperation(cold: boolean) {
+async function signedOperation(cold: boolean, includeFactory = true) {
   const op = unsignedOperation();
   const signedAuth = await testAccount.signAuthorization({
     chainId: 143,
     address: delegate,
     nonce: 0,
   });
-  const authorization = cold ? signedAuth : { address: delegate };
+  const authorization = cold
+    ? signedAuth
+    : includeFactory
+      ? { address: delegate }
+      : undefined;
+  const factory = includeFactory
+    ? { factory: "0x7702", factoryData: "0x" }
+    : {};
   const typed = {
     ...op,
     ...Object.fromEntries(
@@ -315,9 +322,8 @@ async function signedOperation(cold: boolean) {
         "paymasterPostOpGasLimit",
       ].map((k) => [k, BigInt(op[k as keyof typeof op])]),
     ),
-    factory: "0x7702",
-    factoryData: "0x",
-    authorization,
+    ...factory,
+    ...(authorization ? { authorization } : {}),
   } as unknown as UserOperation<"0.8">;
   const signature = await testAccount.signTypedData(
     getUserOperationTypedData({
@@ -328,8 +334,7 @@ async function signedOperation(cold: boolean) {
   );
   const outgoing = {
     ...op,
-    factory: "0x7702",
-    factoryData: "0x",
+    ...factory,
     signature,
     ...(cold
       ? {
@@ -595,6 +600,64 @@ test("historical receipts and ByHash return bounded verified fields without prov
   }
   clock = now;
 });
+test("ByHash normalizes absent provider factory fields without changing submitted operation validation", async () => {
+  const { outgoing, expected } = await signedOperation(false, false);
+  let operation: Record<string, unknown> = {
+    ...outgoing,
+    factory: null,
+    factoryData: null,
+  };
+  let calls = 0;
+  const gateway = new NativeEarnGateway(
+    { pimlicoApiKey: "server-key" },
+    {
+      now: () => now + 3600000,
+      fetcher: async (_url, init) => {
+        calls++;
+        const request = JSON.parse(String(init?.body));
+        return Response.json({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { entryPoint: entryPoint08Address, userOperation: operation },
+        });
+      },
+    },
+  );
+  const request = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "eth_getUserOperationByHash",
+    params: [expected],
+  };
+  const result = await gateway.bundler(143, request);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(
+    (result.result as { userOperation: object }).userOperation,
+    outgoing,
+  );
+  for (const changed of [
+    { ...outgoing, factory: null, factoryData: "0x" },
+    { ...outgoing, factory: "0x7702", factoryData: null },
+    { ...outgoing, factory: null, factoryData: null, nonce: "0x1" },
+    { ...outgoing, factory: null, factoryData: null, paymasterData: null },
+  ]) {
+    operation = changed;
+    assert.ok((await gateway.bundler(143, request)).error);
+  }
+  const previousCalls = calls;
+  await assert.rejects(
+    gateway.bundler(143, {
+      ...request,
+      method: "eth_sendUserOperation",
+      params: [
+        { ...outgoing, factory: null, factoryData: null },
+        entryPoint08Address,
+      ],
+    }),
+  );
+  assert.equal(calls, previousCalls);
+});
+
 test("ByHash accepts provider numeric 7702 authorization fields and returns hex quantities", async () => {
   const { outgoing, expected } = await signedOperation(true);
   const auth = outgoing.eip7702Auth!;

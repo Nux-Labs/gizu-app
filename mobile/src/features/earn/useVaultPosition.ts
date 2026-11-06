@@ -146,6 +146,8 @@ export function useVaultPosition(profileId: EarnProfileId) {
     rows,
     intent,
     completed,
+    // Presentation only. Refresh rechecks expiry before accepting this proof.
+    readyToContinue: intent !== null && typeof proofs[positionKey(intent)] === "number",
     recordCompletion,
     loading: loading || earnLoading,
     message,

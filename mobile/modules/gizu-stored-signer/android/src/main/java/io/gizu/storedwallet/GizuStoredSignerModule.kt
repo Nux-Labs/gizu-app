@@ -288,10 +288,14 @@ class GizuStoredSignerModule : Module() {
       } catch (error: EarnGatewayFailure) {
         promise.reject(error.code, error.message ?: "Earn provider request is unavailable.", null)
       } catch (error: Exception) {
+        // Record code locations only: exception messages may contain provider
+        // payloads, account addresses or other private operation data.
+        val (code, location) = depositFailureDiagnostic(error)
+        android.util.Log.w("GizuWallet", "$code at $location")
         promise.reject(
           "WALLET_FAILED",
-          error.message
-            ?: "Wallet operation failed. Check wallet state; an existing wallet must not be overwritten.",
+          error.message?.takeIf { it.isNotBlank() }
+            ?: "Wallet operation could not be verified. Refresh saved progress and try again.",
           null,
         )
       } finally {

@@ -8,6 +8,11 @@ Incoming public USDC and the existing public funding paths remain unchanged.
 - New vault exits redeem the saved investment portions and finish after their
   return routes have verified confidential USDC credit. Vault positions aggregate
   the value across their investment wallets, with sequential exit progress.
+  The USDG withdrawal screen guides users through withdrawal and private return
+  with one next action. An unfinished unsigned review can be replaced with fresh
+  terms; native cancellation must succeed first. Signed or uncertain transactions
+  retain their saved recovery path. Expired on-screen reviews refresh before
+  approval, and final private credit is verified before continuing to another part.
 - New token sales finish with confidential USDC. Completion requires authenticated
   credit for each inbound route, including partial fills; an aggregate private
   balance or a successful route status alone does not prove sale-specific credit.
@@ -53,6 +58,20 @@ Portfolio refresh invalidates affected public and private observations after
 credits or debits. Stale balances remain visibly incomplete until canonical reads
 finish, preventing sold holdings and private proceeds from being valued twice,
 or newly credited receiving wallets from retaining a fresh cached zero.
+
+The pinned Robinhood USDG vault uses Morpho Vault V2, whose `maxRedeem` view
+[always returns zero](https://docs.morpho.org/developers/contracts/morpho-vaults-v2/).
+Native sponsored withdrawal and retry validation bind the full canonical share
+balance rather than treating this view as a liquidity limit. The planner still
+simulates the exact redemption, and native code retains its exact router calldata,
+owner, nonce, deadline and fee checks. Actual execution can revert if vault gates
+or liquidity change before inclusion; a quote is not a guaranteed withdrawal.
+
+Historical bundler lookups normalize provider `null` deployment fields to absent
+fields before signature and UserOperation-hash verification. Signed submission
+requests retain their strict original schema. Robinhood redemptions and returns
+still wait for the existing finalized receipt policy before advancing; a mined
+transaction or a zero share balance alone does not complete the private return.
 
 ## Backend and privacy
 

@@ -696,10 +696,9 @@ internal fun checkSponsoredRetry(op: JSONObject, state: NativeSponsoredState) {
     "Saved sponsored fee and reserve no longer funded"
   }
   if (p.getString("kind") == "hoodRedeemAll")
-    check(
-      state.shares == p.getString("amountAtoms") &&
-        state.maxRedeemShares.toBigInteger() >= p.getString("amountAtoms").toBigInteger()
-    )
+  // Morpho Vault V2's maxRedeem view always returns zero. Retry only the
+  // originally signed full share balance, with every binding above unchanged.
+  check(state.shares == p.getString("amountAtoms"))
   if (p.getString("kind") == "hoodTokenReturn") check(state.shares == "0")
 }
 
