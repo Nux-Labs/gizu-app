@@ -10,7 +10,7 @@ import {
   ethereumUsdcAssetId,
   robinhoodUsdgAssetId,
 } from "./assets.ts";
-import { auroraApi } from "./http.ts";
+import { auroraApi, AuroraHistoryAccessRequired } from "./http.ts";
 import { EarnRecoveryEnvelope } from "../earn/recovery-envelope.ts";
 export type SettlementExpectation = {
   operationId: string;
@@ -75,6 +75,7 @@ export type SettlementHistoryDiagnostic = {
   httpStatus: number;
   reason:
     | "provider"
+    | "history-access-required"
     | "malformed"
     | "session"
     | "ambiguous"
@@ -280,9 +281,11 @@ export class ConfidentialSettlement {
         httpStatus,
         error instanceof HistoryProofError
           ? error.reason
-          : httpStatus >= 200 && httpStatus < 300
-            ? "malformed"
-            : "provider",
+          : error instanceof AuroraHistoryAccessRequired
+            ? "history-access-required"
+            : httpStatus >= 200 && httpStatus < 300
+              ? "malformed"
+              : "provider",
       );
       throw error;
     }

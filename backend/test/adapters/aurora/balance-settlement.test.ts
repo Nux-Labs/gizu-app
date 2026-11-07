@@ -52,6 +52,7 @@ function setup(
   let clock = now,
     historyLatency = 0;
   let historyStatus = 200;
+  let historyMessage = "PRIVATE-PROVIDER-TEXT " + C;
   let history: Record<string, unknown>[] | undefined;
   const calls: string[] = [];
   const fetcher: typeof fetch = async (url) => {
@@ -61,10 +62,9 @@ function setup(
       if (!history) throw Error("History is unavailable");
       clock += historyLatency;
       if (historyStatus !== 200)
-        return new Response(
-          JSON.stringify({ message: "PRIVATE-PROVIDER-TEXT " + C }),
-          { status: historyStatus },
-        );
+        return new Response(JSON.stringify({ message: historyMessage }), {
+          status: historyStatus,
+        });
       return new Response(JSON.stringify({ items: history }));
     }
     return new Response(
@@ -137,8 +137,9 @@ function setup(
     setHistoryLatency: (ms: number) => {
       historyLatency = ms;
     },
-    setHistoryStatus: (status: number) => {
+    setHistoryStatus: (status: number, message?: string) => {
       historyStatus = status;
+      if (message !== undefined) historyMessage = message;
     },
     setHistory: (rows: Record<string, unknown>[]) => {
       history = rows;
@@ -189,7 +190,7 @@ test("new settlement uses exact route and authenticated balance delta; portable 
 });
 
 test("history diagnostics distinguish provider access, origin-owner and credit mismatches without retaining private data", async () => {
-  for (const variant of ["access", "owner", "credit"] as const) {
+  for (const variant of ["access", "invite-only", "owner", "credit"] as const) {
     const events: unknown[] = [];
     const f = setup(monadUsdcAssetId, (event) => events.push(event));
     const signed = await auth(),
@@ -205,6 +206,8 @@ test("history diagnostics distinguish provider access, origin-owner and credit m
       },
     ]);
     if (variant === "access") f.setHistoryStatus(403);
+    if (variant === "invite-only")
+      f.setHistoryStatus(400, "History is invite-only for now");
     await assert.rejects(
       f
         .service()
@@ -221,18 +224,21 @@ test("history diagnostics distinguish provider access, origin-owner and credit m
       {
         event: "earn.settlement-history",
         stage:
-          variant === "access"
+          variant === "access" || variant === "invite-only"
             ? "history"
             : variant === "owner"
               ? "origin"
               : "credit",
-        httpStatus: variant === "access" ? 403 : 200,
+        httpStatus:
+          variant === "access" ? 403 : variant === "invite-only" ? 400 : 200,
         reason:
           variant === "access"
             ? "provider"
-            : variant === "owner"
-              ? "origin-owner"
-              : "balance-delta",
+            : variant === "invite-only"
+              ? "history-access-required"
+              : variant === "owner"
+                ? "origin-owner"
+                : "balance-delta",
       },
     ]);
     const logged = JSON.stringify(history);
