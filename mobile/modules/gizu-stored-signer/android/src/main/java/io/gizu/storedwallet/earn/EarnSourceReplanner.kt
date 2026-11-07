@@ -314,41 +314,13 @@ private fun parseSourceReplanFees(
   return SourceReplanFees(cap, operation, row.getLong("expiresAtMs"))
 }
 
-/** Same ceil direct-token cap as the native core and backend research planner. */
-private fun sourceReplanFeeCap(op: JSONObject, now: Long): BigInteger {
-  val raw = op.getString("paymasterData").removePrefix("0x").lowercase()
-  check(
-    // 118-byte direct-token config plus a 64-byte compact or 65-byte full signature.
-    raw.length in setOf(364, 366) &&
-      raw.take(2) in setOf("02", "03") &&
-      raw.substring(2, 4) == "00" &&
-      ("0x" + raw.substring(28, 68)).equals(MONAD_EARN_USDC, true)
-  )
-  val until = BigInteger(raw.substring(4, 16), 16)
-  val after = BigInteger(raw.substring(16, 28), 16)
-  check(after <= now.toBigInteger() && (until == BigInteger.ZERO || until > now.toBigInteger()))
-  val fields =
-    listOf(
-      "callGasLimit",
-      "verificationGasLimit",
-      "preVerificationGas",
-      "paymasterVerificationGasLimit",
-      "paymasterPostOpGasLimit",
-    )
-  val gas =
-    fields.fold(BigInteger.ZERO) { sum, field ->
-      val n = quantity(op.getString(field))
-      check(n > BigInteger.ZERO && n.bitLength() <= 128)
-      sum + n
-    }
-  val price = quantity(op.getString("maxFeePerGas"))
-  val priority = quantity(op.getString("maxPriorityFeePerGas"))
-  check(price > BigInteger.ZERO && price.bitLength() <= 128 && priority <= price)
-  val post = BigInteger(raw.substring(68, 100), 16)
-  val rate = BigInteger(raw.substring(100, 164), 16)
-  check(rate > BigInteger.ZERO && post <= BigInteger.valueOf(10000000))
-  val scale = BigInteger.TEN.pow(18)
-  val numerator = (gas + post) * price * rate
-  check((numerator + scale - BigInteger.ONE).bitLength() <= 256)
-  return ((numerator + scale - BigInteger.ONE) / scale).also { check(it.bitLength() <= 256) }
-}
+/** Same parser, bounds and ceil cap as the native signing authority. */
+private fun sourceReplanFeeCap(op: JSONObject, now: Long): BigInteger =
+  try {
+    uniffi.gizu_stored_signer_core
+      .earnErc20FeeCap(op.toString(), MONAD_EARN_USDC, now.toULong())
+      .toBigInteger()
+  } catch (failure: uniffi.gizu_stored_signer_core.SignerException) {
+    // Preserve the adapter's existing validation failure contract at its callers.
+    throw IllegalStateException("Invalid source funding gas terms", failure)
+  }

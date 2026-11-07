@@ -36,6 +36,29 @@ private final class VaultStateRPC: StoredTransferRPC {
   }
 }
 final class EarnVaultRPCTests: XCTestCase {
+  func testCanonicalReviewReferenceChecksBothHeightsAndRejectsReorg() async throws {
+    let base = VaultStateRPC()
+    var current = try await EarnVaultStateLoader(rpc: base, now: { 1000 }).load(
+      owner: EarnValues.router, kind: "vaultDeposit", amount: "1000000")
+    current.blockNumber = 103
+    current.blockHash = "0x" + String(repeating: "44", count: 32)
+    let rpc = VaultReferenceRPC(reviewedHash: base.hash, currentHash: current.blockHash)
+    let reference = try await loadEarnGasReference(
+      rpc: rpc, reviewedNumber: 100, reviewedHash: base.hash, current: current,
+      nowMillis: { 1_000_000 })
+    XCTAssertEqual(rpc.heights, ["0x64", "0x67"])
+    XCTAssertEqual(reference.reviewedBlockNumber, 100)
+    XCTAssertEqual(reference.currentBlockNumber, 103)
+    XCTAssertEqual(reference.observedAtMs, 1_000_000)
+    for failure in ["chain", "height", "reviewed", "current"] {
+      rpc.failure = failure
+      do {
+        _ = try await loadEarnGasReference(
+          rpc: rpc, reviewedNumber: 100, reviewedHash: base.hash, current: current)
+        XCTFail(failure)
+      } catch {}
+    }
+  }
   func testStateUsesPinnedReadsAndRejectsBadChainStaleBlockMissingCodeAndReorg() async throws {
     let rpc = VaultStateRPC()
     let loader = EarnVaultStateLoader(rpc: rpc, now: { 1000 })
@@ -73,5 +96,30 @@ final class EarnVaultRPCTests: XCTestCase {
       _ = try await transport.calls([PortfolioRequest(method: "eth_getBalance", params: [])])
       XCTFail()
     } catch {}
+  }
+}
+
+private final class VaultReferenceRPC: StoredTransferRPC {
+  let reviewedHash: String
+  let currentHash: String
+  var heights: [String] = []
+  var failure = ""
+  init(reviewedHash: String, currentHash: String) {
+    self.reviewedHash = reviewedHash
+    self.currentHash = currentHash
+  }
+  func text(_ method: String, _ params: [Any]) async throws -> String {
+    try require(method == "eth_chainId")
+    return failure == "chain" ? "0x8f" : "0x1"
+  }
+  func call(_ method: String, _ params: [Any]) async throws -> Any {
+    try require(method == "eth_getBlockByNumber")
+    let height = params[0] as! String
+    heights.append(height)
+    var hash = height == "0x64" ? reviewedHash : currentHash
+    if failure == "reviewed" && height == "0x64" || failure == "current" && height == "0x67" {
+      hash = "0x" + String(repeating: "99", count: 32)
+    }
+    return ["number": failure == "height" ? "0x1" : height, "hash": hash]
   }
 }

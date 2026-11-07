@@ -289,6 +289,19 @@ struct SaleInbound {
     credited: U256,
 }
 
+/// Immutable economics shown by native review, independent of later preparation/quote refreshes.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FundingReviewLimits {
+    version: u32,
+    operation_id: String,
+    identity_digest: B256,
+    maximum_source_debit: U256,
+    maximum_gas_fee: U256,
+    minimum_principal: U256,
+    minimum_private_credit: U256,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 struct Data {
@@ -303,6 +316,10 @@ struct Data {
     allowance: U256,
     funding_amount: U256,
     funding_fee: U256,
+    #[serde(default)]
+    review_limits: Option<FundingReviewLimits>,
+    #[serde(default)]
+    funding_review_changed: bool,
     funding_request: Option<QuoteRequest>,
     funding_quote: Option<Quote>,
     prepared: Option<(UserOperation, Option<UnsignedAuthorization>)>,
@@ -363,11 +380,23 @@ enum Outcome {
     Rejected(u16, Value),
 }
 
+fn provider_code(value: &Value) -> Option<&str> {
+    value.get("code").and_then(Value::as_str).filter(|code| {
+        !code.is_empty()
+            && code.len() <= 64
+            && code
+                .bytes()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_')
+    })
+}
+
 fn outcome(status: u16, body: &str) -> Outcome {
-    if status == 0 || status == 429 || status >= 500 {
+    let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let deterministic =
+        value.get("retryable") == Some(&Value::Bool(false)) && provider_code(&value).is_some();
+    if status == 0 || status == 429 || (status >= 500 && !deterministic) {
         return Outcome::Transient;
     }
-    let value = serde_json::from_str(body).unwrap_or(Value::Null);
     if (200..300).contains(&status) {
         Outcome::Ok(value)
     } else {
@@ -742,6 +771,22 @@ impl Engine {
                 return Ok(SwapStep::Review { text: self.review() });
             }
             Step::FundingSign => {
+                if d.signed_operation.is_some() {
+                    // A saved signature is immutable; reconcile it instead of preparing/signing again.
+                    self.go(Step::FundingReceipt { polls: 0, resubmitted: false });
+                    return self.next(now);
+                }
+                if !self.within_funding_review()? {
+                    self.request_funding_review();
+                    return self.next(now);
+                }
+                if let Some(op) = d.prepared.as_ref().map(|p| &p.0)
+                    && funding::readiness_code(op, now / 1000)?.is_some()
+                {
+                    self.m.data.prepared = None;
+                    self.go(Step::SourceChain { execute: true });
+                    return self.next(now);
+                }
                 if d.funding_quote.as_ref().is_none_or(|q| q.deadline_ms <= now + QUOTE_MARGIN_MS) {
                     self.go(Step::FundingQuote { attempt: 0 });
                     return self.next(now);
@@ -936,6 +981,58 @@ impl Engine {
         SwapStep::Unlock
     }
 
+    fn funding_identity(&self) -> Result<B256, SignerError> {
+        let bytes = serde_json::to_vec(&(
+            "gizu-swap-funding-review-v1",
+            &self.m.id,
+            &self.m.plan,
+            self.m.source,
+            self.m.confidential,
+            &self.m.recipients,
+            self.m.data.budget,
+        ))
+        .map_err(|_| SignerError::InvalidInput)?;
+        Ok(keccak256(bytes))
+    }
+
+    fn funding_review_limits(&self) -> Result<FundingReviewLimits, SignerError> {
+        let d = &self.m.data;
+        let quote = d.funding_quote.as_ref().ok_or(SignerError::InvalidInput)?;
+        Ok(FundingReviewLimits {
+            version: 1,
+            operation_id: self.m.id.clone(),
+            identity_digest: self.funding_identity()?,
+            maximum_source_debit: d
+                .funding_amount
+                .checked_add(d.funding_fee)
+                .ok_or(SignerError::InvalidInput)?,
+            maximum_gas_fee: d.funding_fee,
+            minimum_principal: d.funding_amount,
+            minimum_private_credit: quote.min_amount_out,
+        })
+    }
+
+    fn within_funding_review(&self) -> Result<bool, SignerError> {
+        let Some(reviewed) = &self.m.data.review_limits else {
+            return Ok(false);
+        };
+        let fresh = self.funding_review_limits()?;
+        Ok(reviewed.version == 1
+            && reviewed.operation_id == fresh.operation_id
+            && reviewed.identity_digest == fresh.identity_digest
+            && fresh.maximum_source_debit <= reviewed.maximum_source_debit
+            && fresh.maximum_gas_fee <= reviewed.maximum_gas_fee
+            && fresh.minimum_principal >= reviewed.minimum_principal
+            && fresh.minimum_private_credit >= reviewed.minimum_private_credit)
+    }
+
+    fn request_funding_review(&mut self) {
+        self.m.approved_ms = None;
+        self.m.data.review_limits = None;
+        self.m.data.funding_review_changed = true;
+        self.go(Step::PayoutEstimate { index: 0 });
+    }
+
     fn sign_funding(&mut self, now: u64) -> Result<(), SignerError> {
         let (op, authorization) = self
             .m
@@ -960,6 +1057,9 @@ impl Engine {
             &chain,
             now / 1000,
         )?;
+        if !self.within_funding_review()? {
+            return Err(SignerError::InvalidInput);
+        }
         let key = self.key(self.m.plan.source_index)?;
         if evm::key_address(&key) != self.m.source {
             return Err(SignerError::CryptoFailed);
@@ -1185,6 +1285,10 @@ impl Engine {
             (Step::FundingProbe, None) => {
                 let op: UserOperation = serde_json::from_value(value["userOperation"].clone())
                     .map_err(|_| SignerError::InvalidInput)?;
+                if let Some(code) = funding::readiness_code(&op, now / 1000)? {
+                    self.m.paused = Some(code.into());
+                    return Ok(());
+                }
                 let fee = funding::fee_cap(&op, now / 1000)?;
                 if fee >= self.m.data.budget {
                     self.m.paused = Some("FEE_EXCEEDS_BUDGET".into());
@@ -1221,6 +1325,10 @@ impl Engine {
                 let authorization: Option<UnsignedAuthorization> =
                     serde_json::from_value(value["authorization"].clone())
                         .map_err(|_| SignerError::InvalidInput)?;
+                if let Some(code) = funding::readiness_code(&op, now / 1000)? {
+                    self.m.paused = Some(code.into());
+                    return Ok(());
+                }
                 let fee = funding::fee_cap(&op, now / 1000)?;
                 let room = self
                     .m
@@ -1258,6 +1366,10 @@ impl Engine {
                         .ok_or(SignerError::InvalidInput)?
                         .deposit_address,
                 )?;
+                if let Some(code) = funding::approval_code(&op, fee, &self.chain()?)? {
+                    self.m.paused = Some(code.into());
+                    return Ok(());
+                }
                 let checked = funding::check_funding(
                     &op,
                     authorization.as_ref(),
@@ -1270,6 +1382,10 @@ impl Engine {
                 )?;
                 self.m.data.funding_fee = checked.fee_cap;
                 self.m.data.prepared = Some((op, authorization));
+                if execute && !self.within_funding_review()? {
+                    self.request_funding_review();
+                    return Ok(());
+                }
                 self.go(if execute {
                     Step::FundingSign
                 } else {
@@ -2100,7 +2216,11 @@ impl Engine {
                 Some(_),
             ) => self.m.paused = Some("PLANNING_UNAVAILABLE".into()),
             (Step::FundingProbe | Step::FundingPrepare { .. }, Some(_)) => {
-                self.m.paused = Some("FUNDING_UNAVAILABLE".into())
+                self.m.paused = Some(
+                    provider_code(&value)
+                        .unwrap_or("FUNDING_UNAVAILABLE")
+                        .into(),
+                )
             }
             // Fusion refuses very small orders and Aurora's bridge refuses very small deposits.
             // A sale skips such a wallet before anything is signed, so one leftover cent never
@@ -2389,6 +2509,9 @@ impl Engine {
                 min = q.map(|q| usdc(q.min_amount_out)).unwrap_or_default(),
             )
         };
+        if d.funding_review_changed {
+            out.insert_str(0, "FUNDING ECONOMICS CHANGED\nReview the current gas maximum, principal and minimum private credit before approving.\n\n");
+        }
         for (i, (portion, min)) in d.estimates.iter().enumerate() {
             out.push_str(&format!("\nPayout {} of {} ({}) to fresh wallet A{} {}\n  {} USDC → at least {} USDG, then sold for {} via 1inch Fusion\n", i + 1, self.legs(), percent_split(&leg_weights(&self.m.plan)), i + 1, self.m.recipients[i].to_checksum(None), usdc(*portion), usdc(*min), d.target_symbol));
         }
@@ -2856,9 +2979,24 @@ impl SwapOperation {
     /// Resumes a persisted operation without key material; signing waits for `unlock`.
     #[uniffi::constructor]
     pub fn restore(state: String, gateway: String) -> Result<Arc<Self>, SignerError> {
-        let m: Machine = serde_json::from_str(&state).map_err(|_| SignerError::InvalidInput)?;
+        let mut m: Machine = serde_json::from_str(&state).map_err(|_| SignerError::InvalidInput)?;
         if m.version != STATE_VERSION {
             return Err(SignerError::InvalidInput);
+        }
+        if m.plan.kind == "confidentialSwap"
+            && m.approved_ms.is_some()
+            && m.data.review_limits.is_none()
+            && m.data.signed_operation.is_none()
+        {
+            // Historical unsigned approvals did not persist economic limits. Refresh the same
+            // operation/wallet plan and obtain native review; signed/unknown journals are untouched.
+            m.approved_ms = None;
+            m.data.prepared = None;
+            m.data.funding_review_changed = true;
+            m.pending = None;
+            m.reapproval = None;
+            m.paused = None;
+            m.step = Step::SourceChain { execute: false };
         }
         Ok(Arc::new(Self {
             inner: Mutex::new(Engine {
@@ -2914,6 +3052,10 @@ impl SwapOperation {
         }
         if e.m.step != Step::Review || e.m.approved_ms.is_some() {
             return Err(SignerError::InvalidInput);
+        }
+        if e.m.plan.kind == "confidentialSwap" {
+            e.m.data.review_limits = Some(e.funding_review_limits()?);
+            e.m.data.funding_review_changed = false;
         }
         e.m.approved_ms = Some(now_ms);
         e.m.session_until_ms = now_ms + SESSION_MS;

@@ -20,6 +20,7 @@ internal final class EarnVaultEngine {
   private let state: StateLoader
   private var signer: EarnExecutionOperationProtocol?
   private var prepared: EarnVaultReview?
+  private var reviewedBlock: (number: UInt64, hash: String)?
   init(
     store: WalletStorage, journal: EarnVaultJournal, rpc: StoredTransferRPC,
     makeSigner: @escaping SignerFactory = { try EarnExecutionOperation(proposal: $0, entropy: $1) },
@@ -101,6 +102,7 @@ internal final class EarnVaultEngine {
     }
     guard let core = signer else { throw WalletFailure.invalid }
     let text = try core.prepare(revision: proposal.revision, current: current)
+    reviewedBlock = (current.blockNumber, current.blockHash)
     let hash = try core.reviewHash()
     let stored = try journal.prepare(
       id, revision: op.revision, calls: core.preparedCalls(), hash: hash, text: text,
@@ -169,12 +171,16 @@ internal final class EarnVaultEngine {
     } else {
       guard let core = signer else { throw WalletFailure.invalid }
       let current = try await state(p.expectedFrom, p.kind, p.amountAtoms)
+      guard let anchor = reviewedBlock else { throw WalletFailure.invalid }
+      let reference = try await loadEarnGasReference(
+        rpc: rpc, reviewedNumber: anchor.number, reviewedHash: anchor.hash, current: current)
       try authority()
       try Task.checkCancellation()
       try checkWallet(p)
       try require(try journal.get(review.id).revision == review.revision)
       try core.approve(revision: review.coreRevision, reviewHash: review.hash)
-      let tx = try core.signNext(revision: review.coreRevision, current: current)
+      let tx = try core.signNextWithCanonicalReference(
+        revision: review.coreRevision, current: current, reference: reference)
       try require(tx.operationId == review.id && tx.revision == review.coreRevision && tx.step == 0)
       try journal.persistSigned(review.id, revision: review.revision, index: review.index, tx: tx)
       raw = tx.rawTransaction
@@ -193,6 +199,7 @@ internal final class EarnVaultEngine {
     signer?.invalidate()
     signer = nil
     prepared = nil
+    reviewedBlock = nil
   }
   deinit { signer?.invalidate() }
 }

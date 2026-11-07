@@ -10,7 +10,7 @@ import {
   ETHEREUM_PROFILE,
 } from "./vault.ts";
 import type { ExactCall } from "./vault.ts";
-import { ceilDiv } from "./policy.ts";
+import { mulDiv } from "../evm/gas-policy.ts";
 import type { ReferenceBlock } from "./policy.ts";
 export type SimulationRow = {
   to: string;
@@ -197,7 +197,7 @@ export async function simulateForkSequence(
         to: call.to,
         data: call.data,
         value: toHex(call.value ?? 0n),
-        gas: toHex(ceilDiv(gas * 150n, 100n)),
+        gas: toHex(mulDiv(gas, 150n, 100n, "ceil")),
         maxFeePerGas: toHex(10n ** 12n),
         maxPriorityFeePerGas: "0x0",
       },

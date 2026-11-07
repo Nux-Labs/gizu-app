@@ -9,7 +9,7 @@ import {
 import type { Address, PublicClient } from "viem";
 import { entryPoint08Address } from "viem/account-abstraction";
 import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
-import { ceilDiv } from "./policy.ts";
+import { mulDiv } from "../evm/gas-policy.ts";
 import type { ReferenceBlock } from "./policy.ts";
 import { balance } from "./vault.ts";
 import {
@@ -359,11 +359,8 @@ export class RobinhoodDepositPlanner {
         );
       const market = await providers.market(),
         fees = {
-          maxFeePerGas: ceilDiv(market.maxFeePerGas * 110n, 100n),
-          maxPriorityFeePerGas: ceilDiv(
-            market.maxPriorityFeePerGas * 110n,
-            100n,
-          ),
+          maxFeePerGas: mulDiv(market.maxFeePerGas, 110n, 100n, "ceil"),
+          maxPriorityFeePerGas: mulDiv(market.maxPriorityFeePerGas, 110n, 100n, "ceil"),
         };
       let amount = state.token / 2n,
         depositQuoteCap = 0n,
@@ -395,8 +392,8 @@ export class RobinhoodDepositPlanner {
           withdrawal.feeCap > withdrawalQuoteCap
             ? withdrawal.feeCap
             : withdrawalQuoteCap;
-        const depositFeeBudget = ceilDiv(depositQuoteCap * 105n, 100n),
-          withdrawalReserve = ceilDiv(withdrawalQuoteCap * 260n, 100n),
+        const depositFeeBudget = mulDiv(depositQuoteCap, 105n, 100n, "ceil"),
+          withdrawalReserve = mulDiv(withdrawalQuoteCap, 260n, 100n, "ceil"),
           next = state.token - depositFeeBudget - withdrawalReserve;
         if (next <= 0n) throw new Error("Insufficient USDG gas reserve");
         if (next !== amount) {

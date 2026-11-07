@@ -8,6 +8,7 @@ private final class VaultRPC: StoredTransferRPC {
   var receipt: Any = NSNull()
   var transaction: Any = NSNull()
   var canonicalHash = "0x" + String(repeating: "11", count: 32)
+  var canonicalBlocks: [String: [String: String]] = [:]
   var beforeSend: (() throws -> Void)?
   func text(_ method: String, _ params: [Any]) async throws -> String {
     switch method {
@@ -24,7 +25,9 @@ private final class VaultRPC: StoredTransferRPC {
     switch method {
     case "eth_getTransactionReceipt": return receipt
     case "eth_getTransactionByHash": return transaction
-    case "eth_getBlockByNumber": return ["number": "0x64", "hash": canonicalHash]
+    case "eth_getBlockByNumber":
+      if let number = params[0] as? String, let block = canonicalBlocks[number] { return block }
+      return ["number": "0x64", "hash": canonicalHash]
     default: throw WalletFailure.invalid
     }
   }
@@ -91,6 +94,37 @@ final class EarnVaultTests: WalletTestCase {
       XCTAssertThrowsError(try EarnVaultProposal.parse(input, walletId: id, owner: owner), field)
     }
     XCTAssertEqual(try EarnVaultProposal.parse(request(), walletId: id, owner: owner).cycleIndex, 0)
+  }
+  func testLongReviewRechecksCanonicalAnchorAndSignsOriginalReviewedTransaction() async throws {
+    let (store, journal) = try setup()
+    let rpc = VaultRPC()
+    let nextHash = "0x" + String(repeating: "66", count: 32)
+    rpc.canonicalBlocks["0x67"] = ["number": "0x67", "hash": nextHash]
+    var reads = 0
+    let engine = EarnVaultEngine(
+      store: store, journal: journal, rpc: rpc,
+      state: { _, _, _ in
+        var current = self.state()
+        if reads > 0 {
+          current.blockNumber = 103
+          current.blockHash = nextHash
+        }
+        reads += 1
+        return current
+      })
+    let op = try await engine.create(request())
+    let review = try await engine.prepare(op.operationId, revision: op.revision)
+    do {
+      try await engine.execute(review, authority: {})
+      XCTFail("The test transport loses the broadcast response")
+    } catch {}
+    XCTAssertEqual(rpc.sent.count, 1)
+    let saved = try journal.get(op.operationId)
+    let signed = saved.steps[0]
+    XCTAssertEqual(saved.reviewHash, review.hash)
+    XCTAssertEqual(signed.nonce, "4")
+    XCTAssertEqual(signed.gasLimit, "65000")
+    XCTAssertEqual(signed.maxFeePerGasWei, "10000000000")
   }
   func testJournalLocksSenderRejectsDuplicatesAndStaleWrites() throws {
     let (_, journal) = try setup()

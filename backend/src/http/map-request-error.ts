@@ -2,6 +2,7 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import { isPrivateRoute } from "./private-http.ts";
 import { DomainError } from "../domain/errors/domain-error.ts";
+import { GasPolicyError } from "../adapters/evm/gas-errors.ts";
 import { InfrastructureError } from "../domain/errors/infrastructure-error.ts";
 import { NotFoundError } from "../domain/errors/not-found-error.ts";
 
@@ -48,6 +49,7 @@ export function mapRequestError(
     return reply.header("Cache-Control", "no-store").code(status).send({
       code,
       message: "The private request could not be completed.",
+      ...(error instanceof GasPolicyError ? { retryable: false } : {}),
     });
   }
   const logError = () =>

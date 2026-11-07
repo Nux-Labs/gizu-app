@@ -403,3 +403,74 @@ test("a pooled sale reports how many wallets it sold from and how many it paid",
   expect(screen.getByText("Paid out")).toBeVisible();
   expect(screen.getByText("29.7 USDC")).toBeVisible();
 });
+
+test("a token gas allowance rejection shows a recovery action without raw provider details", async () => {
+  start.mockResolvedValue({
+    ...status,
+    phase: "PAUSED",
+    targetSymbol: "COIN",
+    pausedCode: "TOKEN_PAYMASTER_ALLOWANCE_LOW",
+  });
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  await screen.findByText("COIN");
+  fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1.25");
+  fireEvent.press(screen.getByRole("button", { name: "Review swap" }));
+  expect(
+    await screen.findByText(
+      "The USDC gas approval is below the required maximum. Resume to prepare it again before signing.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText("TOKEN_PAYMASTER_ALLOWANCE_LOW")).toBeNull();
+});
+
+test("the market preview states that fees are excluded", async () => {
+  jest.mocked(globalThis.fetch).mockImplementation(
+    async (url) =>
+      ({
+        ok: true,
+        json: async () =>
+          String(url).includes("fusion/preview")
+            ? { marketOut: "1000000000000000000" }
+            : {
+                list: [
+                  {
+                    address: token,
+                    symbol: "COIN",
+                    name: "Coinbase",
+                    decimals: 18,
+                    swapListed: true,
+                  },
+                ],
+              },
+      }) as Response,
+  );
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  await screen.findByText("COIN");
+  fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1.25");
+  expect(await screen.findByText("Market estimate before fees")).toBeVisible();
+});
+
+test("native action failures keep provider details out of the screen", async () => {
+  const providerDetail = "provider request details must stay private";
+  start.mockRejectedValue(new Error(providerDetail));
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  await screen.findByText("COIN");
+  fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1.25");
+  fireEvent.press(screen.getByRole("button", { name: "Review swap" }));
+  expect(
+    await screen.findByText("Swap stopped. Refresh the saved swap status before trying again."),
+  ).toBeVisible();
+  expect(screen.queryByText(providerDetail)).toBeNull();
+});

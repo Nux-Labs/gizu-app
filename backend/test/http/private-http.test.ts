@@ -51,3 +51,11 @@ test("all private request paths use safe allowlisted logging and errors before a
     await app.close();
   }
 });
+
+import { GasPolicyError } from "../../src/adapters/evm/gas-errors.ts";
+test("private gas errors preserve only the safe deterministic code and retry policy",async()=>{
+ const app=Fastify(implementation.privateHttpOptions);implementation.registerPrivateHttp(app);app.setErrorHandler(mapRequestError);
+ app.post("/v1/swap/gas-test",async()=>{throw new GasPolicyError("GAS_APPROVAL_UNSTABLE","sensitive-provider-message");});
+ try{const response=await app.inject({method:"POST",url:"/v1/swap/gas-test"});assert.equal(response.statusCode,422);assert.deepEqual(response.json(),{code:"GAS_APPROVAL_UNSTABLE",message:"The private request could not be completed.",retryable:false});}
+ finally{await app.close();}
+});

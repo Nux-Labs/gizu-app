@@ -67,7 +67,7 @@ export function SwapTokenPicker({
             {selected?.name ?? ""}
           </Typography>
           {estimate && !estimate.loading ? (
-            <Typography variant="micro">Estimated at market price</Typography>
+            <Typography variant="micro">Market estimate before fees</Typography>
           ) : null}
         </View>
       </PressableScale>

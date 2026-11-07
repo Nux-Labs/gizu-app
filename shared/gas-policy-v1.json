@@ -1,0 +1,126 @@
+{
+  "version": "gizu-gas-v1",
+  "description": "Cross-language conformance fixtures. Protocol floor and conservative ceiling are distinct; these vectors grant no spending authority.",
+  "paymasterVectors": [
+    {
+      "name": "fractional-token-charge",
+      "gas": {
+        "preVerificationGas": "1",
+        "callGasLimit": "1",
+        "verificationGasLimit": "1",
+        "paymasterPostOpGasLimit": "1",
+        "paymasterVerificationGasLimit": "1"
+      },
+      "postOpGas": "1",
+      "exchangeRate": "1000000000000000001",
+      "maxFeePerGas": "1",
+      "floorAtoms": "6",
+      "ceilingAtoms": "7",
+      "swapApprovalAtoms": "6",
+      "earnApprovalAtoms": "8"
+    },
+    {
+      "name": "exact-token-charge",
+      "gas": {
+        "preVerificationGas": "50000",
+        "callGasLimit": "100000",
+        "verificationGasLimit": "30000",
+        "paymasterPostOpGasLimit": "12000",
+        "paymasterVerificationGasLimit": "8000"
+      },
+      "postOpGas": "8000",
+      "exchangeRate": "2000000000",
+      "maxFeePerGas": "1000000000",
+      "floorAtoms": "416000",
+      "ceilingAtoms": "416000",
+      "swapApprovalAtoms": "420160",
+      "earnApprovalAtoms": "420160"
+    },
+    {
+      "name": "large-checked-product",
+      "gas": {
+        "preVerificationGas": "1000000",
+        "callGasLimit": "1000000",
+        "verificationGasLimit": "1000000",
+        "paymasterPostOpGasLimit": "1000000",
+        "paymasterVerificationGasLimit": "1000000"
+      },
+      "postOpGas": "1000",
+      "exchangeRate": "18446744073709551616",
+      "maxFeePerGas": "18446744073709551616",
+      "floorAtoms": "1701752116971613255780336411",
+      "ceilingAtoms": "1701752116971613255780336412",
+      "swapApprovalAtoms": "1718769638141329388338139776",
+      "earnApprovalAtoms": "1718769638141329388338139777"
+    },
+    {
+      "name": "small-fractional-swap-charge",
+      "gas": {
+        "preVerificationGas": "2",
+        "callGasLimit": "1",
+        "verificationGasLimit": "1",
+        "paymasterPostOpGasLimit": "1",
+        "paymasterVerificationGasLimit": "1"
+      },
+      "postOpGas": "1",
+      "exchangeRate": "1000000000000000001",
+      "maxFeePerGas": "1",
+      "floorAtoms": "7",
+      "ceilingAtoms": "8",
+      "swapApprovalAtoms": "7",
+      "earnApprovalAtoms": "9"
+    }
+  ],
+  "arithmeticVectors": [
+    {
+      "name": "token-approval-ceiling",
+      "a": "999",
+      "b": "101",
+      "denominator": "100",
+      "floor": "1008",
+      "ceiling": "1009"
+    },
+    {
+      "name": "fee-envelope-ceiling",
+      "a": "10001",
+      "b": "105",
+      "denominator": "100",
+      "floor": "10501",
+      "ceiling": "10502"
+    },
+    {
+      "name": "gas-limit-ceiling",
+      "a": "21001",
+      "b": "110",
+      "denominator": "100",
+      "floor": "23101",
+      "ceiling": "23102"
+    },
+    {
+      "name": "withdrawal-headroom",
+      "a": "123457",
+      "b": "130",
+      "denominator": "100",
+      "floor": "160494",
+      "ceiling": "160495"
+    },
+    {
+      "name": "full-u256-safe-ceiling",
+      "a": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+      "b": "1",
+      "denominator": "2",
+      "floor": "57896044618658097711785492504343953926634992332820282019728792003956564819967",
+      "ceiling": "57896044618658097711785492504343953926634992332820282019728792003956564819968"
+    }
+  ],
+  "balanceVectors": [
+    {
+      "name": "full-balance-fractional-swap",
+      "paymasterVector": "small-fractional-swap-charge",
+      "balanceAtoms": "1000",
+      "principalAtoms": "993",
+      "maximumFeeAtoms": "7",
+      "approvalAtoms": "7"
+    }
+  ]
+}

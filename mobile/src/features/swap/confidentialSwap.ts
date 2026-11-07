@@ -107,7 +107,7 @@ export async function loadSwapTokens(fetchImpl: typeof fetch = fetch): Promise<L
   });
 }
 
-/** Market estimate of the target token received for a USDC budget (before auction slippage). */
+/** Gross market preview only: source gas, bridge/payout fees and auction slippage are excluded. */
 export async function previewSwapOut(
   wallet: string,
   target: string,
@@ -142,4 +142,33 @@ export function swapSigner() {
   const native = getStoredSwapSigner();
   if (!native) throw new Error("Confidential swap is unavailable in this build.");
   return native;
+}
+
+/** Map stable native/gateway gas codes to fixed recovery text. */
+export function swapGasMessage(code: string | null | undefined): string | null {
+  switch (code) {
+    case "TOKEN_PAYMASTER_ALLOWANCE_LOW":
+    case "GAS_ALLOWANCE_INSUFFICIENT":
+      return "The USDC gas approval is below the required maximum. Resume to prepare it again before signing.";
+    case "PAYMASTER_NOT_YET_VALID":
+      return "The gas quote is not valid yet. Wait briefly, then resume to prepare a fresh quote.";
+    case "PAYMASTER_QUOTE_EXPIRED":
+    case "PAYMASTER_VALIDITY_TOO_SHORT":
+    case "GAS_QUOTE_EXPIRED":
+      return "The gas quote needs refreshing. Resume to prepare it again before signing.";
+    case "FEE_EXCEEDS_BUDGET":
+    case "GAS_BUDGET_EXCEEDED":
+      return "The USDC budget does not cover the current gas maximum. Review a new amount before continuing.";
+    case "FEE_UNSTABLE":
+    case "GAS_ESTIMATE_UNSTABLE":
+    case "GAS_APPROVAL_UNSTABLE":
+      return "Gas estimates changed during preparation. Wait briefly, then resume for a fresh review.";
+    case "GAS_STATE_CHANGED":
+    case "GAS_TERMS_CHANGED":
+      return "Gas terms or wallet state changed. Resume to prepare current terms before signing.";
+    case "GAS_ESTIMATE_REJECTED":
+      return "The current transfer could not be prepared with USDC gas. Resume to refresh its balances and gas terms.";
+    default:
+      return null;
+  }
 }

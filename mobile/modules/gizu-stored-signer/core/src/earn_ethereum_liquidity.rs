@@ -370,9 +370,7 @@ impl EthereumLiquidityCancellationOperation {
         {
             return Err(SignerError::InvalidInput);
         }
-        let cost = U256::from(21000)
-            .checked_mul(U256::from(maximum))
-            .ok_or(SignerError::InvalidInput)?;
+        let cost = crate::gas::native_fee_cap(U256::from(21000), U256::from(maximum))?;
         if cost != dec(&p.maximum_gas_cost_wei)? {
             return Err(SignerError::InvalidInput);
         }
@@ -1043,18 +1041,16 @@ fn check_tx_cost(
         && dec(&s.native_balance_wei)?
             != tx
                 .value
-                .checked_add(
-                    U256::from(21000)
-                        .checked_mul(U256::from(tx.max_fee_per_gas))
-                        .ok_or(SignerError::InvalidInput)?,
-                )
+                .checked_add(crate::gas::native_fee_cap(
+                    U256::from(21000),
+                    U256::from(tx.max_fee_per_gas),
+                )?)
                 .ok_or(SignerError::InvalidInput)?
     {
         return Err(SignerError::InvalidInput);
     }
-    let cost = U256::from(tx.gas_limit)
-        .checked_mul(U256::from(tx.max_fee_per_gas))
-        .ok_or(SignerError::InvalidInput)?;
+    let cost =
+        crate::gas::native_fee_cap(U256::from(tx.gas_limit), U256::from(tx.max_fee_per_gas))?;
     if cost > dec(&p.maximum_gas_cost_wei)?
         || dec(&s.base_fee_wei)?
             .checked_add(U256::from(tx.max_priority_fee_per_gas))
@@ -1100,12 +1096,7 @@ fn check_return_quote(
     nonzero_hash(&q.authenticated_body_hash)
 }
 fn ceil(n: U256, d: U256) -> Result<U256, SignerError> {
-    if d == U256::ZERO {
-        return Err(SignerError::InvalidInput);
-    }
-    let (q, r) = n.div_rem(d);
-    q.checked_add(U256::from(u8::from(r != U256::ZERO)))
-        .ok_or(SignerError::InvalidInput)
+    crate::gas::ceil_div(n, d)
 }
 fn check_fusion_quote(
     a: &Authority,

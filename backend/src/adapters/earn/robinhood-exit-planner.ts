@@ -17,6 +17,7 @@ import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts
 import { auroraApi } from "../aurora/http.ts";
 import { monadUsdcAssetId, robinhoodUsdgAssetId } from "../aurora/assets.ts";
 import { ceilDiv } from "./policy.ts";
+import { mulDiv, feeEnvelope } from "../evm/gas-policy.ts";
 import { balance } from "./vault.ts";
 import type { ExactCall } from "./vault.ts";
 import { withPinnedFork, simulateForkSequence } from "./fork-simulation.ts";
@@ -360,8 +361,8 @@ function buffered(m: RobinhoodFeePrice) {
   )
     throw new Error("Invalid USDG market");
   return {
-    maxFeePerGas: ceilDiv(m.maxFeePerGas * 110n, 100n),
-    maxPriorityFeePerGas: ceilDiv(m.maxPriorityFeePerGas * 110n, 100n),
+    maxFeePerGas: mulDiv(m.maxFeePerGas, 110n, 100n, "ceil"),
+    maxPriorityFeePerGas: mulDiv(m.maxPriorityFeePerGas, 110n, 100n, "ceil"),
   };
 }
 function preparedValid(
@@ -475,7 +476,7 @@ export class RobinhoodWithdrawalPlanner {
         calls = await providers.withdrawalCalls(s),
         initial = await providers.prepare(calls, fees);
       preparedValid(initial, s, fees, this.now());
-      const budget = ceilDiv(initial.feeCap * 105n, 100n);
+      const budget = mulDiv(initial.feeCap, 105n, 100n, "ceil");
       if (s.token < budget)
         throw new InfrastructureError(
           409,
@@ -613,7 +614,7 @@ export class RobinhoodReturnPlanner {
           fees,
         );
         preparedValid(probe, s, fees, this.now());
-        budget = ceilDiv(probe.feeCap * 105n, 100n);
+        budget = feeEnvelope(budget, probe.feeCap, 105n, 100n);
         const next = s.token - budget;
         if (next <= 0n) throw new Error("USDG return reserve insufficient");
         if (next !== amount) {

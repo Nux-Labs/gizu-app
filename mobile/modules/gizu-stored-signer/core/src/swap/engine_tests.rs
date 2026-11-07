@@ -46,6 +46,10 @@ struct World {
     tamper: Tamper,
     /// Pimlico's approve amount relative to the signed fee cap.
     approve_delta: i64,
+    funding_fee: u64,
+    funding_credit_bps: u64,
+    paymaster_valid_for: u64,
+    paymaster_valid_after: u64,
     /// Order drafts still to return 3% under the previewed auction end.
     short_orders: u8,
     f_balance: U256,
@@ -86,6 +90,10 @@ impl World {
             w: wallets(),
             tamper: Tamper::None,
             approve_delta: 0,
+            funding_fee: FEE,
+            funding_credit_bps: 10_000,
+            paymaster_valid_for: 600,
+            paymaster_valid_after: 0,
             short_orders: 0,
             f_balance: U256::from(2_000_000u64),
             payout_rate_bps: 9_900,
@@ -387,14 +395,17 @@ impl World {
         };
         let mut data = vec![0u8; 182];
         data[0] = 0x02;
-        data[2..8].copy_from_slice(&(now / 1000 + 600).to_be_bytes()[2..]);
+        data[2..8].copy_from_slice(&(now / 1000 + self.paymaster_valid_for).to_be_bytes()[2..]);
+        data[8..14].copy_from_slice(&self.paymaster_valid_after.to_be_bytes()[2..]);
         data[14..34].copy_from_slice(MONAD_USDC.as_slice());
         data[50..82].copy_from_slice(&U256::from(100_000u64).to_be_bytes::<32>());
         let approve = evm::hex_bytes(&evm::encode_call(
             "approve(address,uint256)",
             &[
                 evm::word_address(PIMLICO_ERC20_PAYMASTER),
-                evm::word_u256(U256::from(FEE.saturating_add_signed(self.approve_delta))),
+                evm::word_u256(U256::from(
+                    self.funding_fee.saturating_add_signed(self.approve_delta),
+                )),
             ],
         ))
         .unwrap();
@@ -413,7 +424,7 @@ impl World {
                 "callGasLimit": "0x186a0",
                 "verificationGasLimit": "0xc350",
                 "preVerificationGas": "0x186a0",
-                "maxFeePerGas": "0x174876e800",
+                "maxFeePerGas": format!("0x{:x}", self.funding_fee * 100_000_000_000 / FEE),
                 "maxPriorityFeePerGas": "0x3b9aca00",
                 "paymaster": PIMLICO_ERC20_PAYMASTER.to_checksum(None),
                 "paymasterVerificationGasLimit": "0x61a8",
@@ -421,7 +432,7 @@ impl World {
                 "paymasterData": hex::encode_prefixed(data),
             },
             "authorization": {"chainId": 143, "address": SIMPLE_7702.to_checksum(None), "nonce": 0},
-            "feeCapAtoms": FEE.to_string(),
+            "feeCapAtoms": self.funding_fee.to_string(),
         })
     }
 
@@ -433,7 +444,7 @@ impl World {
             let out = if destination {
                 amount * U256::from(self.payout_rate_bps) / U256::from(10_000)
             } else {
-                amount - U256::from(20)
+                (amount - U256::from(20)) * U256::from(self.funding_credit_bps) / U256::from(10_000)
             };
             if self.pool_credit && !destination {
                 self.credit += out;
@@ -1189,8 +1200,8 @@ fn sells_stock_into_three_fresh_monad_wallets() {
 }
 
 #[test]
-fn pimlico_rounding_either_side_of_the_fee_is_accepted() {
-    for delta in [-4i64, 4] {
+fn a_bounded_approval_above_the_final_fee_is_accepted() {
+    for delta in [0i64, 4] {
         let (mut world, mut now) = (World::new(), T0);
         world.approve_delta = delta;
         let op = start(Some("2000000"));
@@ -1207,14 +1218,19 @@ fn pimlico_rounding_either_side_of_the_fee_is_accepted() {
 
 #[test]
 fn an_approval_far_from_the_fee_is_never_signed() {
-    for delta in [-(FEE as i64) / 10, FEE as i64 / 10] {
+    for delta in [-1i64, -4, -(FEE as i64) / 10, FEE as i64 / 10] {
         let (mut world, mut now) = (World::new(), T0);
         world.approve_delta = delta;
         let op = start(Some("2000000"));
         assert_eq!(
             drive(&op, &mut world, &mut now),
             SwapStep::Paused {
-                code: "REJECTED_fundingPrepare".into()
+                code: if delta < 0 {
+                    "TOKEN_PAYMASTER_ALLOWANCE_LOW"
+                } else {
+                    "GAS_APPROVAL_UNSTABLE"
+                }
+                .into()
             },
             "approve off by {delta}"
         );
@@ -2636,4 +2652,272 @@ fn confidential_sale_cancellation_never_discards_signed_or_credited_work() {
     assert_eq!(status(&restored)["phase"], "COMPLETE");
     assert_eq!(status(&restored)["privateCreditedAtoms"], credit);
     assert_eq!(world.orders, 3);
+}
+
+#[test]
+fn higher_source_fee_after_review_requires_another_review_before_funding() {
+    let (mut world, mut now) = (World::new(), T0);
+    let op = start(Some("2000000"));
+    review(&op, &mut world, &mut now);
+    op.approve(now).unwrap();
+    let original: Value = serde_json::from_str(&op.export_state().unwrap()).unwrap();
+    assert_eq!(original["data"]["reviewLimits"]["version"], 1);
+    world.funding_fee = 6_000;
+    let changed = review(&op, &mut world, &mut now);
+    assert!(changed.contains("FUNDING ECONOMICS CHANGED"));
+    assert!(changed.contains("gas at most 0.006000 USDC"));
+    assert_eq!(world.user_ops, 0);
+    assert_eq!(status(&op)["approved"], false);
+    op.approve(now).unwrap();
+    assert_eq!(drive(&op, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!(world.user_ops, 1);
+}
+
+#[test]
+fn lower_private_credit_after_quote_refresh_requires_review_before_funding() {
+    let (mut world, mut now) = (World::new(), T0);
+    let op = start(Some("2000000"));
+    review(&op, &mut world, &mut now);
+    op.approve(now).unwrap();
+    now += 6 * 60_000;
+    world.funding_credit_bps = 9_900;
+    let changed = review(&op, &mut world, &mut now);
+    assert!(changed.contains("FUNDING ECONOMICS CHANGED"));
+    assert_eq!(world.user_ops, 0);
+}
+
+#[test]
+fn historical_unsigned_approval_requires_a_fresh_review_with_the_same_identity() {
+    let (mut world, mut now) = (World::new(), T0);
+    let op = start(Some("2000000"));
+    review(&op, &mut world, &mut now);
+    op.approve(now).unwrap();
+    let mut state: Value = serde_json::from_str(&op.export_state().unwrap()).unwrap();
+    state["data"]
+        .as_object_mut()
+        .unwrap()
+        .remove("reviewLimits");
+    let restored = SwapOperation::restore(state.to_string(), GATEWAY.into()).unwrap();
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    let text = review(&restored, &mut world, &mut now);
+    assert!(text.contains("FUNDING ECONOMICS CHANGED"));
+    assert_eq!(restored.operation_id(), op.operation_id());
+    assert_eq!(world.user_ops, 0);
+    restored.approve(now).unwrap();
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
+}
+
+#[test]
+fn historical_signed_funding_keeps_exact_bytes_and_reconciles_without_review_limits() {
+    let (mut world, mut now) = (World::new(), T0);
+    let op = start(Some("2000000"));
+    review(&op, &mut world, &mut now);
+    op.approve(now).unwrap();
+    let SwapStep::Request { url, body, .. } = drive_until(&op, &mut world, &mut now, |u| {
+        u.ends_with("/v1/swap/monad/submit")
+    }) else {
+        panic!()
+    };
+    world.handle(&url, body.as_deref(), now);
+    let mut state: Value = serde_json::from_str(&op.export_state().unwrap()).unwrap();
+    state["data"]
+        .as_object_mut()
+        .unwrap()
+        .remove("reviewLimits");
+    let signed = state["data"]["signedOperation"].clone();
+    now += 11 * 60_000; // Old paymaster validity is irrelevant to reconciliation of saved bytes.
+    let restored = SwapOperation::restore(state.to_string(), GATEWAY.into()).unwrap();
+    let SwapStep::Request { url, .. } = restored.next_step(now).unwrap() else {
+        panic!()
+    };
+    assert!(url.ends_with("/v1/swap/monad/receipt"));
+    let after: Value = serde_json::from_str(&restored.export_state().unwrap()).unwrap();
+    assert_eq!(after["data"]["signedOperation"], signed);
+    assert_eq!(world.user_ops, 1);
+}
+
+#[test]
+fn short_and_future_paymaster_windows_pause_before_review_or_signing() {
+    for future in [false, true] {
+        let (mut world, mut now) = (World::new(), T0);
+        if future {
+            world.paymaster_valid_after = now / 1000 + 60;
+        } else {
+            world.paymaster_valid_for = 10;
+        }
+        let op = start(Some("2000000"));
+        let next = drive(&op, &mut world, &mut now);
+        assert_eq!(
+            next,
+            SwapStep::Paused {
+                code: if future {
+                    "PAYMASTER_NOT_YET_VALID"
+                } else {
+                    "PAYMASTER_VALIDITY_TOO_SHORT"
+                }
+                .into()
+            }
+        );
+        assert_eq!(world.user_ops, 0);
+    }
+}
+
+#[test]
+fn deterministic_gas_errors_are_preserved_even_from_a_gateway_5xx() {
+    let (mut world, mut now) = (World::new(), T0);
+    let op = start(Some("2000000"));
+    let SwapStep::Request { id, .. } = drive_until(&op, &mut world, &mut now, |u| {
+        u.ends_with("/v1/swap/monad/prepare-funding")
+    }) else {
+        panic!()
+    };
+    op.on_response(
+        id,
+        502,
+        json!({"code":"TOKEN_PAYMASTER_ALLOWANCE_LOW", "stage":"prepare", "retryable":false})
+            .to_string(),
+        now,
+    )
+    .unwrap();
+    assert_eq!(
+        op.next_step(now).unwrap(),
+        SwapStep::Paused {
+            code: "TOKEN_PAYMASTER_ALLOWANCE_LOW".into()
+        }
+    );
+    assert_eq!(world.user_ops, 0);
+}
+
+#[test]
+fn funding_review_identity_cannot_be_reused_for_a_changed_plan() {
+    let (mut world, mut now) = (World::new(), T0);
+    let op = start(Some("2000000"));
+    review(&op, &mut world, &mut now);
+    op.approve(now).unwrap();
+    let mut state: Value = serde_json::from_str(&op.export_state().unwrap()).unwrap();
+    state["data"]["reviewLimits"]["identityDigest"] = json!(format!("{:#x}", B256::ZERO));
+    let restored = SwapOperation::restore(state.to_string(), GATEWAY.into()).unwrap();
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    let text = review(&restored, &mut world, &mut now);
+    assert!(text.contains("FUNDING ECONOMICS CHANGED"));
+    assert_eq!(world.user_ops, 0);
+    assert_eq!(restored.operation_id(), op.operation_id());
+}
+
+#[test]
+fn gas_policy_swap_small_caps_and_full_balance_match_the_shared_backend_vectors() {
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../shared/gas-policy-v1.json"
+    )))
+    .unwrap();
+    assert_eq!(fixture["version"], "gizu-gas-v1");
+    let number = |value: &Value| evm::decimal(value.as_str().unwrap()).unwrap();
+    for name in ["fractional-token-charge", "small-fractional-swap-charge"] {
+        let vector = fixture["paymasterVectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|value| value["name"] == name)
+            .unwrap();
+        let balance_vector = fixture["balanceVectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|value| value["paymasterVector"] == name);
+        let fee = number(&vector["floorAtoms"]);
+        let balance = balance_vector
+            .map(|value| number(&value["balanceAtoms"]))
+            .unwrap_or(U256::from(1000));
+        let principal = balance_vector
+            .map(|value| number(&value["principalAtoms"]))
+            .unwrap_or(balance - fee);
+        let approved = number(&vector["swapApprovalAtoms"]);
+        if let Some(expected) = balance_vector {
+            assert_eq!(fee, number(&expected["maximumFeeAtoms"]));
+            assert_eq!(approved, number(&expected["approvalAtoms"]));
+        }
+        assert_eq!(
+            principal + fee,
+            balance,
+            "{name}: full balance must fund exactly"
+        );
+        assert!(
+            number(&vector["ceilingAtoms"]) > fee,
+            "fixture must exercise fractional protocol rounding"
+        );
+        let mut world = World::new();
+        let (owner, recipient) = (world.w.f, world.w.a[0]);
+        let prepared = world.prepare(owner, recipient, principal, T0);
+        let mut op: UserOperation =
+            serde_json::from_value(prepared["userOperation"].clone()).unwrap();
+        let authorization: UnsignedAuthorization =
+            serde_json::from_value(prepared["authorization"].clone()).unwrap();
+        op.pre_verification_gas = format!("0x{:x}", number(&vector["gas"]["preVerificationGas"]));
+        op.call_gas_limit = format!("0x{:x}", number(&vector["gas"]["callGasLimit"]));
+        op.verification_gas_limit =
+            format!("0x{:x}", number(&vector["gas"]["verificationGasLimit"]));
+        op.paymaster_post_op_gas_limit =
+            format!("0x{:x}", number(&vector["gas"]["paymasterPostOpGasLimit"]));
+        op.paymaster_verification_gas_limit = format!(
+            "0x{:x}",
+            number(&vector["gas"]["paymasterVerificationGasLimit"])
+        );
+        op.max_fee_per_gas = format!("0x{:x}", number(&vector["maxFeePerGas"]));
+        op.max_priority_fee_per_gas = op.max_fee_per_gas.clone();
+        let mut paymaster_data = evm::hex_bytes(&op.paymaster_data).unwrap();
+        paymaster_data[34..50]
+            .copy_from_slice(&number(&vector["postOpGas"]).to_be_bytes::<32>()[16..]);
+        paymaster_data[50..82]
+            .copy_from_slice(&number(&vector["exchangeRate"]).to_be_bytes::<32>());
+        op.paymaster_data = hex::encode_prefixed(paymaster_data);
+        let call_data = |approval: U256| {
+            let approve = evm::hex_bytes(&evm::encode_call(
+                "approve(address,uint256)",
+                &[
+                    evm::word_address(PIMLICO_ERC20_PAYMASTER),
+                    evm::word_u256(approval),
+                ],
+            ))
+            .unwrap();
+            let transfer = evm::hex_bytes(&evm::encode_call(
+                "transfer(address,uint256)",
+                &[evm::word_address(recipient), evm::word_u256(principal)],
+            ))
+            .unwrap();
+            hex::encode_prefixed(execute_batch(&[approve, transfer]))
+        };
+        op.call_data = call_data(approved);
+        let chain = FundingChain {
+            code: vec![],
+            transaction_count: 0,
+            paymaster_allowance: U256::ZERO,
+        };
+        assert_eq!(funding::fee_cap(&op, T0 / 1000).unwrap(), fee, "{name}");
+        assert_eq!(funding::readiness_code(&op, T0 / 1000).unwrap(), None);
+        let validate = |candidate: &UserOperation, budget: U256| {
+            funding::check_funding(
+                candidate,
+                Some(&authorization),
+                owner,
+                recipient,
+                principal,
+                budget,
+                &chain,
+                T0 / 1000,
+            )
+        };
+        assert_eq!(validate(&op, balance).unwrap().fee_cap, fee, "{name}");
+        assert!(
+            validate(&op, balance - U256::from(1)).is_err(),
+            "{name}: one atom less cannot cover the exact debit"
+        );
+        // Earn intentionally reserves its ceiling cap and allowance. Reusing that profile for
+        // these small Swap caps must fail the existing native upper bound, never widen it.
+        op.call_data = call_data(number(&vector["earnApprovalAtoms"]));
+        assert!(
+            validate(&op, balance).is_err(),
+            "{name}: Earn allowance is not a compatible Swap preparation"
+        );
+    }
 }

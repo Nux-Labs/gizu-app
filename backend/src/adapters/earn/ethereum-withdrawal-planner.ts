@@ -2,9 +2,10 @@ import { createPublicClient, getAddress, http, keccak256, stringToHex, toHex, ty
 import { mainnet } from "viem/chains";
 import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
 import { readEthereumState, type EthereumPlannerConfig, type EthereumState } from "./ethereum-deposit-planner.ts";
-import { feePolicy, ceilDiv, nextBaseFee, type Fees } from "./policy.ts";
+import { feePolicy, nextBaseFee, type Fees } from "./policy.ts";
 import { withPinnedFork, simulateForkSequence, type SimulationRow } from "./fork-simulation.ts";
 import { balance, redeemCalls, ETHEREUM_PROFILE } from "./vault.ts";
+import { mulDiv, nativeGasCost } from "../evm/gas-policy.ts";
 type Providers={readState:(owner:Address)=>Promise<EthereumState>;assertFresh:(state:EthereumState,fees:Fees)=>Promise<void>;simulate:(state:EthereumState)=>Promise<SimulationRow[]>};
 export type EthereumWithdrawalPlan={kind:"vaultRedeemAll";operationId:string;revision:number;chainId:1;profileId:"ethereum-usdc";owner:string;vault:string;token:string;router:string;amountAtoms:string;shareDecimals:number;nonce:string;deadline:string;referenceBlockNumber:string;referenceBlockHash:string;referenceTimestampMs:number;quotedAtMs:number;expiresAtMs:number;maxFeePerGasWei:string;priorityFeePerGasWei:string;gasLimits:string[];maximumGasCostWei:string;retainedAfterActionWei:"0";startingNativeWei:string;startingUsdc:string;startingShares:string;planHash:string;readOnly:true;executionAvailable:false;returnsQuoted:false;minimumAssetsGuard:false};
 /** Called only for a separate withdrawal review. This module never broadcasts. */
@@ -37,8 +38,8 @@ export class EthereumWithdrawalPlanner {
       if(state.owner.toLowerCase()!==owner.toLowerCase()||state.ownerCode!=="0x"||state.shares<=0n||state.weth!==0n)throw new Error("Position requires reconciliation");
       const fees=feePolicy(state.block,state.tips),rows=await this.providers.simulate(state);
       if(!rows.length||rows.length>2)throw new Error("Invalid full-exit simulation");
-      const gasLimits=rows.map(row=>ceilDiv(row.estimatedGas*130n,100n));
-      const maximumGasCost=gasLimits.reduce((total,g)=>total+g,0n)*fees.depositFee;
+      const gasLimits=rows.map(row=>mulDiv(row.estimatedGas,130n,100n,"ceil"));
+      const maximumGasCost=nativeGasCost(gasLimits.reduce((total,g)=>total+g,0n),fees.depositFee);
       if(state.eth<maximumGasCost)throw new Error("Withdrawal reserve does not cover current fees");
       await this.providers.assertFresh(state,fees);
       const quotedAtMs=this.now(),referenceTimestampMs=Number(state.block.timestamp)*1000;

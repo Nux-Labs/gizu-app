@@ -387,7 +387,7 @@ test("return rejects malformed verified bindings before estimating or simulating
     assert.equal(finalSimulation, false);
   }
 });
-test("return fails closed on residual >=0.5, remaining shares, stale valuation and nonconvergence", async () => {
+test("return rejects unsafe state but accepts a feasible monotone fee envelope", async () => {
   for (const [patch, s] of [
     [
       {
@@ -430,15 +430,14 @@ test("return fails closed on residual >=0.5, remaining shares, stale valuation a
     },
     { ...state, shares: 0n },
   );
-  await assert.rejects(
-    new RobinhoodReturnPlanner(
+  const envelopePlan = await new RobinhoodReturnPlanner(
       { rpcUrl: "test" },
       undefined,
       f.providers,
       () => now,
-    ).plan({ ...request, confidentialAccount: C }),
-  );
-  assert.equal(f.quoted, 0);
+    ).plan({ ...request, confidentialAccount: C });
+  assert.equal(envelopePlan.maximumTokenFeeAtoms,"11550");
+  assert.equal(f.quoted, 1);
 });
 import { robinhoodExitPrice } from "../../../src/adapters/earn/robinhood-exit-planner.ts";
 import {
@@ -488,4 +487,13 @@ test("fresh relative USDG/USDC pricing rounds upward and rejects stale, duplicat
       now,
     ),
   );
+});
+
+test("return fee convergence keeps a feasible envelope when exact cap falls again", async () => {
+ const f=setup({prepare:async(calls,fees)=>{
+  const amount=BigInt("0x"+calls[0]!.data.slice(-64));
+  return {...(await setup().providers.prepare(calls,fees)),feeCap:amount===989500n?10001n:10000n};
+ }},{...state,shares:0n});
+ const p=await new RobinhoodReturnPlanner({rpcUrl:"test"},undefined,f.providers,()=>now).plan({...request,confidentialAccount:C});
+ assert.equal(p.maximumTokenFeeAtoms,"10502");assert.equal(p.amountAtoms,"989498");assert.equal(f.quoted,1);
 });

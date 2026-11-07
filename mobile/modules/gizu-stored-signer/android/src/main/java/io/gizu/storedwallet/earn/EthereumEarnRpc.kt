@@ -3,6 +3,7 @@ package io.gizu.storedwallet
 import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.EarnExecutionState
+import uniffi.gizu_stored_signer_core.NativeGasReference
 import uniffi.gizu_stored_signer_core.earnContractCodeHash
 
 internal const val ETH_EARN_VAULT = "0x55C1B6e461a6334B567bAF0FEb5D728715446f05"
@@ -66,6 +67,37 @@ internal fun requireFreshEarnBlock(
   val hash = earnHash(block.getString("hash"))
   val parent = earnHash(block.getString("parentHash"))
   check(hash != parent && hash != "0x" + "0".repeat(64) && parent != "0x" + "0".repeat(64))
+}
+
+/** Native RPC evidence only; the reviewed anchor never comes from the Expo request. */
+internal suspend fun loadEarnGasReference(
+  rpc: TransferRpc,
+  reviewedNumber: ULong,
+  reviewedHash: String,
+  current: EarnExecutionState,
+  nowMillis: () -> Long = System::currentTimeMillis,
+): NativeGasReference {
+  check(current.chainId == 1uL && quantity(rpc.text("eth_chainId")) == java.math.BigInteger.ONE)
+  check(current.blockNumber >= reviewedNumber)
+  suspend fun canonical(number: ULong, expectedHash: String) {
+    val block =
+      rpc.call("eth_getBlockByNumber", JSONArray().put("0x" + number.toString(16)).put(false))
+        as JSONObject
+    check(quantity(block.getString("number")) == number.toString().toBigInteger())
+    check(earnHash(block.getString("hash")) == earnHash(expectedHash))
+  }
+  canonical(reviewedNumber, reviewedHash)
+  canonical(current.blockNumber, current.blockHash)
+  val observed = nowMillis()
+  check(observed >= 0)
+  return NativeGasReference(
+    1uL,
+    reviewedNumber,
+    earnHash(reviewedHash),
+    current.blockNumber,
+    earnHash(current.blockHash),
+    observed.toULong(),
+  )
 }
 
 /**
