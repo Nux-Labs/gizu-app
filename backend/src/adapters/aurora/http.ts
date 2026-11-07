@@ -1,4 +1,6 @@
 export class AuroraRouteUnavailable extends Error { constructor(){super("EARN_AURORA_ROUTE_UNAVAILABLE");} }
+/** Fixed classification only; never retain the provider's response or request URL. */
+export class AuroraHistoryAccessRequired extends Error { constructor(){super("EARN_AURORA_HISTORY_ACCESS_REQUIRED");} }
 /** Provider credentials and bounded transport stay on the server. */
 function record(v:unknown):Record<string,unknown> {
   if(!v || typeof v!=="object" || Array.isArray(v)) throw new Error("Invalid provider response");
@@ -19,6 +21,7 @@ export async function auroraApi(key: string, fetcher: typeof fetch, path: string
     } finally { reader.releaseLock(); }
     const result=record(JSON.parse(Buffer.concat(chunks).toString("utf8")));
     if(!response.ok) {
+      if(response.status===400 && path.split("?",1)[0]==="account/history/{key}" && result.message==="History is invite-only for now") throw new AuroraHistoryAccessRequired();
       if(response.status===400 && result.message==="Quoting for this pair is not available") throw new AuroraRouteUnavailable();
       throw new Error("Provider unavailable");
     }
