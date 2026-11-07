@@ -6,6 +6,8 @@ mod earn_fees;
 pub use earn_distribution::{derive_earn_distribution_addresses, earn_distribution_allocations};
 mod earn_values;
 pub use earn_values::*;
+mod gas;
+pub use gas::NativeGasReference;
 mod portfolio;
 mod swap_holdings;
 pub use swap_holdings::*;

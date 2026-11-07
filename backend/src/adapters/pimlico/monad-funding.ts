@@ -1,9 +1,13 @@
 import { createSmartAccountClient } from "permissionless";
 import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { prepareUserOperationForErc20Paymaster } from "permissionless/experimental/pimlico";
-import { createPublicClient, defineChain, erc20Abi, getAddress, http, size, sliceHex, type Address, type Hex } from "viem";
+import { createPublicClient, defineChain, erc20Abi, getAddress, http, type Address, type Hex } from "viem";
 import { toAccount } from "viem/accounts";
 import { entryPoint08Address, formatUserOperationRequest, toSimple7702SmartAccount } from "viem/account-abstraction";
+import { fundingFeeCap, assertPaymasterValidity } from "../evm/gas-policy.ts";
+import { estimateWithFreshPaymaster } from "../evm/token-paymaster.ts";
+import { GasPolicyError, deterministicGasError } from "../evm/gas-errors.ts";
+import { sourceFeeCap, stabilizeFundingApproval, validateFundingOperation } from "./source-funding.ts";
 import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
 
 export const MONAD_CHAIN_ID = 143;
@@ -47,29 +51,37 @@ export function signedErc20FeeCap(operation: {
   paymasterVerificationGasLimit?: bigint;
   maxFeePerGas: bigint;
 }): bigint {
-  const data = operation.paymasterData;
-  if (!data || size(data) < 182) throw new Error("Invalid signed ERC-20 paymaster data");
-  const mode = Number(BigInt(sliceHex(data, 0, 1))) >> 1;
-  if (mode !== 1 || getAddress(sliceHex(data, 14, 34)) !== MONAD_USDC) throw new Error("Unexpected paymaster mode or token");
-  const postOpGas = BigInt(sliceHex(data, 34, 50));
-  const exchangeRate = BigInt(sliceHex(data, 50, 82));
-  const gas = operation.preVerificationGas + operation.callGasLimit + operation.verificationGasLimit +
-    (operation.paymasterPostOpGasLimit ?? 0n) + (operation.paymasterVerificationGasLimit ?? 0n);
-  return (gas + postOpGas) * operation.maxFeePerGas * exchangeRate / 10n ** 18n;
+  return fundingFeeCap({ ...operation, maxPriorityFeePerGas: 0n,
+    paymasterPostOpGasLimit: operation.paymasterPostOpGasLimit ?? 0n,
+    paymasterVerificationGasLimit: operation.paymasterVerificationGasLimit ?? 0n,
+  }, MONAD_USDC, "swap");
 }
 
 export class PimlicoMonadFunding {
   private readonly rpc: string;
   private readonly client;
 
-  constructor(private readonly key: string, monadRpc = "https://rpc.monad.xyz") {
+  constructor(private readonly key: string, monadRpc = "https://rpc.monad.xyz", private readonly now: () => number = Date.now) {
     this.rpc = `https://api.pimlico.io/v2/${MONAD_CHAIN_ID}/rpc?apikey=${encodeURIComponent(key)}`;
-    this.client = createPublicClient({ chain: monad, transport: http(monadRpc, { timeout: 20_000 }) });
+    this.client = createPublicClient({ chain: monad, transport: http(monadRpc, { timeout: 20_000 }), cacheTime: 0 });
   }
 
   async prepare(owner: Address, recipient: Address, amount: bigint): Promise<PreparedFunding> {
     return this.guard("prepare", async () => {
+      if (await this.client.getChainId() !== MONAD_CHAIN_ID) throw new GasPolicyError("GAS_STATE_CHANGED", "Funding chain changed.");
+      const block = await this.client.getBlock();
+      const timestampMs = Number(block.timestamp) * 1000;
+      if (!Number.isSafeInteger(timestampMs) || this.now() - timestampMs > 60000 || timestampMs - this.now() > 5000) throw new GasPolicyError("GAS_STATE_CHANGED", "Funding reference expired.");
+      const pinned = { blockNumber: block.number };
+      const [latest, pending, code, held, allowance, decimals, paymasterCode] = await Promise.all([
+        this.client.getTransactionCount({ address: owner, ...pinned }), this.client.getTransactionCount({ address: owner, blockTag: "pending" }), this.client.getCode({ address: owner, ...pinned }),
+        this.client.readContract({ address: MONAD_USDC, abi: erc20Abi, functionName: "balanceOf", args: [owner], ...pinned }),
+        this.client.readContract({ address: MONAD_USDC, abi: erc20Abi, functionName: "allowance", args: [owner, MONAD_PAYMASTER], ...pinned }),
+        this.client.readContract({ address: MONAD_USDC, abi: erc20Abi, functionName: "decimals", ...pinned }), this.client.getCode({ address: MONAD_PAYMASTER, ...pinned }),
+      ]);
       const account = await toSimple7702SmartAccount({ client: this.client, owner: watchOnly(owner) });
+      const expectedCode = `0xef0100${account.authorization.address.slice(2)}`;
+      if (latest !== pending || decimals !== 6 || !paymasterCode || paymasterCode === "0x" || (code && code !== "0x" && code.toLowerCase() !== expectedCode.toLowerCase())) throw new GasPolicyError("GAS_STATE_CHANGED", "Unsupported funding account state.");
       const pimlico = this.pimlico();
       const fees = (await pimlico.getUserOperationGasPrice()).standard;
       const bundler = createSmartAccountClient({
@@ -83,11 +95,30 @@ export class PimlicoMonadFunding {
           prepareUserOperation: prepareUserOperationForErc20Paymaster(pimlico),
         },
       });
-      const prepared = await bundler.prepareUserOperation({
+      const initial = await bundler.prepareUserOperation({
         account,
         paymasterContext: { token: MONAD_USDC },
         calls: [{ to: MONAD_USDC, abi: erc20Abi, functionName: "transfer", args: [recipient, amount] }],
       });
+      // Swap keeps its existing SDK nonce lane. Bind and refresh that same lane.
+      const nonceKey = initial.nonce >> 64n;
+      const binding = { owner, recipient, amount, budget: held, allowance };
+      const prepared = await stabilizeFundingApproval(initial, binding, calls => account.encodeCalls(calls), operation => estimateWithFreshPaymaster(operation,
+        current => pimlico.estimateUserOperationGas({ ...current, account }),
+        current => pimlico.getPaymasterData({ ...current, chainId: MONAD_CHAIN_ID, entryPointAddress: entryPoint08Address, context: { token: MONAD_USDC } }),
+      ), "swap");
+      if (!account.decodeCalls) throw new GasPolicyError("GAS_TERMS_CHANGED", "Funding call decoder unavailable.");
+      validateFundingOperation(prepared, await account.decodeCalls(prepared.callData), binding, "swap");
+      const [canonical, currentLatest, currentPending, currentCode, currentAllowance, currentBalance, currentNonce, currentFees] = await Promise.all([
+        this.client.getBlock({ blockNumber: block.number }), this.client.getTransactionCount({ address: owner }), this.client.getTransactionCount({ address: owner, blockTag: "pending" }), this.client.getCode({ address: owner }),
+        this.client.readContract({ address: MONAD_USDC, abi: erc20Abi, functionName: "allowance", args: [owner, MONAD_PAYMASTER] }), this.client.readContract({ address: MONAD_USDC, abi: erc20Abi, functionName: "balanceOf", args: [owner] }),
+        account.getNonce({ key: nonceKey }), pimlico.getUserOperationGasPrice(),
+      ]);
+      if (canonical.hash !== block.hash || currentLatest !== latest || currentPending !== latest || currentCode !== code || currentAllowance !== allowance || currentBalance !== held || currentNonce !== prepared.nonce || this.now() - timestampMs > 60000 || currentFees.standard.maxFeePerGas > prepared.maxFeePerGas || currentFees.standard.maxPriorityFeePerGas > prepared.maxPriorityFeePerGas) throw new GasPolicyError("GAS_STATE_CHANGED", "Funding state or fees changed during preparation.");
+      if (prepared.authorization && (prepared.authorization.chainId !== MONAD_CHAIN_ID || prepared.authorization.nonce !== latest || prepared.authorization.address.toLowerCase() !== account.authorization.address.toLowerCase())) throw new GasPolicyError("GAS_STATE_CHANGED", "Funding authorization state changed.");
+      if (sourceFeeCap(prepared, "swap") + amount > held) throw new GasPolicyError("GAS_BUDGET_EXCEEDED", "Funding amount and maximum fee exceed the current token balance.");
+      try { assertPaymasterValidity(prepared.paymasterData, MONAD_USDC, BigInt(Math.floor(this.now() / 1000)), 30n); }
+      catch { throw new GasPolicyError("GAS_TERMS_CHANGED", "Funding sponsorship expired or changed."); }
       const formatted = formatUserOperationRequest(prepared) as Record<string, unknown> & {
         eip7702Auth?: { chainId: Hex; address: Address; nonce: Hex };
       };
@@ -142,9 +173,10 @@ export class PimlicoMonadFunding {
     try {
       return await work();
     } catch (error) {
-      const raw = error instanceof Error ? (error as { shortMessage?: string }).shortMessage ?? error.message : String(error);
-      const reason = raw.split(this.key).join("<key>").split(encodeURIComponent(this.key)).join("<key>").slice(0, 200);
-      throw new InfrastructureError(502, "PIMLICO_FAILED", `Pimlico ${what} failed: ${reason}`);
+      const gasError = deterministicGasError(error);
+      if (gasError) throw gasError;
+      if (error instanceof InfrastructureError) throw error;
+      throw new InfrastructureError(502, "PIMLICO_FAILED", `Pimlico ${what} is unavailable. No fresh operation was authorized.`);
     }
   }
 }

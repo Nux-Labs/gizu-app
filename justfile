@@ -193,6 +193,18 @@ backend-start:
 # Check backend TypeScript and run its tests.
 backend-check: backend-typecheck backend-test
 
+# Check production gas helpers against shared arithmetic and preparation regressions; no network.
+gas-check:
+    npm --prefix backend run gas:check
+
+# Include native gas, review, signing and recovery tests; requires Rust/Cargo.
+gas-check-native:
+    npm --prefix backend run gas:check:native
+
+# Read-only diagnostics. Add --live and supply one request on stdin for provider preparation.
+gas-doctor *args:
+    npm --prefix backend run gas:doctor -- {{args}}
+
 # Check backend source and test types.
 backend-typecheck:
     npm --prefix backend run typecheck

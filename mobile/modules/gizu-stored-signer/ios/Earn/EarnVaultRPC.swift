@@ -79,3 +79,26 @@ internal struct EarnVaultStateLoader {
       routerCodeHash: try earnContractCodeHash(code: routerCode))
   }
 }
+
+/// Recheck both canonical heights through fixed native RPC; no Expo/provider proof is accepted.
+internal func loadEarnGasReference(
+  rpc: StoredTransferRPC, reviewedNumber: UInt64, reviewedHash: String,
+  current: EarnExecutionState,
+  nowMillis: () -> UInt64 = { UInt64(Date().timeIntervalSince1970 * 1000) }
+) async throws -> NativeGasReference {
+  try require(current.chainId == 1 && current.blockNumber >= reviewedNumber)
+  try require(try earnQuantityValue(value: await rpc.text("eth_chainId", [])) == "1")
+  func canonical(_ number: UInt64, _ hash: String) async throws {
+    let block = try EarnValues.object(
+      await rpc.call("eth_getBlockByNumber", ["0x" + String(number, radix: 16), false]))
+    try require(try EarnValues.uint(rpcText(block, "number")) == number)
+    try require(try EarnValues.hash(rpcText(block, "hash")) == EarnValues.hash(hash))
+  }
+  try await canonical(reviewedNumber, reviewedHash)
+  try await canonical(current.blockNumber, current.blockHash)
+  return NativeGasReference(
+    chainId: 1, reviewedBlockNumber: reviewedNumber,
+    canonicalReviewedBlockHash: try EarnValues.hash(reviewedHash),
+    currentBlockNumber: current.blockNumber, currentBlockHash: try EarnValues.hash(current.blockHash),
+    observedAtMs: nowMillis())
+}

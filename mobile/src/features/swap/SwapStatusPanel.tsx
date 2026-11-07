@@ -6,7 +6,7 @@ import { HoldingDetails } from "@/components/molecules/HoldingDetails";
 import { Surface } from "@/components/molecules/Surface";
 import { formatSwapAmount } from "@/domain/swap";
 import { groupDigits } from "@/domain/wallet/amounts";
-import { formatTokenAtoms } from "./confidentialSwap";
+import { formatTokenAtoms, swapGasMessage } from "./confidentialSwap";
 import type { StoredSwapView } from "@/domain/wallet/storedSigner";
 import colors from "@/theme/colors.json";
 
@@ -47,6 +47,7 @@ function Facts({ status, fullRows }: { status: StoredSwapView; fullRows: boolean
 
 /** An unfinished swap needs the user's attention, so it keeps the prominent card. */
 export function ActiveSwapCard({ status }: { status: StoredSwapView }) {
+  const gasMessage = swapGasMessage(status.pausedCode);
   return (
     <Surface>
       <View className="gap-2 px-5 py-5">
@@ -56,6 +57,7 @@ export function ActiveSwapCard({ status }: { status: StoredSwapView }) {
         <Typography variant="caption">
           {status.direction === "sell" ? "Selling" : "Buying"} {status.targetSymbol || "tokens"}
         </Typography>
+        {gasMessage ? <Typography variant="caption">{gasMessage}</Typography> : null}
         <HoldingDetails label="Swap details" accessibilityLabel="Swap details">
           <Facts status={status} fullRows />
         </HoldingDetails>

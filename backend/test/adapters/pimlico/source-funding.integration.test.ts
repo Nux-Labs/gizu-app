@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decodeFunctionData, erc20Abi, parseAbi } from "viem";
+import { PimlicoMonadFunding } from "../../../src/adapters/pimlico/monad-funding.ts";
 import { entryPoint08Address } from "viem/account-abstraction";
 import {
   MonadFundingPlanner,
@@ -21,12 +22,12 @@ const simpleAbi = parseAbi([
   "function executeBatch((address target,uint256 value,bytes data)[] calls)",
   "function execute(address target,uint256 value,bytes data)",
 ]);
-function rpcMock(changedNonce = false, entryPointSequence = 0n) {
+function rpcMock(changedNonce = false, entryPointSequence = 0n, drift: "none" | "entrypoint" | "market" = "none", allowance = 0n) {
   const methods: string[] = [],
     sponsorOperations: any[] = [],
     nonceKeys: bigint[] = [];
   let estimates = 0,
-    nonceReads = 0;
+    nonceReads = 0, entryPointReads = 0, marketReads = 0;
   const fetcher: typeof fetch = async (_url, init) => {
     const payload = JSON.parse(String(init?.body));
     const response = (request: any) => {
@@ -74,7 +75,7 @@ function rpcMock(changedNonce = false, entryPointSequence = 0n) {
           const selector = String(params[0].data).slice(0, 10);
           if (selector === "0x70a08231") result = word(1000n);
           else if (selector === "0x313ce567") result = word(6n);
-          else if (selector === "0xdd62ed3e") result = word(0n);
+          else if (selector === "0xdd62ed3e") result = word(allowance);
           else if (selector === "0x35567e1a") {
             const decoded = decodeFunctionData({
               abi: parseAbi([
@@ -84,7 +85,8 @@ function rpcMock(changedNonce = false, entryPointSequence = 0n) {
             });
             const key = decoded.args[1];
             nonceKeys.push(key);
-            result = word((key << 64n) | entryPointSequence);
+            entryPointReads++;
+            result = word((key << 64n) | (entryPointSequence + (drift === "entrypoint" && entryPointReads > 1 ? 1n : 0n)));
           } else throw new Error("Unexpected eth_call selector " + selector);
           break;
         }
@@ -107,13 +109,15 @@ function rpcMock(changedNonce = false, entryPointSequence = 0n) {
           };
           break;
         case "pimlico_getUserOperationGasPrice":
+          marketReads++;
           result = Object.fromEntries(
             ["slow", "standard", "fast"].map((k) => [
               k,
-              { maxFeePerGas: "0x1", maxPriorityFeePerGas: "0x0" },
+              { maxFeePerGas: drift === "market" && marketReads > 1 ? "0x2" : "0x1", maxPriorityFeePerGas: "0x0" },
             ]),
           );
           break;
+        case "pm_getPaymasterData":
         case "pm_getPaymasterStubData":
           sponsorOperations.push(params[0]);
           result = {
@@ -258,9 +262,61 @@ test("full SDK source preparation rejects an EOA nonce change before returning a
   );
   await assert.rejects(
     planner.prepare({ owner, recipient, amount: "100", budget: "1000" }),
-    { code: "EARN_FUNDING_UNAVAILABLE" },
+    { code: "GAS_STATE_CHANGED" },
   );
   assert.ok(
     mock.methods.every((m) => !m.includes("send") && !m.includes("sign")),
   );
+});
+
+for(const drift of ["entrypoint","market"] as const) test(`source rejects ${drift} drift independently of the EOA nonce`,async(t)=>{
+ const mock=rpcMock(false,7n,drift);t.mock.method(globalThis,"fetch",mock.fetcher);
+ const planner=new MonadFundingPlanner("offline-secret","https://offline-monad.invalid",()=>1000000);
+ await assert.rejects(planner.prepare({owner,recipient,amount:"100",budget:"1000"}),{code:"GAS_STATE_CHANGED",statusCode:409});
+ assert.ok(mock.methods.every(m=>!m.includes("send")&&!m.includes("sign")));
+});
+
+test("Swap estimates exact bounded approval and preserves its SDK nonce lane",async(t)=>{
+ const mock=rpcMock(false,7n);t.mock.method(globalThis,"fetch",mock.fetcher);
+ const planner=new PimlicoMonadFunding("offline-secret","https://offline-monad.invalid",()=>1000000);
+ const result=await planner.prepare(owner,recipient,100n);
+ const op=result.userOperation;const decoded=decodeFunctionData({abi:simpleAbi,data:op.callData as `0x${string}`});
+ assert.equal(decoded.functionName,"executeBatch");if(decoded.functionName!=="executeBatch")throw Error("Expected bounded atomic batch");
+ const approval=decodeFunctionData({abi:erc20Abi,data:decoded.args[0][0]!.data});assert.equal(approval.functionName,"approve");assert.equal(approval.args[1],7n);
+ assert.equal(result.feeCapAtoms,"7");assert.ok(mock.estimates>=2);
+ assert.ok(mock.nonceKeys.every(k=>k!==0n));assert.equal(BigInt(op.nonce as string)>>64n,mock.nonceKeys[0]);
+ assert.ok(mock.methods.every(m=>!m.includes("send")&&!m.includes("sign")));
+});
+for(const drift of ["entrypoint","market"] as const) test(`Swap returns structured ${drift} drift failure`,async(t)=>{
+ const mock=rpcMock(false,7n,drift);t.mock.method(globalThis,"fetch",mock.fetcher);
+ await assert.rejects(new PimlicoMonadFunding("offline-secret","https://offline-monad.invalid",()=>1000000).prepare(owner,recipient,100n),{code:"GAS_STATE_CHANGED",statusCode:409,retryable:false});
+});
+
+import { readFileSync } from "node:fs";
+test("Swap full-balance payload matches native protocol fee and approval bounds", async(t)=>{
+ const vectors=JSON.parse(readFileSync(new URL("../../../../shared/gas-policy-v1.json",import.meta.url),"utf8"));
+ const vector=vectors.balanceVectors.find((v:{name:string})=>v.name==="full-balance-fractional-swap");
+ const mock=rpcMock(false,7n);t.mock.method(globalThis,"fetch",mock.fetcher);
+ const result=await new PimlicoMonadFunding("offline-secret","https://offline-monad.invalid",()=>1000000).prepare(owner,recipient,BigInt(vector.principalAtoms));
+ assert.equal(result.feeCapAtoms,vector.maximumFeeAtoms);
+ const decoded=decodeFunctionData({abi:simpleAbi,data:result.userOperation.callData as `0x${string}`});
+ assert.equal(decoded.functionName,"executeBatch");if(decoded.functionName!=="executeBatch")throw Error("Expected atomic funding batch");
+ const approval=decodeFunctionData({abi:erc20Abi,data:decoded.args[0][0]!.data});
+ const transfer=decodeFunctionData({abi:erc20Abi,data:decoded.args[0][1]!.data});
+ assert.equal(approval.functionName,"approve");assert.equal(transfer.functionName,"transfer");
+ const cap=BigInt(result.feeCapAtoms), approved=approval.args[1] as bigint;
+ assert.equal(approved.toString(),vector.approvalAtoms);
+ assert.ok(approved>=cap&&approved<=cap+cap/50n,"must satisfy existing native Swap upper bound");
+ assert.equal(transfer.args[1].toString(),vector.principalAtoms);
+ assert.equal(BigInt(vector.principalAtoms)+cap,BigInt(vector.balanceAtoms));
+ assert.ok(mock.methods.every(m=>!m.includes("send")&&!m.includes("sign")));
+});
+
+test("Swap retains an existing allowance covering the protocol cap without a ceiling approval",async(t)=>{
+ const mock=rpcMock(false,7n,"none",7n);t.mock.method(globalThis,"fetch",mock.fetcher);
+ const result=await new PimlicoMonadFunding("offline-secret","https://offline-monad.invalid",()=>1000000).prepare(owner,recipient,993n);
+ assert.equal(result.feeCapAtoms,"7");
+ const decoded=decodeFunctionData({abi:simpleAbi,data:result.userOperation.callData as `0x${string}`});
+ assert.equal(decoded.functionName,"execute");if(decoded.functionName!=="execute")throw Error("Existing allowance needs only the exact transfer");
+ const transfer=decodeFunctionData({abi:erc20Abi,data:decoded.args[2]});assert.equal(transfer.functionName,"transfer");assert.equal(transfer.args[1],993n);
 });

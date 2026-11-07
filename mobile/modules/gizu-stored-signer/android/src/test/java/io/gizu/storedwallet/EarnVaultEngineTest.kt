@@ -85,6 +85,8 @@ class EarnVaultEngineTest {
         "eth_getTransactionReceipt",
         "eth_getTransactionByHash" -> JSONObject.NULL
         "eth_getTransactionCount" -> "0x4"
+        "eth_getBlockByNumber" ->
+          JSONObject().put("number", params.getString(0)).put("hash", "0x" + "a".repeat(64))
         "eth_sendRawTransaction" -> {
           sent++
           error("response lost")
@@ -111,6 +113,7 @@ class EarnVaultEngineTest {
   }
 
   private var signatures = 0
+  private var signedReference: NativeGasReference? = null
 
   private inner class Signer(private val callNonce: ULong = 4uL) : EarnVaultSigner {
     override fun prepare(revision: ULong, state: EarnExecutionState) = "native full review"
@@ -122,7 +125,14 @@ class EarnVaultEngineTest {
 
     override fun approve(revision: ULong, hash: String) {}
 
-    override fun signNext(revision: ULong, state: EarnExecutionState): NativeSignedEarnTransaction {
+    override fun signNextWithCanonicalReference(
+      revision: ULong,
+      state: EarnExecutionState,
+      reference: NativeGasReference,
+    ): NativeSignedEarnTransaction {
+      assertEquals(state.blockNumber, reference.currentBlockNumber)
+      assertEquals(state.blockHash, reference.currentBlockHash)
+      signedReference = reference
       signatures++
       return NativeSignedEarnTransaction(
         "0x02abcdef",
@@ -137,6 +147,30 @@ class EarnVaultEngineTest {
     }
 
     override fun close() {}
+  }
+
+  @Test
+  fun longReviewSignsOnlyAfterNativeCanonicalAnchorRecheck() = runBlocking {
+    val (j, _) = setup()
+    val rpc = Rpc()
+    var reads = 0
+    EarnVaultEngine(
+        store(),
+        j,
+        rpc,
+        { _, _ -> Signer() },
+        { _, _, _ -> state().also { it.blockNumber = if (reads++ == 0) 10uL else 13uL } },
+      )
+      .use { engine ->
+        val review = engine.prepare("deposit-1", 1)
+        try {
+          engine.execute(review) {}
+        } catch (_: IllegalStateException) {}
+      }
+    assertEquals(1, signatures)
+    assertEquals(10uL, signedReference?.reviewedBlockNumber)
+    assertEquals(13uL, signedReference?.currentBlockNumber)
+    assertTrue(j.get("deposit-1").steps()[0].has("raw"))
   }
 
   @Test

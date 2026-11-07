@@ -9,10 +9,8 @@ export type ReferenceBlock = {
   gasUsed: bigint;
   gasLimit: bigint;
 };
-export const ceilDiv = (a: bigint, b: bigint): bigint => {
-  if (a < 0n || b <= 0n) throw new Error("Invalid integer division");
-  return (a + b - 1n) / b;
-};
+import { ceilDiv, mulDiv, nativeGasCost } from "../evm/gas-policy.ts";
+export { ceilDiv } from "../evm/gas-policy.ts";
 export function nextBaseFee(b: ReferenceBlock): bigint {
   if (
     b.baseFeePerGas < 0n ||
@@ -52,13 +50,13 @@ export function gasBudget(
   const limits = (gas: bigint[], pct: bigint) => {
     if (!gas.length || gas.some((g) => g <= 0n))
       throw new Error("Missing measured gas");
-    return gas.map((g) => ceilDiv(g * pct, 100n));
+    return gas.map((g) => mulDiv(g, pct, 100n, "ceil"));
   };
   const depositLimits = limits(depositGas, 110n),
     withdrawLimits = limits(withdrawGas, 130n);
   const depositWei =
-      depositLimits.reduce((a, b) => a + b, 0n) * fees.depositFee,
-    withdrawWei = withdrawLimits.reduce((a, b) => a + b, 0n) * fees.withdrawFee;
+      nativeGasCost(depositLimits.reduce((a, b) => a + b, 0n), fees.depositFee),
+    withdrawWei = nativeGasCost(withdrawLimits.reduce((a, b) => a + b, 0n), fees.withdrawFee);
   return {
     depositLimits,
     withdrawLimits,
@@ -116,9 +114,9 @@ export function resolverBudget(
   )
     throw new Error("Missing positive resolver gas estimate");
   const estimatedGas = estimates.reduce((a, b) => (a > b ? a : b), 202859n),
-    gasUnits = ceilDiv(estimatedGas * 120n, 100n),
-    budgetGasPrice = ceilDiv(gasPrice * 125n, 100n);
-  const gasCostWei = gasUnits * budgetGasPrice,
+    gasUnits = mulDiv(estimatedGas, 120n, 100n, "ceil"),
+    budgetGasPrice = mulDiv(gasPrice, 125n, 100n, "ceil");
+  const gasCostWei = nativeGasCost(gasUnits, budgetGasPrice),
     profitWei = ceilDiv(gasCostWei, 10n),
     allowanceWei = gasCostWei + profitWei;
   const inputValueWei =

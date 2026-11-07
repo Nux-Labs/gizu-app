@@ -384,6 +384,34 @@ impl EarnExecutionOperation {
         revision: u64,
         current: EarnExecutionState,
     ) -> Result<NativeSignedEarnTransaction, SignerError> {
+        self.sign_next_checked(revision, current, None)
+    }
+    /// Native-owned RPC evidence that the reviewed reference remains canonical.
+    /// The original reviewed digest, transaction bytes and all state/fee guards remain authoritative.
+    pub fn sign_next_with_canonical_reference(
+        &self,
+        revision: u64,
+        current: EarnExecutionState,
+        reference: crate::NativeGasReference,
+    ) -> Result<NativeSignedEarnTransaction, SignerError> {
+        self.sign_next_checked(revision, current, Some(reference))
+    }
+    pub fn invalidate(&self) {
+        if let Ok(mut s) = self.state.lock() {
+            s.seed = None;
+            if let Some(p) = s.prepared.as_mut() {
+                p.approved = false;
+            }
+        }
+    }
+}
+impl EarnExecutionOperation {
+    fn sign_next_checked(
+        &self,
+        revision: u64,
+        current: EarnExecutionState,
+        reference: Option<crate::NativeGasReference>,
+    ) -> Result<NativeSignedEarnTransaction, SignerError> {
         let mut s = self.state.lock().map_err(|_| SignerError::CryptoFailed)?;
         s.live()?;
         let prepared = s.prepared.as_ref().ok_or(SignerError::InvalidInput)?;
@@ -401,7 +429,7 @@ impl EarnExecutionOperation {
                 &current,
                 prepared.transactions[prepared.next].nonce,
             )?;
-            check_continuity(&prepared.baseline, &current)?;
+            check_continuity(&prepared.baseline, &current, reference.as_ref())?;
             let allowance = decimal(&current.allowance_atoms)?;
             let amount = decimal(&p.amount_atoms)?;
             if prepared.transactions.len() == 2 && prepared.next == 0 {
@@ -476,15 +504,8 @@ impl EarnExecutionOperation {
         }
         Ok(result)
     }
-    pub fn invalidate(&self) {
-        if let Ok(mut s) = self.state.lock() {
-            s.seed = None;
-            if let Some(p) = s.prepared.as_mut() {
-                p.approved = false;
-            }
-        }
-    }
 }
+
 fn now() -> Result<u64, SignerError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -584,19 +605,38 @@ fn check_state(
 fn check_continuity(
     before: &EarnExecutionState,
     after: &EarnExecutionState,
+    reference: Option<&crate::NativeGasReference>,
 ) -> Result<(), SignerError> {
+    if let Some(reference) = reference {
+        crate::gas::validate_canonical_reference(
+            reference,
+            before.chain_id,
+            before.block_number,
+            &before.block_hash,
+            after.block_number,
+            &after.block_hash,
+            u64::try_from(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| SignerError::InvalidInput)?
+                    .as_millis(),
+            )
+            .map_err(|_| SignerError::InvalidInput)?,
+        )?;
+    }
     if before.token_code_hash != after.token_code_hash
         || before.vault_code_hash != after.vault_code_hash
         || before.router_code_hash != after.router_code_hash
         || before.usdc_balance_atoms != after.usdc_balance_atoms
         || before.shares != after.shares
-        || !(after.block_number == before.block_number && after.block_hash == before.block_hash
-            || after.block_number
-                == before
-                    .block_number
-                    .checked_add(1)
-                    .ok_or(SignerError::InvalidInput)?
-                && after.parent_hash == before.block_hash)
+        || reference.is_none()
+            && !(after.block_number == before.block_number && after.block_hash == before.block_hash
+                || after.block_number
+                    == before
+                        .block_number
+                        .checked_add(1)
+                        .ok_or(SignerError::InvalidInput)?
+                    && after.parent_hash == before.block_hash)
     {
         return Err(SignerError::InvalidInput);
     }
@@ -606,11 +646,10 @@ fn check_cost(p: &Proposal, s: &EarnExecutionState, txs: &[TxEip1559]) -> Result
     let mut cost = U256::ZERO;
     for tx in txs {
         cost = cost
-            .checked_add(
-                U256::from(tx.gas_limit)
-                    .checked_mul(U256::from(tx.max_fee_per_gas))
-                    .ok_or(SignerError::InvalidInput)?,
-            )
+            .checked_add(crate::gas::native_fee_cap(
+                U256::from(tx.gas_limit),
+                U256::from(tx.max_fee_per_gas),
+            )?)
             .ok_or(SignerError::InvalidInput)?;
     }
     if cost > decimal(&p.maximum_gas_cost_wei)?
@@ -632,10 +671,7 @@ fn share_price(amount: U256, shares: U256, bps: u32) -> Result<U256, SignerError
         .checked_mul(U256::from(10000))
         .filter(|v| *v != U256::ZERO)
         .ok_or(SignerError::InvalidInput)?;
-    let (quotient, remainder) = numerator.div_rem(denominator);
-    quotient
-        .checked_add(U256::from(u8::from(remainder != U256::ZERO)))
-        .ok_or(SignerError::InvalidInput)
+    crate::gas::ceil_div(numerator, denominator)
 }
 fn transaction(
     p: &Proposal,
@@ -791,6 +827,78 @@ mod tests {
         assert_eq!(calls[1].gas_limit, 300000);
         op.invalidate();
         assert!(op.prepared_calls().is_err());
+    }
+    #[test]
+    fn canonical_reference_allows_review_after_several_blocks_without_changing_signed_terms() {
+        let baseline = state();
+        let mut current = baseline.clone();
+        current.block_number += 3;
+        current.block_hash = format!("0x{}", "66".repeat(32));
+        current.parent_hash = format!("0x{}", "77".repeat(32));
+        let strict = approved("vaultDeposit");
+        assert!(strict.sign_next(7, current.clone()).is_err());
+        let op = approved("vaultDeposit");
+        let hash = op.review_hash().unwrap();
+        let tx = op
+            .sign_next_with_canonical_reference(
+                7,
+                current.clone(),
+                crate::NativeGasReference {
+                    chain_id: 1,
+                    reviewed_block_number: baseline.block_number,
+                    canonical_reviewed_block_hash: baseline.block_hash,
+                    current_block_number: current.block_number,
+                    current_block_hash: current.block_hash.clone(),
+                    observed_at_ms: now() * 1000,
+                },
+            )
+            .expect("unchanged reviewed transaction remains valid on the same canonical chain");
+        assert_eq!(tx.review_hash, hash);
+        let (signed, _) = recover(&tx.raw_transaction);
+        assert_eq!(signed.nonce, 4);
+        assert_eq!(signed.gas_limit, 65000);
+        assert_eq!(signed.max_fee_per_gas, 10000000000);
+    }
+    #[test]
+    fn canonical_reference_never_bypasses_reorg_expiry_or_existing_signing_guards() {
+        for case in 0..15 {
+            let baseline = state();
+            let mut current = baseline.clone();
+            current.block_number += 3;
+            current.block_hash = format!("0x{}", "66".repeat(32));
+            let mut reference = crate::NativeGasReference {
+                chain_id: 1,
+                reviewed_block_number: baseline.block_number,
+                canonical_reviewed_block_hash: baseline.block_hash,
+                current_block_number: current.block_number,
+                current_block_hash: current.block_hash.clone(),
+                observed_at_ms: now() * 1000,
+            };
+            let op = approved("vaultDeposit");
+            match case {
+                0 => reference.canonical_reviewed_block_hash = format!("0x{}", "99".repeat(32)),
+                1 => reference.chain_id = 143,
+                2 => reference.reviewed_block_number += 1,
+                3 => reference.current_block_number += 1,
+                4 => reference.current_block_hash = format!("0x{}", "99".repeat(32)),
+                5 => reference.observed_at_ms -= 16000,
+                6 => reference.observed_at_ms += 10000,
+                7 => current.owner = ETHEREUM_EARN_USDC.into(),
+                8 => current.nonce += 1,
+                9 => current.base_fee_wei = "10000000000".into(),
+                10 => current.native_balance_wei = "1".into(),
+                11 => current.token_code_hash = format!("0x{}", "99".repeat(32)),
+                12 => current.allowance_atoms = "1".into(),
+                13 => current.preview_deposit_shares = "1".into(),
+                14 => op.state.lock().unwrap().proposal.deadline = now(),
+                _ => unreachable!(),
+            }
+            assert!(
+                op.sign_next_with_canonical_reference(7, current, reference)
+                    .is_err(),
+                "case {case}"
+            );
+        }
     }
     #[test]
     fn native_contract_code_hash_is_bounded_canonical_hex_and_keccak() {

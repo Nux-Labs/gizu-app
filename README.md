@@ -169,6 +169,11 @@ npm --prefix frontend run build
 npm --prefix landing run build
 ```
 
+Run `just gas-check` for offline checks of production gas calculations, paymaster
+approval stabilization and shared TypeScript/Rust vectors. Use
+`just gas-check-native` to include the native Rust tests. Provider diagnostics are
+opt-in and read-only; see [gas management](docs/internal/GAS_MANAGEMENT.md).
+
 See the [workflow definitions](.github/workflows/) for exact jobs. Native changes
 need release validation even when PR checks pass. CI does not deploy services,
 upload signed store builds or prove live provider settlement; backend tests use

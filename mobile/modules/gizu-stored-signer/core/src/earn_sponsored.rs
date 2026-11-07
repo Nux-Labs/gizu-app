@@ -1082,37 +1082,45 @@ fn check_quote(
     nonzero_hash(&q.authenticated_body_hash)
 }
 fn ceil(n: U256, d: U256) -> Result<U256, SignerError> {
-    if d == U256::ZERO {
-        return Err(SignerError::InvalidInput);
-    }
-    let (q, r) = n.div_rem(d);
-    q.checked_add(U256::from(u8::from(r != U256::ZERO)))
-        .ok_or(SignerError::InvalidInput)
+    crate::gas::ceil_div(n, d)
 }
 fn fee_cap(op: &UserOp, token: &str) -> Result<U256, SignerError> {
+    fee_cap_at(op, token, now()?)
+}
+/// Public arithmetic only. Platform planners use the same conservative cap as the
+/// signing authority, which still reconstructs and validates everything independently.
+#[uniffi::export]
+pub fn earn_erc20_fee_cap(
+    user_operation: String,
+    expected_token: String,
+    now_secs: u64,
+) -> Result<String, SignerError> {
+    let op: UserOp = parse(&user_operation)?;
+    fee_cap_at(&op, &expected_token, now_secs).map(|value| value.to_string())
+}
+fn fee_cap_at(op: &UserOp, token: &str, now_secs: u64) -> Result<U256, SignerError> {
     let data = bytes(&op.paymaster_data, 4096)?;
-    // Pimlico's 118-byte direct-token config accepts compact (64) or full (65)
-    // signatures. Preserve the complete payload when hashing/signing the UserOp.
-    if ![182, 183].contains(&data.len())
-        || ![2, 3].contains(&data[0])
-        || data[1] != 0
-        || Address::from_slice(&data[14..34]) != addr(token)?
+    // The shared decoder preserves the historic Swap layout; Earn retains its
+    // stricter signature length and flags policy around those same decoded terms.
+    let terms = crate::gas::decode_erc20_paymaster_terms(&data, addr(token)?)?;
+    if ![182, 183].contains(&data.len()) || ![2, 3].contains(&terms.mode) || terms.flags != 0 {
+        return Err(SignerError::InvalidInput);
+    }
+    if terms.valid_after > now_secs || terms.valid_until != 0 && terms.valid_until <= now_secs {
+        return Err(SignerError::Expired);
+    }
+    let post = terms.post_op_gas;
+    let rate = terms.exchange_rate;
+    let fee = hexnum(&op.max_fee_per_gas)?;
+    if rate == U256::ZERO
+        || fee == U256::ZERO
+        || fee > U256::from(u128::MAX)
+        || hexnum(&op.max_priority_fee_per_gas)? > fee
+        || post > U256::from(10_000_000)
     {
         return Err(SignerError::InvalidInput);
     }
-    let until = U256::from_be_slice(&data[2..8]);
-    let after = U256::from_be_slice(&data[8..14]);
-    let clock = U256::from(now()?);
-    if after > clock || until != U256::ZERO && until <= clock {
-        return Err(SignerError::Expired);
-    }
-    let post = U256::from_be_slice(&data[34..50]);
-    let rate = U256::from_be_slice(&data[50..82]);
-    let fee = hexnum(&op.max_fee_per_gas)?;
-    if rate == U256::ZERO || fee == U256::ZERO || post > U256::from(10_000_000) {
-        return Err(SignerError::InvalidInput);
-    }
-    let mut gas = post;
+    let mut gas = Vec::new();
     for f in [
         &op.call_gas_limit,
         &op.verification_gas_limit,
@@ -1120,15 +1128,18 @@ fn fee_cap(op: &UserOp, token: &str) -> Result<U256, SignerError> {
         &op.paymaster_post_op_gas_limit,
         &op.paymaster_verification_gas_limit,
     ] {
-        gas = gas
-            .checked_add(hexnum(f)?)
-            .ok_or(SignerError::InvalidInput)?;
+        let value = hexnum(f)?;
+        if value == U256::ZERO || value > U256::from(10_000_000) {
+            return Err(SignerError::InvalidInput);
+        }
+        gas.push(value);
     }
-    ceil(
-        gas.checked_mul(fee)
-            .and_then(|v| v.checked_mul(rate))
-            .ok_or(SignerError::InvalidInput)?,
-        U256::from(10u128.pow(18)),
+    crate::gas::erc20_fee_cap(
+        &gas,
+        post,
+        fee,
+        rate,
+        crate::gas::FeeRounding::ConservativeCeil,
     )
 }
 #[derive(PartialEq)]
@@ -1439,6 +1450,36 @@ mod tests {
         d[81] = 1;
         d[181] = 27;
         json!({"sender":SOURCE,"nonce":"0x4","callData":"0xb61d27f6000000000000000000000000754704bc059f8c67012fed69bc8a327a5aafb603000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044a9059cbb000000000000000000000000111111111111111111111111111111111111111100000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000","callGasLimit":"0x186a0","verificationGasLimit":"0xc350","preVerificationGas":"0x7530","paymasterPostOpGasLimit":"0x2710","paymasterVerificationGasLimit":"0x4e20","maxFeePerGas":"0x3b9aca00","maxPriorityFeePerGas":"0xf4240","paymaster":PM,"paymasterData":alloy_primitives::hex::encode_prefixed(d),"signature":"0x"})
+    }
+    #[test]
+    fn planner_ffi_uses_native_ceil_cap_and_native_bounds() {
+        assert_eq!(
+            earn_erc20_fee_cap(op().to_string(), TOKEN.into(), now()).unwrap(),
+            "1"
+        );
+        for case in 0..6 {
+            let mut value = op();
+            let mut token = TOKEN.to_string();
+            match case {
+                0 => value["callGasLimit"] = json!("0x989681"),
+                1 => value["callGasLimit"] = json!("0x0"),
+                2 => value["maxFeePerGas"] = json!("0x100000000000000000000000000000000"),
+                3 => value["maxPriorityFeePerGas"] = json!("0xffffffffff"),
+                4 => token = HOOD.into(),
+                5 => {
+                    let mut data =
+                        alloy_primitives::hex::decode(value["paymasterData"].as_str().unwrap())
+                            .unwrap();
+                    data[8..14].copy_from_slice(&(now() + 100).to_be_bytes()[2..]);
+                    value["paymasterData"] = json!(alloy_primitives::hex::encode_prefixed(data));
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                earn_erc20_fee_cap(value.to_string(), token, now()).is_err(),
+                "case {case}"
+            );
+        }
     }
     fn prepared() -> Arc<SponsoredEarnOperation> {
         let p = proposal();

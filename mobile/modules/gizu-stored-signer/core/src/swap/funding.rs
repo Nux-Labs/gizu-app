@@ -2,6 +2,7 @@
 use super::evm::{self, AbiReader, RawSignature};
 use super::pins::*;
 use crate::SignerError;
+use crate::gas::{self, FeeRounding};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use serde::{Deserialize, Serialize};
 
@@ -123,33 +124,80 @@ pub fn decode_calls(call_data: &[u8]) -> Result<Vec<(Address, U256, Vec<u8>)>, S
         .collect()
 }
 
-/// Research `signedErc20FeeCap`: the most USDC the paymaster can charge for this operation.
+fn paymaster_terms(op: &UserOperation) -> Result<gas::DirectTokenPaymasterTerms, SignerError> {
+    // The shared decoder preserves the historical accepted layout for fee/hash compatibility.
+    gas::decode_erc20_paymaster_terms(&evm::hex_bytes(&op.paymaster_data)?, MONAD_USDC)
+}
+
+/// Protocol integer charge cap, preserved for historical signed-operation compatibility.
 pub fn fee_cap(op: &UserOperation, now_secs: u64) -> Result<U256, SignerError> {
-    let data = evm::hex_bytes(&op.paymaster_data)?;
-    if data.len() < 182 || data[0] >> 1 != 1 || Address::from_slice(&data[14..34]) != MONAD_USDC {
-        return Err(SignerError::InvalidInput);
-    }
-    let valid_until =
-        u64::from_be_bytes([0, 0, data[2], data[3], data[4], data[5], data[6], data[7]]);
-    if valid_until != 0 && valid_until <= now_secs {
+    let terms = paymaster_terms(op)?;
+    if terms.valid_until != 0 && terms.valid_until <= now_secs {
         return Err(SignerError::Expired);
     }
-    let post_op = U256::from_be_slice(&data[34..50]);
-    let rate = U256::from_be_slice(&data[50..82]);
-    let gas = u128_field(&op.pre_verification_gas)?
-        + u128_field(&op.call_gas_limit)?
-        + u128_field(&op.verification_gas_limit)?
-        + u128_field(&op.paymaster_post_op_gas_limit)?
-        + u128_field(&op.paymaster_verification_gas_limit)?;
-    let cost = (gas + post_op)
-        .checked_mul(u128_field(&op.max_fee_per_gas)?)
-        .and_then(|v| v.checked_mul(rate))
-        .ok_or(SignerError::InvalidInput)?
-        / U256::from(10u64).pow(U256::from(18));
+    let fields = [
+        u128_field(&op.pre_verification_gas)?,
+        u128_field(&op.call_gas_limit)?,
+        u128_field(&op.verification_gas_limit)?,
+        u128_field(&op.paymaster_post_op_gas_limit)?,
+        u128_field(&op.paymaster_verification_gas_limit)?,
+    ];
+    let cost = gas::erc20_fee_cap(
+        &fields,
+        terms.post_op_gas,
+        u128_field(&op.max_fee_per_gas)?,
+        terms.exchange_rate,
+        FeeRounding::ProtocolFloor,
+    )?;
     if cost.is_zero() {
         return Err(SignerError::InvalidInput);
     }
     Ok(cost)
+}
+
+/// Newly prepared operations need time for signing and the submission round trip. Historical
+/// signed journals are reconciled directly and never need another readiness check or signature.
+pub fn readiness_code(
+    op: &UserOperation,
+    now_secs: u64,
+) -> Result<Option<&'static str>, SignerError> {
+    let terms = paymaster_terms(op)?;
+    if terms.valid_after > now_secs {
+        return Ok(Some("PAYMASTER_NOT_YET_VALID"));
+    }
+    if terms.valid_until != 0 && terms.valid_until <= now_secs {
+        return Ok(Some("PAYMASTER_QUOTE_EXPIRED"));
+    }
+    if terms.valid_until != 0 && terms.valid_until.saturating_sub(now_secs) < 30 {
+        return Ok(Some("PAYMASTER_VALIDITY_TOO_SHORT"));
+    }
+    Ok(None)
+}
+
+pub fn approval_code(
+    op: &UserOperation,
+    fee: U256,
+    chain: &FundingChain,
+) -> Result<Option<&'static str>, SignerError> {
+    let calls = decode_calls(&evm::hex_bytes(&op.call_data)?)?;
+    let (_, rest) = calls.split_last().ok_or(SignerError::InvalidInput)?;
+    match rest {
+        [] => Ok((chain.paymaster_allowance < fee).then_some("TOKEN_PAYMASTER_ALLOWANCE_LOW")),
+        [(_, _, data)] => {
+            let (spender, approved) = approve_call(data)?;
+            if spender != PIMLICO_ERC20_PAYMASTER {
+                return Err(SignerError::InvalidInput);
+            }
+            if approved < fee {
+                return Ok(Some("TOKEN_PAYMASTER_ALLOWANCE_LOW"));
+            }
+            let upper = fee
+                .checked_add(fee / U256::from(50))
+                .ok_or(SignerError::InvalidInput)?;
+            Ok((approved > upper).then_some("GAS_APPROVAL_UNSTABLE"))
+        }
+        _ => Err(SignerError::InvalidInput),
+    }
 }
 
 fn pack128(high: U256, low: U256) -> [u8; 32] {
@@ -245,7 +293,7 @@ pub fn check_funding(
         return Err(SignerError::InvalidInput);
     }
     let calls = decode_calls(&evm::hex_bytes(&op.call_data)?)?;
-    let (last, rest) = calls.split_last().ok_or(SignerError::InvalidInput)?;
+    let (last, _) = calls.split_last().ok_or(SignerError::InvalidInput)?;
     if calls
         .iter()
         .any(|(to, value, _)| *to != MONAD_USDC || !value.is_zero())
@@ -255,21 +303,10 @@ pub fn check_funding(
     if transfer_call(&last.2)? != (deposit, amount) {
         return Err(SignerError::InvalidInput);
     }
-    match rest {
-        [] if chain.paymaster_allowance >= fee => {}
-        [(_, _, data)] => {
-            let (spender, approved) = approve_call(data)?;
-            // Pimlico rounds its token cap a few atoms either side of the signed paymaster fee.
-            // The paymaster still charges at most `fee`, which the budget check above covers.
-            let slack = fee / U256::from(50);
-            if spender != PIMLICO_ERC20_PAYMASTER
-                || approved + slack < fee
-                || approved > fee + slack
-            {
-                return Err(SignerError::InvalidInput);
-            }
-        }
-        _ => return Err(SignerError::InvalidInput),
+    // A new signature requires allowance covering the final signed cap. Historical signed
+    // payloads retain their exact bytes and go through reconciliation instead of this validator.
+    if approval_code(op, fee, chain)?.is_some() {
+        return Err(SignerError::InvalidInput);
     }
     Ok(CheckedFunding {
         fee_cap: fee,

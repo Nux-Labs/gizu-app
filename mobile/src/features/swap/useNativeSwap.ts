@@ -8,6 +8,7 @@ import {
   sourceAtoms,
   swapGateway,
   swapSigner,
+  swapGasMessage,
   type ListedToken,
 } from "./confidentialSwap";
 import type { StoredSwapView } from "@/domain/wallet/storedSigner";
@@ -71,10 +72,15 @@ export function useNativeSwap() {
     } catch (cause) {
       diagnostic(name, "failed");
       const message = cause instanceof Error ? cause.message : "";
+      const code = cause && typeof cause === "object" && "code" in cause ? cause.code : null;
       setError(
-        message === "HTTP"
-          ? "A balance or swap service could not complete the request. Pull to refresh and check the saved swap status before trying again."
-          : message || "Swap stopped.",
+        swapGasMessage(typeof code === "string" ? code : message) ??
+          (message === "HTTP"
+            ? "A balance or swap service could not complete the request. Pull to refresh and check the saved swap status before trying again."
+            : message === "Enter a positive USDC amount with at most six decimal places." ||
+                message === "Confidential swap is unavailable in this build."
+              ? message
+              : "Swap stopped. Refresh the saved swap status before trying again."),
       );
     } finally {
       setBusy(false);

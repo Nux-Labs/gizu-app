@@ -19,15 +19,9 @@ import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { createSmartAccountClient } from "permissionless";
 import { prepareUserOperationForErc20Paymaster } from "permissionless/experimental/pimlico";
 import { ROBINHOOD_PROFILE, robinhoodChain } from "./robinhood-vault.ts";
-import { ceilDiv } from "./policy.ts";
 import type { ExactCall } from "./vault.ts";
-const gasFields = [
-  "preVerificationGas",
-  "callGasLimit",
-  "verificationGasLimit",
-  "paymasterPostOpGasLimit",
-  "paymasterVerificationGasLimit",
-] as const;
+import { gasFields, erc20PaymasterCap, assertPaymasterValidity, uint256, mulDiv } from "../evm/gas-policy.ts";
+import { stabilizePaymasterApproval, estimateWithFreshPaymaster } from "../evm/token-paymaster.ts";
 export type RobinhoodOperation = Partial<
   Record<(typeof gasFields)[number], bigint>
 > & {
@@ -41,35 +35,10 @@ export type RobinhoodOperation = Partial<
   factory?: Address;
   factoryData?: Hex;
 };
-function uint(n: unknown, positive = false): bigint {
-  if (
-    typeof n !== "bigint" ||
-    n < 0n ||
-    n >= 1n << 256n ||
-    (positive && n === 0n)
-  )
-    throw new Error("Invalid token sponsored quantity");
-  return n;
-}
+const uint = uint256;
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 export function robinhoodTokenCap(op: RobinhoodOperation): bigint {
-  const data = op.paymasterData;
-  if (!data || !/^0x[0-9a-f]{364,8192}$/i.test(data) || data.length % 2 !== 0)
-    throw new Error("Malformed USDG paymaster data");
-  const raw = data.slice(2).toLowerCase();
-  if (
-    !["02", "03"].includes(raw.slice(0, 2)) ||
-    raw.slice(2, 4) !== "00" ||
-    !same("0x" + raw.slice(28, 68), ROBINHOOD_PROFILE.token)
-  )
-    throw new Error("Unsupported USDG paymaster mode/token");
-  const fee = uint(op.maxFeePerGas, true);
-  uint(op.maxPriorityFeePerGas);
-  if (op.maxPriorityFeePerGas > fee) throw new Error("Invalid token fee price");
-  const gas = gasFields.reduce((sum, k) => sum + uint(op[k]), 0n),
-    post = BigInt("0x" + raw.slice(68, 100)),
-    rate = uint(BigInt("0x" + raw.slice(100, 164)), true);
-  return uint(ceilDiv((uint(gas, true) + post) * fee * rate, 10n ** 18n), true);
+  return erc20PaymasterCap(op, { token: ROBINHOOD_PROFILE.token, rounding: "ceil" });
 }
 export async function stabilizeRobinhoodApproval<T extends RobinhoodOperation>(
   initial: T,
@@ -78,40 +47,8 @@ export async function stabilizeRobinhoodApproval<T extends RobinhoodOperation>(
   encode: (calls: ExactCall[]) => Promise<Hex>,
   estimate: (operation: T) => Promise<T>,
 ): Promise<T> {
-  let operation = initial;
-  for (let i = 0; i < 4; i++) {
-    const cap = robinhoodTokenCap(operation),
-      approval = ceilDiv(cap * 101n, 100n);
-    const allowed =
-      allowance < cap
-        ? [
-            {
-              to: ROBINHOOD_PROFILE.token,
-              value: 0n,
-              data: encodeFunctionData({
-                abi: erc20Abi,
-                functionName: "approve",
-                args: [ROBINHOOD_PROFILE.paymaster, approval],
-              }),
-            },
-            ...calls,
-          ]
-        : calls;
-    const callData = await encode(allowed),
-      next = await estimate({ ...operation, callData }),
-      checked = robinhoodTokenCap(next);
-    if (next.callData !== callData)
-      throw new Error("Bundler changed USDG calldata");
-    if (
-      allowed.length === calls.length
-        ? allowance >= checked
-        : approval >= checked && approval <= ceilDiv(checked * 101n, 100n)
-    ) {
-      return next;
-    }
-    operation = next;
-  }
-  throw new Error("USDG conservative paymaster approval did not stabilize");
+  return stabilizePaymasterApproval({ initial, calls, allowance, token: ROBINHOOD_PROFILE.token,
+    paymaster: ROBINHOOD_PROFILE.paymaster, cap: robinhoodTokenCap, encode: allowed => encode(allowed.map(c => ({ ...c, data: c.data ?? "0x" }))), estimate });
 }
 export type RobinhoodFeePrice = {
   maxFeePerGas: bigint;
@@ -222,42 +159,10 @@ export async function createRobinhoodPaymaster(
       allowance,
       async (allowed) => account.encodeCalls(allowed),
       async (operation) => {
-        const gas = await pimlico.estimateUserOperationGas({
-          ...operation,
-          account,
-          ...(stateOverride ? { stateOverride } : {}),
-        });
-        const stub = await pimlico.getPaymasterStubData({
-          ...operation,
-          ...gas,
-          chainId: 4663,
-          entryPointAddress: entryPoint08Address,
-          context: { token: ROBINHOOD_PROFILE.token },
-        });
-        if (
-          !stub.paymaster ||
-          !stub.paymasterData ||
-          ("paymasterAndData" in stub && stub.paymasterAndData !== undefined)
-        )
-          throw new Error("USDG stub format changed");
-        return {
-          ...operation,
-          callGasLimit: uint(gas.callGasLimit, true),
-          preVerificationGas: uint(gas.preVerificationGas, true),
-          verificationGasLimit: uint(gas.verificationGasLimit, true),
-          paymaster: stub.paymaster,
-          paymasterData: stub.paymasterData,
-          paymasterPostOpGasLimit: uint(
-            stub.paymasterPostOpGasLimit ??
-              gas.paymasterPostOpGasLimit ??
-              operation.paymasterPostOpGasLimit,
-          ),
-          paymasterVerificationGasLimit: uint(
-            stub.paymasterVerificationGasLimit ??
-              gas.paymasterVerificationGasLimit ??
-              operation.paymasterVerificationGasLimit,
-          ),
-        };
+        return estimateWithFreshPaymaster(operation,
+          current => pimlico.estimateUserOperationGas({ ...current, account, ...(stateOverride ? { stateOverride } : {}) }),
+          current => pimlico.getPaymasterStubData({ ...current, chainId: 4663, entryPointAddress: entryPoint08Address, context: { token: ROBINHOOD_PROFILE.token } }),
+        );
       },
     );
     if (
@@ -287,15 +192,6 @@ export async function createRobinhoodPaymaster(
     )
       throw new Error("USDG vault calls changed");
     const cap = robinhoodTokenCap(op);
-    const header = op.paymasterData!.slice(2),
-      validUntil = BigInt("0x" + header.slice(4, 16)),
-      validAfter = BigInt("0x" + header.slice(16, 28)),
-      nowSec = BigInt(Math.floor(Date.now() / 1000));
-    if (
-      validAfter > nowSec + 5n ||
-      (validUntil !== 0n && validUntil <= nowSec + 15n)
-    )
-      throw new Error("Expired USDG paymaster stub");
     if (decoded.length === calls.length + 1) {
       const a = decoded[0]!;
       if (
@@ -309,19 +205,20 @@ export async function createRobinhoodPaymaster(
         d.functionName !== "approve" ||
         !same(d.args[0], ROBINHOOD_PROFILE.paymaster) ||
         d.args[1] < cap ||
-        d.args[1] > ceilDiv(cap * 101n, 100n)
+        d.args[1] > mulDiv(cap, 101n, 100n, "ceil")
       )
         throw new Error("USDG approval exceeds cap");
     } else if (allowance < cap) throw new Error("USDG allowance insufficient");
     const noFactory = op.factory === undefined && op.factoryData === undefined,
       stubFactory = op.factory === "0x7702" && op.factoryData === "0x";
     if (!noFactory && !stubFactory) throw new Error("Unexpected USDG factory");
+    const currentEntryPointNonce = await account.getNonce({ key: 0n });
     const latest = await client.getTransactionCount({ address: owner }),
       pending = await client.getTransactionCount({
         address: owner,
         blockTag: "pending",
       });
-    if (latest !== pending) throw new Error("Pending Robinhood nonce");
+    if (latest !== pending || currentEntryPointNonce !== op.nonce) throw new Error("Pending Robinhood nonce");
     if (
       op.authorization &&
       (op.authorization.chainId !== 4663 ||
@@ -329,6 +226,7 @@ export async function createRobinhoodPaymaster(
         !same(op.authorization.address, account.authorization.address))
     )
       throw new Error("Changed Robinhood authorization binding");
+    const { validUntil } = assertPaymasterValidity(op.paymasterData, ROBINHOOD_PROFILE.token, BigInt(Math.floor(Date.now() / 1000)), 15n, 5n);
     return {
       operation: formatUserOperationRequest(op),
       feeCap: cap,

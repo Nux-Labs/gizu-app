@@ -64,3 +64,14 @@ test("SDK floor approval is rebuilt and re-estimated until the conservative ceil
   // Changed estimated cap still fits only when the budget includes it.
   await assert.rejects(stabilizeFundingApproval(f.operation,{...f.binding,budget:106n},async()=>"0x1234",async(op)=>op));
 });
+
+test("flow-specific final validation keeps Swap protocol fees separate from Earn ceilings",()=>{
+ const f=fixture(),operation={...f.operation,preVerificationGas:2n};
+ const binding={...f.binding,amount:993n,budget:1000n,allowance:7n};
+ const transfer={to:token,value:0n,data:encodeFunctionData({abi:erc20Abi,functionName:"transfer",args:[recipient,993n]})};
+ assert.equal(sourceFeeCap(operation,"swap"),7n);assert.equal(sourceFeeCap(operation),8n);
+ assert.equal(validateFundingOperation(operation,[transfer],binding,"swap"),7n);
+ assert.throws(()=>validateFundingOperation(operation,[transfer],binding));
+ const approval={to:token,value:0n,data:encodeFunctionData({abi:erc20Abi,functionName:"approve",args:[paymaster,8n]})};
+ assert.throws(()=>validateFundingOperation(operation,[approval,transfer],{...binding,allowance:0n},"swap"),/approval/);
+});

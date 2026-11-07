@@ -103,7 +103,11 @@ internal interface EarnVaultSigner : AutoCloseable {
 
   fun approve(revision: ULong, hash: String)
 
-  fun signNext(revision: ULong, state: EarnExecutionState): NativeSignedEarnTransaction
+  fun signNextWithCanonicalReference(
+    revision: ULong,
+    state: EarnExecutionState,
+    reference: NativeGasReference,
+  ): NativeSignedEarnTransaction
 }
 
 private class RustEarnVaultSigner(proposal: String, entropy: ByteArray) : EarnVaultSigner {
@@ -117,7 +121,11 @@ private class RustEarnVaultSigner(proposal: String, entropy: ByteArray) : EarnVa
 
   override fun approve(revision: ULong, hash: String) = core.approve(revision, hash)
 
-  override fun signNext(revision: ULong, state: EarnExecutionState) = core.signNext(revision, state)
+  override fun signNextWithCanonicalReference(
+    revision: ULong,
+    state: EarnExecutionState,
+    reference: NativeGasReference,
+  ) = core.signNextWithCanonicalReference(revision, state, reference)
 
   override fun close() {
     core.invalidate()
@@ -139,6 +147,7 @@ internal class EarnVaultEngine(
 ) : AutoCloseable {
   private var signer: EarnVaultSigner? = null
   private var prepared: EarnVaultReview? = null
+  private var reviewedBlock: Pair<ULong, String>? = null
 
   private fun walletCheck(record: WalletRecord) {
     requireEarnExecutionWallet(record, journal.walletId)
@@ -201,6 +210,7 @@ internal class EarnVaultEngine(
       }
     val core = checkNotNull(signer)
     val text = core.prepare(coreRevision, state)
+    reviewedBlock = state.blockNumber to state.blockHash
     val hash = core.reviewHash()
     val calls =
       JSONArray(
@@ -300,6 +310,8 @@ internal class EarnVaultEngine(
       val core = checkNotNull(signer)
       val state =
         stateLoader(p.getString("expectedFrom"), p.getString("kind"), p.getString("amountAtoms"))
+      val anchor = checkNotNull(reviewedBlock)
+      val reference = loadEarnGasReference(rpc, anchor.first, anchor.second, state)
       authority()
       store.load().use {
         walletCheck(it)
@@ -308,7 +320,7 @@ internal class EarnVaultEngine(
       currentCoroutineContext().ensureActive()
       check(journal.get(review.id).getInt("revision") == review.revision)
       core.approve(review.coreRevision, review.hash)
-      val tx = core.signNext(review.coreRevision, state)
+      val tx = core.signNextWithCanonicalReference(review.coreRevision, state, reference)
       check(tx.operationId == review.id && tx.revision == review.coreRevision && tx.step == 0u)
       journal.persistSigned(
         review.id,
@@ -338,6 +350,7 @@ internal class EarnVaultEngine(
     signer?.close()
     signer = null
     prepared = null
+    reviewedBlock = null
   }
 }
 
