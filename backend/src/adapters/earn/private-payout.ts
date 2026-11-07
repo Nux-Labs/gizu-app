@@ -321,6 +321,33 @@ const messageSchema = z
     ]),
   })
   .strict();
+/** Validate one exact private debit without changing the bytes reserved for signing. */
+export function validatePrivatePayoutIntent(
+  payload: string,
+  expected: { signer: string; depositId: string; amountAtoms: string },
+): { deadlineMs: number; nonce: string } {
+  z.string().min(1).max(4096).parse(payload);
+  const message = messageSchema.parse(strictJson(payload)),
+    transfer = message.intents[0],
+    tokens = Object.keys(transfer.tokens),
+    token = tokens[0],
+    nonce = Buffer.from(message.nonce, "base64");
+  if (
+    tokens.length !== 1 ||
+    !token ||
+    !token.startsWith("imt:") ||
+    /^imt:0{64}:/.test(token) ||
+    !token.endsWith(":" + monadUsdcAssetId) ||
+    !/^[0-9a-f]{64}$/.test(token.slice(4, -monadUsdcAssetId.length - 1)) ||
+    transfer.tokens[token] !== expected.amountAtoms ||
+    !same(message.signer_id, expected.signer) ||
+    transfer.receiver_id !== expected.depositId ||
+    nonce.length !== 32 ||
+    nonce.toString("base64") !== message.nonce
+  )
+    throw Error("Generated private funding intent changed");
+  return { deadlineMs: date(message.deadline), nonce: message.nonce };
+}
 /** Fresh provider-generated unsigned payload only. Signed/recovered retries never call this. */
 export function boundUnsignedPayoutDeadline(
   payload: string,

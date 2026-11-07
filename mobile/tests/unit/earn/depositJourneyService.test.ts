@@ -78,3 +78,33 @@ test("intent lookup is scoped to the exact saved cycle", async () => {
   });
   await expect(service.status(owner, "intent:" + id)).rejects.toThrow(/identity/);
 });
+
+test("funding balance falls back to public only when the native capability is absent", async () => {
+  const { service } = fixture();
+  expect(await service.fundingBalance!(owner)).toBeNull();
+});
+test("funding balance validates native integer totals and preserves incomplete state", async () => {
+  const { native } = fixture();
+  const snapshot = {
+    publicAtoms: "2000000",
+    privateAtoms: "5000000",
+    totalAtoms: "7000000",
+    complete: true,
+    checkedAtMs: Date.now(),
+  };
+  const readEarnDepositFundingBalance = jest.fn().mockResolvedValue(snapshot);
+  const service = createEarnDepositService(() => ({ ...native, readEarnDepositFundingBalance }));
+  expect(await service.fundingBalance!(owner)).toEqual(snapshot);
+  expect(readEarnDepositFundingBalance).toHaveBeenCalledWith({ walletId: owner.walletId });
+  readEarnDepositFundingBalance.mockResolvedValue({ ...snapshot, complete: false });
+  expect((await service.fundingBalance!(owner))?.complete).toBe(false);
+  for (const change of [
+    { totalAtoms: "6999999" },
+    { privateAtoms: "-1" },
+    { checkedAtMs: 0 },
+    { complete: "yes" },
+  ]) {
+    readEarnDepositFundingBalance.mockResolvedValue({ ...snapshot, ...change });
+    await expect(service.fundingBalance!(owner)).rejects.toThrow();
+  }
+});

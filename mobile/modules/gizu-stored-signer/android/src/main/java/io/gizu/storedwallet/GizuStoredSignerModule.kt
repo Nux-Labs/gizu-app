@@ -47,6 +47,7 @@ class GizuStoredSignerModule : Module() {
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private var task: Job? = null
+  private var ceremonySession: NativeCeremonySession? = null
   private var dialog: Dialog? = null
   private var awaitingProvider = false
   private var foreground = true
@@ -95,7 +96,8 @@ class GizuStoredSignerModule : Module() {
           saved.getString("walletId") == record.id &&
             saved.getString("generation") == record.journalId
         )
-        fundingReservations(context, record).cancelBatchUnsigned(batch)
+        if (!batch.startsWith("private_"))
+          fundingReservations(context, record).cancelBatchUnsigned(batch)
       }
     }
   }
@@ -163,12 +165,25 @@ class GizuStoredSignerModule : Module() {
         val walletId = walletStore(activity).load().use { it.id }
         WalletRecoveryRuntime.beforeFreshFunding(activity, walletId)
       }
+    val session = ceremonySession
+    if (fullReview && session != null)
+      session.review { showConfirmation(activity, title, message, fullReview) }
+    else showConfirmation(activity, title, message, fullReview)
+  }
+
+  private suspend fun showConfirmation(
+    activity: Activity,
+    title: String,
+    message: String,
+    fullReview: Boolean,
+  ) {
     suspendCancellableCoroutine<Unit> { continuation ->
       val alert = Dialog(activity)
       alert.requestWindowFeature(Window.FEATURE_NO_TITLE)
-      // Same dismissal semantics as the former AlertDialog: back and outside touch cancel.
+      // Back and Cancel remain explicit dismissal paths. A stray outside tap
+      // must not discard a financial review while the user is reading it.
       alert.setCancelable(true)
-      alert.setCanceledOnTouchOutside(true)
+      alert.setCanceledOnTouchOutside(!fullReview)
       alert.setOnCancelListener { continuation.cancel() }
       alert.setContentView(
         confirmationView(
@@ -189,6 +204,7 @@ class GizuStoredSignerModule : Module() {
       dialog = alert
       alert.window?.apply {
         addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        if (fullReview) addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (Build.VERSION.SDK_INT >= 31) setHideOverlayWindows(true)
         setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
@@ -216,6 +232,14 @@ class GizuStoredSignerModule : Module() {
         setPadding(dp(24), dp(24), dp(24), dp(20))
         filterTouchesWhenObscured = true
         addView(NativeStyle.title(activity, title, 22f))
+        if (fullReview)
+          addView(
+            NativeStyle.body(
+              activity,
+              "You have 5 minutes to review. Continue opens secure approval.",
+            ),
+            NativeStyle.fullWidth(activity, 10),
+          )
         if (fullReview)
           addView(
             ScrollView(activity).apply {
@@ -268,23 +292,22 @@ class GizuStoredSignerModule : Module() {
         return@launch
       }
       task = coroutineContext[Job]
+      val session = NativeCeremonySession(timeoutMs)
+      ceremonySession = session
       try {
         WalletRecoveryRuntime.initialize(activity!!.applicationContext)
         requireForeground(activity)
         check(depositHost?.busy != true) {
           "A native deposit is running. Check its progress or stop its remaining approval first."
         }
-        val result =
-          withTimeout(timeoutMs) { block(activity, walletStore(activity.applicationContext)) }
+        val result = session.run { block(activity, walletStore(activity.applicationContext)) }
         currentCoroutineContext().ensureActive()
         requireForeground(activity)
         promise.resolve(result)
       } catch (error: CancellationException) {
-        promise.reject(
-          "CANCELLED",
-          "Wallet operation cancelled or expired. Check wallet state before retrying creation.",
-          null,
-        )
+        val (code, location) = depositFailureDiagnostic(error)
+        android.util.Log.w("GizuWallet", "$code at $location")
+        promise.reject("CANCELLED", nativeWalletFailureMessage(error), null)
       } catch (error: EarnGatewayFailure) {
         promise.reject(error.code, error.message ?: "Earn provider request is unavailable.", null)
       } catch (error: Exception) {
@@ -293,9 +316,8 @@ class GizuStoredSignerModule : Module() {
         val (code, location) = depositFailureDiagnostic(error)
         android.util.Log.w("GizuWallet", "$code at $location")
         promise.reject(
-          "WALLET_FAILED",
-          error.message?.takeIf { it.isNotBlank() }
-            ?: "Wallet operation could not be verified. Refresh saved progress and try again.",
+          if (error is EarnRpcRejection) "EARN_RPC_UNAVAILABLE" else "WALLET_FAILED",
+          nativeWalletFailureMessage(error),
           null,
         )
       } finally {
@@ -303,6 +325,7 @@ class GizuStoredSignerModule : Module() {
         dialog = null
         awaitingProvider = false
         task = null
+        ceremonySession = null
         ceremony.unlock()
       }
     }
@@ -421,12 +444,98 @@ class GizuStoredSignerModule : Module() {
           "earnEthereumLiquidityExecution" to eligible(appContext.currentActivity),
           "earnDepositJourney" to eligible(appContext.currentActivity),
           "earnDepositDistribution" to eligible(appContext.currentActivity),
+          "earnDepositPrivateFunding" to eligible(appContext.currentActivity),
           "earnBalanceDeltaSettlement" to eligible(appContext.currentActivity),
         )
       )
     }
     AsyncFunction("getWalletState") { promise: Promise ->
       runCeremony(promise) { _, store -> withContext(Dispatchers.IO) { publicState(store) } }
+    }
+    AsyncFunction("readEarnDepositFundingBalance") { request: Map<String, Any?>, promise: Promise ->
+      runCeremony(promise, timeoutMs = 180000L) { activity, store ->
+        check(request.keys == setOf("walletId"))
+        val wallet = request["walletId"] as? String ?: error("Missing wallet")
+        ensureDepositReadPermission(activity, store, wallet)
+        store.load().use { record ->
+          check(record.id == wallet && record.verified)
+          withContext(Dispatchers.IO) {
+            assertCashoutInactive(activity, record)
+            val portfolio = io.gizu.storedwallet.swap.MainnetPortfolio(activity)
+            portfolio.invalidate(record)
+            val public = portfolio.read(record, emptyList(), includeOwned = false)
+            check(public["balanceComplete"] == true && public["stale"] == false) {
+              "Public balance is still syncing"
+            }
+            val candidates = privateDepositCandidates(activity, record)
+            val limit = kotlinx.coroutines.sync.Semaphore(4)
+            val observations = coroutineScope {
+              candidates
+                .map { source ->
+                  async {
+                    limit.acquire()
+                    try {
+                      currentCoroutineContext().ensureActive()
+                      source to
+                        readPrivateDepositBalance(record, source) {
+                          requirePrivateDepositReadPermission(activity, record)
+                        }
+                    } finally {
+                      limit.release()
+                    }
+                  }
+                }
+                .awaitAll()
+            }
+            val cache = io.gizu.storedwallet.portfolio.NativeOwnedConfidentialPortfolio(activity)
+            var private = java.math.BigInteger.ZERO
+            for ((source, b) in observations) {
+              val available = depositAtoms(b.getValue("available").toString())
+              if (available >= PRIVATE_DEPOSIT_MINIMUM) private += available
+              cache.recordValidated(
+                io.gizu.storedwallet.portfolio.NativeConfidentialTarget(
+                  record.id,
+                  record.journalId,
+                  source.getString("address"),
+                  source.getString("kind"),
+                  source.getInt("profileChainId"),
+                  source.getInt("cycleIndex"),
+                ),
+                b,
+              )
+            }
+            check(
+              observations.all {
+                System.currentTimeMillis() -
+                  (it.second.getValue("timestampMs") as Number).toLong() <= 60000
+              }
+            ) {
+              "Private balance checks expired; retry before preparing this deposit"
+            }
+            val ledger = fundingReservations(activity, record)
+            val publicAtoms =
+              (public["accounts"] as List<*>).fold(java.math.BigInteger.ZERO) { sum, raw ->
+                val account = raw as Map<*, *>
+                val address = account["address"] as String
+                val balance = depositAtoms(account["balanceAtoms"] as String)
+                sum +
+                  if (ledger.hasUnsettledSigned(address)) java.math.BigInteger.ZERO
+                  else
+                    maxOf(
+                      java.math.BigInteger.ZERO,
+                      balance - depositAtoms(ledger.reservedAtoms(address)),
+                    )
+              }
+            mapOf(
+              "publicAtoms" to publicAtoms.toString(),
+              "privateAtoms" to private.toString(),
+              "totalAtoms" to (private + publicAtoms).toString(),
+              "complete" to true,
+              "checkedAtMs" to System.currentTimeMillis(),
+            )
+          }
+        }
+      }
     }
     AsyncFunction("prepareEarnDeposit") {
       walletId: String,
@@ -435,11 +544,12 @@ class GizuStoredSignerModule : Module() {
       draftId: String?,
       promise: Promise ->
       runCeremony(promise, timeoutMs = 180000L) { activity, store ->
-        store.load().use { assertCashoutInactive(activity, it) }
+        store.load().use { assertCashoutInactive(activity, it, deposit = true) }
         check(profile == "robinhood-usdg") {
           "Guided native deposits currently support Robinhood USDG only"
         }
         depositAtoms(budgetAtoms, true)
+        ensureDepositReadPermission(activity, store, walletId)
         var id =
           store.load().use { record ->
             check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
@@ -467,7 +577,10 @@ class GizuStoredSignerModule : Module() {
             return@use journal.publicSnapshot(id)
           depositPreparingId = id
           try {
-            nativeDepositPreparer(activity, record, journal).prepare(record, 4663, budgetAtoms, id)
+            nativeDepositPreparer(activity, record, journal) {
+                requirePrivateDepositReadPermission(activity, record)
+              }
+              .prepare(record, 4663, budgetAtoms, id)
           } finally {
             depositPreparingId = null
           }
@@ -495,7 +608,8 @@ class GizuStoredSignerModule : Module() {
           check(cycle.has("distribution"))
           if (cycle.optBoolean("depositAbandoned")) return@use
           journal.cancelUnsignedReview(draftId) { batch ->
-            fundingReservations(context, record).cancelBatchUnsigned(batch)
+            if (!batch.startsWith("private_"))
+              fundingReservations(context, record).cancelBatchUnsigned(batch)
           }
           journal.pause(draftId, "cancelled")
           store.selectEarnCycle(cycle.getInt("cycleIndex"))
@@ -513,7 +627,7 @@ class GizuStoredSignerModule : Module() {
       promise: Promise ->
       // Wait for a read-only status reconciliation instead of rejecting the user's action.
       runCeremony(promise, wait = true) { activity, store ->
-        store.load().use { assertCashoutInactive(activity, it) }
+        store.load().use { assertCashoutInactive(activity, it, deposit = true) }
         val host = makeDepositHost(activity, store, walletId, id)
         depositHost = host
         host.confirm(id, revision, false)
@@ -526,7 +640,8 @@ class GizuStoredSignerModule : Module() {
       promise: Promise ->
       // Wait for a read-only status reconciliation instead of rejecting the user's action.
       runCeremony(promise, wait = true) { activity, store ->
-        store.load().use { assertCashoutInactive(activity, it) }
+        store.load().use { assertCashoutInactive(activity, it, deposit = true) }
+        ensureDepositReadPermission(activity, store, walletId)
         val row =
           store.load().use { record ->
             check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
@@ -542,6 +657,7 @@ class GizuStoredSignerModule : Module() {
                 record,
                 journal,
                 foreground = { requireForeground(activity) },
+                readAuthority = { requirePrivateDepositReadPermission(activity, record) },
                 readAuth = {
                   depositReconciliationReadAuth(
                     activity,
@@ -1350,7 +1466,9 @@ class GizuStoredSignerModule : Module() {
             earnPayoutJournal(activity, record)
           }
         store.load().use { record ->
-          currentCycleRows(record, journal.all()).map { journal.public(it) }
+          currentCycleRows(record, journal.all())
+            .filter { it.getJSONObject("proposal").getString("kind") != "privateEarnPayout" }
+            .map { journal.public(it) }
         }
       }
     }
@@ -1363,6 +1481,9 @@ class GizuStoredSignerModule : Module() {
         store.load().use { assertCashoutInactive(activity, it) }
         payoutEngine(activity, store, walletId).use { engine ->
           var op = engine.journal.get(id)
+          check(op.getJSONObject("proposal").getString("kind") != "privateEarnPayout") {
+            "Resume this payout from its saved deposit"
+          }
           check(op.getInt("revision") == revision)
           if (op.has("signedData")) op = engine.reconcile(id, revision)
           if (
@@ -1388,6 +1509,9 @@ class GizuStoredSignerModule : Module() {
             requireSponsoredWallet(record, walletId)
             earnPayoutJournal(activity, record)
           }
+        check(journal.get(id).getJSONObject("proposal").getString("kind") != "privateEarnPayout") {
+          "Cancel this payout from its saved deposit"
+        }
         journal.public(journal.cancelUnsigned(id, revision))
       }
     }
@@ -1398,6 +1522,12 @@ class GizuStoredSignerModule : Module() {
       promise: Promise ->
       runCeremony(promise) { activity, store ->
         payoutEngine(activity, store, walletId).use { engine ->
+          check(
+            engine.journal.get(id).getJSONObject("proposal").getString("kind") !=
+              "privateEarnPayout"
+          ) {
+            "Check this payout from its saved deposit"
+          }
           engine.journal.public(engine.reconcile(id, revision))
         }
       }
@@ -2214,7 +2344,16 @@ class GizuStoredSignerModule : Module() {
           "Approve only the remaining work under these saved limits. Historical estimates are not fresh quotes; every exact operation is checked again.\n\n"
         )
       append("Total source budget: ${usd(review.getString("sourceBudgetAtoms"))} USDC\n")
-      append("Source gas limit: ${usd(sourceFees.toString())} USDC\n")
+      val privateBudget =
+        sources
+          .filter { it.optString("kind") == "private" }
+          .fold(java.math.BigInteger.ZERO) { n, source ->
+            n + depositAtoms(source.getString("budgetAtoms"))
+          }
+      append(
+        "Private USDC: ${usd(privateBudget.toString())}; public USDC: ${usd((depositAtoms(review.getString("sourceBudgetAtoms")) - privateBudget).toString())}\n"
+      )
+      append("Public source gas limit: ${usd(sourceFees.toString())} USDC\n")
       if (distribution == null)
         append("Holding wallet receives at least ${usd(hold.toString())} USDG\n")
       else {
@@ -2244,7 +2383,7 @@ class GizuStoredSignerModule : Module() {
         if (distribution == null)
           "Funding becomes confidential USDC. Each source retains its own funding and independent 10/90 payouts. Only wallet 2 deposits into Steakhouse USDG on Robinhood. This approval never withdraws or returns funds.\n\n"
         else
-          "Funding becomes confidential USDC. The saved distribution applies to verified confidential credit. Each selected wallet receives its own payout and deposits into Steakhouse USDG on Robinhood, retaining its own withdrawal reserve. This approval never withdraws or returns funds.\n\n"
+          "Existing private USDC funds this deposit first; public USDC covers the remainder and becomes confidential USDC. The saved distribution applies to these exact private budgets and verified new credit. Each selected wallet receives its own payout and deposits into Steakhouse USDG on Robinhood, retaining its own withdrawal reserve. This approval never withdraws or returns funds.\n\n"
       )
       append(
         "Valid for up to 15 minutes in the foreground. Leaving, locking or closing revokes further signing. Submitted transactions remain saved.\n\n"
@@ -2256,7 +2395,7 @@ class GizuStoredSignerModule : Module() {
         "Read-only confidential authentication for this cycle is included. Its identity is visible to the confidential provider: ${review.getString("confidentialAccount")}\n"
       )
       for (source in sources) append(
-        "\nSource ${source.getInt("accountIndex")}: ${source.getString("address")}\nMaximum budget ${usd(source.getString("budgetAtoms"))} USDC; retained margin ${usd(source.getString("retainedAtoms"))} USDC\n"
+        "\n${if (source.optString("kind") == "private") "Private USDC source" else "Public source ${source.getInt("accountIndex")}"}: ${source.getString("address")}\nMaximum budget ${usd(source.getString("budgetAtoms"))} USDC; retained margin ${usd(source.getString("retainedAtoms"))} USDC\n"
       )
       if (distribution == null)
         append(
@@ -2464,6 +2603,27 @@ class GizuStoredSignerModule : Module() {
     )
   }
 
+  private suspend fun ensureDepositReadPermission(
+    activity: Activity,
+    store: WalletStore,
+    wallet: String,
+  ) {
+    ensureCashoutReadPermission(activity, store, wallet)
+    // Deposit history reconciliation uses the existing two-minute read-only permission.
+    balanceReadUntil = minOf(balanceReadUntil, System.currentTimeMillis() + 120000L)
+  }
+
+  private fun requirePrivateDepositReadPermission(activity: Activity, record: WalletRecord) {
+    requireForeground(activity)
+    check(
+      balanceReadWallet == record.id &&
+        balanceReadGeneration == record.journalId &&
+        balanceReadUntil > System.currentTimeMillis()
+    ) {
+      "Unlock your wallet to check private deposit funds"
+    }
+  }
+
   private suspend fun ensureCashoutReadPermission(
     activity: Activity,
     store: WalletStore,
@@ -2483,7 +2643,7 @@ class GizuStoredSignerModule : Module() {
     confirm(
       activity,
       "Check private cash",
-      "Authenticate read-only checks of your existing confidential accounts to prepare this exact withdrawal. This approval does not move funds.",
+      "Check the available USDC in your confidential accounts. This read-only approval does not move funds.",
     )
     withProviderUi(activity) {
       PasskeyGate(activity).authorize(identity.first, wallet, "cashout-read:v1:${identity.second}")

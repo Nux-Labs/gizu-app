@@ -1,5 +1,5 @@
-import { ConfidentialCashoutGateway } from "./adapters/earn/confidential-cashout.ts";
-import { registerConfidentialCashoutRoutes } from "./http/routes/confidential-cashout.routes.ts";
+import { ConfidentialCashoutGateway, ConfidentialPrivateFundingGateway } from "./adapters/earn/confidential-cashout.ts";
+import { registerConfidentialCashoutRoutes, registerConfidentialPrivateFundingRoutes } from "./http/routes/confidential-cashout.routes.ts";
 import { PgRecoveryUploadAdmission, recoveryAdmissionDefaults } from "./adapters/postgres/pg-recovery-upload-admission.ts";
 import { PgWalletRecovery } from "./adapters/postgres/pg-wallet-recovery.ts";
 import { PgOperationCoordination } from "./adapters/postgres/pg-operation-coordination.ts";
@@ -134,6 +134,7 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   registerEarnFusionRoutes(app,new FusionNativeGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,apiKey:secret.ONEINCH_API_KEY,rpcUrl:ethereumPlannerConfig.rpcUrl}));
   registerEarnExitRoutes(app, new EarnExitSnapshot({ethereumRpcUrl:ethereumPlannerConfig.rpcUrl,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL,auroraApiKey:secret.AURORA_API_KEY}));
   registerConfidentialCashoutRoutes(app, new ConfidentialCashoutGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY}));
+  registerConfidentialPrivateFundingRoutes(app, new ConfidentialPrivateFundingGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL}));
   registerEarnPayoutRoutes(app,new PrivatePayoutGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification,ethereumRpcUrl:ethereumPlannerConfig.rpcUrl,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL??"https://rpc.mainnet.chain.robinhood.com"}));
   const chains = resolveCatalogChains(secret);
   const vaults = resolveCatalogVaults(secret, chains);

@@ -139,3 +139,44 @@ test("private signing material is not returned to the public presentation", () =
   expect(parsed).not.toHaveProperty("signedData");
   expect(parsed).not.toHaveProperty("entropy");
 });
+
+test("private source reviews require native-only addresses and exact fee-free funding", () => {
+  const base = snapshot();
+  const original = base.review.sources[0]!;
+  const source = {
+    ...original,
+    kind: "private",
+    accountIndex: -1,
+    address: "",
+    budgetAtoms: "2970000",
+    amountAtoms: "2970000",
+    maximumFeeAtoms: "0",
+    retainedAtoms: "0",
+  };
+  const raw = {
+    ...base,
+    budgetAtoms: "2970000",
+    review: { ...base.review, sourceBudgetAtoms: "2970000", sources: [source] },
+  };
+  expect(parseDepositSnapshot(raw, owner).review?.sources[0]).toMatchObject({
+    kind: "private",
+    address: "",
+    accountIndex: -1,
+  });
+  for (const changes of [
+    { kind: "unknown" },
+    { accountIndex: 1 },
+    { address: original.address },
+    { maximumFeeAtoms: "1" },
+    { retainedAtoms: "1" },
+    { amountAtoms: "2969999" },
+    { budgetAtoms: "2970001" },
+    { minimumCreditAtoms: "2969999" },
+  ])
+    expect(() =>
+      parseDepositSnapshot(
+        { ...raw, review: { ...raw.review, sources: [{ ...source, ...changes }] } },
+        owner,
+      ),
+    ).toThrow();
+});

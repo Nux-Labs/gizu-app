@@ -554,6 +554,28 @@ test("a signed withdrawal can only continue its saved transaction, never reset o
   expect(h.robinhood.resume).toHaveBeenCalledTimes(1);
 });
 
+test("a failed transaction status check explains the error and preserves the saved withdrawal", async () => {
+  const saved = {
+    ...unfinishedReview("pending"),
+    canResume: false,
+    userOperationHash: "0x" + "a".repeat(64),
+  };
+  const h = setup({ savedOperations: [operation(), saved] });
+  await screen.findByRole("button", { name: "Check withdrawal status" });
+  h.robinhood.list.mockRejectedValueOnce(
+    new Error(
+      "Could not check the transaction status. Your saved transaction is kept. Please try again shortly.",
+    ),
+  );
+  await userEvent.press(screen.getByRole("button", { name: "Check withdrawal status" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Your saved transaction is kept/);
+  expect(screen.getByRole("button", { name: "Check withdrawal status" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Start a fresh review" })).toBeNull();
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+  expect(h.robinhood.resume).not.toHaveBeenCalled();
+});
+
 test("an expired on-screen review refreshes its terms instead of opening approval", async () => {
   const now = Date.now();
   const h = setup();

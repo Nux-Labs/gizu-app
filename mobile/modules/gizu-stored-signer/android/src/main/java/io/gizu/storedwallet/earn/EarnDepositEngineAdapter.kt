@@ -103,7 +103,78 @@ internal class EarnDepositEngineAdapter(
         batch(id).also { rows -> check(rows.all { credit(it) != null }) }
       },
       readAuth = auth,
+      privateFundingOffset = {
+        depositReview()
+          .getJSONArray("sources")
+          .objects()
+          .filter { it.optString("kind") == "private" }
+          .fold(BigInteger.ZERO) { sum, source ->
+            sum + depositAtoms(source.getString("amountAtoms"))
+          }
+          .toString()
+      },
     )
+
+  private fun depositReview(): JSONObject = record { r ->
+    earnDepositJournal(context, r)
+      .all()
+      .single { it.getInt("cycleIndex") == cycle }
+      .getJSONObject("review")
+  }
+
+  private fun privateSource(sourceId: String): Boolean =
+    depositReview()
+      .getJSONArray("fundingRows")
+      .objects()
+      .single { it.getString("operationId") == sourceId }
+      .let(::isPrivateDepositSource)
+
+  private fun privatePayoutEngine(
+    readAuthority: (() -> Unit)? = null,
+    readAuthorization: suspend () -> Unit = {},
+  ): EarnPrivatePayoutEngine {
+    fun authority() {
+      foreground()
+      if (readAuthority != null) readAuthority()
+      else record { checkNotNull(executionGrant).assertRead(it, now()) }
+    }
+    val privateGateway =
+      NativeCashoutGateway(
+        auth = { source ->
+          readAuthorization()
+          val signed =
+            store.load().use { r ->
+              record {}
+              privateDepositReadAuth(r, source, ::authority)
+            }
+          JSONObject()
+            .put("standard", "erc191")
+            .put("payload", signed.payload)
+            .put("signature", signed.signature)
+        },
+        rpc = EarnSponsoredChainRpc(4663),
+        route = "private-funding",
+      )
+    return EarnPrivatePayoutEngine(
+      store,
+      payouts(),
+      privateGateway,
+      { source ->
+        readAuthorization()
+        store.load().use { r ->
+          record {}
+          readPrivateDepositBalance(r, source, ::authority)
+        }
+      },
+      ::authority,
+      { r, addresses ->
+        io.gizu.storedwallet.portfolio
+          .NativeOwnedConfidentialPortfolio(context)
+          .invalidateSources(r, addresses)
+        io.gizu.storedwallet.swap.MainnetPortfolio(context).invalidate(r)
+      },
+    )
+  }
 
   private var executionGrant: EarnDepositApproval? = null
 
@@ -141,6 +212,7 @@ internal class EarnDepositEngineAdapter(
           p.optInt("cycleIndex", 0) == cycle
       }
     if (existing != null) return existing
+    if (privateSource(sourceId)) return privatePayoutEngine().create(depositReview(), sourceId, leg)
     val source = sponsored().get(sourceId)
     return payoutEngine(grant).use {
       it.create(
@@ -240,6 +312,12 @@ internal class EarnDepositEngineAdapter(
     selectDepositChild(stage, id)
     record { grant.assertRead(it, now()) }
     if (stage == "payouts") {
+      if (payouts().get(id).getJSONObject("proposal").getString("kind") == "privateEarnPayout") {
+        privatePayoutEngine().execute(id, grant) { row, proof ->
+          record { grant.assertPrepared(it, stage, row, proof, now()) }
+        }
+        return
+      }
       payoutEngine(grant).use { engine ->
         var row = engine.journal.get(id)
         val review = engine.prepare(id, row.getInt("revision"))
@@ -320,6 +398,8 @@ internal class EarnDepositEngineAdapter(
       val journal = payouts()
       val row = journal.get(id)
       if (grant == null || !row.has("signedData") || row.getString("status") == "paid") return row
+      if (row.getJSONObject("proposal").getString("kind") == "privateEarnPayout")
+        return privatePayoutEngine().reconcile(id)
       return payoutEngine(grant).use { it.reconcile(id, row.getInt("revision")) }
     }
     val journal = sponsored()
@@ -356,11 +436,17 @@ internal class EarnDepositEngineAdapter(
     stage: String,
     id: String,
     auth: suspend () -> EarnReadAuthentication,
+    readAuthority: () -> Unit = foreground,
   ): JSONObject {
     foreground()
     if (stage == "payouts")
       return reconcileDepositPayoutBeforeReview(payouts().get(id)) { row ->
-        payoutEngine(auth).use { it.reconcile(id, row.getInt("revision")) }
+        if (row.getJSONObject("proposal").getString("kind") == "privateEarnPayout") {
+          // The supplied empty-intents authenticator checks the current bounded login permission.
+          auth()
+          privatePayoutEngine(readAuthority = readAuthority, readAuthorization = { auth() })
+            .reconcile(id)
+        } else payoutEngine(auth).use { it.reconcile(id, row.getInt("revision")) }
       }
     check(stage == "funding")
     val row = reconcile(stage, id, null)

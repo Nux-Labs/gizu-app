@@ -131,3 +131,34 @@ test("withdrawal progress belongs to the selected investment slot", () => {
   expect(() => parseEarnWithdrawals([operation], intent)).toThrow();
   expect(parseEarnWithdrawals([{ ...operation, investmentSlot: 1 }], intent)).toHaveLength(1);
 });
+
+test("distributed reviews validate private funding without public gas or address fields", () => {
+  const raw = distributed();
+  const source = {
+    ...raw.review.sources[0]!,
+    kind: "private",
+    accountIndex: -1,
+    address: "",
+    budgetAtoms: "2970000",
+    amountAtoms: "2970000",
+    maximumFeeAtoms: "0",
+    retainedAtoms: "0",
+  };
+  const privateReview = {
+    ...raw,
+    budgetAtoms: "2970000",
+    review: { ...raw.review, sourceBudgetAtoms: "2970000", sources: [source] },
+  };
+  expect(
+    parseDepositSnapshot(privateReview, { walletId: hoodIntent.walletId }).review?.sources[0]?.kind,
+  ).toBe("private");
+  expect(() =>
+    parseDepositSnapshot(
+      {
+        ...privateReview,
+        review: { ...privateReview.review, sources: [{ ...source, maximumFeeAtoms: "1" }] },
+      },
+      { walletId: hoodIntent.walletId },
+    ),
+  ).toThrow();
+});

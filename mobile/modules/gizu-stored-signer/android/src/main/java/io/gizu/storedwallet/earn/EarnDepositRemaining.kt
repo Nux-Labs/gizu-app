@@ -320,6 +320,7 @@ internal fun nativeDepositRemaining(
   journal: EarnDepositJournal,
   foreground: () -> Unit,
   readAuth: suspend () -> uniffi.gizu_stored_signer_core.EarnReadAuthentication,
+  readAuthority: () -> Unit = foreground,
 ): EarnDepositRemaining {
   val root = journal.all().single { it.getInt("cycleIndex") == record.earnCycleIndex }
   val sourceRefs = root.getJSONObject("children").optJSONArray("funding")
@@ -343,6 +344,33 @@ internal fun nativeDepositRemaining(
     EarnDepositGateway(),
     { original ->
       foreground()
+      if (isPrivateDepositSource(original)) {
+        readAuth()
+        val source = original.getJSONObject("proposal").getJSONObject("source")
+        val signed =
+          payouts
+            .all()
+            .filter {
+              it.getJSONObject("proposal").getString("operationId") ==
+                original.getString("operationId") && it.has("signedData")
+            }
+            .fold(BigInteger.ZERO) { sum, child ->
+              sum + depositAtoms(child.getJSONObject("proposal").getString("amountAtoms"))
+            }
+        val remaining = depositAtoms(source.getString("amountAtoms"), true) - signed
+        if (remaining.signum() > 0) {
+          val balance = readPrivateDepositBalance(record, source, readAuthority)
+          check(depositAtoms(balance.getValue("available").toString()) >= remaining) {
+            "Private source funds changed"
+          }
+        }
+        return@EarnDepositRemaining DepositRemainingSource(
+          JSONObject(original.toString()).also {
+            it.getJSONObject("proposal").put("deadline", System.currentTimeMillis() / 1000 + 180)
+          },
+          source.getString("amountAtoms"),
+        )
+      }
       val saved =
         sponsored
           .all()
@@ -386,9 +414,13 @@ internal fun nativeDepositRemaining(
           ?: error("Missing source credit proof")
       DepositRemainingSource(current, minimum)
     },
-    { id -> rootAdapter.reconcileBeforeRemaining("payouts", id, readAuth) },
+    { id -> rootAdapter.reconcileBeforeRemaining("payouts", id, readAuth, readAuthority) },
     rootAdapter::payoutReceipt,
-    { fundingReservations(context, record).batch(reservationId) },
+    {
+      if (reservationId.startsWith("private_"))
+        JSONObject(root.getJSONObject("review").getJSONObject("reservation").toString())
+      else fundingReservations(context, record).batch(reservationId)
+    },
     sponsored::get,
   )
 }

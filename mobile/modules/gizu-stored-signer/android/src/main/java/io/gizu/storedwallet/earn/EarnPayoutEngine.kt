@@ -223,6 +223,7 @@ internal class EarnPayoutEngine(
   private val eventTopic: (String) -> String = ::earnEventTopic,
   private val sourceBatchReader: (suspend (String) -> List<JSONObject>)? = null,
   private val sourceIdentity: (WalletRecord, Int) -> String = ::publicAccountAddress,
+  private val privateFundingOffset: () -> String = { "0" },
 ) : AutoCloseable {
   private var signer: NativePayoutSigner? = null
   private var displayed: EarnPayoutReview? = null
@@ -390,7 +391,9 @@ internal class EarnPayoutEngine(
           row.getString("operationId")
         )
       else listOf(row)
-    return nativePayoutBatchOffset(row, rows) { validatedSource(it, leg) }
+    return (depositAtoms(nativePayoutBatchOffset(row, rows) { validatedSource(it, leg) }) +
+        depositAtoms(privateFundingOffset()))
+      .toString()
   }
 
   private suspend fun checkSavedBatch(op: JSONObject) {
@@ -399,8 +402,10 @@ internal class EarnPayoutEngine(
     val rows = checkNotNull(sourceBatchReader)(p.getString("operationId"))
     val source = rows.single { it.getString("operationId") == p.getString("operationId") }
     check(
-      nativePayoutBatchOffset(source, rows) { validatedSource(it, p.getString("leg")) } ==
-        p.getString("splitOffsetAtoms")
+      (depositAtoms(
+          nativePayoutBatchOffset(source, rows) { validatedSource(it, p.getString("leg")) }
+        ) + depositAtoms(privateFundingOffset()))
+        .toString() == p.getString("splitOffsetAtoms")
     )
     check(
       source.getJSONObject("settlement").getString("creditedAtoms") == p.getString("creditedAtoms")

@@ -103,9 +103,22 @@ export function DepositJourneyScreen({
               {v.balanceLoading
                 ? "Checking available USDC…"
                 : v.balanceUnavailable || v.balance === null
-                  ? "Available USDC is unavailable. Refresh your wallet before investing."
+                  ? "Available USDC could not be verified. Retry before investing."
                   : `Available: ${v.balance} USDC`}
             </Typography>
+            {v.balanceBreakdown && (
+              <Typography variant="caption">
+                Private {v.balanceBreakdown.privateBalance} USDC · Public{" "}
+                {v.balanceBreakdown.publicBalance} USDC
+              </Typography>
+            )}
+            {!v.balanceLoading && (v.balanceUnavailable || v.balance === null) && (
+              <Button
+                label="Retry available balance"
+                variant="secondary"
+                onPress={v.retryBalance}
+              />
+            )}
             <Typography variant="caption">
               {row && !distribution
                 ? "Two fresh wallets are created for this investment. The 10/90 split applies to verified private credit after source fees."
@@ -434,14 +447,22 @@ export function DepositJourneyScreen({
             </Typography>
             {review?.sources.map((source) => (
               <View key={source.operationId} className="gap-1">
-                <Typography selectable variant="caption">
-                  {source.address}
-                </Typography>
-                <Typography variant="caption">
-                  Budget {formatUsdc(source.budgetAtoms)} USDC · gas cap{" "}
-                  {formatUsdc(source.maximumFeeAtoms)} USDC · retained{" "}
-                  {formatUsdc(source.retainedAtoms)} USDC
-                </Typography>
+                {source.kind === "private" ? (
+                  <Typography variant="caption">
+                    Private USDC source · {formatUsdc(source.budgetAtoms)} USDC
+                  </Typography>
+                ) : (
+                  <>
+                    <Typography selectable variant="caption">
+                      {source.address}
+                    </Typography>
+                    <Typography variant="caption">
+                      Budget {formatUsdc(source.budgetAtoms)} USDC · gas cap{" "}
+                      {formatUsdc(source.maximumFeeAtoms)} USDC · retained{" "}
+                      {formatUsdc(source.retainedAtoms)} USDC
+                    </Typography>
+                  </>
+                )}
               </View>
             ))}
             {row.depositTransactionHash && (

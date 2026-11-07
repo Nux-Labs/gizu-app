@@ -10,6 +10,7 @@ import type { EarnProfileId } from "@/domain/earn/types";
 import { useFundingWallet } from "@/features/wallet/WalletProvider";
 import { useEarn } from "./EarnProvider";
 import { formatUsdc } from "@/domain/wallet/amounts";
+import { useDepositFundingBalance } from "./useDepositFundingBalance";
 export const depositPauseCopy: Record<DepositPauseCode, string> = {
   quoteUnavailable: "The route is unavailable. Review again when the provider recovers.",
   previewUnavailable: "A fresh fee estimate is unavailable. No new spending can be approved.",
@@ -42,6 +43,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     () => ({ walletId: wallet.session.walletId ?? "", address: wallet.session.address }),
     [wallet.session.walletId, wallet.session.address],
   );
+  const funding = useDepositFundingBalance(service, owner, isFocused, wallet);
   const [amount, setAmountText] = useState(""),
     [snapshot, setSnapshot] = useState<DepositSnapshot | null>(null),
     [available, setAvailable] = useState(false),
@@ -294,6 +296,17 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
           ].includes(snapshot.pauseReason ?? "") ||
             (!snapshot.review &&
               ["cancelled", "approvalExpired"].includes(snapshot.pauseReason ?? "")))));
+  const canReview =
+    available &&
+    !loading &&
+    !busy &&
+    !!atoms &&
+    editable &&
+    !funding.loading &&
+    !funding.error &&
+    funding.balance !== null &&
+    !!depositBudgetAtoms(funding.balance) &&
+    BigInt(atoms ?? "0") <= BigInt(depositBudgetAtoms(funding.balance) ?? "0");
   return {
     amount,
     snapshot,
@@ -352,24 +365,14 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
       setSnapshot(null);
       setMessage("");
     },
-    canReview:
-      available &&
-      !loading &&
-      !busy &&
-      !!atoms &&
-      editable &&
-      !wallet.loading &&
-      !wallet.error &&
-      wallet.balance !== null &&
-      !!depositBudgetAtoms(wallet.balance) &&
-      BigInt(atoms ?? "0") <= BigInt(depositBudgetAtoms(wallet.balance) ?? "0"),
+    canReview,
     canConfirm:
       !busy &&
       !!snapshot &&
       canConfirmDeposit(snapshot, clock) &&
       (savedJourneyId !== undefined || snapshot.budgetAtoms === atoms),
     review: () =>
-      atoms
+      atoms && canReview
         ? perform(() => service.prepare(owner, profileId, atoms, saved.current?.journeyId), atoms)
         : Promise.resolve(),
     confirm: async () => {
@@ -406,8 +409,10 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     },
     refresh: () =>
       snapshot ? perform(() => service.status(owner, snapshot.journeyId)) : Promise.resolve(),
-    balance: wallet.balance,
-    balanceLoading: wallet.loading,
-    balanceUnavailable: wallet.error,
+    balance: funding.balance,
+    balanceLoading: funding.loading,
+    balanceUnavailable: funding.error,
+    balanceBreakdown: funding.breakdown,
+    retryBalance: funding.retry,
   };
 }

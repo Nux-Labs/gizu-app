@@ -127,6 +127,7 @@ internal class EarnDepositCoordinator(
         setPhase(id, "funding")
       val credits = linkedMapOf<String, String>()
       for (s in sources) {
+        if (s.optString("kind") == "private") continue
         val sourceId = s.getString("operationId")
         val children = journal.get(id).getJSONObject("children").optJSONArray("funding")
         val registered =
@@ -144,9 +145,20 @@ internal class EarnDepositCoordinator(
       }
       // Register every selected source before the first can spend; a partial write cannot start a
       // batch.
-      for (s in sources) engines.child("funding", s.getString("operationId"))
+      for (s in sources.filter { it.optString("kind") != "private" }) engines.child(
+        "funding",
+        s.getString("operationId"),
+      )
       for (s in sources) {
         val sourceId = s.getString("operationId")
+        if (s.optString("kind") == "private") {
+          // Existing private funds never claim a public funding transaction or settlement credit.
+          // The private signer authenticates the source balance again immediately before signing.
+          val amount = s.getString("amountAtoms")
+          credits[sourceId] = amount
+          grant?.recordCredit(sourceId, amount)
+          continue
+        }
         val row = reconcileAndExecute("funding", sourceId, grant)
         check(row.getString("status") != "reverted") { "Source funding failed" }
         val credit = engines.credit(row)

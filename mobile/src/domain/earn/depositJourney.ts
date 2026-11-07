@@ -34,6 +34,7 @@ export type DepositLegReview = {
   providerFeeBps: number;
 };
 export type DepositSourceReview = {
+  kind?: "public" | "private";
   operationId: string;
   accountIndex: number;
   address: string;
@@ -111,8 +112,17 @@ export type DepositSnapshot = {
   message?: string;
   depositTransactionHash?: string;
 };
+export type DepositFundingBalance = {
+  publicAtoms: string;
+  privateAtoms: string;
+  totalAtoms: string;
+  complete: boolean;
+  checkedAtMs: number;
+};
 export interface EarnDepositService {
   available(): Promise<boolean>;
+  /** Null means this native build supports public funding only. */
+  fundingBalance?(owner: EarnOwner): Promise<DepositFundingBalance | null>;
   prepare(
     owner: EarnOwner,
     profileId: EarnProfileId,
@@ -179,6 +189,49 @@ function address(value: unknown): string {
   if (/^0x0{40}$/i.test(result)) fail();
   return result;
 }
+export function parseDepositFundingBalance(value: unknown): DepositFundingBalance {
+  const row = object(value);
+  const result = {
+    publicAtoms: atoms(row.publicAtoms),
+    privateAtoms: atoms(row.privateAtoms),
+    totalAtoms: atoms(row.totalAtoms),
+    complete: row.complete === true,
+    checkedAtMs: integer(row.checkedAtMs, 1),
+  };
+  if (
+    typeof row.complete !== "boolean" ||
+    BigInt(result.publicAtoms) + BigInt(result.privateAtoms) !== BigInt(result.totalAtoms)
+  )
+    fail();
+  return result;
+}
+function sourceIdentity(s: Record<string, unknown>) {
+  if (s.kind !== undefined && s.kind !== "public" && s.kind !== "private") fail();
+  const privateSource = s.kind === "private";
+  if (privateSource && s.address !== "") fail();
+  return {
+    ...(s.kind === undefined ? {} : { kind: s.kind as "private" | "public" }),
+    accountIndex: privateSource
+      ? integer(s.accountIndex, -2147483647, -1)
+      : integer(s.accountIndex, 0, 2147483647),
+    address: privateSource ? "" : address(s.address),
+  };
+}
+function sourceCostsInvalid(source: DepositSourceReview): boolean {
+  if (source.kind === "private")
+    return (
+      source.maximumFeeAtoms !== "0" ||
+      source.retainedAtoms !== "0" ||
+      source.amountAtoms !== source.budgetAtoms ||
+      source.minimumCreditAtoms !== source.amountAtoms
+    );
+  return (
+    BigInt(source.minimumCreditAtoms) > BigInt(source.amountAtoms) ||
+    BigInt(source.retainedAtoms) < 10000n ||
+    BigInt(source.amountAtoms) + BigInt(source.maximumFeeAtoms) + BigInt(source.retainedAtoms) !==
+      BigInt(source.budgetAtoms)
+  );
+}
 function leg(value: unknown, recipient: string, expectedInput: bigint): DepositLegReview {
   const row = object(value),
     result = {
@@ -236,11 +289,10 @@ function review(value: unknown, snapshot: DepositSnapshot): DepositReview {
       hold = (offset + credit) / 10n - offset / 10n;
     const source: DepositSourceReview = {
       operationId: text(s.operationId),
-      accountIndex: integer(s.accountIndex, 0, 2147483647),
-      address: address(s.address),
+      ...sourceIdentity(s),
       budgetAtoms: atoms(s.budgetAtoms, true),
       amountAtoms: atoms(s.amountAtoms, true),
-      maximumFeeAtoms: atoms(s.maximumFeeAtoms, true),
+      maximumFeeAtoms: atoms(s.maximumFeeAtoms, s.kind !== "private"),
       retainedAtoms: atoms(s.retainedAtoms),
       minimumCreditAtoms: credit.toString(),
       hold: leg(s.hold, snapshot.destinations[0].address, hold),
@@ -249,14 +301,12 @@ function review(value: unknown, snapshot: DepositSnapshot): DepositReview {
     if (
       ids.has(source.operationId) ||
       indices.has(source.accountIndex) ||
-      addresses.has(source.address.toLowerCase()) ||
-      snapshot.destinations.some(
-        (dest) => dest.address.toLowerCase() === source.address.toLowerCase(),
-      ) ||
-      credit > BigInt(source.amountAtoms) ||
-      BigInt(source.retainedAtoms) < 10000n ||
-      BigInt(source.amountAtoms) + BigInt(source.maximumFeeAtoms) + BigInt(source.retainedAtoms) !==
-        BigInt(source.budgetAtoms)
+      (source.kind !== "private" && addresses.has(source.address.toLowerCase())) ||
+      (source.kind !== "private" &&
+        snapshot.destinations.some(
+          (dest) => dest.address.toLowerCase() === source.address.toLowerCase(),
+        )) ||
+      sourceCostsInvalid(source)
     )
       fail();
     ids.add(source.operationId);
@@ -324,11 +374,10 @@ function distributionReview(value: unknown, snapshot: DepositSnapshot): DepositR
     );
     const source: DepositSourceReview = {
       operationId: text(s.operationId),
-      accountIndex: integer(s.accountIndex, 0, 2147483647),
-      address: address(s.address),
+      ...sourceIdentity(s),
       budgetAtoms: atoms(s.budgetAtoms, true),
       amountAtoms: atoms(s.amountAtoms, true),
-      maximumFeeAtoms: atoms(s.maximumFeeAtoms, true),
+      maximumFeeAtoms: atoms(s.maximumFeeAtoms, s.kind !== "private"),
       retainedAtoms: atoms(s.retainedAtoms),
       minimumCreditAtoms: credit.toString(),
       allocations,
@@ -336,12 +385,12 @@ function distributionReview(value: unknown, snapshot: DepositSnapshot): DepositR
     if (
       ids.has(source.operationId) ||
       indices.has(source.accountIndex) ||
-      addresses.has(source.address.toLowerCase()) ||
-      snapshot.destinations.some((d) => d.address.toLowerCase() === source.address.toLowerCase()) ||
-      credit > BigInt(source.amountAtoms) ||
-      BigInt(source.retainedAtoms) < 10000n ||
-      BigInt(source.amountAtoms) + BigInt(source.maximumFeeAtoms) + BigInt(source.retainedAtoms) !==
-        BigInt(source.budgetAtoms)
+      (source.kind !== "private" && addresses.has(source.address.toLowerCase())) ||
+      (source.kind !== "private" &&
+        snapshot.destinations.some(
+          (d) => d.address.toLowerCase() === source.address.toLowerCase(),
+        )) ||
+      sourceCostsInvalid(source)
     )
       fail();
     ids.add(source.operationId);

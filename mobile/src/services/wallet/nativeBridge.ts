@@ -103,6 +103,8 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
         Platform.OS === "android" && result.earnBalanceDeltaSettlement === true,
       earnDepositJourney: Platform.OS === "android" && result.earnDepositJourney === true,
       earnDepositDistribution: Platform.OS === "android" && result.earnDepositDistribution === true,
+      earnDepositPrivateFunding:
+        Platform.OS === "android" && result.earnDepositPrivateFunding === true,
       confidentialWithdrawals: Platform.OS === "android" && result.confidentialWithdrawals === true,
       confidentialSaleProceeds:
         Platform.OS === "android" && result.confidentialSaleProceeds === true,
@@ -599,6 +601,13 @@ export function getStoredEarnDepositSigner() {
     resume = native.resumeEarnDeposit.bind(native),
     cancel = native.cancelEarnDeposit.bind(native);
   return {
+    async readEarnDepositFundingBalance(request: { walletId: string }) {
+      await checked(native, "earnDepositJourney");
+      if (!(await getSignerCapabilities()).earnDepositPrivateFunding) return null;
+      if (!native.readEarnDepositFundingBalance)
+        throw new Error("Private deposit funding requires the updated native app.");
+      return native.readEarnDepositFundingBalance(request);
+    },
     ...(native.discardEarnDepositDraft
       ? {
           async discardEarnDepositDraft(walletId: string, journeyId: string) {

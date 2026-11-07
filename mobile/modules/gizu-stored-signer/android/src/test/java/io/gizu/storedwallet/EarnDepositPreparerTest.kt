@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import uniffi.gizu_stored_signer_core.deriveAccountAddressRange
 
 internal class DepositMemoryFile : WalletFile {
   var bytes: ByteArray? = null
@@ -52,6 +53,242 @@ internal fun distributionDepositRecord(
   )
 
 class EarnDepositPreparerTest {
+  private fun privateSourceDraft(record: WalletRecord, mixed: Boolean): DepositSourceDraft {
+    val base =
+      DistributionDepositFixtures.review(
+        record,
+        if (mixed) listOf("990000", "990000") else listOf("990000"),
+      )
+    val address = deriveAccountAddressRange(record.entropy, 2u, 1u).single()
+    val descriptor =
+      JSONObject()
+        .put("kind", "swap")
+        .put("profileChainId", 0)
+        .put("cycleIndex", 0)
+        .put("address", address)
+        .put("amountAtoms", "990000")
+    val private =
+      JSONObject()
+        .put("operationId", "source0")
+        .put("walletId", record.id)
+        .put("revision", 1)
+        .put("status", "privateReserved")
+        .put(
+          "proposal",
+          JSONObject()
+            .put("kind", "privateEarnFunding")
+            .put("operationId", "source0")
+            .put("revision", 1)
+            .put("profileChainId", 4663)
+            .put("cycleIndex", record.earnCycleIndex)
+            .put("sourceAccountIndex", -1)
+            .put("expectedFrom", address)
+            .put("confidentialAccount", cycleConfidential(record))
+            .put("source", descriptor)
+            .put("token", MONAD_EARN_USDC)
+            .put("amountAtoms", "990000")
+            .put("budgetAtoms", "990000")
+            .put("maximumTokenFeeAtoms", "0")
+            .put("deadline", 180),
+        )
+    val publicRows = base.getJSONArray("fundingRows").objects().drop(1)
+    publicRows.forEach { it.getJSONObject("proposal").put("fundingBatchSize", publicRows.size) }
+    val rows = listOf(private) + publicRows
+    val reservation =
+      if (mixed)
+        JSONObject(base.getJSONObject("reservation").toString())
+          .put(
+            "legs",
+            JSONArray(base.getJSONObject("reservation").getJSONArray("legs").objects().drop(1)),
+          )
+      else JSONObject().put("id", "private_only_placeholder")
+    return DepositSourceDraft(
+      rows,
+      reservation,
+      rows.associate {
+        it.getString("operationId") to it.getJSONObject("proposal").getString("amountAtoms")
+      },
+    )
+  }
+
+  @Test
+  fun privateOnlyAndMixedPreparationPublishZeroPrivateFeesAndPreserveExactInputBudgets() =
+    runBlocking {
+      for (mixed in listOf(false, true)) distributionDepositRecord().use { record ->
+        val journal = testDepositJournal()
+        val draft = privateSourceDraft(record, mixed)
+        val budget = if (mixed) "2000000" else "990000"
+        val totalCredit = if (mixed) "1980000" else "990000"
+        var selected = 0
+        var releases = 0
+        val requests = mutableListOf<Pair<String, JSONObject>>()
+        val diagnostics = mutableListOf<String>()
+        val gateway =
+          EarnDepositGateway(
+            { path, text ->
+              val body = JSONObject(text)
+              requests += path to body
+              if (path == "/robinhood/deposit-preview") {
+                // This is published before vault reads; zero private fees must reach this stage.
+                val preparing = journal.all().single()
+                assertEquals("preparing", preparing.getString("phase"))
+                val indicative = preparing.getJSONObject("indicativeReview")
+                assertEquals(
+                  if (mixed) "10000" else "0",
+                  indicative.getString("sourceMaximumFeeAtoms"),
+                )
+                assertEquals(totalCredit, indicative.getString("investEstimatedAtoms"))
+                assertEquals("0", indicative.getString("holdEstimatedAtoms"))
+              }
+              previewResponse(path, body, 1000)
+            },
+            { 1000 },
+            feeValidator = { 0 },
+          )
+        val row =
+          EarnDepositPreparer(
+              journal,
+              gateway,
+              { _, selectedBudget ->
+                assertEquals(budget, selectedBudget)
+                selected++
+                draft
+              },
+              { releases++ },
+              { 1000 },
+              reportFailure = { stage, code, _ -> diagnostics += "$stage:$code" },
+            )
+            .prepare(record, 4663, budget, null)
+        assertEquals(diagnostics.toString(), "review", row.getString("phase"))
+        assertEquals(1, selected)
+        assertEquals(0, releases)
+        assertTrue(diagnostics.isEmpty())
+        val review = row.getJSONObject("review")
+        val sources = review.getJSONArray("sources").objects()
+        val private = sources.single { it.optString("kind") == "private" }
+        assertEquals(-1, private.getInt("accountIndex"))
+        for (field in listOf("amountAtoms", "budgetAtoms", "minimumCreditAtoms")) assertEquals(
+          "990000",
+          private.getString(field),
+        )
+        for (field in listOf("maximumFeeAtoms", "retainedAtoms")) assertEquals(
+          "0",
+          private.getString(field),
+        )
+        assertEquals(budget, review.getString("sourceBudgetAtoms"))
+        assertEquals(budget, sources.sumOf { it.getString("budgetAtoms").toLong() }.toString())
+        assertEquals(
+          totalCredit,
+          sources
+            .flatMap { it.getJSONArray("allocations").objects() }
+            .sumOf { it.getString("inputAtoms").toLong() }
+            .toString(),
+        )
+        val privateRows =
+          review.getJSONArray("fundingRows").objects().filter(::isPrivateDepositSource)
+        assertEquals(1, privateRows.size)
+        assertFalse(privateRows.single().has("unsignedUserOperation"))
+        assertFalse(privateRows.single().has("signedUserOperation"))
+        assertEquals(
+          if (mixed) 1 else 0,
+          review.getJSONArray("fundingRows").objects().count { !isPrivateDepositSource(it) },
+        )
+        assertEquals(2 * sources.size, requests.count { it.first == "/native/payout/preview" })
+        assertEquals(2, requests.count { it.first == "/robinhood/deposit-preview" })
+        assertTrue(requests.all { !it.second.has("signedData") })
+        assertEquals(0, row.getJSONObject("children").length())
+        EarnDepositApproval.fromReview(record, review).invalidate()
+      }
+    }
+
+  @Test
+  fun privateOnlyRemainingReviewRefreshAcceptsZeroFeeAndPrivateReservationPlaceholder() =
+    runBlocking {
+      distributionDepositRecord().use { record ->
+        val journal = testDepositJournal()
+        val draft = privateSourceDraft(record, false)
+        val initialGateway =
+          EarnDepositGateway(
+            { path, text -> previewResponse(path, JSONObject(text), 1000) },
+            { 1000 },
+            feeValidator = { 0 },
+          )
+        val initial =
+          EarnDepositPreparer(journal, initialGateway, { _, _ -> draft }, {}, { 1000 })
+            .prepare(record, 4663, "990000", null)
+        assertEquals("review", initial.getString("phase"))
+        val id = initial.getString("journeyId")
+        journal.pause(id, "termsChanged")
+        var sourceReads = 0
+        var reservationReads = 0
+        val requests = mutableListOf<String>()
+        val gateway =
+          EarnDepositGateway(
+            { path, text ->
+              requests += path
+              previewResponse(path, JSONObject(text), 100000)
+            },
+            { 100000 },
+            feeValidator = { 0 },
+          )
+        val refresh =
+          EarnDepositRemaining(
+            journal,
+            gateway,
+            { original ->
+              assertTrue(isPrivateDepositSource(original))
+              sourceReads++
+              val updated =
+                JSONObject(original.toString()).also {
+                  it.getJSONObject("proposal").put("deadline", 280)
+                }
+              DepositRemainingSource(updated, "990000")
+            },
+            { error("No saved payout or invented source credit") },
+            { error("No saved payout receipt") },
+            {
+              reservationReads++
+              JSONObject(draft.reservation.toString())
+            },
+            { error("No vault child exists") },
+            { 100000 },
+          )
+        val refreshed = refresh.refresh(record, id, journal.get(id).getInt("revision"))
+        assertEquals("paused", refreshed.getString("phase"))
+        assertEquals(1, sourceReads)
+        assertEquals(1, reservationReads)
+        assertEquals(2, requests.count { it == "/native/payout/preview" })
+        assertEquals(2, requests.count { it == "/robinhood/deposit-preview" })
+        val review = refreshed.getJSONObject("review")
+        assertEquals(
+          "private_only_placeholder",
+          review.getJSONObject("reservation").getString("id"),
+        )
+        assertEquals(1, review.getJSONObject("reservation").length())
+        val source = review.getJSONArray("sources").getJSONObject(0)
+        assertEquals("private", source.getString("kind"))
+        assertEquals("0", source.getString("maximumFeeAtoms"))
+        assertEquals("0", source.getString("retainedAtoms"))
+        assertEquals("990000", source.getString("minimumCreditAtoms"))
+        assertTrue(
+          nativeJsonEqual(
+            draft.rows.single().getJSONObject("proposal").getJSONObject("source"),
+            review
+              .getJSONArray("fundingRows")
+              .getJSONObject(0)
+              .getJSONObject("proposal")
+              .getJSONObject("source"),
+          )
+        )
+        assertEquals(0, refreshed.getJSONObject("children").length())
+        EarnDepositApproval.fromRemainingReview(record, review, 100000).apply {
+          approveAfterPasskey(100001)
+          invalidate()
+        }
+        Unit
+      }
+    }
+
   private fun sourceDraft(r: WalletRecord): DepositSourceDraft {
     val review = DepositFixtures.review(r)
     return DepositSourceDraft(
