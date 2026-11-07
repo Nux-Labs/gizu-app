@@ -59,7 +59,12 @@ export function registerEarnSettlementRoutes(
       reply
         .header("Cache-Control", "no-store")
         .send(
-          await settlement.read(request.body.signedData, request.body.expected),
+          await settlement.read(
+            request.body.signedData,
+            request.body.expected,
+            request.headers["x-gizu-settlement-proof"] ===
+              "operation-history-v1",
+          ),
         ),
   );
   app.withTypeProvider<ZodTypeProvider>().post(

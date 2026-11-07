@@ -75,9 +75,34 @@ or liquidity change before inclusion; a quote is not a guaranteed withdrawal.
 
 Historical bundler lookups normalize provider `null` deployment fields to absent
 fields before signature and UserOperation-hash verification. Signed submission
-requests retain their strict original schema. Robinhood redemptions and returns
-still wait for the existing finalized receipt policy before advancing; a mined
-transaction or a zero share balance alone does not complete the private return.
+requests retain their strict original schema. Robinhood deposits, redemptions and
+returns advance from verified canonical execution receipts, without waiting for
+the delayed L1 finalized head. Native reconciliation still checks the exact
+signed UserOperation, EntryPoint event, token transfers, fee bound and canonical
+block hash twice. Other chains retain their existing receipt policy. Canonical
+execution does not prove private credit: the return remains awaiting settlement
+until its saved route reports success and authenticated private balance evidence
+meets the bound credit amount. A zero share balance alone cannot complete it.
+
+Aurora's quoted `amountOut` is an expected output, rather than a maximum execution
+amount. The historical `maximumCreditAtoms` field remains the bound for ordinary
+balance-delta evidence. If the authenticated credit exceeds that estimate, an
+updated client requests `operation-history-v1` using the
+`x-gizu-settlement-proof` header. The backend requires one exact authenticated
+history record matching the saved route, owner, recipient, input asset/amount and
+origin transaction, with output equal to the observed balance delta and at least
+the approved minimum. Missing access or ambiguous history leaves verification
+pending; there is no tolerance increase or credit clamping. The sealed proof keeps
+its verification method across restart and balance consumption, and subsequent
+funding/payout checks revalidate it. Older clients continue using the existing
+bounded balance-delta method. Deploy the backend before relying on the new history
+path; older backends safely ignore the capability header.
+
+Home offers a read-only wallet unlock when private balance read permission has
+expired. It refreshes the aggregate across native confidential accounts after
+authentication. Previously checked amounts stay visible with an explicit label;
+incomplete observations remain excluded from current portfolio valuation and
+cannot authorize spending or prove settlement.
 
 Robinhood return planning estimates gas using a temporary, full nonzero-byte
 recipient whose USDG balance is verified as zero at the reference block. The old

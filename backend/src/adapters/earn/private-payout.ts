@@ -855,7 +855,7 @@ export class PrivatePayoutGateway {
     if (existing) {
       try {
         const { quoteId, ...expectation } = i.source;
-        const fresh = await this.settlement.read(i.signedData, expectation);
+        const fresh = await this.settlement.read(i.signedData, expectation, true);
         if (
           fresh.status !== "credited" ||
           fresh.creditedAtoms !== existing.prepared.sourceCredit.creditedAtoms
@@ -893,7 +893,7 @@ export class PrivatePayoutGateway {
     const promise = this.bounded(async () => {
       try {
         const { quoteId: sourceQuoteId, ...expectation } = i.source;
-        const verified = await this.settlement.read(i.signedData, expectation);
+        const verified = await this.settlement.read(i.signedData, expectation, true);
         if (
           verified.status !== "credited" ||
           BigInt(verified.creditedAtoms) <

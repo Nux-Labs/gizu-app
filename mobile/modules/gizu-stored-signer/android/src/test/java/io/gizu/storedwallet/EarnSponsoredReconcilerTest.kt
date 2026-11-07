@@ -95,12 +95,14 @@ class EarnSponsoredReconcilerTest {
     var shares = 0
     var redeem = false
     var deposit = false
+    var returning = false
+    var returnAmount = 1000
     var finalNumber = "0x10"
     val stateTags = mutableListOf<String>()
 
     override suspend fun call(method: String, params: JSONArray): Any =
       when (method) {
-        "eth_chainId" -> if (redeem || deposit) "0x1237" else "0x8f"
+        "eth_chainId" -> if (redeem || deposit || returning) "0x1237" else "0x8f"
         "eth_getUserOperationReceipt" -> receipt
         "eth_getUserOperationByHash" -> known
         "eth_getBlockByNumber" ->
@@ -138,13 +140,21 @@ class EarnSponsoredReconcilerTest {
                 listOf(1000, 900),
               )
             )
-          } else logs.add(transfer(owner, recipient, 1000))
+          } else
+            logs.add(
+              transfer(
+                owner,
+                recipient,
+                returnAmount,
+                if (returning) HOOD_EARN_USDG else MONAD_EARN_USDC,
+              )
+            )
           logs.add(
             transfer(
               owner,
               EARN_PAYMASTER,
               paid,
-              if (redeem || deposit) HOOD_EARN_USDG else MONAD_EARN_USDC,
+              if (redeem || deposit || returning) HOOD_EARN_USDG else MONAD_EARN_USDC,
             )
           )
           JSONObject()
@@ -262,6 +272,69 @@ class EarnSponsoredReconcilerTest {
     chain.found(source)
     reconcileEarnSponsoredOperations(source, chain, chain, ::topic, { error("No latest") })
     assertEquals("pending", source.get("op").getString("status"))
+  }
+
+  @Test
+  fun robinhoodExitsUseCanonicalReceiptsButNeverAssumePrivateCredit() = runBlocking {
+    for (kind in listOf("hoodRedeemAll", "hoodTokenReturn")) {
+      val journal = setup(kind)
+      val rpc = Rpc()
+      rpc.redeem = kind == "hoodRedeemAll"
+      rpc.returning = kind == "hoodTokenReturn"
+      rpc.finalNumber = "0xf"
+      rpc.found(journal)
+      reconcileEarnSponsoredOperations(
+        journal,
+        rpc,
+        rpc,
+        ::topic,
+        { error("No latest observation") },
+      )
+      val result = journal.public(journal.get("op"))
+      assertEquals(if (rpc.redeem) "withdrawn" else "awaitingSettlement", result["status"])
+      assertFalse(result["blocked"] as Boolean)
+      assertFalse(result.containsKey("creditedAtoms"))
+      assertEquals(transaction, result["transactionHash"])
+      rpc.canonical = hash
+      reconcileEarnSponsoredOperations(
+        journal,
+        rpc,
+        rpc,
+        ::topic,
+        { error("No latest observation") },
+      )
+      assertEquals("pending", journal.public(journal.get("op"))["status"])
+      assertTrue(journal.public(journal.get("op"))["blocked"] as Boolean)
+    }
+  }
+
+  @Test
+  fun canonicalRobinhoodReturnStillRejectsWrongTransferAndFee() = runBlocking {
+    for (changed in listOf("amount", "fee", "signature")) {
+      val journal = setup("hoodTokenReturn")
+      val rpc = Rpc()
+      rpc.returning = true
+      rpc.finalNumber = "0xf"
+      rpc.found(journal)
+      when (changed) {
+        "amount" -> rpc.returnAmount = 999
+        "fee" -> rpc.paid = 101
+        "signature" ->
+          (rpc.known as JSONObject).getJSONObject("userOperation").put("signature", "0xchanged")
+      }
+      try {
+        reconcileEarnSponsoredOperations(
+          journal,
+          rpc,
+          rpc,
+          ::topic,
+          { error("No latest observation") },
+        )
+        fail("A changed $changed must not pass canonical receipt validation")
+      } catch (_: IllegalStateException) {}
+      assertTrue(journal.get("op").sponsoredBlocked())
+      assertNotEquals("finalized", journal.get("op").getString("status"))
+    }
   }
 
   @Test

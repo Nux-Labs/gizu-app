@@ -605,7 +605,9 @@ test("a locked private balance explains wallet unlock without claiming a provide
     ],
   });
   await open();
-  expect(screen.getByText("Private USDC needs wallet unlock before refresh.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
+  expect(screen.getByText("Unlock to check your private USDC.")).toBeVisible();
+  expect(screen.queryByText("USDC (private) balance unavailable. Refresh to retry.")).toBeNull();
   expect(screen.queryByText("Checking USDC (private) balance…")).toBeNull();
   expect(screen.queryByText("0 USDC (private)")).toBeNull();
   expect(screen.getByLabelText("19.990574 USDC")).toBeVisible();

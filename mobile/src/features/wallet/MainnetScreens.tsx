@@ -155,10 +155,12 @@ function OwnedBalanceRow({
   asset,
   position = false,
   loading,
+  privateLocked = false,
 }: {
   loading: boolean;
   asset: OwnedPortfolioAsset | OwnedPortfolioPosition;
   position?: boolean;
+  privateLocked?: boolean;
 }) {
   const estimated = position && "conversionEstimated" in asset && asset.conversionEstimated;
   const amount =
@@ -175,10 +177,20 @@ function OwnedBalanceRow({
       <Typography>
         {asset.complete && amount !== null && asset.decimals !== null
           ? `${estimated ? "Estimated underlying: " : ""}${holdingAmount(amount, asset.decimals)} ${asset.symbol}`
-          : loading
-            ? `Checking ${asset.symbol} balance…`
-            : `${asset.symbol} balance unavailable. Refresh to retry.`}
+          : privateLocked
+            ? "Unlock to check your private USDC."
+            : loading
+              ? `Checking ${asset.symbol} balance…`
+              : `${asset.symbol} balance unavailable. Refresh to retry.`}
       </Typography>
+      {!asset.complete &&
+        asset.checkedAt > 0 &&
+        observedAmount != null &&
+        asset.decimals !== null && (
+          <Typography variant="micro">
+            Previously checked: {holdingAmount(observedAmount, asset.decimals)} {asset.symbol}
+          </Typography>
+        )}
       {asset.valueUsdcAtoms !== null && (
         <Typography>Value: {holdingAmount(asset.valueUsdcAtoms, 6)} USDC</Typography>
       )}
@@ -214,7 +226,14 @@ function OwnedBalanceRow({
   );
 }
 function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) => void }) {
-  const { snapshot, loading, refresh } = useMainnetWallet();
+  const {
+    snapshot,
+    loading,
+    refresh,
+    unlockingPrivateBalance,
+    privateBalanceError,
+    unlockPrivateBalance,
+  } = useMainnetWallet();
   if (!snapshot?.ownedAssets && !snapshot?.positions) return null;
   const visible = (asset: OwnedPortfolioAsset) =>
     !asset.complete || BigInt(asset.balanceAtoms ?? asset.observedAtoms) > 0n;
@@ -251,15 +270,39 @@ function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) 
           <Surface>
             <View className="px-5">
               {assets.map((asset) => (
-                <OwnedBalanceRow key={asset.assetId} asset={asset} loading={loading} />
+                <OwnedBalanceRow
+                  key={asset.assetId}
+                  asset={asset}
+                  loading={loading}
+                  privateLocked={
+                    snapshot.confidentialReadState === "locked" &&
+                    asset.token === "confidential:monad-usdc"
+                  }
+                />
               ))}
             </View>
           </Surface>
         </View>
       )}
       <View className="gap-2">
-        {!loading && snapshot.confidentialReadState === "locked" && (
-          <Typography variant="micro">Private USDC needs wallet unlock before refresh.</Typography>
+        {snapshot.confidentialReadState === "locked" && (
+          <>
+            <Typography variant="micro">
+              Unlock to refresh your private USDC. This does not move funds.
+            </Typography>
+            <Button
+              label="Unlock private balance"
+              variant="quiet"
+              disabled={loading || unlockingPrivateBalance}
+              loading={unlockingPrivateBalance}
+              onPress={() => void unlockPrivateBalance()}
+            />
+          </>
+        )}
+        {privateBalanceError !== "" && (
+          <Typography accessibilityRole="alert" variant="negative">
+            {privateBalanceError}
+          </Typography>
         )}
         {snapshot.ownedBalanceComplete === false && (
           <Typography variant="micro">

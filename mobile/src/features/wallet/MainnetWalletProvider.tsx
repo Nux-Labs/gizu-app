@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { MainnetWalletSession } from "@/services/access";
 import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
-import { getStoredSwapSigner } from "@/services/wallet/nativeBridge";
+import { getStoredSigner, getStoredSwapSigner } from "@/services/wallet/nativeBridge";
 import {
   portfolioValuationService,
   expirePortfolioValuation,
@@ -121,9 +121,12 @@ function useMainnetState(
   const [snapshot, setSnapshot] = useState<MainnetPortfolioSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [unlockingPrivateBalance, setUnlockingPrivateBalance] = useState(false);
+  const [privateBalanceError, setPrivateBalanceError] = useState("");
   const alive = useRef(true);
   const generation = useRef(0);
   const busy = useRef(false);
+  const unlocking = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const valuator = useMemo(
     () => valuation ?? (service ? undefined : portfolioValuationService),
@@ -139,7 +142,7 @@ function useMainnetState(
     };
   }, []);
   const refresh = useCallback(async () => {
-    if (busy.current) return;
+    if (busy.current || unlocking.current) return;
     busy.current = true;
     const requestGeneration = generation.current;
     const current = () => alive.current && generation.current === requestGeneration;
@@ -168,6 +171,33 @@ function useMainnetState(
       }
     }
   }, [session.walletId, session.address, service, valuator]);
+  const unlockPrivateBalance = useCallback(async () => {
+    if (busy.current || unlocking.current) return;
+    const requestGeneration = generation.current;
+    const current = () => alive.current && generation.current === requestGeneration;
+    unlocking.current = true;
+    setUnlockingPrivateBalance(true);
+    setPrivateBalanceError("");
+    try {
+      const signer = getStoredSigner();
+      if (!signer) throw new Error("Native wallet unlock is unavailable in this build.");
+      // Reuse the existing read-only login permission. No spending approval is requested.
+      const state = await signer.openWallet();
+      if (!current()) return;
+      if (state.status !== "ready" || state.walletId !== session.walletId)
+        throw new Error("Wallet changed. Sign in again before checking private balances.");
+      unlocking.current = false;
+      await refresh();
+    } catch (cause) {
+      if (current())
+        setPrivateBalanceError(
+          cause instanceof Error ? cause.message : "Could not unlock your private balance. Retry.",
+        );
+    } finally {
+      unlocking.current = false;
+      if (current()) setUnlockingPrivateBalance(false);
+    }
+  }, [session.walletId, refresh]);
   useEffect(() => {
     const expiresAt = snapshot?.valuationExpiresAt;
     if (expiresAt === undefined) return;
@@ -193,7 +223,16 @@ function useMainnetState(
     });
     return () => subscription.remove();
   }, [refresh]);
-  return { session, snapshot, loading, error, refresh };
+  return {
+    session,
+    snapshot,
+    loading,
+    error,
+    refresh,
+    unlockingPrivateBalance,
+    privateBalanceError,
+    unlockPrivateBalance,
+  };
 }
 const Context = createContext<ReturnType<typeof useMainnetState> | null>(null);
 export function MainnetWalletProvider({

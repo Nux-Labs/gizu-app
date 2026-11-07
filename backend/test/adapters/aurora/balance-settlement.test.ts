@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import Fastify from "fastify";
+import {
+  validatorCompiler,
+  serializerCompiler,
+} from "@fastify/type-provider-zod";
+import { registerEarnSettlementRoutes } from "../../../src/http/routes/earn-settlement.routes.ts";
 import { privateKeyToAccount } from "viem/accounts";
 import { hexToBytes } from "viem";
 import { base58 } from "@scure/base";
 import { ConfidentialSettlement } from "../../../src/adapters/aurora/settlement.ts";
 import { EarnRecoveryEnvelope } from "../../../src/adapters/earn/recovery-envelope.ts";
-import { monadUsdcAssetId } from "../../../src/adapters/aurora/assets.ts";
+import {
+  monadUsdcAssetId,
+  ethereumUsdcAssetId,
+  robinhoodUsdgAssetId,
+} from "../../../src/adapters/aurora/assets.ts";
 const now = Date.parse("2026-10-12T10:00:00Z"),
   key = "11".repeat(32),
   account = privateKeyToAccount(("0x" + "1".repeat(64)) as `0x${string}`);
@@ -33,14 +43,21 @@ async function auth() {
     signature: "secp256k1:" + base58.encode(bytes),
   };
 }
-function setup() {
+function setup(originAsset = monadUsdcAssetId) {
   let balance = "100",
     status = "SUCCESS";
+  let clock = now,
+    historyLatency = 0;
+  let history: Record<string, unknown>[] | undefined;
   const calls: string[] = [];
   const fetcher: typeof fetch = async (url) => {
     const path = String(url);
     calls.push(path);
-    if (path.includes("history")) throw Error("History is invite-only for now");
+    if (path.includes("history")) {
+      if (!history) throw Error("History is unavailable");
+      clock += historyLatency;
+      return new Response(JSON.stringify({ items: history }));
+    }
     return new Response(
       JSON.stringify(
         path.includes("authenticate")
@@ -73,14 +90,14 @@ function setup() {
     );
   };
   const service = () =>
-    new ConfidentialSettlement("api-key", fetcher, () => now, key);
+    new ConfidentialSettlement("api-key", fetcher, () => clock, key);
   const quote = {
     operationId: "fund_1",
     revision: 1,
     recipient: deposit,
     confidentialAccount: C,
     refundOwner: owner,
-    originAsset: monadUsdcAssetId,
+    originAsset,
     destinationAsset: monadUsdcAssetId,
     amountAtoms: "1000000",
     minimumCreditAtoms: "990000",
@@ -98,7 +115,7 @@ function setup() {
     depositAddress: deposit,
     sourceOwner: owner,
     confidentialAccount: C,
-    originAsset: monadUsdcAssetId,
+    originAsset,
     amountAtoms: "1000000",
     minimumCreditAtoms: "990000",
     transactionHash: tx,
@@ -108,6 +125,12 @@ function setup() {
     service,
     expected,
     calls,
+    setHistoryLatency: (ms: number) => {
+      historyLatency = ms;
+    },
+    setHistory: (rows: Record<string, unknown>[]) => {
+      history = rows;
+    },
     setBalance: (v: string) => {
       balance = v;
     },
@@ -132,30 +155,214 @@ test("new settlement uses exact route and authenticated balance delta; portable 
   if (!("settlementEnvelope" in proof))
     throw Error("Missing credit attestation");
   f.setBalance("0");
-  const restored = await f
-    .service()
-    .read(signed, {
-      ...expected,
-      settlementEnvelope: proof.settlementEnvelope,
-    });
+  const restored = await f.service().read(signed, {
+    ...expected,
+    settlementEnvelope: proof.settlementEnvelope,
+  });
   assert.equal(restored.creditedAtoms, "995000");
   assert.ok(!f.calls.some((p) => p.includes("history")));
   await assert.rejects(
-    f
-      .service()
-      .read(signed, {
+    f.service().read(signed, {
+      ...expected,
+      sourceOwner: deposit,
+      settlementEnvelope: proof.settlementEnvelope,
+    }),
+  );
+  await assert.rejects(
+    f.service().read(signed, {
+      ...expected,
+      baselineEnvelope: baseline.baselineEnvelope + "a",
+    }),
+  );
+});
+
+function exactHistory(originAsset = monadUsdcAssetId): Record<string, unknown> {
+  return {
+    status: "SUCCESS",
+    depositType: "ORIGIN_CHAIN",
+    recipientType: "CONFIDENTIAL_INTENTS",
+    refundType: "ORIGIN_CHAIN",
+    createdAt: new Date(now - 10000).toISOString(),
+    depositAddress: deposit,
+    originAsset,
+    destinationAsset: monadUsdcAssetId,
+    recipient: C,
+    refundTo: owner,
+    amountInFormatted:
+      originAsset === "nep141:eth.omft.near" ? "0.000000000001" : "1",
+    amountOutFormatted: "0.995001",
+    quoteTransactions: [{ sender: owner, txHash: tx }],
+  };
+}
+
+test("better execution requires exact authenticated route history and survives consumed-balance replay", async () => {
+  for (const origin of [
+    monadUsdcAssetId,
+    ethereumUsdcAssetId,
+    robinhoodUsdgAssetId,
+    "nep141:eth.omft.near",
+  ]) {
+    const f = setup(origin),
+      signed = await auth(),
+      baseline = await f.service().baseline(signed);
+    const expected = {
+      ...f.expected,
+      maximumCreditAtoms: "995000",
+      baselineEnvelope: baseline.baselineEnvelope,
+    };
+    f.setBalance("995101");
+    f.setHistory([exactHistory(origin)]);
+    const proof = await f.service().read(signed, expected, true);
+    assert.equal(proof.status, "credited");
+    assert.equal(proof.creditedAtoms, "995001");
+    assert.ok("verification" in proof && "settlementEnvelope" in proof);
+    assert.equal(proof.verification, "operation-history-v1");
+    assert.ok(proof.settlementEnvelope);
+    f.setBalance("0");
+    f.setHistory([]);
+    const restored = await f.service().read(
+      signed,
+      {
         ...expected,
-        sourceOwner: deposit,
+        revision: 3,
+        settlementEnvelope: proof.settlementEnvelope,
+      },
+      true,
+    );
+    assert.equal(restored.creditedAtoms, "995001");
+    assert.ok("verification" in restored);
+    assert.equal(restored.verification, "operation-history-v1");
+    assert.equal(restored.revision, 3);
+    await assert.rejects(
+      f.service().read(signed, {
+        ...expected,
         settlementEnvelope: proof.settlementEnvelope,
       }),
-  );
+    );
+  }
+});
+
+test("extra private balance cannot bypass missing, mismatched or ambiguous operation history", async () => {
+  for (const rows of [
+    [],
+    [{ ...exactHistory(), amountOutFormatted: "0.995" }],
+    [{ ...exactHistory(), recipient: owner }],
+    [{ ...exactHistory(), refundTo: deposit }],
+    [{ ...exactHistory(), originAsset: "wrong" }],
+    [{ ...exactHistory(), destinationAsset: "wrong" }],
+    [{ ...exactHistory(), amountInFormatted: "2" }],
+    [
+      {
+        ...exactHistory(),
+        quoteTransactions: [{ sender: owner, txHash: "0x" + "b".repeat(64) }],
+      },
+    ],
+    [
+      {
+        ...exactHistory(),
+        quoteTransactions: [{ sender: deposit, txHash: tx }],
+      },
+    ],
+    [exactHistory(), exactHistory()],
+  ]) {
+    const f = setup(),
+      signed = await auth(),
+      baseline = await f.service().baseline(signed);
+    f.setBalance("995101");
+    f.setHistory(rows);
+    await assert.rejects(
+      f
+        .service()
+        .read(
+          signed,
+          { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
+          true,
+        ),
+    );
+  }
+  const f = setup(),
+    signed = await auth(),
+    baseline = await f.service().baseline(signed);
+  f.setBalance("995101");
   await assert.rejects(
     f
       .service()
-      .read(signed, {
-        ...expected,
-        baselineEnvelope: baseline.baselineEnvelope + "a",
-      }),
+      .read(
+        signed,
+        { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
+        true,
+      ),
+  );
+});
+
+test("the settlement endpoint negotiates history proofs without changing saved request bodies", async () => {
+  const f = setup(),
+    signed = await auth(),
+    baseline = await f.service().baseline(signed);
+  f.setBalance("995101");
+  f.setHistory([exactHistory()]);
+  const app = Fastify({ logger: false });
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  registerEarnSettlementRoutes(app, f.service());
+  const payload = {
+    signedData: signed,
+    expected: { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
+  };
+  try {
+    const legacy = await app.inject({
+      method: "POST",
+      url: "/v1/earn/native/settlement",
+      payload,
+    });
+    assert.equal(legacy.statusCode, 502);
+    assert.equal(
+      f.calls.some((path) => path.includes("history")),
+      false,
+    );
+    const modern = await app.inject({
+      method: "POST",
+      url: "/v1/earn/native/settlement",
+      payload,
+      headers: { "x-gizu-settlement-proof": "operation-history-v1" },
+    });
+    assert.equal(modern.statusCode, 200);
+    assert.equal(modern.json().verification, "operation-history-v1");
+    assert.equal(modern.json().creditedAtoms, "995001");
+    assert.equal(modern.headers["cache-control"], "no-store");
+  } finally {
+    await app.close();
+  }
+});
+
+test("history attestation is issued after verification and cannot refresh stale balance evidence", async () => {
+  const signed = await auth();
+  const f = setup(),
+    baseline = await f.service().baseline(signed);
+  f.setBalance("995101");
+  f.setHistory([exactHistory()]);
+  f.setHistoryLatency(20000);
+  const proof = await f
+    .service()
+    .read(
+      signed,
+      { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
+      true,
+    );
+  assert.equal(proof.timestampMs, now + 20000);
+  const stale = setup(),
+    oldBaseline = await stale.service().baseline(signed);
+  stale.setBalance("995101");
+  stale.setHistory([exactHistory()]);
+  stale.setHistoryLatency(60001);
+  await assert.rejects(
+    stale
+      .service()
+      .read(
+        signed,
+        { ...stale.expected, baselineEnvelope: oldBaseline.baselineEnvelope },
+        true,
+      ),
   );
 });
 test("pending, missing, reduced and excess balances never become source credit", async () => {
@@ -228,11 +435,29 @@ test("settlement checks log only route status, balance entry kinds and credit cl
         : path.includes("/account/balances/")
           ? {
               balances: path.includes("tokenIds=")
-                ? [{ source: "private", tokenId: monadUsdcAssetId, available: "100" }]
+                ? [
+                    {
+                      source: "private",
+                      tokenId: monadUsdcAssetId,
+                      available: "100",
+                    },
+                  ]
                 : [
-                    { source: "private", tokenId: monadUsdcAssetId, available: "100" },
-                    { source: "public", tokenId: monadUsdcAssetId, available: "995000" },
-                    { source: "private", tokenId: wrapped, available: "995000" },
+                    {
+                      source: "private",
+                      tokenId: monadUsdcAssetId,
+                      available: "100",
+                    },
+                    {
+                      source: "public",
+                      tokenId: monadUsdcAssetId,
+                      available: "995000",
+                    },
+                    {
+                      source: "private",
+                      tokenId: wrapped,
+                      available: "995000",
+                    },
                   ],
             }
           : {
@@ -249,8 +474,12 @@ test("settlement checks log only route status, balance entry kinds and credit cl
     return new Response(JSON.stringify(body));
   };
   const events: unknown[] = [];
-  const proof = await new ConfidentialSettlement("api-key", fetcher, () => now, key, (e) =>
-    events.push(e),
+  const proof = await new ConfidentialSettlement(
+    "api-key",
+    fetcher,
+    () => now,
+    key,
+    (e) => events.push(e),
   ).read(signed, expected);
   assert.equal(proof.status, "awaitingSettlement");
   assert.deepEqual(events, [
