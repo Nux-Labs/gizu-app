@@ -39,6 +39,38 @@ function native() {
   };
 }
 afterEach(() => jest.restoreAllMocks());
+test("a rejected private-return fee review explains the return without suggesting another vault redemption", async () => {
+  const b = native();
+  const service = createEarnRobinhoodService(
+    "https://backend.test",
+    () => b,
+    () => now,
+  );
+  jest.spyOn(globalThis, "fetch").mockResolvedValue({
+    ok: false,
+    status: 409,
+    json: async () => ({ code: "EARN_RETURN_QUOTE_FEE_CHANGED" }),
+  } as Response);
+  await expect(
+    service.plan(hoodIntent, "hoodTokenReturn", new AbortController().signal),
+  ).rejects.toThrow(
+    "The private return network fee changed before review. Your USDG remains in the investment wallet. Refresh the return quote; no new vault withdrawal is needed.",
+  );
+  expect(b.executeEarnSponsored).not.toHaveBeenCalled();
+});
+test("private-return planner outages preserve the already-withdrawn state in the error", async () => {
+  const service = createEarnRobinhoodService("https://backend.test", native, () => now);
+  jest.spyOn(globalThis, "fetch").mockResolvedValue({
+    ok: false,
+    status: 502,
+    json: async () => ({ code: "EARN_ROBINHOOD_RETURN_UNAVAILABLE" }),
+  } as Response);
+  await expect(
+    service.plan(hoodIntent, "hoodTokenReturn", new AbortController().signal),
+  ).rejects.toThrow(
+    "A fresh private USDC return quote could not be verified. Your withdrawn USDG remains in the investment wallet. Refresh before approving the return.",
+  );
+});
 test("returns advertise balance settlement only when the native build explicitly supports it", async () => {
   for (const supported of [false, true]) {
     jest.mocked(getSignerCapabilities).mockResolvedValueOnce({

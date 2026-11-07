@@ -182,7 +182,7 @@ export function RobinhoodWithdrawalPanel({
             <Typography variant="caption">
               {plan.kind === "hoodRedeemAll"
                 ? "The vault amount can change before confirmation. This redeems all shares in this part; no minimum withdrawal amount is guaranteed. You will approve the private return separately."
-                : "Your USDC stays private in Gizu. The return service fee is 0.02%. A small balance may remain for network costs."}
+                : `Your USDC stays private in Gizu.${plan.route ? ` The quoted return service fee is ${plan.route.providerFeeBps / 100}%.` : ""} A small balance may remain for network costs.`}
             </Typography>
             <Button
               label={

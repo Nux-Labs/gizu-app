@@ -79,6 +79,18 @@ requests retain their strict original schema. Robinhood redemptions and returns
 still wait for the existing finalized receipt policy before advancing; a mined
 transaction or a zero share balance alone does not complete the private return.
 
+Robinhood return planning estimates gas using a temporary, full nonzero-byte
+recipient whose USDG balance is verified as zero at the reference block. The old
+burn-address probe already held USDG, so it underestimated the cost of creating a
+fresh route recipient's token balance and caused `EARN_RETURN_QUOTE_FEE_CHANGED`
+after redemption. The probe never receives a live transfer. The planner still
+issues one immutable route quote, checks the exact recipient's fee against the
+bounded budget, and simulates the final calls. Return-specific errors identify
+the USDG already held in the investment wallet; they do not suggest redeeming
+the vault again. The review displays the verified routing fee instead of a
+hardcoded 0.02%. Deploy the updated backend planner to Render for this correction
+to take effect; updating the APK alone only changes the messages and fee display.
+
 ## Backend and privacy
 
 The matching backend exposes:

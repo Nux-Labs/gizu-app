@@ -652,9 +652,16 @@ test("the guided withdrawal needs separate approvals and verifies private credit
   if (!("route" in raw)) throw new Error("Expected private return fixture.");
   raw.route.refundOwner = first.destinations[0].address;
   const plan = parseRobinhoodPlan(raw, first, "hoodTokenReturn", "private_return", 1, now);
+  if (!plan.route) throw new Error("Expected verified return route.");
+  plan.route.providerFeeBps = 45;
   h.robinhood.plan.mockResolvedValueOnce(plan);
   await userEvent.press(screen.getByRole("button", { name: "Review private return" }));
   expect(await screen.findByText("0.98 USDC")).toBeVisible();
+  expect(
+    screen.getByText(
+      "Your USDC stays private in Gizu. The quoted return service fee is 0.45%. A small balance may remain for network costs.",
+    ),
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Review private return" })).toBeNull();
   expect(h.robinhood.execute).toHaveBeenCalledTimes(1);
   await userEvent.press(screen.getByRole("button", { name: "Confirm private return" }));

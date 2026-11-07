@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   encodeFunctionData,
+  decodeFunctionData,
   erc20Abi,
   parseAbi,
   getAddress,
@@ -11,6 +12,7 @@ import type { Hex } from "viem";
 import {
   RobinhoodWithdrawalPlanner,
   RobinhoodReturnPlanner,
+  robinhoodReturnProbeRecipient,
 } from "../../../src/adapters/earn/robinhood-exit-planner.ts";
 import type { RobinhoodExitProviders } from "../../../src/adapters/earn/robinhood-exit-planner.ts";
 import { ROBINHOOD_PROFILE } from "../../../src/adapters/earn/robinhood-vault.ts";
@@ -48,6 +50,8 @@ function setup(
   let quoted = 0;
   const amounts: bigint[] = [];
   const providers: RobinhoodExitProviders = {
+    returnProbeRecipient: async () =>
+      getAddress("0x0123456789abcdef102132435465768798a9bacb"),
     readState: async () => s,
     market: async () => ({ maxFeePerGas: 100n, maxPriorityFeePerGas: 10n }),
     prepare: async (calls, fees) => {
@@ -252,6 +256,81 @@ test("return converges both directions before exactly one quote, then estimates 
   assert.equal(p.residualTargetMet, true);
   assert.ok(f.amounts.includes(500000n));
   assert.ok(f.amounts.includes(989500n));
+});
+test("return probes a verified empty recipient before quoting instead of a funded burn address", async () => {
+  const empty = getAddress("0x0123456789abcdef102132435465768798a9bacb");
+  const seen: string[] = [];
+  const f = setup(
+    {
+      returnProbeRecipient: async () => empty,
+      prepare: async (calls, fees) => {
+        const transfer = decodeFunctionData({
+          abi: erc20Abi,
+          data: calls[0]!.data,
+        });
+        assert.equal(transfer.functionName, "transfer");
+        const to = transfer.args![0] as string;
+        seen.push(to);
+        return {
+          ...(await setup().providers.prepare(calls, fees)),
+          feeCap:
+            to.toLowerCase() === "0x000000000000000000000000000000000000dead"
+              ? 17632n
+              : 20033n,
+        };
+      },
+    },
+    { ...state, shares: 0n },
+  );
+  const plan = await new RobinhoodReturnPlanner(
+    { rpcUrl: "test" },
+    undefined,
+    f.providers,
+    () => now,
+  ).plan({ ...request, confidentialAccount: C });
+  assert.equal(seen[0], empty);
+  assert.equal(plan.maximumTokenFeeAtoms, "21035");
+  assert.equal(plan.amountAtoms, "978965");
+  assert.equal(plan.finalQuoteCapAtoms, "20033");
+  assert.equal(f.quoted, 1);
+});
+test("return probe rejects funded, low-calldata-cost and unresolved candidates", async () => {
+  const calls: any[] = [];
+  let reads = 0,
+    generated = 0;
+  const client = {
+    readContract: async (request: any) => {
+      calls.push(request);
+      return reads++ === 0 ? 123n : 0n;
+    },
+  } as any;
+  const result = await robinhoodReturnProbeRecipient(client, state, () => {
+    generated++;
+    return new Uint8Array(20).fill(generated === 1 ? 0 : generated);
+  });
+  assert.equal(result.toLowerCase(), "0x" + "03".repeat(20));
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].blockNumber, state.block.number);
+  assert.equal(calls[0].address, ROBINHOOD_PROFILE.token);
+  assert.equal(calls[0].functionName, "balanceOf");
+  await assert.rejects(
+    robinhoodReturnProbeRecipient(
+      { readContract: async () => 1n } as any,
+      state,
+      () => new Uint8Array(20).fill(4),
+    ),
+  );
+  await assert.rejects(
+    robinhoodReturnProbeRecipient(
+      {
+        readContract: async () => {
+          throw Error("RPC unavailable");
+        },
+      } as any,
+      state,
+      () => new Uint8Array(20).fill(4),
+    ),
+  );
 });
 test("bound quote cannot silently change amount and exact-recipient fee increase rejects", async () => {
   let prepares = 0;
