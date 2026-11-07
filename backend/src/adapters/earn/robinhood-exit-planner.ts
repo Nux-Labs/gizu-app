@@ -11,6 +11,7 @@ import {
   toHex,
 } from "viem";
 import type { Address, Hex } from "viem";
+import { randomBytes } from "node:crypto";
 import { entryPoint08Address } from "viem/account-abstraction";
 import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
 import { auroraApi } from "../aurora/http.ts";
@@ -70,6 +71,30 @@ export interface RobinhoodExitProviders {
   ) => Promise<void>;
   price: () => Promise<{ tokenPriceMicroUsdc: bigint; observedAtMs: number }>;
   quote: (input: NativeQuoteInput) => Promise<NativeVerifiedQuote>;
+  returnProbeRecipient: (state: RobinhoodState) => Promise<Address>;
+}
+
+/** An existing token holder is a cheaper transfer target than a fresh route deposit address. */
+export async function robinhoodReturnProbeRecipient(
+  client: Pick<ReturnType<typeof createPublicClient>, "readContract">,
+  state: RobinhoodState,
+  random: () => Uint8Array = () => randomBytes(20),
+): Promise<Address> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const bytes = random();
+    if (bytes.length !== 20 || bytes.some((v) => v === 0)) continue;
+    const candidate = getAddress("0x" + Buffer.from(bytes).toString("hex"));
+    if (same(candidate, state.owner)) continue;
+    const held = await client.readContract({
+      address: ROBINHOOD_PROFILE.token,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [candidate],
+      blockNumber: state.block.number,
+    });
+    if (held === 0n) return candidate;
+  }
+  throw new Error("No conservative USDG return probe recipient");
 }
 const accountAbi = parseAbi([
   "function execute(address target,uint256 value,bytes data)",
@@ -236,6 +261,7 @@ function runtime(
       owner = address;
       return readRobinhoodState(client, address, now);
     },
+    returnProbeRecipient: (state) => robinhoodReturnProbeRecipient(client, state),
     market: async () => (await requirePaymaster()).market(),
     prepare: async (calls, fees) =>
       (await requirePaymaster()).prepare(calls, fees),
@@ -570,6 +596,7 @@ export class RobinhoodReturnPlanner {
           args: [to, amount],
         }),
       });
+      const probeRecipient = await providers.returnProbeRecipient(s);
       let amount = s.token / 2n,
         budget = 0n,
         stable = false;
@@ -581,10 +608,7 @@ export class RobinhoodReturnPlanner {
           throw new Error("Insufficient or stale return balance");
         const probe = await providers.prepare(
           [
-            transfer(
-              getAddress("0x000000000000000000000000000000000000dEaD"),
-              amount,
-            ),
+            transfer(probeRecipient, amount),
           ],
           fees,
         );

@@ -88,12 +88,26 @@ export function createEarnRobinhoodService(
               signal: controller.signal,
             },
           );
-          if (!response.ok)
+          if (!response.ok) {
+            if (response.status === 404)
+              throw new Error("Robinhood planning has not been deployed yet.");
+            if (kind === "hoodTokenReturn") {
+              let code: unknown;
+              try {
+                code = (await response.json())?.code;
+              } catch {
+                /* Keep a safe return-specific message. */
+              }
+              throw new Error(
+                code === "EARN_RETURN_QUOTE_FEE_CHANGED"
+                  ? "The private return network fee changed before review. Your USDG remains in the investment wallet. Refresh the return quote; no new vault withdrawal is needed."
+                  : "A fresh private USDC return quote could not be verified. Your withdrawn USDG remains in the investment wallet. Refresh before approving the return.",
+              );
+            }
             throw new Error(
-              response.status === 404
-                ? "Robinhood planning has not been deployed yet."
-                : "Fresh USDG fees, shares and funding could not be verified. Refresh before authorizing.",
+              "Fresh USDG fees, shares and funding could not be verified. Refresh before authorizing.",
             );
+          }
           const value = await response.json();
           assertNotAborted(controller.signal);
           return parseRobinhoodPlan(value, intent, kind, operationId, revision, now());
