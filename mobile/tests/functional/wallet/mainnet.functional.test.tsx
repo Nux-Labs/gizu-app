@@ -1,10 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppRoot } from "@/application/AppRoot";
 import * as nativeBridge from "@/services/wallet/nativeBridge";
 import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
 import { validateMainnetPortfolio } from "@/features/wallet/MainnetWalletProvider";
 import portfolioFixtures from "../../../modules/gizu-stored-signer/ios/Tests/Fixtures/public-portfolio.json";
+import { deferred } from "../../support/renderApp";
 
 const funding = "0x" + "1".repeat(40);
 const returned = "0x" + "2".repeat(40);
@@ -65,6 +66,87 @@ async function open(value: MainnetPortfolioSnapshot = snapshot) {
   return { read, transfers };
 }
 afterEach(() => jest.restoreAllMocks());
+
+test("Home can unlock an expired private read and refresh the authenticated private amount", async () => {
+  const privateAsset = {
+    assetId: "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+    chainId: 143,
+    token: "confidential:monad-usdc",
+    symbol: "USDC (private)",
+    decimals: 6,
+    balanceAtoms: null,
+    observedAtoms: "2000000",
+    valueUsdcAtoms: null,
+    valuationUnavailable: true,
+    complete: false,
+    stale: true,
+    checkedAt: snapshot.checkedAt,
+  };
+  const unlock = jest.fn().mockResolvedValue({ status: "ready", walletId, accounts: [] });
+  jest.spyOn(nativeBridge, "getStoredSigner").mockReturnValue({
+    openWallet: unlock,
+  } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
+  const { read, transfers } = await open({
+    ...snapshot,
+    confidentialReadState: "locked",
+    ownedAssets: [privateAsset],
+  });
+  expect(screen.getByText("Previously checked: 2 USDC (private)")).toBeVisible();
+  read.mockResolvedValue({
+    ...snapshot,
+    confidentialReadState: "ready",
+    ownedAssets: [
+      {
+        ...privateAsset,
+        complete: true,
+        stale: false,
+        balanceAtoms: "2500000",
+        observedAtoms: "2500000",
+        valueUsdcAtoms: "2500000",
+        valuationUnavailable: false,
+      },
+    ],
+  });
+  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
+  expect(await screen.findByText("2.5 USDC (private)")).toBeVisible();
+  expect(screen.getByLabelText("5.5 USDC")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
+  expect(unlock).toHaveBeenCalledTimes(1);
+  expect(transfers).not.toHaveBeenCalled();
+});
+
+test("private unlock stays disabled during authentication and rejects another wallet", async () => {
+  const pending = deferred<import("@/domain/wallet/storedSigner").StoredWalletState>();
+  const unlock = jest.fn().mockReturnValue(pending.promise);
+  jest.spyOn(nativeBridge, "getStoredSigner").mockReturnValue({
+    openWallet: unlock,
+  } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
+  const { read } = await open({ ...snapshot, confidentialReadState: "locked", ownedAssets: [] });
+  const readsBefore = read.mock.calls.length;
+  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeDisabled();
+  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
+  await act(async () =>
+    pending.resolve({ status: "ready", walletId: "another-wallet", accounts: [] }),
+  );
+  expect(
+    await screen.findByText("Wallet changed. Sign in again before checking private balances."),
+  ).toBeVisible();
+  expect(unlock).toHaveBeenCalledTimes(1);
+  expect(read).toHaveBeenCalledTimes(readsBefore);
+  expect(screen.getByLabelText("3 USDC")).toBeVisible();
+});
+
+test("a declined private balance unlock preserves cached amounts and allows a retry", async () => {
+  jest.spyOn(nativeBridge, "getStoredSigner").mockReturnValue({
+    openWallet: jest.fn().mockRejectedValue(new Error("Wallet unlock cancelled.")),
+  } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
+  await open({ ...snapshot, confidentialReadState: "locked", ownedAssets: [] });
+  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
+  expect(await screen.findByText("Wallet unlock cancelled.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeEnabled();
+  expect(screen.getByLabelText("3 USDC")).toBeVisible();
+});
 
 test("shared Rust, Swift and Kotlin fixtures satisfy the Home contract", () => {
   for (const fixture of portfolioFixtures.cases) {

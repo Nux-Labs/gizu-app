@@ -3,7 +3,17 @@ package io.gizu.storedwallet
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.EarnReadAuthentication
 
-/** Expectation is assembled from authenticated native quote + finalized origin receipt only. */
+/** Fixed facts only: no wallet identity, amounts, envelopes, signatures or provider text. */
+internal fun sponsoredSettlementReadFacts(op: JSONObject): String {
+  val state = op.optJSONObject("stateBinding")
+  val baseline = state?.optJSONObject("privateBaseline")
+  val quote = state?.optJSONObject("routeProof")
+  val minimum = quote?.optString("minimumCreditAtoms")?.takeIf { it.isNotEmpty() }
+  val maximum = quote?.optString("maximumCreditAtoms")?.takeIf { it.isNotEmpty() }
+  return "baselinePresent=${baseline != null} baselineZero=${baseline?.optString("available") == "0"} estimateEqualsMinimum=${minimum != null && minimum == maximum}"
+}
+
+/** Expectation is assembled from authenticated native quote + verified origin receipt only. */
 internal fun sponsoredSettlementExpected(op: JSONObject): JSONObject {
   check(op.getString("status") == "finalized")
   val p = op.getJSONObject("proposal")
@@ -68,13 +78,15 @@ internal fun validateSponsoredSettlement(
   )
   check(now - row.getLong("timestampMs") in -5000L..60000L)
   if (expected.has("baselineEnvelope")) {
-    check(row.getString("verification") == "balance-delta-v1")
+    check(row.getString("verification") in setOf("balance-delta-v1", "operation-history-v1"))
     if (row.getString("status") == "credited")
       check(row.getString("settlementEnvelope").isNotEmpty())
   }
   val credited = row.getString("creditedAtoms")
   earnNumberWord(credited)
-  if (expected.has("maximumCreditAtoms"))
+  val historyVerified =
+    expected.has("baselineEnvelope") && row.optString("verification") == "operation-history-v1"
+  if (expected.has("maximumCreditAtoms") && !historyVerified)
     check(credited.toBigInteger() <= expected.getString("maximumCreditAtoms").toBigInteger())
   when (row.getString("status")) {
     "credited" ->
@@ -116,7 +128,12 @@ internal suspend fun readNativeSponsoredSettlement(
           .put("signature", auth.signature),
       )
       .put("expected", expected)
-  val response = NativeRpcTransport("$EARN_NATIVE_BACKEND/settlement").post(request.toString())
+  val response =
+    NativeRpcTransport(
+        "$EARN_NATIVE_BACKEND/settlement",
+        requestHeaders = mapOf("x-gizu-settlement-proof" to "operation-history-v1"),
+      )
+      .post(request.toString())
   return validateSponsoredSettlement(response, expected)
 }
 

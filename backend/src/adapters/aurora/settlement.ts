@@ -55,7 +55,7 @@ function decimalAtoms(value: unknown, decimals: number): bigint {
   if (result >= 1n << 256n) throw new Error("History quantity too large");
   return result;
 }
-/** Native journals bind finalized origin receipts, saved quotes and pre-spend snapshots.
+/** Native journals bind verified origin receipts, saved quotes and pre-spend snapshots.
  * Route SUCCESS alone is insufficient: a bounded authenticated balance delta is required.
  * Legacy journals without snapshots retain history reconciliation. */
 /** Sanitized settlement observation: no amounts, addresses, tokens or signed data. */
@@ -125,10 +125,88 @@ export class ConfidentialSettlement {
     );
   }
 
+  /** Actual operation history, not the quote's estimated output or an aggregate balance. */
+  private async historyCredit(
+    auth: ReadAuthentication,
+    expected: SettlementExpectation,
+    signer: string,
+  ): Promise<string> {
+    const session = await auroraApi(
+      this.key!,
+      this.fetcher,
+      "auth/authenticate/{key}",
+      { signedData: auth },
+    );
+    if (
+      typeof session.accessToken !== "string" ||
+      !session.accessToken ||
+      session.accessToken.length > 8192
+    )
+      throw new Error("Invalid session");
+    const query = new URLSearchParams({
+      depositAddress: expected.depositAddress,
+      status: "SUCCESS",
+      depositType: "ORIGIN_CHAIN",
+      recipientType: "CONFIDENTIAL_INTENTS",
+      refundType: "ORIGIN_CHAIN",
+      limit: "100",
+    });
+    const history = await auroraApi(
+      this.key!,
+      this.fetcher,
+      `account/history/{key}?${query}`,
+      undefined,
+      session.accessToken,
+    );
+    if (!Array.isArray(history.items) || history.items.length > 100)
+      throw new Error("Invalid settlement history");
+    const matches = history.items
+      .map(object)
+      .filter((row) => same(row.depositAddress, expected.depositAddress));
+    if (matches.length > 1) throw new Error("Ambiguous quote history");
+    const row = matches[0];
+    if (row?.status !== "SUCCESS") return "0";
+    if (
+      row.depositType !== "ORIGIN_CHAIN" ||
+      row.recipientType !== "CONFIDENTIAL_INTENTS" ||
+      row.refundType !== "ORIGIN_CHAIN" ||
+      row.originAsset !== expected.originAsset ||
+      row.destinationAsset !== monadUsdcAssetId ||
+      !same(row.recipient, signer) ||
+      !same(row.refundTo, expected.sourceOwner) ||
+      row.depositMemo != null ||
+      !Array.isArray(row.quoteTransactions) ||
+      row.quoteTransactions.length !== 1
+    )
+      throw new Error("Settlement route changed");
+    const created =
+      typeof row.createdAt === "string" ? Date.parse(row.createdAt) : NaN;
+    if (!Number.isSafeInteger(created) || created > this.now() + 5000)
+      throw new Error("Invalid settlement timestamp");
+    const tx = object(row.quoteTransactions[0]);
+    if (
+      !same(tx.sender, expected.sourceOwner) ||
+      !same(tx.txHash, expected.transactionHash)
+    )
+      throw new Error("Origin settlement differs");
+    if (
+      decimalAtoms(
+        row.amountInFormatted,
+        expected.originAsset === "nep141:eth.omft.near" ? 18 : 6,
+      ) !== BigInt(expected.amountAtoms)
+    )
+      throw new Error("Actual input changed");
+    const credit = decimalAtoms(row.amountOutFormatted, 6);
+    if (credit < BigInt(expected.minimumCreditAtoms))
+      throw new Error("Confidential credit below reviewed minimum");
+    return credit.toString();
+  }
+
   private async balanceCredit(
     auth: ReadAuthentication,
     expected: SettlementExpectation,
     signer: string,
+    allowOperationHistory: boolean,
   ) {
     const base = {
       operationId: expected.operationId,
@@ -150,17 +228,27 @@ export class ConfidentialSettlement {
       )
         throw new Error("Credit binding changed");
       const proof = object(saved.proof);
+      const verification =
+        proof.verification === undefined
+          ? "balance-delta-v1"
+          : proof.verification;
       if (
         proof.status !== "credited" ||
         !atoms(proof.creditedAtoms) ||
-        BigInt(proof.creditedAtoms) < BigInt(expected.minimumCreditAtoms)
+        BigInt(proof.creditedAtoms) < BigInt(expected.minimumCreditAtoms) ||
+        (verification !== "balance-delta-v1" &&
+          verification !== "operation-history-v1") ||
+        (verification === "operation-history-v1" && !allowOperationHistory) ||
+        (verification === "balance-delta-v1" &&
+          expected.maximumCreditAtoms !== undefined &&
+          BigInt(proof.creditedAtoms) > BigInt(expected.maximumCreditAtoms))
       )
         throw new Error("Invalid saved credit");
       return {
         ...base,
         creditedAtoms: proof.creditedAtoms,
         status: "credited" as const,
-        verification: "balance-delta-v1" as const,
+        verification,
         settlementEnvelope: expected.settlementEnvelope,
       };
     }
@@ -239,7 +327,9 @@ export class ConfidentialSettlement {
       try {
         this.diagnose?.({
           event: "earn.settlement",
-          route: /^[A-Z_]{1,32}$/.test(String(route.status)) ? String(route.status) : "OTHER",
+          route: /^[A-Z_]{1,32}$/.test(String(route.status))
+            ? String(route.status)
+            : "OTHER",
           credit,
           entries,
           ...facts,
@@ -281,14 +371,39 @@ export class ConfidentialSettlement {
         baselineAtMs: baseline.timestampMs as number,
       },
     );
-    if (delta < 0n || delta > BigInt(quote.maximumCreditAtoms))
-      throw new Error("Ambiguous private credit");
+    if (delta < 0n) throw new Error("Ambiguous private credit");
+    let verification: "balance-delta-v1" | "operation-history-v1" =
+      "balance-delta-v1";
+    if (delta > BigInt(quote.maximumCreditAtoms)) {
+      if (!allowOperationHistory) throw new Error("Ambiguous private credit");
+      try {
+        // amountOut is an estimate. Better execution needs an exact operation record;
+        // never enlarge a tolerance or attribute unrelated extra balance to this route.
+        const actual = await this.historyCredit(auth, expected, signer);
+        if (BigInt(actual) !== delta)
+          throw new Error("History and private credit differ");
+        verification = "operation-history-v1";
+      } catch {
+        throw new InfrastructureError(
+          503,
+          "EARN_SETTLEMENT_HISTORY_UNAVAILABLE",
+          "The exact private return record could not be verified. Retry verification; do not withdraw again.",
+        );
+      }
+    }
     if (delta < BigInt(expected.minimumCreditAtoms)) return pending;
+    const verifiedAt = this.now();
+    if (
+      verifiedAt - balance.timestampMs < -5000 ||
+      verifiedAt - balance.timestampMs > 60000
+    )
+      throw new Error("Private balance evidence expired during verification");
     const proof = {
       ...base,
+      timestampMs: verifiedAt,
       creditedAtoms: delta.toString(),
       status: "credited" as const,
-      verification: "balance-delta-v1" as const,
+      verification,
     };
     return {
       ...proof,
@@ -298,7 +413,11 @@ export class ConfidentialSettlement {
       }),
     };
   }
-  async read(auth: ReadAuthentication, expected: SettlementExpectation) {
+  async read(
+    auth: ReadAuthentication,
+    expected: SettlementExpectation,
+    allowOperationHistory = false,
+  ) {
     if (!this.key)
       throw new InfrastructureError(
         503,
@@ -360,80 +479,17 @@ export class ConfidentialSettlement {
         expected.quoteEnvelope ||
         expected.settlementEnvelope
       )
-        return await this.balanceCredit(auth, expected, signer);
-      const session = await auroraApi(
-        this.key,
-        this.fetcher,
-        "auth/authenticate/{key}",
-        { signedData: auth },
-      );
-      if (
-        typeof session.accessToken !== "string" ||
-        !session.accessToken ||
-        session.accessToken.length > 8192
-      )
-        throw new Error("Invalid session");
-      const query = new URLSearchParams({
-        depositAddress: expected.depositAddress,
-        status: "SUCCESS",
-        depositType: "ORIGIN_CHAIN",
-        recipientType: "CONFIDENTIAL_INTENTS",
-        refundType: "ORIGIN_CHAIN",
-        limit: "100",
-      });
-      const history = await auroraApi(
-        this.key,
-        this.fetcher,
-        `account/history/{key}?${query}`,
-        undefined,
-        session.accessToken,
-      );
-      if (!Array.isArray(history.items) || history.items.length > 100)
-        throw new Error("Invalid settlement history");
-      const matches = history.items
-        .map(object)
-        .filter((row) => same(row.depositAddress, expected.depositAddress));
-      if (matches.length > 1) throw new Error("Ambiguous quote history");
-      const row = matches[0];
-      let creditedAtoms = "0",
-        status: "credited" | "awaitingSettlement" = "awaitingSettlement";
-      if (row?.status === "SUCCESS") {
-        if (
-          row.depositType !== "ORIGIN_CHAIN" ||
-          row.recipientType !== "CONFIDENTIAL_INTENTS" ||
-          row.refundType !== "ORIGIN_CHAIN" ||
-          row.originAsset !== expected.originAsset ||
-          row.destinationAsset !== monadUsdcAssetId ||
-          !same(row.recipient, signer) ||
-          !same(row.refundTo, expected.sourceOwner) ||
-          row.depositMemo != null ||
-          !Array.isArray(row.quoteTransactions) ||
-          row.quoteTransactions.length !== 1
-        )
-          throw new Error("Settlement route changed");
-        const created =
-          typeof row.createdAt === "string" ? Date.parse(row.createdAt) : NaN;
-        if (!Number.isSafeInteger(created) || created > this.now() + 5000)
-          throw new Error("Invalid settlement timestamp");
-        const tx = object(row.quoteTransactions[0]);
-        if (
-          !same(tx.sender, expected.sourceOwner) ||
-          !same(tx.txHash, expected.transactionHash)
-        )
-          throw new Error("Origin settlement differs");
-        if (
-          decimalAtoms(
-            row.amountInFormatted,
-            expected.originAsset === "nep141:eth.omft.near" ? 18 : 6,
-          ) !== BigInt(expected.amountAtoms)
-        )
-          throw new Error("Actual input changed");
-        const credit = decimalAtoms(row.amountOutFormatted, 6);
-        if (credit < BigInt(expected.minimumCreditAtoms))
-          throw new Error("Confidential credit below reviewed minimum");
-        creditedAtoms = credit.toString();
-        status = "credited";
-      }
+        return await this.balanceCredit(
+          auth,
+          expected,
+          signer,
+          allowOperationHistory,
+        );
+      const creditedAtoms = await this.historyCredit(auth, expected, signer);
+      const status =
+        creditedAtoms === "0"
+          ? ("awaitingSettlement" as const)
+          : ("credited" as const);
       return {
         operationId: expected.operationId,
         revision: expected.revision,
@@ -447,7 +503,12 @@ export class ConfidentialSettlement {
         operationScoped: true as const,
         status,
       };
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof InfrastructureError &&
+        error.code === "EARN_SETTLEMENT_HISTORY_UNAVAILABLE"
+      )
+        throw error;
       throw new InfrastructureError(
         502,
         "EARN_SETTLEMENT_UNAVAILABLE",

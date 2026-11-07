@@ -242,6 +242,25 @@ class EarnPayoutEngineTest {
   }
 
   @Test
+  fun exactHistoryCreditRemainsAllocatableAboveTheOriginalQuoteEstimate() {
+    val op = f.source()
+    op
+      .getJSONObject("stateBinding")
+      .put("privateBaseline", JSONObject().put("baselineEnvelope", "baseline"))
+      .getJSONObject("routeProof")
+      .put("recoveryEnvelope", "quote")
+      .put("maximumCreditAtoms", "1000000")
+    op
+      .getJSONObject("settlement")
+      .put("verification", "operation-history-v1")
+      .put("settlementEnvelope", "authenticated-source-credit")
+    val source = nativePayoutSource(op, 11, PayoutIdentities(f.owner, f.C, f.recipient), 1)
+    assertEquals("1000000", source.getString("maximumCreditAtoms"))
+    assertEquals("authenticated-source-credit", source.getString("settlementEnvelope"))
+    assertFalse(source.has("allowOperationHistory"))
+  }
+
+  @Test
   fun onlyActualAuthenticatedCreditFromMatchingNativeOriginIsAllocatable() {
     val pair = PayoutIdentities(f.owner, f.C, f.recipient)
     val source = nativePayoutSource(f.source(), 11, pair, 1)

@@ -1315,7 +1315,7 @@ class GizuStoredSignerModule : Module() {
       id: String,
       revision: Int,
       promise: Promise ->
-      runCeremony(promise) { activity, store ->
+      runCeremony(promise, timeoutMs = 180_000L) { activity, store ->
         val journal =
           store.load().use { record ->
             requireSponsoredWallet(record, walletId)
@@ -1332,6 +1332,7 @@ class GizuStoredSignerModule : Module() {
         )
         val operation = journal.get(id)
         val expected = sponsoredSettlementExpected(operation)
+        android.util.Log.i("GizuSettlement", sponsoredSettlementReadFacts(operation))
         val identity =
           store.load().use { record ->
             requireSponsoredWallet(record, walletId)
@@ -1720,7 +1721,7 @@ class GizuStoredSignerModule : Module() {
       id: String,
       revision: Int,
       promise: Promise ->
-      runCeremony(promise) { activity, store ->
+      runCeremony(promise, timeoutMs = 180_000L) { activity, store ->
         val journal =
           store.load().use { record ->
             requireEarnExecutionWallet(record, walletId)

@@ -34,6 +34,31 @@ class EarnSponsoredSettlementTest {
       .put("status", "credited")
 
   @Test
+  fun savedSettlementDiagnosticsContainOnlyFixedFacts() {
+    val baseline = JSONObject().put("available", "0")
+    val quote =
+      JSONObject().put("minimumCreditAtoms", "2435822").put("maximumCreditAtoms", "2435822")
+    val op =
+      JSONObject()
+        .put("stateBinding", JSONObject().put("privateBaseline", baseline).put("routeProof", quote))
+    assertEquals(
+      "baselinePresent=true baselineZero=true estimateEqualsMinimum=true",
+      sponsoredSettlementReadFacts(op),
+    )
+    baseline.put("available", "private-value-that-must-not-be-logged")
+    quote.put("maximumCreditAtoms", "private-value-that-must-not-be-logged")
+    assertEquals(
+      "baselinePresent=true baselineZero=false estimateEqualsMinimum=false",
+      sponsoredSettlementReadFacts(op),
+    )
+    op.getJSONObject("stateBinding").remove("privateBaseline")
+    assertEquals(
+      "baselinePresent=false baselineZero=false estimateEqualsMinimum=false",
+      sponsoredSettlementReadFacts(op),
+    )
+  }
+
+  @Test
   fun onlyExactAuthenticatedOperationCreditCanCompleteFunding() {
     val proof = validateSponsoredSettlement(response().toString(), expected(), 100000)
     assertEquals("990000", sponsoredSettlementPublic(proof)["creditedAtoms"])
@@ -76,6 +101,37 @@ class EarnSponsoredSettlementTest {
           .put("settlementEnvelope", "secret-envelope")
       )
     assertFalse(public.toString().contains("secret-envelope"))
+  }
+
+  @Test
+  fun aboveEstimateCreditNeedsAnOperationHistoryAttestation() {
+    val expected =
+      expected()
+        .put("baselineEnvelope", "baseline")
+        .put("quoteEnvelope", "quote")
+        .put("maximumCreditAtoms", "995000")
+    val proof =
+      response()
+        .put("creditedAtoms", "995001")
+        .put("verification", "operation-history-v1")
+        .put("settlementEnvelope", "sealed-operation-credit")
+    assertEquals(
+      "995001",
+      validateSponsoredSettlement(proof.toString(), expected, 100000).getString("creditedAtoms"),
+    )
+    for (kind in listOf("balance-delta-v1", "unverified")) {
+      assertThrows(Exception::class.java) {
+        validateSponsoredSettlement(
+          JSONObject(proof.toString()).put("verification", kind).toString(),
+          expected,
+          100000,
+        )
+      }
+    }
+    proof.remove("settlementEnvelope")
+    assertThrows(Exception::class.java) {
+      validateSponsoredSettlement(proof.toString(), expected, 100000)
+    }
   }
 
   @Test

@@ -40,8 +40,15 @@ internal class NativeRpcTransport(
           readTimeout(60, TimeUnit.SECONDS)
           callTimeout(70, TimeUnit.SECONDS)
         }
+        if (endpoint == "$EARN_NATIVE_BACKEND/settlement") {
+          // Status, balance and optional exact history each use bounded provider requests.
+          // Their worst-case aggregate exceeds the ordinary 30-second transport budget.
+          readTimeout(80, TimeUnit.SECONDS)
+          callTimeout(90, TimeUnit.SECONDS)
+        }
       }
       .build(),
+  private val requestHeaders: Map<String, String> = emptyMap(),
 ) {
   suspend fun post(payload: String): String {
     val (status, body) = execute("POST", endpoint, payload)
@@ -69,6 +76,7 @@ internal class NativeRpcTransport(
       val request =
         Request.Builder()
           .url(url)
+          .apply { requestHeaders.forEach { (name, value) -> header(name, value) } }
           .method(
             method,
             if (method == "GET") null
@@ -168,6 +176,8 @@ internal fun safeEarnGatewayFailure(body: String): EarnGatewayFailure? {
         "Saved Earn recovery could not be verified. Reconcile before retrying."
       "EARN_SETTLEMENT_UNAVAILABLE" ->
         "Operation-specific confidential credit is unavailable. Reconcile before proceeding."
+      "EARN_SETTLEMENT_HISTORY_UNAVAILABLE" ->
+        "Your private balance can be checked on Home, but the exact return record could not be verified yet. Retry this check; do not withdraw from the vault again."
       else -> return null
     }
   return EarnGatewayFailure(code, message)

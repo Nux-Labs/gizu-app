@@ -85,6 +85,7 @@ async function input(
 }
 function balanceAttestedSource<T extends { quoteId: string; revision: number }>(
   source: T,
+  operationHistory = false,
 ) {
   const fields = Object.fromEntries(
     Object.entries(source).filter(
@@ -95,7 +96,7 @@ function balanceAttestedSource<T extends { quoteId: string; revision: number }>(
     ...fields,
     baselineEnvelope: "saved-baseline",
     quoteEnvelope: "saved-quote",
-    maximumCreditAtoms: "995001",
+    maximumCreditAtoms: operationHistory ? "995000" : "995001",
   };
   const canonical = Object.fromEntries(
     Object.entries(binding)
@@ -114,11 +115,39 @@ function balanceAttestedSource<T extends { quoteId: string; revision: number }>(
       "source-credit",
       {
         binding: canonical,
-        proof: { status: "credited", creditedAtoms: "995001" },
+        proof: {
+          status: "credited",
+          creditedAtoms: "995001",
+          ...(operationHistory ? { verification: "operation-history-v1" } : {}),
+        },
       },
     ),
   };
 }
+
+test("history-attested better execution supports source preparation and recovery without exposing negotiation fields", async () => {
+  const f = fixture((path) => {
+    if (path.includes("/account/history/"))
+      throw Error("Saved authenticated evidence must be reused");
+  });
+  const request = await input();
+  const source = balanceAttestedSource(request.source, true);
+  const prepared = await f.gateway.prepare({ ...request, source });
+  assert.equal(prepared.sourceCredit.creditedAtoms, "995001");
+  assert.equal(source.maximumCreditAtoms, "995000");
+  const recovered = await f
+    .restart()
+    .prepare({
+      ...request,
+      source,
+      recoveryEnvelope: prepared.recoveryEnvelope,
+    });
+  assert.equal(recovered.sourceCredit.creditedAtoms, "995001");
+  assert.equal(
+    f.calls.some((path) => path.includes("/account/history/")),
+    false,
+  );
+});
 function fixture(
   mutate?: (path: string, body: any, init?: RequestInit) => void,
   profileChainId: 1 | 4663 = 1,

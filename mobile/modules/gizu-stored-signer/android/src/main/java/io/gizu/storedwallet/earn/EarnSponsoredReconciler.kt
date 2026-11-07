@@ -113,9 +113,10 @@ internal suspend fun reconcileEarnSponsoredOperations(
       )
       val canonical =
         chainRpc.call("eth_getBlockByNumber", JSONArray().put(number).put(false)) as JSONObject
-      // Like Swap, a Robinhood vault deposit counts from its canonical receipt; Robinhood's L1
-      // finality trails by ~17 minutes. Other operations keep waiting for finalized receipts.
-      val awaitFinality = !(p.getLong("chainId") == 4663L && p.getString("kind") == "hoodDeposit")
+      // Robinhood execution uses a canonical receipt, like Swap. L1 finality can trail by ~17
+      // minutes. This only proves execution: a return still needs authenticated private credit.
+      // Keep the receipt, signed UserOp, event, fee and second canonical-block checks below.
+      val awaitFinality = p.getLong("chainId") != 4663L
       val final =
         if (awaitFinality)
           chainRpc.call("eth_getBlockByNumber", JSONArray().put("finalized").put(false))
