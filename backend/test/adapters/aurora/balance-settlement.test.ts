@@ -43,11 +43,15 @@ async function auth() {
     signature: "secp256k1:" + base58.encode(bytes),
   };
 }
-function setup(originAsset = monadUsdcAssetId) {
+function setup(
+  originAsset = monadUsdcAssetId,
+  diagnose?: (event: unknown) => void,
+) {
   let balance = "100",
     status = "SUCCESS";
   let clock = now,
     historyLatency = 0;
+  let historyStatus = 200;
   let history: Record<string, unknown>[] | undefined;
   const calls: string[] = [];
   const fetcher: typeof fetch = async (url) => {
@@ -56,6 +60,11 @@ function setup(originAsset = monadUsdcAssetId) {
     if (path.includes("history")) {
       if (!history) throw Error("History is unavailable");
       clock += historyLatency;
+      if (historyStatus !== 200)
+        return new Response(
+          JSON.stringify({ message: "PRIVATE-PROVIDER-TEXT " + C }),
+          { status: historyStatus },
+        );
       return new Response(JSON.stringify({ items: history }));
     }
     return new Response(
@@ -90,7 +99,7 @@ function setup(originAsset = monadUsdcAssetId) {
     );
   };
   const service = () =>
-    new ConfidentialSettlement("api-key", fetcher, () => clock, key);
+    new ConfidentialSettlement("api-key", fetcher, () => clock, key, diagnose);
   const quote = {
     operationId: "fund_1",
     revision: 1,
@@ -127,6 +136,9 @@ function setup(originAsset = monadUsdcAssetId) {
     calls,
     setHistoryLatency: (ms: number) => {
       historyLatency = ms;
+    },
+    setHistoryStatus: (status: number) => {
+      historyStatus = status;
     },
     setHistory: (rows: Record<string, unknown>[]) => {
       history = rows;
@@ -174,6 +186,70 @@ test("new settlement uses exact route and authenticated balance delta; portable 
       baselineEnvelope: baseline.baselineEnvelope + "a",
     }),
   );
+});
+
+test("history diagnostics distinguish provider access, origin-owner and credit mismatches without retaining private data", async () => {
+  for (const variant of ["access", "owner", "credit"] as const) {
+    const events: unknown[] = [];
+    const f = setup(monadUsdcAssetId, (event) => events.push(event));
+    const signed = await auth(),
+      baseline = await f.service().baseline(signed);
+    f.setBalance("995101");
+    f.setHistory([
+      {
+        ...exactHistory(),
+        ...(variant === "owner"
+          ? { quoteTransactions: [{ sender: deposit, txHash: tx }] }
+          : {}),
+        ...(variant === "credit" ? { amountOutFormatted: "0.995" } : {}),
+      },
+    ]);
+    if (variant === "access") f.setHistoryStatus(403);
+    await assert.rejects(
+      f
+        .service()
+        .read(
+          signed,
+          { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
+          true,
+        ),
+    );
+    const history = events.filter(
+      (event: any) => event.event === "earn.settlement-history",
+    );
+    assert.deepEqual(history, [
+      {
+        event: "earn.settlement-history",
+        stage:
+          variant === "access"
+            ? "history"
+            : variant === "owner"
+              ? "origin"
+              : "credit",
+        httpStatus: variant === "access" ? 403 : 200,
+        reason:
+          variant === "access"
+            ? "provider"
+            : variant === "owner"
+              ? "origin-owner"
+              : "balance-delta",
+      },
+    ]);
+    const logged = JSON.stringify(history);
+    for (const secret of [
+      C,
+      owner,
+      deposit,
+      tx,
+      "PRIVATE-PROVIDER-TEXT",
+      "995101",
+      "995000",
+      "api-key",
+      "jwt",
+      signed.signature,
+    ])
+      assert.equal(logged.includes(secret), false);
+  }
 });
 
 function exactHistory(originAsset = monadUsdcAssetId): Record<string, unknown> {
