@@ -69,6 +69,36 @@ export type SettlementDiagnostic = {
   baselineZero?: boolean;
   baselineAtMs?: number;
 };
+export type SettlementHistoryDiagnostic = {
+  event: "earn.settlement-history";
+  stage: "authenticate" | "history" | "route" | "origin" | "input" | "credit";
+  httpStatus: number;
+  reason:
+    | "provider"
+    | "malformed"
+    | "session"
+    | "ambiguous"
+    | "not-found"
+    | "not-settled"
+    | "route-type"
+    | "origin-asset"
+    | "destination-asset"
+    | "recipient"
+    | "refund-owner"
+    | "memo"
+    | "transaction-count"
+    | "timestamp"
+    | "origin-transaction"
+    | "origin-owner"
+    | "input-amount"
+    | "minimum-credit"
+    | "balance-delta";
+};
+class HistoryProofError extends Error {
+  constructor(readonly reason: SettlementHistoryDiagnostic["reason"]) {
+    super("Authenticated history did not match");
+  }
+}
 export class ConfidentialSettlement {
   private occupied = new Set<string>();
   private recovery: EarnRecoveryEnvelope;
@@ -79,11 +109,31 @@ export class ConfidentialSettlement {
     private now: () => number = Date.now,
     recoveryKey?: string,
     private diagnose?: (
-      event: SettlementDiagnostic | PrivateBalanceDiagnostic,
+      event:
+        | SettlementDiagnostic
+        | SettlementHistoryDiagnostic
+        | PrivateBalanceDiagnostic,
     ) => void,
   ) {
     this.recovery = new EarnRecoveryEnvelope(recoveryKey);
     this.balances = new ConfidentialBalance(key, fetcher, now, diagnose);
+  }
+
+  private historyDiagnostic(
+    stage: SettlementHistoryDiagnostic["stage"],
+    httpStatus: number,
+    reason: SettlementHistoryDiagnostic["reason"],
+  ) {
+    try {
+      this.diagnose?.({
+        event: "earn.settlement-history",
+        stage,
+        httpStatus,
+        reason,
+      });
+    } catch {
+      /* Diagnostics cannot change verification. */
+    }
   }
   async baseline(auth: ReadAuthentication) {
     if (!this.recovery.configured)
@@ -131,75 +181,111 @@ export class ConfidentialSettlement {
     expected: SettlementExpectation,
     signer: string,
   ): Promise<string> {
-    const session = await auroraApi(
-      this.key!,
-      this.fetcher,
-      "auth/authenticate/{key}",
-      { signedData: auth },
-    );
-    if (
-      typeof session.accessToken !== "string" ||
-      !session.accessToken ||
-      session.accessToken.length > 8192
-    )
-      throw new Error("Invalid session");
-    const query = new URLSearchParams({
-      depositAddress: expected.depositAddress,
-      status: "SUCCESS",
-      depositType: "ORIGIN_CHAIN",
-      recipientType: "CONFIDENTIAL_INTENTS",
-      refundType: "ORIGIN_CHAIN",
-      limit: "100",
-    });
-    const history = await auroraApi(
-      this.key!,
-      this.fetcher,
-      `account/history/{key}?${query}`,
-      undefined,
-      session.accessToken,
-    );
-    if (!Array.isArray(history.items) || history.items.length > 100)
-      throw new Error("Invalid settlement history");
-    const matches = history.items
-      .map(object)
-      .filter((row) => same(row.depositAddress, expected.depositAddress));
-    if (matches.length > 1) throw new Error("Ambiguous quote history");
-    const row = matches[0];
-    if (row?.status !== "SUCCESS") return "0";
-    if (
-      row.depositType !== "ORIGIN_CHAIN" ||
-      row.recipientType !== "CONFIDENTIAL_INTENTS" ||
-      row.refundType !== "ORIGIN_CHAIN" ||
-      row.originAsset !== expected.originAsset ||
-      row.destinationAsset !== monadUsdcAssetId ||
-      !same(row.recipient, signer) ||
-      !same(row.refundTo, expected.sourceOwner) ||
-      row.depositMemo != null ||
-      !Array.isArray(row.quoteTransactions) ||
-      row.quoteTransactions.length !== 1
-    )
-      throw new Error("Settlement route changed");
-    const created =
-      typeof row.createdAt === "string" ? Date.parse(row.createdAt) : NaN;
-    if (!Number.isSafeInteger(created) || created > this.now() + 5000)
-      throw new Error("Invalid settlement timestamp");
-    const tx = object(row.quoteTransactions[0]);
-    if (
-      !same(tx.sender, expected.sourceOwner) ||
-      !same(tx.txHash, expected.transactionHash)
-    )
-      throw new Error("Origin settlement differs");
-    if (
-      decimalAtoms(
-        row.amountInFormatted,
-        expected.originAsset === "nep141:eth.omft.near" ? 18 : 6,
-      ) !== BigInt(expected.amountAtoms)
-    )
-      throw new Error("Actual input changed");
-    const credit = decimalAtoms(row.amountOutFormatted, 6);
-    if (credit < BigInt(expected.minimumCreditAtoms))
-      throw new Error("Confidential credit below reviewed minimum");
-    return credit.toString();
+    let stage: SettlementHistoryDiagnostic["stage"] = "authenticate",
+      httpStatus = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      httpStatus = 0;
+      const response = await this.fetcher(input, init);
+      httpStatus = response.status;
+      return response;
+    };
+    const fail = (reason: SettlementHistoryDiagnostic["reason"]): never => {
+      throw new HistoryProofError(reason);
+    };
+    try {
+      const session = await auroraApi(
+        this.key!,
+        fetcher,
+        "auth/authenticate/{key}",
+        { signedData: auth },
+      );
+      if (
+        typeof session.accessToken !== "string" ||
+        !session.accessToken ||
+        session.accessToken.length > 8192
+      )
+        fail("session");
+      stage = "history";
+      const query = new URLSearchParams({
+        depositAddress: expected.depositAddress,
+        status: "SUCCESS",
+        depositType: "ORIGIN_CHAIN",
+        recipientType: "CONFIDENTIAL_INTENTS",
+        refundType: "ORIGIN_CHAIN",
+        limit: "100",
+      });
+      const history = await auroraApi(
+        this.key!,
+        fetcher,
+        `account/history/{key}?${query}`,
+        undefined,
+        session.accessToken as string,
+      );
+      if (!Array.isArray(history.items) || history.items.length > 100)
+        fail("malformed");
+      const matches = (history.items as unknown[])
+        .map(object)
+        .filter((row) => same(row.depositAddress, expected.depositAddress));
+      if (matches.length > 1) fail("ambiguous");
+      const row = matches[0];
+      if (row?.status !== "SUCCESS") {
+        this.historyDiagnostic(
+          stage,
+          httpStatus,
+          row ? "not-settled" : "not-found",
+        );
+        return "0";
+      }
+      stage = "route";
+      if (
+        row.depositType !== "ORIGIN_CHAIN" ||
+        row.recipientType !== "CONFIDENTIAL_INTENTS" ||
+        row.refundType !== "ORIGIN_CHAIN"
+      )
+        fail("route-type");
+      if (row.originAsset !== expected.originAsset) fail("origin-asset");
+      if (row.destinationAsset !== monadUsdcAssetId) fail("destination-asset");
+      if (!same(row.recipient, signer)) fail("recipient");
+      if (!same(row.refundTo, expected.sourceOwner)) fail("refund-owner");
+      if (row.depositMemo != null) fail("memo");
+      if (
+        !Array.isArray(row.quoteTransactions) ||
+        row.quoteTransactions.length !== 1
+      )
+        fail("transaction-count");
+      const created =
+        typeof row.createdAt === "string" ? Date.parse(row.createdAt) : NaN;
+      if (!Number.isSafeInteger(created) || created > this.now() + 5000)
+        fail("timestamp");
+      stage = "origin";
+      const tx = object((row.quoteTransactions as unknown[])[0]);
+      if (!same(tx.txHash, expected.transactionHash))
+        fail("origin-transaction");
+      if (!same(tx.sender, expected.sourceOwner)) fail("origin-owner");
+      stage = "input";
+      if (
+        decimalAtoms(
+          row.amountInFormatted,
+          expected.originAsset === "nep141:eth.omft.near" ? 18 : 6,
+        ) !== BigInt(expected.amountAtoms)
+      )
+        fail("input-amount");
+      stage = "credit";
+      const credit = decimalAtoms(row.amountOutFormatted, 6);
+      if (credit < BigInt(expected.minimumCreditAtoms)) fail("minimum-credit");
+      return credit.toString();
+    } catch (error) {
+      this.historyDiagnostic(
+        stage,
+        httpStatus,
+        error instanceof HistoryProofError
+          ? error.reason
+          : httpStatus >= 200 && httpStatus < 300
+            ? "malformed"
+            : "provider",
+      );
+      throw error;
+    }
   }
 
   private async balanceCredit(
@@ -380,8 +466,10 @@ export class ConfidentialSettlement {
         // amountOut is an estimate. Better execution needs an exact operation record;
         // never enlarge a tolerance or attribute unrelated extra balance to this route.
         const actual = await this.historyCredit(auth, expected, signer);
-        if (BigInt(actual) !== delta)
+        if (BigInt(actual) !== delta) {
+          this.historyDiagnostic("credit", 200, "balance-delta");
           throw new Error("History and private credit differ");
+        }
         verification = "operation-history-v1";
       } catch {
         throw new InfrastructureError(
