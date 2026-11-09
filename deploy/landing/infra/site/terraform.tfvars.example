@@ -1,0 +1,6 @@
+aws_account_id = "123456789012"
+owner = "REPLACE_WITH_OPERATING_TEAM"
+certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/REPLACE"
+github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+# Verified through the repository OIDC API on 2026-11-09; recheck before apply.
+github_oidc_subject = "repo:Nux-Labs@345999852/gizu-app@1381183565:ref:refs/heads/main"

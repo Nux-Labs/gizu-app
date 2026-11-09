@@ -1,0 +1,38 @@
+name: Landing rollback
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full SHA of a completed archived landing release
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: landing-production
+  cancel-in-progress: false
+jobs:
+  restore:
+    if: github.ref == 'refs/heads/main' && vars.LANDING_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.LANDING_DEPLOY_ROLE_ARN }}
+          aws-region: eu-central-1
+          allowed-account-ids: ${{ vars.LANDING_AWS_ACCOUNT_ID }}
+      - name: Restore verified archived release
+        env:
+          RELEASE: ${{ inputs.release_sha }}
+          LANDING_BUCKET: ${{ vars.LANDING_BUCKET }}
+          LANDING_DISTRIBUTION_ID: ${{ vars.LANDING_DISTRIBUTION_ID }}
+          LANDING_CLOUDFRONT_DOMAIN: ${{ vars.LANDING_CLOUDFRONT_DOMAIN }}
+        run: node deploy/landing/release.mjs rollback "$RELEASE"
