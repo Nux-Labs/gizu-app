@@ -2,7 +2,9 @@
 
 **Status:** draft for discussion, not an approved architecture or deployment runbook.  
 **Scope:** production-facing hackathon project; conserve credits and resources.  
-**Reviewed:** 5 November 2026, working tree on `main`, HEAD `0a46f1a`.  
+**Architecture reviewed:** 5 November 2026, working tree on `main`, HEAD `0a46f1a`.
+
+**Implementation started:** 9 November 2026; application delivery wiring is under [deploy/aws](../../deploy/aws/README.md). Infrastructure and cutover remain pending.
 **Owner and monthly spending ceiling:** to assign.
 
 The user confirmed production-first deployment, then clarified that Gizu is a
@@ -26,8 +28,20 @@ seven-day point-in-time recovery plus retained manual snapshots before
 destructive changes or database deletion. Manual snapshots are retained for at
 least seven days and longer while needed for rollback or database retirement.
 Cleanup mechanics and other tooling remain setup work. Routine releases automatically deploy from `main` after
-required checks pass; no per-release manual trigger/approval is selected. No resources,
-containers, application changes or deployment workflows have been created.
+required checks pass; no per-release manual trigger/approval is selected. No
+AWS resources have been created by this work. Local container, application and
+deployment-workflow wiring now exists; see the implementation status below.
+
+### Implementation status
+
+The first implementation slice adds the backend Dockerfile, production Compose,
+host NGINX configuration, host-directory preparation and SSH deployment script,
+plus an AWS delivery workflow reusing backend/web/mobile checks. Deployment is
+disabled until the repository enable flag and host cutover gate are set after
+qualification. A local image is not deployed infrastructure. OpenTofu/static IP,
+full software bootstrap, DB migration/TLS, certificates, restricted SSH setup,
+monitoring/notifications, capacity and native qualification remain open. See the
+[setup and release procedures](../../deploy/aws/README.md).
 
 ## 1. Lean starting point
 
@@ -180,10 +194,10 @@ this proposal's cost; managed hosting does not remove those responsibilities.
 | Anvil installer is Linux x64 only | Use an x86-64 image/host initially; no ARM selection without a separately verified runtime |
 | Node version drift | CI uses `24.15.0`; the Render guide documents `24.19.0`. Choose one reviewed Node 24 patch for build/runtime |
 | Backend requires PostgreSQL | Health checks ping it; retain runtime cache/invitation table/index creation in a dedicated application schema with narrow grants, selected. Preserve imported data and verify search_path |
-| Process-local quote/recovery/rate-limit records | Prove restart behavior; no autoscaling or overlapping API instances initially proposed |
+| Process-local quotes plus PostgreSQL recovery/coordination/admission records | Prove restart behavior and migrate all durable records consistently; no autoscaling or overlapping API instances initially proposed |
 | Hardcoded Render URLs in native code | Audit Swift, Kotlin, saved gateways and EAS profiles; changing `EXPO_PUBLIC_API_URL` alone does not migrate every call |
 | `EARN_GATEWAY_RECOVERY_KEY` | Preserve the existing 64-hex-character key across migration, restart and rollback; protected recovery copy, no routine regeneration |
-| Shutdown not explicitly wired in `server.ts` | Verify/add termination-to-`app.close()` handling, child cleanup and pool closure before treating replacement as graceful |
+| Shutdown now wired from SIGTERM/SIGINT to `app.close()` | Verify drain, child cleanup and pool closure in the actual container; bounded shutdown is not proof of operation recovery |
 | Associations live in `frontend/public/.well-known/` | Preserve approved JSON through build/artifact transfer and explicitly serve it at `gizu.io`, even though that hostname now serves `landing/`; `landing/` does not contain equivalent source files |
 | CI artifacts do not explicitly retain hidden files | Ensure `.well-known` survives artifact transfer; do not blindly upload repository secrets to include hidden files |
 | Root README differs from current frontend entry | Use the actual frontend/public invitation experience as evidence; resolve the README's mock-wallet description separately |
@@ -353,7 +367,10 @@ wallet access on signed iOS and Android builds; HTTP checks alone are insufficie
    OS-only x86-64 blueprint; verify actual regional blueprint ID before creation.
    Use the version-controlled bootstrap script for host software/configuration;
    configure OS patching, firewall, Compose, NGINX/TLS,
-   managed PostgreSQL network/TLS, protected secrets, log rotation and DB backups. Settle a secure
+   managed PostgreSQL network/TLS, protected secrets, log rotation and DB backups.
+   Allocate/attach a Lightsail static IPv4 before DNS and retain it for host recovery.
+   Configure NGINX to preserve the 1,398,400-byte recovery upload limit and proxy
+   `/wallet-recovery/` as well as `/v1/`. Settle a secure
    supported access method for Lightsail rather than assuming it has EC2
    instance-profile behavior.
 4. **Qualify without cutover:** use a temporary isolated slot on the chosen host
@@ -376,8 +393,11 @@ wallet access on signed iOS and Android builds; HTTP checks alone are insufficie
    a PR runner unrestricted host access.
    First cutover still needs its tester-update, data-transfer and recovery checks.
 7. **Cut over:** confirm testers have updated to the verified compatible native
-   build before switching traffic. Quiesce signup writes or use a verified
+   build before switching traffic. Quiesce all database writers or use a verified
    synchronization method, move authoritative data and update DNS/web config.
+   Inventory and preserve wallet recovery objects/versions/capacity, operation
+   coordination and upload admission in addition to signups/cache. Verify the
+   recovered revisions and consumed-operation claims before reopening writes.
    Initial funded acceptance requires separate authorization;
    first verify synthetic/read-only cases.
 8. **Observe then retire:** check errors, simulations, passkeys, signups and saved

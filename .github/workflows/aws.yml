@@ -1,0 +1,126 @@
+name: AWS delivery
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+# Never cancel a deployment. The server also holds a lock across replacement.
+concurrency:
+  group: aws-delivery-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  backend:
+    uses: ./.github/workflows/backend.yml
+  web:
+    uses: ./.github/workflows/web.yml
+    with:
+      api-url: https://api.gizu.io
+  mobile:
+    uses: ./.github/workflows/mobile.yml
+  image:
+    runs-on: ubuntu-latest
+    needs: [backend, web, mobile]
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.reference.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check deployment scripts
+        run: |
+          bash -n deploy/aws/deploy.sh
+          bash -n deploy/aws/prepare-host.sh
+          node --test deploy/aws/test/*.test.mjs
+      - uses: docker/setup-buildx-action@v3
+      - name: Choose registry path
+        id: reference
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: echo "image=ghcr.io/${REPOSITORY,,}/api" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: backend
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' }}
+          load: true
+          tags: ${{ steps.reference.outputs.image }}:${{ github.sha }}
+      - name: Verify packaged Anvil runs without network
+        env:
+          IMAGE: ${{ steps.reference.outputs.image }}:${{ github.sha }}
+        run: docker run --rm --network none --read-only "$IMAGE" /app/.runtime/anvil-v1.8.3/anvil-fork --version
+      - name: Check container health and shutdown with disposable PostgreSQL
+        env:
+          IMAGE: ${{ steps.reference.outputs.image }}:${{ github.sha }}
+        run: bash deploy/aws/test/runtime.sh "$IMAGE"
+      - name: Save immutable reference
+        if: github.event_name == 'push'
+        env:
+          IMAGE: ${{ steps.reference.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          printf '%s@%s\n' "$IMAGE" "$DIGEST" > api-image
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: api-image
+          path: api-image
+  deploy:
+    if: github.event_name == 'push' && vars.AWS_DEPLOY_ENABLED == 'true'
+    needs: [image]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-image
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: release/frontend
+      - uses: actions/download-artifact@v4
+        with:
+          name: landing-dist
+          path: release/landing
+      - name: Prepare approved associations
+        run: |
+          mkdir release/associations
+          cp release/frontend/.well-known/apple-app-site-association release/associations/
+          cp release/frontend/.well-known/assetlinks.json release/associations/
+      - name: Upload and deploy checked release
+        env:
+          DEPLOY_HOST: ${{ vars.AWS_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.AWS_DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.AWS_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.AWS_DEPLOY_KNOWN_HOSTS }}
+          RELEASE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9.-]+$ && "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$DEPLOY_KEY" && -n "$KNOWN_HOSTS" ]]
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          trap 'rm -f ~/.ssh/id_ed25519' EXIT
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          # RELEASE is a GitHub commit SHA, intentionally expanded locally.
+          [[ "$RELEASE" =~ ^[0-9a-f]{40}$ ]]
+          # shellcheck disable=SC2029
+          ssh "${ssh_args[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p /srv/gizu/incoming/$RELEASE"
+          scp "${ssh_args[@]}" -r release/. "$DEPLOY_USER@$DEPLOY_HOST:/srv/gizu/incoming/$RELEASE/"
+          # shellcheck disable=SC2029
+          ssh "${ssh_args[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "/usr/local/bin/gizu-deploy $RELEASE"
+      - name: Report deployment failure
+        if: failure()
+        run: echo '::error::AWS deployment failed. Check the host; automatic API recovery may also have failed. GitHub Actions failure notifications must be enabled for the operator.'

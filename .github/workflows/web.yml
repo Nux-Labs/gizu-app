@@ -5,10 +5,14 @@ on:
     branches: [main]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      api-url:
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
-  group: web-${{ github.event_name }}-${{ github.ref }}
+  group: web-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
@@ -36,11 +40,16 @@ jobs:
         run: npm run test --if-present
       # Each build script runs TypeScript before Vite.
       - name: Typecheck and build
-        run: npm run build
+        env:
+          BUILD_API_URL: ${{ inputs.api-url }}
+        run: |
+          if [ -n "$BUILD_API_URL" ]; then export VITE_API_URL="$BUILD_API_URL"; fi
+          npm run build
       - name: Upload static build
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.app }}-dist
           path: ${{ matrix.app }}/dist
+          include-hidden-files: true
           retention-days: 7
           if-no-files-found: error

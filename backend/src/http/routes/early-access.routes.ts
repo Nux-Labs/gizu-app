@@ -14,7 +14,7 @@ export function registerEarlyAccessRoutes(
   signups: EarlyAccess,
   development = false,
 ) {
-  const origins = new Set(["https://gizu.io", "https://www.gizu.io"]);
+  const origins = new Set(["https://gizu.io", "https://www.gizu.io", "https://app.gizu.io"]);
   if (development) {
     for (const host of ["localhost", "127.0.0.1"]) {
       origins.add(`http://${host}:5173`);

@@ -1,0 +1,9 @@
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!scripts/
+!scripts/install-anvil.mjs
+!scripts/anvil-fork.sh
