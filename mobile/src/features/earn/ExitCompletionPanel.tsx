@@ -161,7 +161,7 @@ export function ExitCompletionPanel({
                 ? "Private return verified for this part."
                 : "Some funds are still in the vault or waiting to return. Refresh the activity to continue."
               : result.complete
-                ? "Investment exit complete: zero shares, residual value below 0.50 USDC, and every submitted return has authenticated credit."
+                ? "Investment exit complete: zero shares, residual value below 0.50 USDC, and every submitted return has authenticated confirmation."
                 : "Investment exit incomplete: shares or asset value remain above the exit threshold."}
           </Typography>
           <Typography variant="caption">

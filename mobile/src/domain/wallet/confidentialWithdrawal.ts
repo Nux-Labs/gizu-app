@@ -73,6 +73,9 @@ export function parseConfidentialWithdrawal(
   const row = object(value);
   if (
     row.walletId !== walletId ||
+    row.minimumReturnReceipt !== undefined ||
+    row.verifiedMinimumAtoms !== undefined ||
+    row.minimumReturnEnvelope !== undefined ||
     typeof row.operationId !== "string" ||
     !/^[-a-zA-Z0-9_]{1,128}$/.test(row.operationId) ||
     !Number.isSafeInteger(row.revision) ||

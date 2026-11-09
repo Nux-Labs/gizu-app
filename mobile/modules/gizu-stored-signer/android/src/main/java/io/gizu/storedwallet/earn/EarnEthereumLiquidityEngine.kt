@@ -368,7 +368,7 @@ internal class EarnLiquidityEngine(
       val baseline =
         if (returning?.maximumCreditAtoms != null) {
           checkNotNull(returning?.recoveryEnvelope)
-          requireSequentialSourceCredit(journal.all(), op)
+          requireSequentialSourceCredit(journal.all(), op, journal.walletId, journal.generation)
           baselineReader(p, authority).also { authority() }
         } else null
       val state = stateReader(p)

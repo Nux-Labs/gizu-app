@@ -477,7 +477,7 @@ internal class EarnSponsoredEngine(
     val baseline =
       if (review.kind == "operation" && route?.maximumCreditAtoms != null) {
         checkNotNull(route.recoveryEnvelope)
-        requireSequentialSourceCredit(journal.all(), op)
+        requireSequentialSourceCredit(journal.all(), op, journal.walletId, journal.generation)
         baselineReader(p, authority).also {
           check(
             it.getString("confidentialAddress").equals(p.getString("confidentialAccount"), true)
@@ -715,7 +715,12 @@ internal fun nativeJsonEqual(a: Any?, b: Any?): Boolean =
   }
 
 /** A dedicated cycle account has at most one uncredited incoming route at a time. */
-internal fun requireSequentialSourceCredit(rows: List<JSONObject>, current: JSONObject) {
+internal fun requireSequentialSourceCredit(
+  rows: List<JSONObject>,
+  current: JSONObject,
+  walletId: String? = null,
+  generation: String? = null,
+) {
   val p = current.getJSONObject("proposal")
   val owner = p.getString("confidentialAccount")
   for (other in rows) {
@@ -730,7 +735,10 @@ internal fun requireSequentialSourceCredit(rows: List<JSONObject>, current: JSON
     if (other.sponsoredSpendSaved() && other.getString("status") != "reverted")
       check(
         other.getString("status") == "finalized" &&
-          other.optJSONObject("settlement")?.optString("status") == "credited"
+          (other.optJSONObject("settlement")?.optString("status") == "credited" ||
+            (other.has("minimumReturnReceipt") &&
+              savedMinimumReturnReceipt(other, checkNotNull(walletId), checkNotNull(generation)) !=
+                null))
       ) {
         "Previous source credit must settle first"
       }

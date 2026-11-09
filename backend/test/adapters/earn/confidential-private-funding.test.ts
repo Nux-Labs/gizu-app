@@ -435,172 +435,208 @@ async function signedReadAndIntent() {
   );
   return { signer, read, sign };
 }
-for (const change of [
-  "none",
-  "wrongChain",
-  "wrongToken",
-  "wrongRecipient",
-  "wrongAmount",
-  "failedReceipt",
-  "notFinal",
-  "referenceReorg",
-  "receiptReorg",
-  "staleReceipt",
-  "beforeReference",
-  "duplicateTransfer",
-  "transactionMismatch",
-  "reorgAfter",
-] as const)
-  test(`private funding production RPC verifies canonical finalized USDG transfer: ${change}`, async (t) => {
-    const f = fixture(),
-      { signer, read, sign } = await signedReadAndIntent();
-    const token = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
-    let prepared = false,
-      receiptBlockReads = 0;
-    const rpc = "https://private-funding-rpc.test/";
-    t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
-      const path = String(url),
-        body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      let result: any;
-      if (path === rpc) {
-        if (body.method === "eth_chainId")
-          result = toHex(change === "wrongChain" && prepared ? 143 : 4663);
-        else if (body.method === "eth_call") result = toHex(0n, { size: 32 });
-        else if (body.method === "eth_getBlockByNumber") {
-          const isReference =
-            body.params[0] === "0x64" ||
-            (!prepared && body.params[0] === "finalized");
-          const isReceipt = body.params[0] === "0x65";
-          if (isReceipt) receiptBlockReads++;
-          result = {
-            number: isReference
-              ? "0x64"
-              : isReceipt
-                ? "0x65"
-                : change === "notFinal"
-                  ? "0x64"
-                  : "0x66",
-            hash:
-              "0x" +
-              (isReference
-                ? change === "referenceReorg" && prepared
-                  ? "d"
-                  : "a"
+for (const receiptOnly of [false, true])
+  for (const change of [
+    "none",
+    "wrongChain",
+    "wrongToken",
+    "wrongRecipient",
+    "wrongAmount",
+    "failedReceipt",
+    "notFinal",
+    "referenceReorg",
+    "receiptReorg",
+    "staleReceipt",
+    "beforeReference",
+    "duplicateTransfer",
+    "transactionMismatch",
+    "reorgAfter",
+  ] as const)
+    test(`${receiptOnly ? "cashout receipt" : "private funding"} production RPC verifies canonical finalized transfer: ${change}`, async (t) => {
+      const f = fixture(),
+        { signer, read, sign } = await signedReadAndIntent();
+      const token = receiptOnly
+        ? "0x754704bc059f8c67012fed69bc8a327a5aafb603"
+        : "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+      const chainId = receiptOnly ? 143 : 4663;
+      let prepared = false,
+        receiptBlockReads = 0;
+      const rpc = receiptOnly
+        ? "https://rpc.monad.xyz/"
+        : "https://private-funding-rpc.test/";
+      t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
+        const path = String(url),
+          body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        let result: any;
+        if (path === rpc) {
+          if (body.method === "eth_chainId")
+            result = toHex(
+              change === "wrongChain" && prepared
+                ? receiptOnly
+                  ? 4663
+                  : 143
+                : chainId,
+            );
+          else if (body.method === "eth_call") result = toHex(0n, { size: 32 });
+          else if (body.method === "eth_getBlockByNumber") {
+            const isReference =
+              body.params[0] === "0x64" ||
+              (!prepared && body.params[0] === "finalized");
+            const isReceipt = body.params[0] === "0x65";
+            if (isReceipt) receiptBlockReads++;
+            result = {
+              number: isReference
+                ? "0x64"
                 : isReceipt
-                  ? change === "receiptReorg" ||
-                    (change === "reorgAfter" && receiptBlockReads > 1)
+                  ? "0x65"
+                  : change === "notFinal"
+                    ? "0x64"
+                    : "0x66",
+              hash:
+                "0x" +
+                (isReference
+                  ? change === "referenceReorg" && prepared
                     ? "d"
-                    : "c"
-                  : "e"
-              ).repeat(64),
-            timestamp: toHex(
-              BigInt(
-                (at - (change === "staleReceipt" && isReceipt ? 60000 : 0)) /
-                  1000,
+                    : "a"
+                  : isReceipt
+                    ? change === "receiptReorg" ||
+                      (change === "reorgAfter" && receiptBlockReads > 1)
+                      ? "d"
+                      : "c"
+                    : "e"
+                ).repeat(64),
+              timestamp: toHex(
+                BigInt(
+                  (at - (change === "staleReceipt" && isReceipt ? 60000 : 0)) /
+                    1000,
+                ),
               ),
-            ),
-            transactions: [],
-          };
-        } else if (body.method === "eth_getTransactionReceipt") {
-          const log = {
-            address:
-              change === "wrongToken"
-                ? "0x754704bc059f8c67012fed69bc8a327a5aafb603"
-                : token,
-            data: toHex(change === "wrongAmount" ? 989999n : 990000n, {
-              size: 32,
-            }),
-            topics: encodeEventTopics({
-              abi: erc20Abi,
-              eventName: "Transfer",
-              args: {
-                from: C as `0x${string}`,
-                to: (change === "wrongRecipient" ? signer : R) as `0x${string}`,
-              },
-            }),
-            transactionHash: tx,
-            blockHash: "0x" + "c".repeat(64),
-            blockNumber: "0x65",
-            logIndex: "0x7",
-            transactionIndex: "0x0",
-            removed: false,
-          };
+              transactions: [],
+            };
+          } else if (body.method === "eth_getTransactionReceipt") {
+            const log = {
+              address:
+                change === "wrongToken"
+                  ? receiptOnly
+                    ? "0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+                    : "0x754704bc059f8c67012fed69bc8a327a5aafb603"
+                  : token,
+              data: toHex(
+                change === "wrongAmount"
+                  ? receiptOnly
+                    ? 979999n
+                    : 989999n
+                  : receiptOnly
+                    ? 995012n
+                    : 990000n,
+                {
+                  size: 32,
+                },
+              ),
+              topics: encodeEventTopics({
+                abi: erc20Abi,
+                eventName: "Transfer",
+                args: {
+                  from: C as `0x${string}`,
+                  to: (change === "wrongRecipient"
+                    ? signer
+                    : R) as `0x${string}`,
+                },
+              }),
+              transactionHash: tx,
+              blockHash: "0x" + "c".repeat(64),
+              blockNumber: "0x65",
+              logIndex: "0x7",
+              transactionIndex: "0x0",
+              removed: false,
+            };
+            result = {
+              transactionHash:
+                change === "transactionMismatch" ? "0x" + "d".repeat(64) : tx,
+              blockHash: "0x" + "c".repeat(64),
+              blockNumber: change === "beforeReference" ? "0x64" : "0x65",
+              status: change === "failedReceipt" ? "0x0" : "0x1",
+              transactionIndex: "0x0",
+              gasUsed: "0x1",
+              cumulativeGasUsed: "0x1",
+              effectiveGasPrice: "0x1",
+              from: C,
+              to: R,
+              type: "0x2",
+              logs:
+                change === "duplicateTransfer"
+                  ? [log, { ...log, logIndex: "0x8" }]
+                  : [log],
+            };
+          } else throw Error("Unexpected RPC method " + body.method);
+          return Response.json({ jsonrpc: "2.0", id: body.id, result });
+        }
+        if (path.includes("/auth/authenticate/"))
+          result = { accessToken: "test-session" };
+        else if (path.includes("/tokens/"))
           result = {
-            transactionHash:
-              change === "transactionMismatch" ? "0x" + "d".repeat(64) : tx,
-            blockHash: "0x" + "c".repeat(64),
-            blockNumber: change === "beforeReference" ? "0x64" : "0x65",
-            status: change === "failedReceipt" ? "0x0" : "0x1",
-            transactionIndex: "0x0",
-            gasUsed: "0x1",
-            cumulativeGasUsed: "0x1",
-            effectiveGasPrice: "0x1",
-            from: C,
-            to: R,
-            type: "0x2",
-            logs:
-              change === "duplicateTransfer"
-                ? [log, { ...log, logIndex: "0x8" }]
-                : [log],
+            tokens: [
+              {
+                blockchain: "monad",
+                symbol: "USDC",
+                decimals: 6,
+                contractAddress: "0x754704bc059f8c67012fed69bc8a327a5aafb603",
+                assetId: source,
+              },
+            ],
           };
-        } else throw Error("Unexpected RPC method " + body.method);
-        return Response.json({ jsonrpc: "2.0", id: body.id, result });
-      }
-      if (path.includes("/auth/authenticate/"))
-        result = { accessToken: "test-session" };
-      else if (path.includes("/tokens/"))
-        result = {
-          tokens: [
-            {
-              blockchain: "monad",
-              symbol: "USDC",
-              decimals: 6,
-              contractAddress: "0x754704bc059f8c67012fed69bc8a327a5aafb603",
-              assetId: source,
+        else if (path.includes("/account/balances/"))
+          result = {
+            balances: [
+              { source: "private", tokenId: source, available: "3000000" },
+            ],
+          };
+        else if (path.includes("/quote/"))
+          result = await f.providers.quote(body);
+        else if (path.includes("/status/")) result = { status: "SUCCESS" };
+        else if (path.includes("/generate-intent/"))
+          result = {
+            intent: {
+              standard: "erc191",
+              payload: JSON.stringify({ ...f.message, signer_id: signer }),
             },
-          ],
-        };
-      else if (path.includes("/account/balances/"))
-        result = {
-          balances: [
-            { source: "private", tokenId: source, available: "3000000" },
-          ],
-        };
-      else if (path.includes("/quote/")) result = await f.providers.quote(body);
-      else if (path.includes("/generate-intent/"))
-        result = {
-          intent: {
-            standard: "erc191",
-            payload: JSON.stringify({ ...f.message, signer_id: signer }),
-          },
-        };
-      else if (path.includes("/account/history/"))
-        result = {
-          items: [
-            {
-              ...f.successfulHistory(),
-              refundTo: signer,
-              quoteTransactions: [{ sender: signer, txHash: "intent1" }],
-            },
-          ],
-        };
-      else throw Error("Unexpected provider route");
-      return Response.json(result);
+          };
+        else if (path.includes("/account/history/") && receiptOnly)
+          throw Error("History not allowed");
+        else if (path.includes("/account/history/"))
+          result = {
+            items: [
+              {
+                ...f.successfulHistory(),
+                refundTo: signer,
+                quoteTransactions: [{ sender: signer, txHash: "intent1" }],
+              },
+            ],
+          };
+        else throw Error("Unexpected provider route");
+        return Response.json(result);
+      });
+      const Gateway = receiptOnly
+        ? gateways.ConfidentialCashoutGateway
+        : (gateways as any).ConfidentialPrivateFundingGateway;
+      const gateway = new Gateway(
+        { ...f.config, auroraApiKey: "test-only", robinhoodRpcUrl: rpc },
+        undefined,
+        () => at,
+      );
+      const p = await gateway.prepare(
+        { ...f.prepare, signedData: read },
+        receiptOnly,
+      );
+      prepared = true;
+      const input = {
+        ...f.status(p),
+        signedData: read,
+        submittedIntent: await sign(p.intent.payload),
+      };
+      if (change === "none") {
+        const paid = await gateway.status(input, receiptOnly);
+        assert.equal(paid.status, "paid");
+        if (receiptOnly) assert.equal(paid.receivedAtoms, "995012");
+      } else await assert.rejects(gateway.status(input, receiptOnly));
     });
-    const Gateway = (gateways as any).ConfidentialPrivateFundingGateway;
-    const gateway = new Gateway(
-      { ...f.config, auroraApiKey: "test-only", robinhoodRpcUrl: rpc },
-      undefined,
-      () => at,
-    );
-    const p = await gateway.prepare({ ...f.prepare, signedData: read });
-    prepared = true;
-    const input = {
-      ...f.status(p),
-      signedData: read,
-      submittedIntent: await sign(p.intent.payload),
-    };
-    if (change === "none")
-      assert.equal((await gateway.status(input)).status, "paid");
-    else await assert.rejects(gateway.status(input));
-  });

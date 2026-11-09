@@ -1,4 +1,5 @@
 import { investmentDestination, assertInvestmentSlot } from "@/domain/earn/distribution";
+import { parseMinimumReturn, type MinimumReturnReceipt } from "./minimumReturn";
 import { parseEarnFeeProof, type EarnFeeProof } from "./policy";
 import { earnObject, earnAtoms } from "./vaultExecution";
 import type { EarnIntent } from "./types";
@@ -88,11 +89,14 @@ export type SponsoredOperation = {
     | "returnSubmitted"
     | "residualShares"
     | "awaitingSettlement"
+    | "minimumReceived"
     | "credited";
   userOperationHash?: string;
   transactionHash?: string;
   actualTokenFeeAtoms?: string;
   creditedAtoms?: string;
+  verifiedMinimumAtoms?: string;
+  minimumReturnReceipt?: MinimumReturnReceipt;
   residualShares?: string;
 };
 export type SourceFundingPlan = {
@@ -364,6 +368,7 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
         "returnSubmitted",
         "residualShares",
         "awaitingSettlement",
+        "minimumReceived",
         "credited",
       ].includes(String(r.status))
     )
@@ -398,6 +403,11 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
       throw new Error("Invalid native funding batch.");
     const amountAtoms = earnAtoms(r.amountAtoms),
       optional: Partial<SponsoredOperation> = {};
+    const minimumReturnReceipt = parseMinimumReturn(r, intent);
+    if (minimumReturnReceipt) {
+      optional.minimumReturnReceipt = minimumReturnReceipt;
+      optional.verifiedMinimumAtoms = minimumReturnReceipt.verifiedMinimumAtoms;
+    }
     if (r.canCancelPreparation !== undefined) {
       if (typeof r.canCancelPreparation !== "boolean")
         throw new Error("Invalid preparation cancellation state.");

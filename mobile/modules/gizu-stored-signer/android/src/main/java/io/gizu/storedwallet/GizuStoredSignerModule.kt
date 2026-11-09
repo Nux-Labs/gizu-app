@@ -1370,18 +1370,22 @@ class GizuStoredSignerModule : Module() {
               System.currentTimeMillis().toULong(),
             )
           }
-        val proof = readNativeSponsoredSettlement(auth, expected)
+        val proof = readNativeSponsoredSettlement(auth, expected, operation)
         currentCoroutineContext().ensureActive()
         requireForeground(activity)
         store.load().use { record ->
           requireSponsoredWallet(record, walletId)
           check(record.journalId == journal.generation && record.earnChain == identity.second)
+          requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
+          check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
         }
         store.load().use { record ->
           invalidateEarnPrivateCreditCaches(activity, record, operation, proof)
         }
         val committed =
-          journal.update(id, operation.getInt("revision")) { it.put("settlement", proof) }
+          journal.update(id, operation.getInt("revision")) {
+            saveSponsoredSettlement(it, proof, walletId, journal.generation)
+          }
         store.load().use { record -> fundingReservations(activity, record).complete(id) }
         journal.public(committed)
       }
@@ -1735,6 +1739,8 @@ class GizuStoredSignerModule : Module() {
           store.load().use { record ->
             requireEarnExecutionWallet(record, walletId)
             check(record.journalId == journal.generation)
+            requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
+            check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
             record.credential
           }
         confirm(
@@ -1758,6 +1764,8 @@ class GizuStoredSignerModule : Module() {
           store.load().use { record ->
             requireEarnExecutionWallet(record, walletId)
             check(record.journalId == journal.generation)
+            requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
+            check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
             cycleReadAuth(
               record,
               salt,
@@ -1766,18 +1774,22 @@ class GizuStoredSignerModule : Module() {
               System.currentTimeMillis().toULong(),
             )
           }
-        val proof = readNativeSponsoredSettlement(auth, expected)
+        val proof = readNativeSponsoredSettlement(auth, expected, operation)
         currentCoroutineContext().ensureActive()
         requireForeground(activity)
         store.load().use { record ->
           requireEarnExecutionWallet(record, walletId)
           check(record.journalId == journal.generation)
+          requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
+          check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
         }
         store.load().use { record ->
           invalidateEarnPrivateCreditCaches(activity, record, operation, proof)
         }
         journal.public(
-          journal.update(id, operation.getInt("revision")) { it.put("settlement", proof) }
+          journal.update(id, operation.getInt("revision")) {
+            saveSponsoredSettlement(it, proof, walletId, journal.generation)
+          }
         )
       }
     }
@@ -2680,9 +2692,9 @@ class GizuStoredSignerModule : Module() {
         check(record.id == wallet && record.journalId == generation && record.verified)
       }
     }
-    suspend fun auth(source: JSONObject): EarnReadAuthentication {
+    suspend fun auth(source: JSONObject, freshSalt: ByteArray? = null): EarnReadAuthentication {
       authority()
-      val salt = ConfidentialBalance().salt()
+      val salt = freshSalt ?: ConfidentialBalance().salt()
       val random = ByteArray(7).also { SecureRandom().nextBytes(it) }
       val started = System.currentTimeMillis()
       authority()
@@ -2715,7 +2727,23 @@ class GizuStoredSignerModule : Module() {
             .put("standard", "erc191")
             .put("payload", signed.payload)
             .put("signature", signed.signature)
-        }
+        },
+        authBatch = { sources ->
+          cashoutReadAuthentications(
+            sources,
+            {
+              authority()
+              ConfidentialBalance().salt()
+            },
+            { source, salt ->
+              val signed = auth(source, salt)
+              JSONObject()
+                .put("standard", "erc191")
+                .put("payload", signed.payload)
+                .put("signature", signed.signature)
+            },
+          )
+        },
       )
     val journal = store.load().use { confidentialWithdrawalJournal(activity, it) }
     return ConfidentialWithdrawalEngine(

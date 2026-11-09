@@ -659,3 +659,92 @@ Operational notes:
 - On a 3 USDC budget the 10% hold leg lost about half to a fixed route fee
   (0.2987 USDC in, 0.147037 USDG out).
 
+
+### November 9: minimum return confirmation without history
+
+New Android vault returns negotiate `minimum-return-v1`. This is an explicit
+provider-backed lower-bound confirmation, not an exact output record or an
+independently verifiable private-chain proof. It requires the original sealed
+quote and pre-funding balance snapshot, fresh account-owner read authentication,
+success for that saved route, a matching canonical source-chain funding receipt,
+and a private USDC increase covering the quoted guaranteed minimum. Robinhood
+source verification uses canonical execution receipts without waiting for delayed
+L1 finality; Ethereum preserves finalized execution checks.
+
+The response is `minimumReceived`, with `verifiedMinimumAtoms`, immutable
+`observedAtMs`, and a distinct `minimum-return` sealed envelope. It explicitly
+sets `exactAmountKnown: false` and `spendingAuthorized: false`. There is no
+`creditedAtoms` or `source-credit` envelope. Native journals retain this evidence
+separately from exact settlement; source-funding and existing exact-credit payout
+validators reject it. UI says “At least … USDC verified.” Exit completion still
+refreshes native operation evidence and the investment wallet's shares/residuals.
+
+The durable PostgreSQL exclusion ledger retains a permanent per-private-account
+observation sequence and an immutable record per route. Account/route identities
+and financial binding commitments use domain-separated server-keyed HMACs; no raw
+wallet addresses, signatures, snapshots or user-to-wallet catalogue are stored.
+Records retain only these keyed commitments, the sequence, verified minimum and
+observation time. The tables are created by the adapter and have no TTL. Balance
+snapshots carry the sequence read before and after their authenticated balance
+observation. Committing a confirmation checks and advances that sequence atomically.
+Two phones/replicas cannot commit distinct returns against the same observation
+window. Rechecking an existing route reconstructs its original receipt without
+recounting or requiring its funds to remain unspent.
+
+An older unfenced snapshot is eligible only before that private account's first
+minimum confirmation. Overlapping older observations are rejected rather than
+reconstructed from a later aggregate balance. The existing signed operation must
+be reconciled; never re-fund it to resolve this error. Keep the exclusion tables
+and the stable recovery/HMAC key across deploys and database recovery. Resetting
+this ledger, restoring it to an older state, or rotating its key without a migration
+invalidates the anti-reuse guarantee and is not a supported maintenance procedure.
+Wallet backup restoration preserves the original financial bindings and migrates
+native journal generation bindings only through the validated history importer.
+
+The full private balance remains an independent authenticated portfolio observation.
+Minimum receipts never add to that balance or cap it. Surplus and historical cycle
+accounts remain discoverable and available for fresh balance-based spending.
+
+“Withdraw from Gizu” separately negotiates `destination-receipt-group-v1`.
+It retains fresh private-balance checks and the user's native signing approval.
+A deterministic whole-plan identity binds the original private sources, exact
+amounts, distribution weights and the same 1–5 native-derived receiving wallets.
+Several source transfers may share a receiving wallet. All source ownership proofs,
+sealed quotes, exact signed private debits and successful routes must match before
+a group can complete. Partial signed progress reports the existing routes without
+requiring a funded child to be submitted again.
+
+The exact public delivery is verified per receiving slot by summing unique
+canonical finalized Monad USDC transfer events, rather than attributing each public
+transfer to one private source. Each slot must cover the sum of its quoted minima.
+The receiver is permanently bound to the whole plan, and a sealed zero-balance
+anchor permits later unsigned quotes to reuse that same receiver after earlier
+children funded it. No additional receiving wallets or consolidation transactions
+are introduced. Each canonical event is permanently bound to the immutable group,
+with only keyed commitments retained server-side. Native checks the canonical
+events independently and commits the group atomically, preserving already-paid
+child amounts and allocating the remaining actual delivery deterministically.
+Pending slots retain positive matching events rather than an estimated upper
+bound. A fully paid slot revalidates only its original canonical event set and
+fixed paid amount; later ordinary incoming funds remain separate and cannot block
+other pending slots. This proves public group delivery, not exact private-ledger provenance.
+
+Owner proofs are generated locally from one freshly read salt per bounded batch,
+and checked before provider reads. Read-only verification uses bounded concurrency
+and separate transport limits; financial approval/deadline checks are unchanged.
+The encrypted cashout journal is included in backup history. Trusted import checks
+the original generation, deterministic plan, signed children, nonce history and
+paid allocations before rebinding the destination journal generation. Group evidence
+and pending signed work remain recoverable on another phone.
+
+New cashout receipt claims are independent of the provider intent hash, so an
+older wallet backup can reconcile them with the saved signed payload. A legacy
+history-based event claim can be reused only when its exact original intent hash
+is available and the complete legacy ownership commitment matches. Missing legacy
+hashes and attempts by old clients to consume new-version claims fail closed;
+existing claims are never cleared or reassigned to make recovery succeed.
+
+Old exact settlement/history methods remain available for compatible saved flows.
+Private-funded-deposit payout completion still uses its existing history contract;
+it is not silently upgraded to the cashout receipt policy. No financial transaction
+is submitted by minimum-return verification or receipt reconciliation.

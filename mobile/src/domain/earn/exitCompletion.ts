@@ -5,6 +5,7 @@ import { assertFresh, conservativeResidual } from "./policy";
 import { hoodWrappedNative } from "./robinhoodExecution";
 import type { LiquidityOperation } from "./ethereumLiquidity";
 import type { SponsoredOperation } from "./sourceFunding";
+import { parseMinimumReturn } from "./minimumReturn";
 export type ExitSnapshot = {
   owner: string;
   profileId: EarnIntent["profileId"];
@@ -174,6 +175,7 @@ export function assertReturnCredits(
     )
       throw Error("Saved native progress must be reconciled.");
     seen.add(row.operationId);
+    const minimumReturnReceipt = parseMinimumReturn({ ...row }, intent);
     const isReturn =
       intent.profileId === "ethereum-usdc"
         ? ["returnUsdc", "returnEth"].includes(row.kind)
@@ -198,9 +200,9 @@ export function assertReturnCredits(
     }
     if (isReturn) {
       if (
-        row.status !== "credited" ||
+        (row.status !== "credited" && !minimumReturnReceipt) ||
         !hash(row.transactionHash) ||
-        BigInt(earnAtoms(row.creditedAtoms)) === 0n
+        (row.status === "credited" && BigInt(earnAtoms(row.creditedAtoms)) === 0n)
       )
         throw Error("Every submitted return needs authenticated operation credit.");
       returns.push(row.operationId);

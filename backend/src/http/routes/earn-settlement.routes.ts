@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "@fastify/type-provider-zod";
 import { z } from "zod";
 import type { ConfidentialSettlement } from "../../adapters/aurora/settlement.ts";
+import type { MinimumReturnVerifier } from "../../adapters/aurora/minimum-return.ts";
+import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
 const address = z.string().regex(/^0x[0-9a-f]{40}$/i),
   amount = z
     .string()
@@ -10,6 +12,7 @@ const address = z.string().regex(/^0x[0-9a-f]{40}$/i),
 export function registerEarnSettlementRoutes(
   app: FastifyInstance,
   settlement: Pick<ConfidentialSettlement, "read" | "baseline">,
+  minimum?: Pick<MinimumReturnVerifier, "minimumReturn" | "baseline">,
 ) {
   app.withTypeProvider<ZodTypeProvider>().post(
     "/v1/earn/native/settlement",
@@ -55,8 +58,24 @@ export function registerEarnSettlementRoutes(
           .strict(),
       },
     },
-    async (request, reply) =>
-      reply
+    async (request, reply) => {
+      if (request.headers["x-gizu-settlement-proof"] === "minimum-return-v1") {
+        if (!minimum)
+          throw new InfrastructureError(
+            503,
+            "EARN_MINIMUM_RETURN_UNAVAILABLE",
+            "Durable private return verification is unavailable.",
+          );
+        return reply
+          .header("Cache-Control", "no-store")
+          .send(
+            await minimum.minimumReturn(
+              request.body.signedData,
+              request.body.expected,
+            ),
+          );
+      }
+      return reply
         .header("Cache-Control", "no-store")
         .send(
           await settlement.read(
@@ -65,7 +84,8 @@ export function registerEarnSettlementRoutes(
             request.headers["x-gizu-settlement-proof"] ===
               "operation-history-v1",
           ),
-        ),
+        );
+    },
   );
   app.withTypeProvider<ZodTypeProvider>().post(
     "/v1/earn/native/settlement-baseline",
@@ -89,6 +109,6 @@ export function registerEarnSettlementRoutes(
     async (request, reply) =>
       reply
         .header("Cache-Control", "no-store")
-        .send(await settlement.baseline(request.body.signedData)),
+        .send(await (minimum ?? settlement).baseline(request.body.signedData)),
   );
 }

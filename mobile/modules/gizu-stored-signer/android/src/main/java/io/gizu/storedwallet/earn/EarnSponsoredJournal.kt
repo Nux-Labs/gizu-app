@@ -305,6 +305,8 @@ internal class EarnSponsoredJournal(
   fun public(op: JSONObject): Map<String, Any> {
     val p = op.getJSONObject("proposal")
     val status = op.getString("status")
+    val minimum =
+      if (status == "finalized") savedMinimumReturnReceipt(op, walletId, generation) else null
     return buildMap {
       put("operationId", op.getString("operationId"))
       put("walletId", walletId)
@@ -344,7 +346,8 @@ internal class EarnSponsoredJournal(
               if (op.optString("residualShares", "0") == "0") "withdrawn" else "residualShares"
             "sourceFunding",
             "hoodTokenReturn" ->
-              if (op.optJSONObject("settlement")?.optString("status") == "credited") "credited"
+              if (minimum != null) "minimumReceived"
+              else if (op.optJSONObject("settlement")?.optString("status") == "credited") "credited"
               else "awaitingSettlement"
             else -> error("Unsupported sponsored action")
           }
@@ -352,6 +355,10 @@ internal class EarnSponsoredJournal(
           "cancelled"
         else status,
       )
+      if (minimum != null) {
+        put("minimumReturnReceipt", minimumReturnPublic(minimum))
+        put("verifiedMinimumAtoms", minimum.getString("verifiedMinimumAtoms"))
+      }
       if (op.has("residualShares")) put("residualShares", op.getString("residualShares"))
       if (status == "finalized" && op.has("settlement")) {
         val settlement = op.getJSONObject("settlement")

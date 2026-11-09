@@ -125,9 +125,27 @@ internal class ConfidentialWithdrawalEngine(
     return journal.public(refreshUnsigned(checkNotNull(row)))
   }
 
+  private fun group(row: JSONObject): JSONObject =
+    store.load().use { record ->
+      identity(record)
+      val indices =
+        row.getJSONObject("plan").getJSONObject("proposal").getJSONArray("recipientIndices")
+      JSONObject()
+        .put("plan", JSONObject(row.getJSONObject("plan").toString()))
+        .put(
+          "recipients",
+          JSONArray(
+            (0 until indices.length()).map { slot ->
+              deriveAccountAddressRange(record.entropy, indices.getInt(slot).toUInt(), 1u).single()
+            }
+          ),
+        )
+    }
+
   private suspend fun refreshUnsigned(initial: JSONObject): JSONObject {
     var row = initial
     val sourceRows = sources(row)
+    val deliveryGroup = if (gateway.groupedReceipts) group(row) else null
     val balances = mutableMapOf<Int, Map<String, Any>>()
     for ((index, s) in sourceRows.withIndex()) {
       val unsigned =
@@ -182,12 +200,24 @@ internal class ConfidentialWithdrawalEngine(
             .single()
         }
       val prepared =
-        gateway.prepare(
-          row.getString("operationId") + "_" + i,
-          sourceRows[c.getInt("source")],
-          receiver,
-          c.getString("amountAtoms"),
-        )
+        if (deliveryGroup != null)
+          gateway.prepareGroup(
+            deliveryGroup,
+            i,
+            sourceRows[c.getInt("source")],
+            row
+              .getJSONArray("children")
+              .objects()
+              .firstOrNull { it.getInt("slot") == c.getInt("slot") && it.has("preparedText") }
+              ?.let { JSONObject(it.getString("preparedText")).getString("recoveryEnvelope") },
+          )
+        else
+          gateway.prepare(
+            row.getString("operationId") + "_" + i,
+            sourceRows[c.getInt("source")],
+            receiver,
+            c.getString("amountAtoms"),
+          )
       val payload = prepared.getJSONObject("intent").getString("payload")
       val nonce = JSONObject(payload).getString("nonce")
       journal.assertFreshNonce(
@@ -290,10 +320,14 @@ internal class ConfidentialWithdrawalEngine(
             .filter { it.optBoolean("signingPending") && !it.has("signedData") }
             .forEach { it.put("signingPending", false).put("status", "needsReview") }
         }
-    for (i in 0 until row.getJSONArray("children").length()) if (
-      child(row, i).has("signedData") && child(row, i).getString("status") != "paid"
-    )
-      row = reconcile(row, i)
+    if (gateway.groupedReceipts) {
+      if (row.getJSONArray("children").objects().any { it.has("signedData") })
+        row = reconcileGroup(row)
+    } else
+      for (i in 0 until row.getJSONArray("children").length()) if (
+        child(row, i).has("signedData") && child(row, i).getString("status") != "paid"
+      )
+        row = reconcile(row, i)
     if (row.getJSONArray("children").objects().all { it.getString("status") == "paid" })
       return journal.public(row)
     if (row.getJSONArray("children").objects().any { !it.has("signedData") })
@@ -304,7 +338,11 @@ internal class ConfidentialWithdrawalEngine(
     try {
       for (i in 0 until row.getJSONArray("children").length()) {
         val c = child(row, i)
-        if (c.getString("status") == "paid") continue
+        if (
+          c.getString("status") == "paid" ||
+            (gateway.groupedReceipts && c.optBoolean("routeSucceeded"))
+        )
+          continue
         if (c.has("signedData")) {
           texts.add(
             "Retry only the saved signed child ${i+1}: ${c.getString("amountAtoms")} input atoms. The original route was checked; rebroadcast is identical bytes."
@@ -332,6 +370,7 @@ internal class ConfidentialWithdrawalEngine(
         )
         hashes.add(signer.reviewHash())
       }
+      if (texts.isEmpty()) return journal.public(row)
       val view = journal.public(row)
       val receiverSummary =
         (view["payouts"] as List<*>).joinToString("\n") { p ->
@@ -350,7 +389,11 @@ internal class ConfidentialWithdrawalEngine(
       currentCoroutineContext().ensureActive()
       for (i in 0 until row.getJSONArray("children").length()) {
         var c = child(row, i)
-        if (c.getString("status") == "paid") continue
+        if (
+          c.getString("status") == "paid" ||
+            (gateway.groupedReceipts && c.optBoolean("routeSucceeded"))
+        )
+          continue
         authority()
         store.load().use { identity(it) }
         currentCoroutineContext().ensureActive()
@@ -398,9 +441,12 @@ internal class ConfidentialWithdrawalEngine(
         } catch (_: Exception) {
           return journal.public(row)
         }
-        row = reconcile(row, i)
-        if (child(row, i).getString("status") != "paid") return journal.public(row)
+        if (!gateway.groupedReceipts) {
+          row = reconcile(row, i)
+          if (child(row, i).getString("status") != "paid") return journal.public(row)
+        }
       }
+      if (gateway.groupedReceipts) row = reconcileGroup(row)
       return journal.public(row)
     } finally {
       signers.values.forEach {
@@ -408,6 +454,116 @@ internal class ConfidentialWithdrawalEngine(
         it.close()
       }
     }
+  }
+
+  private suspend fun reconcileGroup(row: JSONObject): JSONObject {
+    authority()
+    invalidate(row)
+    val deliveryGroup = group(row)
+    val requestedAt = System.currentTimeMillis()
+    val result = gateway.groupStatus(row, deliveryGroup)
+    check(
+      result.getBoolean("authenticated") &&
+        result.getBoolean("operationScoped") &&
+        result.getString("operationId") == row.getString("operationId") &&
+        result.getString("verification") == "destination-receipt-group-v1" &&
+        result.getString("groupId") == cashoutGroupIdentity(deliveryGroup)
+    )
+    // This timestamp is set by the native gateway immediately when the response arrives,
+    // before potentially slow canonical receipt reads; it is never accepted from the server.
+    val receivedAt = result.getLong("nativeReceivedAtMs")
+    check(receivedAt in requestedAt..System.currentTimeMillis())
+    check(receivedAt - result.getLong("observedAtMs") in -5000L..60000L)
+    val children = row.getJSONArray("children").objects()
+    val routes = result.getJSONArray("routes").objects()
+    check(routes.map { it.getInt("index") }.toSet().size == routes.size)
+    check(
+      routes.map { it.getInt("index") }.toSet() ==
+        children.indices.filter { children[it].has("signedData") }.toSet()
+    )
+    check(
+      routes.all {
+        it.getString("status") in
+          setOf(
+            "SUCCESS",
+            "KNOWN_DEPOSIT_TX",
+            "PENDING_DEPOSIT",
+            "INCOMPLETE_DEPOSIT",
+            "PROCESSING",
+          )
+      }
+    )
+    val allocations = mutableMapOf<Int, String>()
+    if (result.getString("status") == "paid") {
+      check(
+        children.all { it.has("signedData") } && routes.all { it.getString("status") == "SUCCESS" }
+      )
+      val slots = result.getJSONArray("slots").objects()
+      check(slots.size == deliveryGroup.getJSONArray("recipients").length())
+      val events = mutableSetOf<String>()
+      for ((slot, proof) in slots.withIndex()) {
+        check(
+          proof.getInt("slot") == slot &&
+            proof
+              .getString("destinationRecipient")
+              .equals(deliveryGroup.getJSONArray("recipients").getString(slot), true)
+        )
+        val indices = children.indices.filter { children[it].getInt("slot") == slot }
+        val selected = indices.map { children[it] }
+        check(
+          proof.getString("minimumDestinationAtoms") == selected.sumAtoms("minimumDestinationAtoms")
+        )
+        val receipts = proof.getJSONArray("receipts").objects()
+        for (receipt in receipts) check(
+          events.add(
+            earnHash(receipt.getString("transactionHash")) + ":" + receipt.getInt("logIndex")
+          )
+        )
+        val total = proof.getString("receivedAtoms").toBigInteger()
+        check(total == receipts.sumAtoms("receivedAtoms").toBigInteger())
+        val paid = selected.filter { it.getString("status") == "paid" }
+        for (c in paid) c.optJSONObject("receipt")?.let { saved ->
+          check(
+            receipts.any {
+              earnHash(it.getString("transactionHash")) ==
+                earnHash(saved.getString("transactionHash")) &&
+                it.getInt("logIndex") == saved.getInt("logIndex") &&
+                it.getString("receivedAtoms") == c.getString("receivedAtoms")
+            }
+          )
+        }
+        val unpaid = indices.filter { children[it].getString("status") != "paid" }
+        val fixed = paid.sumAtoms("receivedAtoms").toBigInteger()
+        val minimum = unpaid.map { children[it] }.sumAtoms("minimumDestinationAtoms").toBigInteger()
+        check(total >= fixed + minimum)
+        if (unpaid.isEmpty()) check(total == fixed)
+        for ((position, index) in unpaid.withIndex()) allocations[index] =
+          (children[index].getString("minimumDestinationAtoms").toBigInteger() +
+              if (position == unpaid.lastIndex) total - fixed - minimum else BigInteger.ZERO)
+            .toString()
+      }
+    } else check(result.getString("status") in setOf("pending", "awaitingReceipt"))
+    val updated =
+      update(row) { r ->
+        if (result.has("groupScan")) r.put("groupScan", result.getJSONArray("groupScan"))
+        for (route in routes) {
+          val c = child(r, route.getInt("index"))
+          if (c.getString("status") != "paid") {
+            c.put("routeSucceeded", route.getString("status") == "SUCCESS")
+            if (route.getString("status") == "SUCCESS" || c.getString("status") != "unknown")
+              c.put("status", "pending")
+          }
+        }
+        if (result.getString("status") == "paid") {
+          r.put("groupReceipt", result)
+          for ((index, amount) in allocations) child(r, index)
+            .put("status", "paid")
+            .put("receivedAtoms", amount)
+            .put("deliveryGroupId", result.getString("groupId"))
+        }
+      }
+    invalidate(updated)
+    return updated
   }
 
   private suspend fun reconcile(row: JSONObject, i: Int): JSONObject {

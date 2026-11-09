@@ -8,6 +8,61 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.walletDiscoveryCandidates
 
+internal val walletRecoveryHistoryDomains =
+  mapOf(
+    "gizu-discovered-wallets" to "gizu-discovered-wallets",
+    "gizu-operations" to "gizu-stored-operations",
+    "gizu-swap" to "gizu-swap",
+    "gizu-earn-vault" to "gizu-earn-vault",
+    "gizu-earn-sponsored" to "gizu-earn-sponsored",
+    "gizu-earn-payout" to "gizu-earn-payout",
+    "gizu-earn-liquidity" to "gizu-earn-liquidity",
+    "gizu-earn-withdrawal" to "gizu-earn-withdrawal",
+    "gizu-earn-deposit" to "gizu-earn-deposit",
+    "gizu-earn-quotes" to "gizu-earn-quotes",
+    "gizu-confidential-withdrawal" to "gizu-confidential-withdrawal",
+    "gizu-funding-reservations" to "gizu-funding-reservations",
+  )
+
+/** The same authenticated portable export is used by runtime and restore roundtrip checks. */
+internal fun exportWalletRecoveryHistory(
+  walletId: String,
+  generation: String,
+  key: javax.crypto.SecretKey,
+  names: List<String>,
+  archived: JSONArray,
+  read: (String) -> ByteArray,
+): JSONArray {
+  val result = JSONArray(archived.toString())
+  for ((prefix, domain) in walletRecoveryHistoryDomains) {
+    val selected =
+      names
+        .map { it.removeSuffix(".bak") }
+        .distinct()
+        .filter {
+          it.startsWith("$prefix-$generation") && it.endsWith(".enc") && !it.contains(".page-")
+        }
+        .sorted()
+    require(selected.size <= 4096)
+    for (name in selected) {
+      val clear =
+        CryptoEnvelope.decrypt(key, read(name), "$domain:v1:$walletId:$generation".toByteArray())
+      try {
+        result.put(
+          JSONObject()
+            .put("name", name)
+            .put("domain", domain)
+            .put("generation", generation)
+            .put("data", String(clear, Charsets.UTF_8))
+        )
+      } finally {
+        clear.fill(0)
+      }
+    }
+  }
+  return result
+}
+
 /** Sole application wiring. All recovery credentials and portable records remain native. */
 internal object WalletRecoveryRuntime {
   @Volatile private var context: Context? = null
@@ -52,21 +107,6 @@ internal object WalletRecoveryRuntime {
     engine(context).sync(walletId)
   }
 
-  private val domains =
-    mapOf(
-      "gizu-discovered-wallets" to "gizu-discovered-wallets",
-      "gizu-operations" to "gizu-stored-operations",
-      "gizu-swap" to "gizu-swap",
-      "gizu-earn-vault" to "gizu-earn-vault",
-      "gizu-earn-sponsored" to "gizu-earn-sponsored",
-      "gizu-earn-payout" to "gizu-earn-payout",
-      "gizu-earn-liquidity" to "gizu-earn-liquidity",
-      "gizu-earn-withdrawal" to "gizu-earn-withdrawal",
-      "gizu-earn-deposit" to "gizu-earn-deposit",
-      "gizu-earn-quotes" to "gizu-earn-quotes",
-      "gizu-funding-reservations" to "gizu-funding-reservations",
-    )
-
   private fun archiveFile(context: Context, record: WalletRecord) =
     AndroidWalletFile(context, "gizu-recovered-history-${record.journalId}.enc", 16 * 1024 * 1024)
 
@@ -89,44 +129,16 @@ internal object WalletRecoveryRuntime {
     }
   }
 
-  private fun exportHistory(context: Context, record: WalletRecord): JSONArray {
-    val result = archived(context, record)
-    for ((prefix, domain) in domains) {
-      val names =
-        context.noBackupFilesDir
-          .listFiles()
-          .orEmpty()
-          .map { it.name.removeSuffix(".bak") }
-          .distinct()
-          .filter {
-            it.startsWith("$prefix-${record.journalId}") &&
-              it.endsWith(".enc") &&
-              !it.contains(".page-")
-          }
-          .sorted()
-      require(names.size <= 4096)
-      for (name in names) {
-        val clear =
-          CryptoEnvelope.decrypt(
-            checkNotNull(AndroidWalletKeys().existing()),
-            AndroidWalletFile(context, name, 16 * 1024 * 1024).read(),
-            "$domain:v1:${record.id}:${record.journalId}".toByteArray(),
-          )
-        try {
-          result.put(
-            JSONObject()
-              .put("name", name)
-              .put("domain", domain)
-              .put("generation", record.journalId)
-              .put("data", String(clear, Charsets.UTF_8))
-          )
-        } finally {
-          clear.fill(0)
-        }
-      }
+  private fun exportHistory(context: Context, record: WalletRecord): JSONArray =
+    exportWalletRecoveryHistory(
+      record.id,
+      record.journalId,
+      checkNotNull(AndroidWalletKeys().existing()),
+      context.noBackupFilesDir.listFiles().orEmpty().map { it.name },
+      archived(context, record),
+    ) { name ->
+      AndroidWalletFile(context, name, 16 * 1024 * 1024).read()
     }
-    return result
-  }
 
   /**
    * Encrypted root commitments are cheap to inspect; never decrypt execution history on status
@@ -141,8 +153,9 @@ internal object WalletRecoveryRuntime {
         .filter { file ->
           file.name.endsWith(".enc") &&
             !file.name.contains(".page-") &&
-            (domains.keys.any { file.name.startsWith("$it-${record.journalId}") } ||
-              file.name == "gizu-recovered-history-${record.journalId}.enc")
+            (walletRecoveryHistoryDomains.keys.any {
+              file.name.startsWith("$it-${record.journalId}")
+            } || file.name == "gizu-recovered-history-${record.journalId}.enc")
         }
         .sortedBy { it.name }
     require(names.size <= 32768)
@@ -165,7 +178,7 @@ internal object WalletRecoveryRuntime {
     for (source in listOf(archived(context, record), history)) for (i in 0 until source.length()) {
       val row = source.getJSONObject(i)
       require(
-        row.getString("domain") in domains.values &&
+        row.getString("domain") in walletRecoveryHistoryDomains.values &&
           row.getString("data").toByteArray().size <= 16 * 1024 * 1024
       )
       val id =

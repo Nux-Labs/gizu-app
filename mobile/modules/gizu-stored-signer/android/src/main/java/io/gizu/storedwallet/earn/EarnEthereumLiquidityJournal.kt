@@ -133,6 +133,8 @@ internal class EarnLiquidityJournal(
   fun public(op: JSONObject): Map<String, Any> = buildMap {
     val p = op.getJSONObject("proposal")
     val status = op.getString("status")
+    val minimum =
+      if (status == "finalized") savedMinimumReturnReceipt(op, walletId, generation) else null
     put("operationId", op.getString("operationId"))
     put("walletId", walletId)
     put("revision", op.getInt("revision"))
@@ -163,7 +165,8 @@ internal class EarnLiquidityJournal(
           "fusionUsdcApproval" -> "approvalFinalized"
           "returnUsdc",
           "returnEth" ->
-            if (op.optJSONObject("settlement")?.optString("status") == "credited") "credited"
+            if (minimum != null) "minimumReceived"
+            else if (op.optJSONObject("settlement")?.optString("status") == "credited") "credited"
             else "awaitingSettlement"
           else -> error("Unsupported liquidity kind")
         }
@@ -188,6 +191,10 @@ internal class EarnLiquidityJournal(
         else cancellations.last().getString("transactionHash"),
       )
       put("cancellationTransactionHashes", cancellations.map { it.getString("transactionHash") })
+    }
+    if (minimum != null) {
+      put("minimumReturnReceipt", minimumReturnPublic(minimum))
+      put("verifiedMinimumAtoms", minimum.getString("verifiedMinimumAtoms"))
     }
     if (status == "finalized" && op.has("settlement"))
       put("settlement", sponsoredSettlementPublic(op.getJSONObject("settlement")))

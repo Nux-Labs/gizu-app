@@ -63,6 +63,11 @@ internal fun validateSponsoredSettlement(
   now: Long = System.currentTimeMillis(),
 ): JSONObject {
   val row = JSONObject(text)
+  check(
+    row.optString("verification") != "minimum-return-v1" &&
+      !row.has("verifiedMinimumAtoms") &&
+      !row.has("minimumReturnEnvelope")
+  )
   check(row.getBoolean("authenticated") && row.getBoolean("operationScoped"))
   check(
     row.getString("operationId") == expected.getString("operationId") &&
@@ -117,7 +122,9 @@ internal fun sponsoredSettlementPublic(row: JSONObject): Map<String, Any> = buil
 internal suspend fun readNativeSponsoredSettlement(
   auth: EarnReadAuthentication,
   expected: JSONObject,
+  operation: JSONObject? = null,
 ): JSONObject {
+  val capability = sponsoredSettlementCapability(operation)
   val request =
     JSONObject()
       .put(
@@ -131,10 +138,16 @@ internal suspend fun readNativeSponsoredSettlement(
   val response =
     NativeRpcTransport(
         "$EARN_NATIVE_BACKEND/settlement",
-        requestHeaders = mapOf("x-gizu-settlement-proof" to "operation-history-v1"),
+        requestHeaders = mapOf("x-gizu-settlement-proof" to capability),
       )
       .post(request.toString())
-  return validateSponsoredSettlement(response, expected)
+  return if (capability == "minimum-return-v1")
+    validateMinimumReturnObservation(
+      response,
+      expected,
+      operation!!.getJSONObject("proposal").getString("kind"),
+    )
+  else validateSponsoredSettlement(response, expected)
 }
 
 /** Read-only authentication uses the same existing native authority, never another passkey. */

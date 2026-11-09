@@ -7,7 +7,8 @@ import { createStoredWalletAccess } from "@/services/wallet/storedAccess";
 import { parseRobinhoodPlan, type RobinhoodKind } from "@/domain/earn/robinhoodExecution";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
 import { hoodIntent, hoodRaw } from "../../support/robinhoodEarn";
-import { exitSnapshot, returnRow } from "../../support/exitCompletion";
+import { exitSnapshot, returnRow, minimumReturnRow } from "../../support/exitCompletion";
+import { parseSponsoredOperations } from "@/domain/earn/sourceFunding";
 function operation(
   kind: RobinhoodKind = "hoodDeposit",
   status: SponsoredOperation["status"] = "invested",
@@ -49,7 +50,7 @@ beforeEach(() => {
   jest.spyOn(Linking, "addEventListener");
 });
 afterEach(() => jest.restoreAllMocks());
-function setup(saved: SponsoredOperation[] = [], available = true) {
+function setup(saved: SponsoredOperation[] = [], available = true, privateAtoms = "0") {
   const ready = {
     status: "ready",
     walletId: hoodIntent.walletId,
@@ -89,12 +90,27 @@ function setup(saved: SponsoredOperation[] = [], available = true) {
     cancelUnsigned: jest.fn(),
     cancel: jest.fn(),
   };
+  const portfolio = mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress);
+  portfolio.ownedAssets = [
+    {
+      assetId: "private-usdc",
+      chainId: 143,
+      token: "confidential:monad-usdc",
+      symbol: "USDC (private)",
+      decimals: 6,
+      balanceAtoms: privateAtoms,
+      observedAtoms: privateAtoms,
+      valueUsdcAtoms: privateAtoms,
+      checkedAt: Date.now(),
+      complete: true,
+      stale: false,
+      valuationUnavailable: false,
+    },
+  ];
   render(
     <AppRoot
       mainnetPortfolioService={{
-        getMainnetPortfolio: jest
-          .fn()
-          .mockResolvedValue(mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress)),
+        getMainnetPortfolio: jest.fn().mockResolvedValue(portfolio),
       }}
       accessService={createStoredWalletAccess(() => access)}
       earnWalletService={{
@@ -163,3 +179,83 @@ test("real AppRoot reports dust and zero-share failure only after explicit read-
   expect(await screen.findByText("Current residual value: 0.1 USDC")).toBeVisible();
   expect(screen.getByText(/Investment exit incomplete:/)).toBeVisible();
 });
+
+test("pending return confirms a minimum and exit rechecks native evidence without claiming an exact amount", async () => {
+  const pending = {
+    ...returnRow(),
+    status: "awaitingSettlement" as const,
+    creditedAtoms: undefined,
+  };
+  const service = setup([operation("hoodRedeemAll", "withdrawn"), pending], true, "5000000");
+  const confirmed = parseSponsoredOperations([minimumReturnRow()], hoodIntent)[0]!;
+  service.reconcileCredit.mockResolvedValueOnce(confirmed);
+  const fetcher = jest
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(
+      async () => ({ ok: true, json: async () => exitSnapshot(Date.now()) }) as Response,
+    );
+  await open();
+  await userEvent.press(await screen.findByRole("button", { name: "Check exit completion" }));
+  expect(
+    await screen.findByText("Every submitted return needs authenticated operation credit."),
+  ).toBeVisible();
+  expect(fetcher).not.toHaveBeenCalled();
+  await userEvent.press(screen.getByRole("button", { name: "Check USDG return credit" }));
+  expect(await screen.findByText("At least 0.899 USDC verified")).toBeVisible();
+  expect(
+    screen.getByText("Your full private balance is checked separately and includes any surplus."),
+  ).toBeVisible();
+  expect(screen.queryByText(/Confirmed return credit:/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Check USDG return credit" })).toBeNull();
+  // A displayed confirmation alone cannot complete exit: the service must reread native evidence.
+  await userEvent.press(screen.getByRole("button", { name: "Check exit completion" }));
+  expect(
+    await screen.findByText("Every submitted return needs authenticated operation credit."),
+  ).toBeVisible();
+  expect(fetcher).not.toHaveBeenCalled();
+  service.list.mockResolvedValue([operation("hoodRedeemAll", "withdrawn"), confirmed]);
+  await userEvent.press(screen.getByRole("button", { name: "Check exit completion" }));
+  expect(await screen.findByText(/Investment exit complete:/)).toBeVisible();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(service.list).toHaveBeenCalledTimes(4);
+  expect(service.execute).not.toHaveBeenCalled();
+  await userEvent.press(screen.getByRole("button", { name: "Back" }));
+  // The independent native portfolio includes all private cash, including surplus,
+  // once. A minimum receipt neither replaces it nor adds another portfolio credit.
+  expect(await screen.findByLabelText("24.990574 USDC")).toBeVisible();
+});
+
+test.each(["wrong-kind", "malformed"])(
+  "%s minimum evidence leaves the return pending and recoverable",
+  async (problem) => {
+    const pending = {
+      ...returnRow(),
+      status: "awaitingSettlement" as const,
+      creditedAtoms: undefined,
+    };
+    const service = setup([operation("hoodRedeemAll", "withdrawn"), pending]);
+    const row = minimumReturnRow();
+    const invalid =
+      problem === "wrong-kind"
+        ? { ...row, kind: "hoodDeposit" }
+        : {
+            ...row,
+            minimumReturnReceipt: { ...row.minimumReturnReceipt, spendingAuthorized: true },
+          };
+    service.reconcileCredit.mockImplementationOnce(
+      async () => parseSponsoredOperations([invalid], hoodIntent)[0]!,
+    );
+    const fetcher = jest.spyOn(globalThis, "fetch");
+    await open();
+    await userEvent.press(await screen.findByRole("button", { name: "Check USDG return credit" }));
+    expect(await screen.findByText("Invalid native minimum return evidence.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Check USDG return credit" })).toBeEnabled();
+    expect(screen.queryByText(/At least .* USDC verified/)).toBeNull();
+    await userEvent.press(screen.getByRole("button", { name: "Check exit completion" }));
+    expect(
+      await screen.findByText("Every submitted return needs authenticated operation credit."),
+    ).toBeVisible();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(service.execute).not.toHaveBeenCalled();
+  },
+);

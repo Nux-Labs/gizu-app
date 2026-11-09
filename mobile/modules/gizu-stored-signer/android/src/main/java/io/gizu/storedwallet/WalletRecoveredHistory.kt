@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.SwapOperation
+import uniffi.gizu_stored_signer_core.confidentialWithdrawalPlan
 
 private val recoveredDomains =
   mapOf(
@@ -19,6 +20,7 @@ private val recoveredDomains =
     "gizu-earn-withdrawal" to "gizu-earn-withdrawal",
     "gizu-earn-deposit" to "gizu-earn-deposit",
     "gizu-earn-quotes" to "gizu-earn-quotes",
+    "gizu-confidential-withdrawal" to "gizu-confidential-withdrawal",
     "gizu-funding-reservations" to "gizu-funding-reservations",
   )
 
@@ -137,7 +139,12 @@ internal class RecoveredHistoryImporter(
     return true
   }
 
-  private fun mergeEntry(a: JSONObject, b: JSONObject, sponsored: Boolean): JSONObject {
+  private fun mergeEntry(
+    a: JSONObject,
+    b: JSONObject,
+    sponsored: Boolean,
+    cashout: Boolean,
+  ): JSONObject {
     val ar = a.optInt("revision", 0)
     val br = b.optInt("revision", 0)
     require(ar >= 0 && br >= 0)
@@ -147,6 +154,7 @@ internal class RecoveredHistoryImporter(
     }
     val newer = if (ar > br) a else b
     val older = if (ar > br) b else a
+    if (cashout) validateCashoutMerge(older, newer)
     val signed = signedEvidence(older)
     val current = signedEvidence(newer)
     check(signed.all { (path, value) -> current[path] == value }) {
@@ -166,6 +174,7 @@ internal class RecoveredHistoryImporter(
     a: JSONArray,
     b: JSONArray,
     sponsored: Boolean = false,
+    cashout: Boolean = false,
     identity: (JSONObject) -> String,
   ): JSONArray {
     val rows = linkedMapOf<String, JSONObject>()
@@ -174,10 +183,200 @@ internal class RecoveredHistoryImporter(
       if (row.has("walletId")) check(row.getString("walletId") == walletId)
       val id = identity(row)
       require(id.length in 1..256)
-      rows[id] = rows[id]?.let { mergeEntry(it, row, sponsored) } ?: JSONObject(row.toString())
+      rows[id] =
+        rows[id]?.let { mergeEntry(it, row, sponsored, cashout) } ?: JSONObject(row.toString())
     }
     require(rows.size <= 100_000)
     return JSONArray(rows.values.toList())
+  }
+
+  /** Cashout plans and signed allocations are native immutable records across every generation. */
+  private fun validateCashoutMerge(older: JSONObject, newer: JSONObject) {
+    check(canonical(older.get("plan")) == canonical(newer.get("plan"))) {
+      "RECOVERY_CASHOUT_PLAN_CONFLICT"
+    }
+    val before = older.getJSONArray("children").objects()
+    val after = newer.getJSONArray("children").objects()
+    check(before.size == after.size)
+    for ((index, child) in before.withIndex()) {
+      val next = after[index]
+      for (field in listOf("source", "slot", "amountAtoms")) check(
+        canonical(child.get(field)) == canonical(next.get(field))
+      )
+      if (child.has("signedData"))
+        for (field in
+          listOf("signedData", "preparedText", "nonce", "payloadHash", "reservationId")) check(
+          canonical(child.get(field)) == canonical(next.get(field))
+        ) {
+          "RECOVERY_CASHOUT_SIGNED_CONFLICT"
+        }
+      child.optJSONArray("nonceHistory")?.let { history ->
+        val current = next.getJSONArray("nonceHistory")
+        check(current.length() >= history.length())
+        for (i in 0 until history.length()) check(history.getString(i) == current.getString(i))
+      }
+      if (child.getString("status") == "paid")
+        check(canonical(child) == canonical(next)) { "RECOVERY_CASHOUT_PAID_CONFLICT" }
+    }
+    if (older.optBoolean("cancelled")) check(newer.optBoolean("cancelled"))
+    if (older.has("groupReceipt"))
+      check(canonical(older.get("groupReceipt")) == canonical(newer.get("groupReceipt"))) {
+        "RECOVERY_CASHOUT_GROUP_CONFLICT"
+      }
+  }
+
+  private fun validateCashoutOperation(row: JSONObject) {
+    check(row.getString("walletId") == walletId && row.getInt("revision") > 0)
+    val plan = row.getJSONObject("plan")
+    val proposal = plan.getJSONObject("proposal")
+    check(proposal.getString("operationId") == row.getString("operationId"))
+    check(nativeJsonEqual(plan, JSONObject(confidentialWithdrawalPlan(proposal.toString()))))
+    val matrix = plan.getJSONArray("children").objects()
+    val children = row.getJSONArray("children").objects()
+    check(children.size == matrix.size)
+    val events = mutableSetOf<String>()
+    for ((index, child) in children.withIndex()) {
+      for (field in listOf("source", "slot", "amountAtoms")) check(
+        nativeJsonEqual(child.get(field), matrix[index].get(field))
+      )
+      val status = child.getString("status")
+      check(
+        status in
+          setOf("needsReview", "review", "unknown", "pending", "paid", "conflict", "cancelled")
+      )
+      val minimum = depositAtoms(child.getString("minimumDestinationAtoms"))
+      val received = depositAtoms(child.getString("receivedAtoms"))
+      if (child.has("signedData")) {
+        check(
+          !row.optBoolean("cancelled") && status !in setOf("needsReview", "review", "cancelled")
+        )
+        for (field in listOf("preparedText", "nonce", "payloadHash", "reservationId")) check(
+          child.getString(field).isNotEmpty()
+        )
+        val prepared = JSONObject(child.getString("preparedText"))
+        val payload = prepared.getJSONObject("intent").getString("payload")
+        val source =
+          proposal
+            .getJSONArray("sources")
+            .getJSONObject(child.getInt("source"))
+            .getString("address")
+        check(prepared.getString("operationId") == row.getString("operationId") + "_" + index)
+        check(
+          prepared.getString("confidentialAccount").equals(source, true) &&
+            JSONObject(payload).getString("signer_id").equals(source, true)
+        )
+        earnAddressWord(prepared.getString("destinationRecipient"))
+        val signed = JSONObject(child.getString("signedData"))
+        check(
+          signed.getString("standard") == "erc191" &&
+            signed.getString("payload") == payload &&
+            signed.getString("signature").isNotEmpty()
+        )
+        check(
+          JSONObject(payload).getString("nonce") == child.getString("nonce") &&
+            utf8EarnHash(payload) == child.getString("payloadHash")
+        )
+        check(
+          prepared.getString("amountAtoms") == child.getString("amountAtoms") &&
+            prepared.getString("minimumDestinationAtoms") ==
+              child.getString("minimumDestinationAtoms")
+        )
+      }
+      if (child.optBoolean("signingPending"))
+        check(!row.optBoolean("cancelled") && status != "cancelled")
+      if (status == "paid") {
+        check(child.has("signedData") && minimum.signum() > 0 && received >= minimum)
+        val receipt = child.optJSONObject("receipt")
+        if (receipt != null) {
+          val event =
+            earnHash(receipt.getString("transactionHash")) + ":" + receipt.getInt("logIndex")
+          check(receipt.getInt("logIndex") >= 0 && events.add(event))
+          if (receipt.has("receivedAtoms"))
+            check(receipt.getString("receivedAtoms") == child.getString("receivedAtoms"))
+        } else check(child.has("deliveryGroupId") && row.has("groupReceipt"))
+      } else check(received.signum() == 0)
+      if (row.optBoolean("cancelled")) check(status == "cancelled")
+    }
+    row.optJSONObject("groupReceipt")?.let { proof -> validateCashoutGroupReceipt(row, proof) }
+  }
+
+  private fun validateCashoutGroupReceipt(row: JSONObject, proof: JSONObject) {
+    check(
+      proof.getString("operationId") == row.getString("operationId") &&
+        proof.getString("status") == "paid"
+    )
+    check(
+      proof.get("authenticated") == true &&
+        proof.get("operationScoped") == true &&
+        proof.getString("verification") == "destination-receipt-group-v1"
+    )
+    val groupId = proof.getString("groupId")
+    check(groupId.matches(Regex("[0-9a-f]{64}")))
+    val children = row.getJSONArray("children").objects()
+    check(children.all { it.getString("status") == "paid" && it.has("signedData") })
+    val routes = proof.getJSONArray("routes").objects()
+    check(
+      routes.size == children.size &&
+        routes.map { it.getInt("index") }.toSet() == children.indices.toSet() &&
+        routes.all { it.getString("status") == "SUCCESS" }
+    )
+    val slots = proof.getJSONArray("slots").objects()
+    val group =
+      JSONObject()
+        .put("plan", row.getJSONObject("plan"))
+        .put("recipients", JSONArray(slots.map { it.getString("destinationRecipient") }))
+    check(cashoutGroupIdentity(group) == groupId)
+    check(
+      slots.size ==
+        row
+          .getJSONObject("plan")
+          .getJSONObject("proposal")
+          .getJSONArray("recipientIndices")
+          .length()
+    )
+    val events = mutableSetOf<String>()
+    for ((slot, receipt) in slots.withIndex()) {
+      check(receipt.getInt("slot") == slot)
+      val selected = children.filter { it.getInt("slot") == slot }
+      check(
+        receipt.getString("minimumDestinationAtoms") ==
+          selected.sumAtoms("minimumDestinationAtoms") &&
+          receipt.getString("receivedAtoms") == selected.sumAtoms("receivedAtoms")
+      )
+      val transfers = receipt.getJSONArray("receipts").objects()
+      check(
+        transfers.isNotEmpty() &&
+          transfers.sumAtoms("receivedAtoms") == receipt.getString("receivedAtoms")
+      )
+      for (transfer in transfers) {
+        check(depositAtoms(transfer.getString("receivedAtoms"), true).signum() > 0)
+        check(
+          transfer.getInt("logIndex") >= 0 &&
+            events.add(
+              earnHash(transfer.getString("transactionHash")) + ":" + transfer.getInt("logIndex")
+            )
+        )
+      }
+      for (child in selected) {
+        val prepared = JSONObject(child.getString("preparedText"))
+        check(
+          receipt
+            .getString("destinationRecipient")
+            .equals(prepared.getString("destinationRecipient"), true)
+        )
+        if (child.has("deliveryGroupId")) check(child.getString("deliveryGroupId") == groupId)
+        child.optJSONObject("receipt")?.let { legacy ->
+          check(
+            transfers.any {
+              earnHash(it.getString("transactionHash")) ==
+                earnHash(legacy.getString("transactionHash")) &&
+                it.getInt("logIndex") == legacy.getInt("logIndex") &&
+                it.getString("receivedAtoms") == child.getString("receivedAtoms")
+            }
+          )
+        }
+      }
+    }
   }
 
   private fun prepare(domain: String, data: String, sourceGeneration: String): Any {
@@ -186,6 +385,13 @@ internal class RecoveredHistoryImporter(
     val root = JSONObject(data)
     check(root.getInt("version") == 1)
     if (domain != "gizu-funding-reservations") check(root.getString("walletId") == walletId)
+    if (domain == "gizu-confidential-withdrawal") {
+      check(root.getString("generation") == sourceGeneration)
+      for (operation in root.getJSONArray("operations").objects()) validateCashoutOperation(
+        operation
+      )
+      root.put("generation", generation)
+    }
     if (domain == "gizu-earn-deposit") {
       check(root.getString("generation") == sourceGeneration)
       root.put("generation", generation)
@@ -196,6 +402,18 @@ internal class RecoveredHistoryImporter(
           row.getString("walletId") == walletId && row.getString("generation") == sourceGeneration
         )
         row.put("generation", generation)
+      }
+    }
+    if (domain in setOf("gizu-earn-sponsored", "gizu-earn-liquidity")) {
+      val operations = root.getJSONArray("operations")
+      for (i in 0 until operations.length()) {
+        val operation = operations.getJSONObject(i)
+        if (!operation.has("minimumReturnReceipt")) continue
+        // Only this authenticated import boundary can move already validated evidence between
+        // journal generations. Never repair a substituted source generation or wallet binding.
+        val receipt = checkNotNull(savedMinimumReturnReceipt(operation, walletId, sourceGeneration))
+        receipt.getJSONObject("nativeBinding").put("generation", generation)
+        checkNotNull(savedMinimumReturnReceipt(operation, walletId, generation))
       }
     }
     return root
@@ -246,6 +464,7 @@ internal class RecoveredHistoryImporter(
           a.getJSONArray(collection),
           b.getJSONArray(collection),
           domain == "gizu-earn-sponsored",
+          domain == "gizu-confidential-withdrawal",
         ) {
           it.getString(id)
         },
@@ -325,6 +544,8 @@ internal class RecoveredHistoryImporter(
         domain to if (existing == null) incoming else merge(domain, existing, incoming)
     }
     compactTransferHistory(pending)
+    for ((_, entry) in pending) if (entry.first == "gizu-confidential-withdrawal")
+      check(entry.second.toString().toByteArray().size < 8 * 1024 * 1024 - 1024)
     // Archive before the active root, so a crash can duplicate settled rows but never lose them.
     for ((target, entry) in pending.entries.sortedBy { if ("-archive-" in it.key) 0 else 1 }) {
       val clear = entry.second.toString().toByteArray()

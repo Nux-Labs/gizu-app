@@ -2,6 +2,9 @@ import { ConfidentialCashoutGateway, ConfidentialPrivateFundingGateway } from ".
 import { registerConfidentialCashoutRoutes, registerConfidentialPrivateFundingRoutes } from "./http/routes/confidential-cashout.routes.ts";
 import { PgRecoveryUploadAdmission, recoveryAdmissionDefaults } from "./adapters/postgres/pg-recovery-upload-admission.ts";
 import { PgWalletRecovery } from "./adapters/postgres/pg-wallet-recovery.ts";
+import { PgMinimumReturnStore } from "./adapters/postgres/pg-minimum-return.ts";
+import { MinimumReturnVerifier } from "./adapters/aurora/minimum-return.ts";
+import { MinimumReturnOriginReceipts } from "./adapters/evm/minimum-return-origin.ts";
 import { PgOperationCoordination } from "./adapters/postgres/pg-operation-coordination.ts";
 import { OperationCoordinator } from "./adapters/earn/operation-coordinator.ts";
 import { registerWalletRecoveryRoutes } from "./http/routes/wallet-recovery.routes.ts";
@@ -124,7 +127,19 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   registerEarnRoutes(app, new EarnPreflight(), new ConfidentialBalance(secret.AURORA_API_KEY,fetch,Date.now,(event)=>app.log.info({event:event.event,code:"EARN_PRIVATE_BALANCE_UNAVAILABLE",status:event.httpStatus},"earn private balance read failed")));
   const ethereumPlannerConfig={rpcUrl:secret.ETHEREUM_RPC_URL??"https://ethereum-rpc.publicnode.com",oneInchApiKey:secret.ONEINCH_API_KEY,anvilPath:secret.EARN_ANVIL_PATH};
   const auroraFeeQualification=secret.EARN_AURORA_FEE_QUALIFICATION_JSON?parseAuroraFeeQualification(secret.EARN_AURORA_FEE_QUALIFICATION_JSON):observedAuroraFeeQualification;
-  registerEarnSettlementRoutes(app,new ConfidentialSettlement(secret.AURORA_API_KEY,fetch,Date.now,secret.EARN_GATEWAY_RECOVERY_KEY,(event)=>app.log.info(event.event === "earn.settlement-history" ? {event:event.event,stage:event.stage,httpStatus:event.httpStatus,reason:event.reason} : {event:event.event,code:"EARN_SETTLEMENT_OBSERVATION"},"earn settlement check")));
+  registerEarnSettlementRoutes(
+    app,
+    new ConfidentialSettlement(secret.AURORA_API_KEY,fetch,Date.now,secret.EARN_GATEWAY_RECOVERY_KEY,(event)=>app.log.info(event.event === "earn.settlement-history" ? {event:event.event,stage:event.stage,httpStatus:event.httpStatus,reason:event.reason} : {event:event.event,code:"EARN_SETTLEMENT_OBSERVATION"},"earn settlement check")),
+    new MinimumReturnVerifier({
+      key: secret.AURORA_API_KEY,
+      recoveryKey: secret.EARN_GATEWAY_RECOVERY_KEY,
+      store: new PgMinimumReturnStore(pgPool),
+      origin: new MinimumReturnOriginReceipts({
+        ethereumRpcUrl: ethereumPlannerConfig.rpcUrl,
+        robinhoodRpcUrl: secret.ROBINHOOD_RPC_URL ?? "https://rpc.mainnet.chain.robinhood.com",
+      }),
+    }),
+  );
   const nativeGateway=new NativeEarnGateway({coordination,auroraHistoryQualified:secret.EARN_AURORA_HISTORY_QUALIFIED==="true",recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,pimlicoApiKey:secret.PIMLICO_API_KEY,auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification});
   const hoodConfig={rpcUrl:secret.ROBINHOOD_RPC_URL??"https://rpc.mainnet.chain.robinhood.com",pimlicoApiKey:secret.PIMLICO_API_KEY,anvilPath:secret.EARN_ANVIL_PATH,auroraApiKey:secret.AURORA_API_KEY};
   registerEarnPreviewRoutes(app,new RobinhoodDepositPreviewPlanner(hoodConfig),new EarnPayoutPreviewGateway({auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification}));

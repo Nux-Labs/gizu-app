@@ -16,6 +16,8 @@ import { createStoredWalletAccess } from "@/services/wallet/storedAccess";
 import type { EarnIntent } from "@/domain/earn/types";
 import type { VaultPlan, VaultOperation } from "@/domain/earn/vaultExecution";
 import { deferred } from "../../support/renderApp";
+import { minimumReturnRow } from "../../support/exitCompletion";
+import { parseLiquidityOperations } from "@/domain/earn/ethereumLiquidity";
 const walletId = "7aafcc2e-0891-4e31-a7d4-03780d7b4f12",
   address = "0x" + "1".repeat(40),
   invest = "0x" + "3".repeat(40);
@@ -499,6 +501,47 @@ test("saved pending return needs separate native cancellation approval and stays
   expect(await screen.findByText("ETH return · Cancellation confirmed")).toBeVisible();
   expect(liquidity.returnPlan).not.toHaveBeenCalled();
 });
+
+test.each(["returnUsdc", "returnEth"] as const)(
+  "%s verifies only a minimum and leaves the full private balance independent",
+  async (kind) => {
+    const confirmed = parseLiquidityOperations(
+      [{ ...minimumReturnRow(), kind, chainId: 1 }],
+      intent,
+    )[0]!;
+    const pending = {
+      ...confirmed,
+      status: "awaitingSettlement" as const,
+      verifiedMinimumAtoms: undefined,
+      minimumReturnReceipt: undefined,
+    };
+    const liquidity = {
+      available: jest.fn().mockResolvedValue(true),
+      list: jest.fn().mockResolvedValue([pending]),
+      bootstrap: jest.fn(),
+      returnPlan: jest.fn(),
+      execute: jest.fn(),
+      resume: jest.fn(),
+      reconcileCredit: jest.fn().mockResolvedValue(confirmed),
+      cancelUnsigned: jest.fn(),
+      cancelPending: jest.fn(),
+      cancel: jest.fn(),
+    };
+    setup([], undefined, liquidity);
+    await open();
+    await userEvent.press(
+      await screen.findByRole("button", { name: "Check returned private credit" }),
+    );
+    expect(await screen.findByText("At least 0.899 USDC verified")).toBeVisible();
+    expect(
+      screen.getByText("Your full private balance is checked separately and includes any surplus."),
+    ).toBeVisible();
+    expect(screen.queryByText(/Verified returned credit:/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Check returned private credit" })).toBeNull();
+    expect(liquidity.execute).not.toHaveBeenCalled();
+    expect(liquidity.reconcileCredit).toHaveBeenCalledWith(intent, pending);
+  },
+);
 
 test("cancelled unsigned payout resumes the same reserved child instead of allocating the role again", async () => {
   const child = {

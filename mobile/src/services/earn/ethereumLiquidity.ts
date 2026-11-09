@@ -131,7 +131,7 @@ export function createEarnLiquidityService(
     },
     async reconcileCredit(intent, op) {
       parseLiquidityOperations([op], intent);
-      if (op.status !== "awaitingSettlement" && op.status !== "credited")
+      if (!["awaitingSettlement", "credited", "minimumReceived"].includes(op.status))
         throw new Error("Confirm the origin return before authenticating settlement.");
       return (
         await action(intent, (b) =>

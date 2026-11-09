@@ -62,6 +62,9 @@ test("native withdrawal results reject source/C recipients, wrong networks, and 
     { chainId: 4663 },
     { walletId: "other" },
     { status: "paid", receivedAtoms: "1" },
+    { verifiedMinimumAtoms: "880000" },
+    { minimumReturnReceipt: {} },
+    { minimumReturnEnvelope: "private" },
   ])
     expect(() => parseEarnWithdrawals([{ ...operation, ...change }], hoodIntent)).toThrow();
 });

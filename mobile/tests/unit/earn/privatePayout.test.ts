@@ -43,6 +43,9 @@ test("payout requests use only the native funding reference and role, never aggr
     payoutRequest(intent, { ...funding, status: "awaitingSettlement" }, "invest"),
   ).toThrow();
   expect(() => payoutRequest(intent, { ...funding, walletId: "other" }, "invest")).toThrow();
+  expect(() =>
+    payoutRequest(intent, { ...funding, verifiedMinimumAtoms: "999901" }, "invest"),
+  ).toThrow();
 });
 test("public payout progress binds exact native role and refuses private payloads as completion evidence", () => {
   const row = {
@@ -68,6 +71,9 @@ test("public payout progress binds exact native role and refuses private payload
     { chainId: 4663 },
     { status: "paid" },
     { walletId: "other" },
+    { verifiedMinimumAtoms: "880000" },
+    { minimumReturnReceipt: {} },
+    { minimumReturnEnvelope: "private" },
   ])
     expect(() => parsePayoutOperations([{ ...row, ...change }], intent)).toThrow();
   const paid = {
