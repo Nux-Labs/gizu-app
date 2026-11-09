@@ -9,6 +9,18 @@ tsconfig.tsbuildinfo
 !.env.example
 coverage/
 
+# OpenTofu configuration, state and plans stay on the operator workstation.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+*.backend.hcl
+crash.log
+crash.*.log
+deploy/landing/infra/bootstrap/backend.tf
+
 # Expo mobile generated artifacts
 mobile/.expo/
 mobile/ios/

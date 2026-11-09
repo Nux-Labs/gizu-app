@@ -1,0 +1,9 @@
+# Copy to backend.tf only AFTER the bootstrap bucket has been applied locally.
+terraform {
+  backend "s3" {
+    key          = "bootstrap/terraform.tfstate"
+    region       = "eu-central-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

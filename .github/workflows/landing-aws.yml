@@ -1,0 +1,67 @@
+name: Landing AWS
+on:
+  pull_request:
+    paths: [landing/**, deploy/landing/**, frontend/public/.well-known/**, .github/workflows/landing-aws.yml]
+  push:
+    branches: [main]
+    paths: [landing/**, deploy/landing/**, frontend/public/.well-known/**, .github/workflows/landing-aws.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: landing-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: landing/package-lock.json
+      - name: Test packaging and failed-release recovery
+        run: node --test deploy/landing/test/*.test.mjs
+      - run: npm --prefix landing ci
+      - run: npm --prefix landing run build
+      - name: Package landing and canonical passkey associations
+        env:
+          RELEASE: ${{ github.sha }}
+        run: node deploy/landing/release.mjs package landing/dist landing-bundle "$RELEASE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landing-release
+          path: landing-bundle
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.LANDING_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: landing-release
+          path: landing-bundle
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.LANDING_DEPLOY_ROLE_ARN }}
+          aws-region: eu-central-1
+          allowed-account-ids: ${{ vars.LANDING_AWS_ACCOUNT_ID }}
+      - name: Publish, invalidate, verify and recover on failure
+        env:
+          LANDING_BUCKET: ${{ vars.LANDING_BUCKET }}
+          LANDING_DISTRIBUTION_ID: ${{ vars.LANDING_DISTRIBUTION_ID }}
+          LANDING_CLOUDFRONT_DOMAIN: ${{ vars.LANDING_CLOUDFRONT_DOMAIN }}
+        run: node deploy/landing/release.mjs deploy landing-bundle

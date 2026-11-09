@@ -1,5 +1,9 @@
 # Gizu AWS production deployment plan
 
+> The initial website phase now follows the approved [landing-only S3/CloudFront
+> plan](LANDING_AWS_DEPLOYMENT_PLAN.md). The full-stack proposal below is retained
+> for context and does not authorize backend/database provisioning for that phase.
+
 **Status:** draft for discussion, not an approved architecture or deployment runbook.  
 **Scope:** production-facing hackathon project; conserve credits and resources.  
 **Reviewed:** 5 November 2026, working tree on `main`, HEAD `0a46f1a`.  
