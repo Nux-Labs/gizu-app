@@ -1,0 +1,46 @@
+version: 0.2
+
+env:
+  shell: bash
+  variables:
+    ECR_REPOSITORY_URI: 381673247521.dkr.ecr.eu-central-1.amazonaws.com/gizu-backend
+    ECR_REGION: eu-central-1
+    ECS_CONTAINER_NAME: gizu-backend
+
+phases:
+  pre_build:
+    commands:
+      - |
+        set -euo pipefail
+        : "${CODEBUILD_RESOLVED_SOURCE_VERSION:?A Git commit is required}"
+        : "${CODEBUILD_BUILD_ID:?A CodeBuild build ID is required}"
+        if ! [[ "$CODEBUILD_RESOLVED_SOURCE_VERSION" =~ ^[0-9a-f]{40}$ ]]; then
+          printf 'Expected a resolved Git commit from the source stage\n' >&2
+          exit 1
+        fi
+        export IMAGE_TAG="${CODEBUILD_RESOLVED_SOURCE_VERSION:0:12}-${CODEBUILD_BUILD_ID##*:}"
+        export IMAGE_URI="${ECR_REPOSITORY_URI}:${IMAGE_TAG}"
+        aws ecr get-login-password --region "$ECR_REGION" |
+          docker login --username AWS --password-stdin "${ECR_REPOSITORY_URI%%/*}"
+  build:
+    commands:
+      - |
+        set -euo pipefail
+        docker build --platform linux/amd64 --pull \
+          --file backend/Dockerfile \
+          --label "org.opencontainers.image.revision=$CODEBUILD_RESOLVED_SOURCE_VERSION" \
+          --tag "$IMAGE_URI" .
+  post_build:
+    commands:
+      - |
+        set -euo pipefail
+        # CodeBuild can enter post_build even when the build phase has failed.
+        test "$CODEBUILD_BUILD_SUCCEEDING" = 1
+        docker push "$IMAGE_URI"
+        printf '[{"name":"%s","imageUri":"%s"}]\n' \
+          "$ECS_CONTAINER_NAME" "$IMAGE_URI" > imagedefinitions.json
+        printf 'Built commit %s\nImage: %s\n' "$CODEBUILD_RESOLVED_SOURCE_VERSION" "$IMAGE_URI"
+
+artifacts:
+  files:
+    - imagedefinitions.json

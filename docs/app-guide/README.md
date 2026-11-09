@@ -31,6 +31,7 @@ Each guide follows prerequisites → steps → expected result → troubleshooti
 | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [Mobile local development](MOBILE_LOCAL_DEVELOPMENT.md) | Run iOS and Android development builds, including Android over USB.            |
 | [Backend deployment](BACKEND_DEPLOYMENT.md)             | Render runtime, provider configuration, release checks and backend operations. |
+| [AWS backend deployment](AWS_BACKEND_DEPLOYMENT.md)     | Build backend images from GitHub, configure ECS/RDS, and release manually.      |
 | [Android signing](ANDROID_SIGNING.md)                   | Local Android signing and certificate association setup.                       |
 | [Passkey configuration](PASSKEY_CONFIGURATION.md)       | App identity, relying-party domain and platform configuration.                 |
 | [Passkey hosting](PASSKEY_HOSTING.md)                   | Frontend hosting and deployment of domain association files.                   |
