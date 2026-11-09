@@ -21,7 +21,8 @@ export class EarnRecoveryEnvelope {
       | "native-quote"
       | "fusion-order"
       | "private-balance"
-      | "source-credit",
+      | "source-credit"
+      | "minimum-return",
     value: unknown,
   ): string {
     if (!this.key) throw new Error("Earn recovery key unavailable");
@@ -47,7 +48,8 @@ export class EarnRecoveryEnvelope {
       | "native-quote"
       | "fusion-order"
       | "private-balance"
-      | "source-credit",
+      | "source-credit"
+      | "minimum-return",
     token: string,
   ): unknown {
     if (!this.key || token.length > 180000)

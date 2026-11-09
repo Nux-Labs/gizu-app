@@ -16,6 +16,19 @@ class EarnGatewayFailureTest {
   }
 
   @Test
+  fun ambiguousMinimumObservationKeepsTheSavedReturnRetryableWithoutProviderText() {
+    val failure =
+      safeEarnGatewayFailure(
+        "{\"code\":\"EARN_MINIMUM_RETURN_CONFLICT\",\"message\":\"private-provider-error\"}"
+      )
+    assertNotNull(failure)
+    assertTrue(failure!!.message!!.contains("saved return"))
+    assertTrue(failure.message!!.contains("do not withdraw"))
+    assertFalse(failure.message!!.contains("private-provider-error"))
+    assertNotNull(safeEarnGatewayFailure("{\"code\":\"EARN_MINIMUM_RETURN_UNAVAILABLE\"}"))
+  }
+
+  @Test
   fun unknownMalformedAndOversizedErrorsAreNotForwarded() {
     for (body in listOf("{\"code\":\"ATTACKER\"}", "not-json", "x".repeat(4097))) assertNull(
       safeEarnGatewayFailure(body)

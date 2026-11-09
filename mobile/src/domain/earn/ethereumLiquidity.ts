@@ -6,6 +6,7 @@ import {
 import { earnAtoms, earnObject, type VaultPlan } from "./vaultExecution";
 import { earnProfiles, monadConfidentialUsdcAssetId, type EarnIntent } from "./types";
 import { ceilDiv } from "./policy";
+import { parseMinimumReturn, type MinimumReturnReceipt } from "./minimumReturn";
 export type LiquidityKind = "fusionEthOrder" | "fusionUsdcApproval" | "returnUsdc" | "returnEth";
 export type FusionProposal = {
   cycleIndex?: number;
@@ -74,6 +75,7 @@ export type LiquidityOperation = {
     | "approvalFinalized"
     | "awaitingSettlement"
     | "credited"
+    | "minimumReceived"
     | "cancelled"
     | "reverted"
     | "expired"
@@ -87,6 +89,8 @@ export type LiquidityOperation = {
   actualFeeWei?: string;
   receivedEthWei?: string;
   creditedAtoms?: string;
+  verifiedMinimumAtoms?: string;
+  minimumReturnReceipt?: MinimumReturnReceipt;
 };
 export interface EarnLiquidityService {
   available(): Promise<boolean>;
@@ -364,6 +368,7 @@ export function parseLiquidityOperations(value: unknown, intent: EarnIntent): Li
         "approvalFinalized",
         "awaitingSettlement",
         "credited",
+        "minimumReceived",
         "cancelled",
         "reverted",
         "expired",
@@ -387,6 +392,11 @@ export function parseLiquidityOperations(value: unknown, intent: EarnIntent): Li
       canResume: q.canResume,
       status: q.status as LiquidityOperation["status"],
     };
+    const minimumReturnReceipt = parseMinimumReturn(q, intent);
+    if (minimumReturnReceipt) {
+      out.minimumReturnReceipt = minimumReturnReceipt;
+      out.verifiedMinimumAtoms = minimumReturnReceipt.verifiedMinimumAtoms;
+    }
     if (q.canCancelPending !== undefined) {
       if (typeof q.canCancelPending !== "boolean")
         throw new Error("Invalid cancellation authority.");

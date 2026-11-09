@@ -34,6 +34,8 @@ class ConfidentialWithdrawalEngineTest {
     var rejectCompeting = false
     var loseFirstResponse = false
     var malformedQuote = false
+    var grouped = false
+    var groupReady = true
     val store =
       WalletStore(
           File(),
@@ -73,6 +75,74 @@ class ConfidentialWithdrawalEngineTest {
     val paid = mutableMapOf<String, JSONObject>()
     val gateway =
       object : CashoutGateway {
+        override val groupedReceipts
+          get() = grouped
+
+        override suspend fun groupStatus(row: JSONObject, group: JSONObject): JSONObject {
+          val children = row.getJSONArray("children").objects()
+          val routes =
+            JSONArray(
+              children.mapIndexedNotNull { index, child ->
+                if (!child.has("signedData")) null
+                else JSONObject().put("index", index).put("status", "SUCCESS")
+              }
+            )
+          val result =
+            JSONObject()
+              .put("operationId", row.getString("operationId"))
+              .put("authenticated", true)
+              .put("operationScoped", true)
+              .put("observedAtMs", System.currentTimeMillis())
+              .put("verification", "destination-receipt-group-v1")
+              .put("groupId", cashoutGroupIdentity(group))
+              .put("nativeReceivedAtMs", System.currentTimeMillis())
+              .put("routes", routes)
+          if (children.any { !it.has("signedData") } || !groupReady)
+            return result.put("status", "pending")
+          val slots =
+            JSONArray(
+              (0 until group.getJSONArray("recipients").length()).map { slot ->
+                val selected = children.filter { it.getInt("slot") == slot }
+                val fullyPaid = selected.all { it.getString("status") == "paid" }
+                val total =
+                  if (fullyPaid) selected.sumAtoms("receivedAtoms").toBigInteger()
+                  else
+                    selected.sumAtoms("minimumDestinationAtoms").toBigInteger() + 123.toBigInteger()
+                JSONObject()
+                  .put("slot", slot)
+                  .put("destinationRecipient", group.getJSONArray("recipients").getString(slot))
+                  .put("minimumDestinationAtoms", selected.sumAtoms("minimumDestinationAtoms"))
+                  .put("receivedAtoms", total.toString())
+                  .put(
+                    "receipts",
+                    JSONArray().also { events ->
+                      val alreadyPaid = selected.filter { it.getString("status") == "paid" }
+                      alreadyPaid.forEach { c ->
+                        events.put(
+                          JSONObject(c.getJSONObject("receipt").toString())
+                            .put("receivedAtoms", c.getString("receivedAtoms"))
+                        )
+                      }
+                      if (!fullyPaid)
+                        events.put(
+                          JSONObject()
+                            .put("transactionHash", "0x" + "b".repeat(64))
+                            .put("logIndex", slot)
+                            .put(
+                              "receivedAtoms",
+                              (selected.sumAtoms("minimumDestinationAtoms").toBigInteger() +
+                                  123.toBigInteger() -
+                                  alreadyPaid.sumAtoms("receivedAtoms").toBigInteger())
+                                .toString(),
+                            )
+                        )
+                    },
+                  )
+              }
+            )
+          return result.put("status", "paid").put("slots", slots)
+        }
+
         override suspend fun prepare(
           operationId: String,
           source: JSONObject,
@@ -120,6 +190,7 @@ class ConfidentialWithdrawalEngineTest {
               .put("confidentiality", "advanced")
           return JSONObject()
             .put("operationId", operationId)
+            .put("recoveryEnvelope", "sealed-$operationId")
             .put("confidentialAccount", C)
             .put("destinationRecipient", recipient)
             .put("destinationToken", MONAD_EARN_USDC)
@@ -232,6 +303,212 @@ class ConfidentialWithdrawalEngineTest {
         { check(!rejectCompeting) { "Other private execution" } },
         { _, _ -> invalidations++ },
       )
+  }
+
+  @Test
+  fun twoSlotLegacyRestoreKeepsCompletedSlotFixedThroughLateGroupCompletionAndBackup() =
+    runBlocking {
+      val f = Fixture()
+      val indices =
+        f.store.load().use { record ->
+          val allocation =
+            uniffi.gizu_stored_signer_core.allocateSwapRecipientsN(record.roleRegistry, 2u)
+          f.store.persistRegistry(record.id, allocation.registry)
+          allocation.indices.map { it.toInt() }
+        }
+      val sources =
+        JSONArray(
+          f.addresses.mapIndexed { index, address ->
+            JSONObject()
+              .put("kind", if (index == 0) "swap" else "earn")
+              .put("profileChainId", if (index == 0) 0 else 4663)
+              .put("cycleIndex", 0)
+              .put("address", address)
+              .put("amountAtoms", if (index == 0) "1500000" else "500000")
+          }
+        )
+      val plan =
+        JSONObject(
+          uniffi.gizu_stored_signer_core.confidentialWithdrawalPlan(
+            JSONObject()
+              .put("operationId", "cashout_two_slots")
+              .put("amountAtoms", "2000000")
+              .put("sources", sources)
+              .put("recipientIndices", JSONArray(indices))
+              .put("weightsBps", JSONArray(listOf(5000, 5000)))
+              .toString()
+          )
+        )
+      f.journal.create(plan)
+      val prepared = f.engine().prepare("2000000")
+      f.loseFirstResponse = true
+      val unknown =
+        f.engine().execute(prepared["operationId"] as String, prepared["revision"] as Int) { _, _ ->
+          f.approvals++
+        }
+      val legacy =
+        f.journal.update(unknown["operationId"] as String, unknown["revision"] as Int) { row ->
+          val c = row.getJSONArray("children").getJSONObject(0)
+          val proof = f.paid.getValue(JSONObject(c.getString("signedData")).getString("payload"))
+          c.put("status", "paid")
+            .put("receivedAtoms", proof.getString("receivedAtoms"))
+            .put("receipt", proof.getJSONObject("receipt"))
+        }
+      val fixed = legacy.getJSONArray("children").getJSONObject(0).toString()
+      f.grouped = true
+      f.groupReady = false
+      val waiting =
+        f.engine().execute(legacy.getString("operationId"), legacy.getInt("revision")) { _, _ ->
+          f.approvals++
+        }
+      assertEquals("pending", waiting["status"])
+      assertEquals("999000", waiting["receivedAtoms"])
+      assertEquals(3, f.submitted.size)
+      f.groupReady = true
+      val complete =
+        f.engine().execute(waiting["operationId"] as String, waiting["revision"] as Int) { _, _ ->
+          fail("Only read-only completion remains")
+        }
+      assertEquals("paid", complete["status"])
+      assertEquals("1997123", complete["receivedAtoms"])
+      val saved = f.journal.get(complete["operationId"] as String)
+      assertEquals(fixed, saved.getJSONArray("children").getJSONObject(0).toString())
+      assertEquals(
+        "999000",
+        saved
+          .getJSONObject("groupReceipt")
+          .getJSONArray("slots")
+          .getJSONObject(0)
+          .getString("receivedAtoms"),
+      )
+      val domain = "gizu-confidential-withdrawal"
+      val history =
+        exportWalletRecoveryHistory(
+          f.wallet,
+          f.wallet,
+          f.key,
+          listOf("$domain-${f.wallet}.enc"),
+          JSONArray(),
+        ) {
+          f.file.read()
+        }
+      val restoredFile = File()
+      val generation = "00000000-0000-4000-8000-000000000002"
+      RecoveredHistoryImporter(f.wallet, generation, f.key) { restoredFile }.import(history)
+      val restored = ConfidentialWithdrawalJournal(restoredFile, { f.key }, f.wallet, generation)
+      assertEquals(
+        "1997123",
+        restored.public(restored.get(complete["operationId"] as String))["receivedAtoms"],
+      )
+      assertEquals(
+        fixed,
+        restored
+          .get(complete["operationId"] as String)
+          .getJSONArray("children")
+          .getJSONObject(0)
+          .toString(),
+      )
+      assertTrue(
+        nativeJsonEqual(
+          saved.getJSONObject("groupReceipt"),
+          restored.get(complete["operationId"] as String).getJSONObject("groupReceipt"),
+        )
+      )
+    }
+
+  @Test
+  fun groupUpgradePreservesPreviouslyPaidChildAllocationAndCanonicalReceipt() = runBlocking {
+    val f = Fixture()
+    f.loseFirstResponse = true
+    val p = f.engine().prepare("2000000")
+    val partial =
+      f.engine().execute(p["operationId"] as String, p["revision"] as Int) { _, _ -> f.approvals++ }
+    val updated =
+      f.journal.update(partial["operationId"] as String, partial["revision"] as Int) { row ->
+        val c = row.getJSONArray("children").getJSONObject(0)
+        val proof = f.paid.getValue(JSONObject(c.getString("signedData")).getString("payload"))
+        c.put("status", "paid")
+          .put("receivedAtoms", proof.getString("receivedAtoms"))
+          .put("receipt", proof.getJSONObject("receipt"))
+      }
+    val paidChild = updated.getJSONArray("children").getJSONObject(0).toString()
+    f.grouped = true
+    val result =
+      f.engine().execute(updated.getString("operationId"), updated.getInt("revision")) { _, _ ->
+        f.approvals++
+      }
+    assertEquals("paid", result["status"])
+    assertEquals("1998123", result["receivedAtoms"])
+    assertEquals(2, f.submitted.size)
+    assertEquals(
+      paidChild,
+      f.journal
+        .get(result["operationId"] as String)
+        .getJSONArray("children")
+        .getJSONObject(0)
+        .toString(),
+    )
+  }
+
+  @Test
+  fun groupSubmitsBothUnequalSourcesBeforeWaitingForSharedReceivingSlot() = runBlocking {
+    val f = Fixture()
+    f.grouped = true
+    f.groupReady = false
+    val p = f.engine().prepare("2000000")
+    val original = f.journal.active()!!.getJSONObject("plan").toString()
+    val pending =
+      f.engine().execute(p["operationId"] as String, p["revision"] as Int) { _, _ -> f.approvals++ }
+    assertEquals(1, pending["walletCount"])
+    assertEquals(2, f.submitted.size)
+    assertEquals("pending", pending["status"])
+    val signatures = f.submitted.toList()
+    f.groupReady = true
+    val paid =
+      f.engine().execute(pending["operationId"] as String, pending["revision"] as Int) { _, _ ->
+        fail("Completion must not sign again")
+      }
+    assertEquals("paid", paid["status"])
+    assertEquals("1998123", paid["receivedAtoms"])
+    assertEquals(signatures, f.submitted)
+    val saved = f.journal.get(paid["operationId"] as String)
+    assertEquals(original, saved.getJSONObject("plan").toString())
+    assertEquals(
+      "1499000",
+      saved.getJSONArray("children").getJSONObject(0).getString("receivedAtoms"),
+    )
+    assertEquals(
+      "499123",
+      saved.getJSONArray("children").getJSONObject(1).getString("receivedAtoms"),
+    )
+    assertTrue(saved.has("groupReceipt"))
+  }
+
+  @Test
+  fun groupRestartsAfterFirstFundedSourceWithoutResigningOrRebroadcastingIt() = runBlocking {
+    val f = Fixture()
+    f.grouped = true
+    f.loseFirstResponse = true
+    val p = f.engine().prepare("2000000")
+    val unknown =
+      f.engine().execute(p["operationId"] as String, p["revision"] as Int) { _, _ -> f.approvals++ }
+    assertEquals(1, f.submitted.size)
+    val signed =
+      f.journal.active()!!.getJSONArray("children").getJSONObject(0).getString("signedData")
+    val paid =
+      f.engine().execute(unknown["operationId"] as String, unknown["revision"] as Int) { _, _ ->
+        f.approvals++
+      }
+    assertEquals("paid", paid["status"])
+    assertEquals(2, f.submitted.size)
+    assertEquals(
+      signed,
+      f.journal
+        .get(paid["operationId"] as String)
+        .getJSONArray("children")
+        .getJSONObject(0)
+        .getString("signedData"),
+    )
   }
 
   @Test

@@ -40,6 +40,11 @@ internal class NativeRpcTransport(
           readTimeout(60, TimeUnit.SECONDS)
           callTimeout(70, TimeUnit.SECONDS)
         }
+        if (endpoint == "$EARN_NATIVE_BACKEND/cashout/group-status") {
+          // Read-only whole-plan verification uses bounded batches of route/receipt reads.
+          readTimeout(180, TimeUnit.SECONDS)
+          callTimeout(190, TimeUnit.SECONDS)
+        }
         if (endpoint == "$EARN_NATIVE_BACKEND/settlement") {
           // Status, balance and optional exact history each use bounded provider requests.
           // Their worst-case aggregate exceeds the ordinary 30-second transport budget.
@@ -176,6 +181,10 @@ internal fun safeEarnGatewayFailure(body: String): EarnGatewayFailure? {
         "Saved Earn recovery could not be verified. Reconcile before retrying."
       "EARN_SETTLEMENT_UNAVAILABLE" ->
         "Operation-specific confidential credit is unavailable. Reconcile before proceeding."
+      "EARN_MINIMUM_RETURN_CONFLICT" ->
+        "An earlier private observation overlaps this saved return. Retry reconciliation; do not withdraw from the vault again."
+      "EARN_MINIMUM_RETURN_UNAVAILABLE" ->
+        "The saved minimum private return could not be verified yet. Retry this check; do not withdraw from the vault again."
       "EARN_SETTLEMENT_HISTORY_UNAVAILABLE" ->
         "Your private balance can be checked on Home, but the exact return record could not be verified yet. Retry this check; do not withdraw from the vault again."
       else -> return null

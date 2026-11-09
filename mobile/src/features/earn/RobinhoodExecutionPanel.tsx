@@ -171,18 +171,25 @@ function LegacyRobinhoodExecutionPanel({
                   ? "USDG withdrawal confirmed. Return has not been submitted."
                   : op.status === "residualShares"
                     ? "Shares remain. Review another withdrawal before returning USDG."
-                    : op.status === "credited"
-                      ? `Confirmed return credit: ${formatUsdc(op.creditedAtoms ?? "0")} USDC`
-                      : op.status === "awaitingSettlement" || op.status === "returnSubmitted"
-                        ? "USDG sent. Confidential credit is awaiting reconciliation."
-                        : op.status === "pending" || op.status === "unknown"
-                          ? "USDG submission awaiting reconciliation"
-                          : op.status === "reverted"
-                            ? "USDG operation reverted. Review saved progress."
-                            : op.status === "cancelled"
-                              ? "Unsigned USDG review cancelled"
-                              : "Native authorization required for the next USDG step"}
+                    : op.status === "minimumReceived"
+                      ? `At least ${formatUsdc(op.verifiedMinimumAtoms ?? "0")} USDC verified`
+                      : op.status === "credited"
+                        ? `Confirmed return credit: ${formatUsdc(op.creditedAtoms ?? "0")} USDC`
+                        : op.status === "awaitingSettlement" || op.status === "returnSubmitted"
+                          ? "USDG sent. Confidential credit is awaiting reconciliation."
+                          : op.status === "pending" || op.status === "unknown"
+                            ? "USDG submission awaiting reconciliation"
+                            : op.status === "reverted"
+                              ? "USDG operation reverted. Review saved progress."
+                              : op.status === "cancelled"
+                                ? "Unsigned USDG review cancelled"
+                                : "Native authorization required for the next USDG step"}
             </Typography>
+            {op.status === "minimumReceived" && (
+              <Typography>
+                Your full private balance is checked separately and includes any surplus.
+              </Typography>
+            )}
             {op.actualTokenFeeAtoms && (
               <Typography>Verified gas paid: {formatUsdc(op.actualTokenFeeAtoms)} USDG</Typography>
             )}

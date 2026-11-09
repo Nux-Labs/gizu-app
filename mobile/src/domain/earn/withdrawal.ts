@@ -60,6 +60,9 @@ export function parseEarnWithdrawals(
         !Number.isSafeInteger(row.revision) ||
         (row.revision as number) < 1 ||
         row.kind !== "confidentialWithdrawal" ||
+        row.minimumReturnReceipt !== undefined ||
+        row.verifiedMinimumAtoms !== undefined ||
+        row.minimumReturnEnvelope !== undefined ||
         row.leg !== "withdrawal" ||
         row.chainId !== 143 ||
         typeof row.recipient !== "string" ||

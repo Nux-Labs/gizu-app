@@ -13,7 +13,7 @@ import type { EarnIntent } from "@/domain/earn/types";
 import type { EarnInvestmentPosition } from "@/domain/earn/investmentPositions";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
 import { getStoredEarnWithdrawalSigner } from "@/services/wallet/nativeBridge";
-import { exitSnapshot, returnRow } from "../../support/exitCompletion";
+import { exitSnapshot, returnRow, minimumReturnRow } from "../../support/exitCompletion";
 jest.mock("@/services/wallet/nativeBridge", () => ({
   ...jest.requireActual("@/services/wallet/nativeBridge"),
   getStoredEarnWithdrawalSigner: jest.fn(),
@@ -681,4 +681,21 @@ test("the guided withdrawal needs separate approvals and verifies private credit
   expect(screen.queryByText(returning.transactionHash!)).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Activity details" }));
   expect(screen.getByText(returning.transactionHash!)).toBeVisible();
+});
+
+test("restored minimum return exposes final verification without repeating withdrawal or return", async () => {
+  const confirmed = { ...minimumReturnRow(), from: first.destinations[0].address };
+  const h = setup({
+    savedOperations: [
+      { ...operation("withdrawn"), operationId: "redeem_1", kind: "hoodRedeemAll" },
+      confirmed,
+    ],
+  });
+  expect(await screen.findByText("At least 0.899 USDC verified")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Verify private balance" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Review private return" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Review withdrawal" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Check private return" })).toBeNull();
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
 });

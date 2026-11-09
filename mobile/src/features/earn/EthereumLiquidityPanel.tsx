@@ -119,6 +119,7 @@ export function EthereumLiquidityPanel({
                 approvalFinalized: "Authorization confirmed",
                 awaitingSettlement: "Waiting for private credit",
                 credited: "Private credit verified",
+                minimumReceived: "Minimum private return verified",
                 cancelled: "Unsigned review cancelled",
                 reverted: "Transaction reverted",
                 expired: "Review expired",
@@ -156,6 +157,16 @@ export function EthereumLiquidityPanel({
           )}
           {row.creditedAtoms && (
             <Typography>Verified returned credit: {formatUsdc(row.creditedAtoms)} USDC</Typography>
+          )}
+          {row.status === "minimumReceived" && (
+            <>
+              <Typography>
+                At least {formatUsdc(row.verifiedMinimumAtoms ?? "0")} USDC verified
+              </Typography>
+              <Typography>
+                Your full private balance is checked separately and includes any surplus.
+              </Typography>
+            </>
           )}
           {row.actualFeeWei && (
             <Typography>Verified gas paid: {formatMon(row.actualFeeWei)} ETH</Typography>

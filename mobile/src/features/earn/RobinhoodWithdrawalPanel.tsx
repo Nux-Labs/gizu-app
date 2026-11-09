@@ -41,6 +41,7 @@ export function RobinhoodWithdrawalPanel({
     );
   const awaitingCredit =
     returned && ["returnSubmitted", "awaitingSettlement"].includes(returned.status);
+  const returnConfirmed = returned && ["credited", "minimumReceived"].includes(returned.status);
   // Never offer a new proposal over signed or uncertain spend. Cancellation is
   // checked again by native code, including authorizations and signing in flight.
   const fresh =
@@ -132,15 +133,28 @@ export function RobinhoodWithdrawalPanel({
                         ? "Your return is on its way. We will confirm it before marking this withdrawal complete."
                         : saved
                           ? "Checking your saved transaction"
-                          : returned?.status === "credited"
-                            ? "Your return has been credited. Verify the final balance to finish."
-                            : withdrawn
-                              ? "Your funds have left the vault. Return them to your private USDC balance next."
-                              : redeemable
-                                ? "Your investment is ready to withdraw."
-                                : "Check your saved activity to find the next withdrawal step."}
+                          : returned?.status === "minimumReceived"
+                            ? "Your minimum return is verified. Check the final balance to finish."
+                            : returned?.status === "credited"
+                              ? "Your return has been credited. Verify the final balance to finish."
+                              : withdrawn
+                                ? "Your funds have left the vault. Return them to your private USDC balance next."
+                                : redeemable
+                                  ? "Your investment is ready to withdraw."
+                                  : "Check your saved activity to find the next withdrawal step."}
           </Typography>
         </View>
+
+        {returned?.status === "minimumReceived" && (
+          <>
+            <Typography>
+              At least {formatUsdc(returned.verifiedMinimumAtoms ?? "0")} USDC verified
+            </Typography>
+            <Typography variant="caption">
+              Your full private balance is checked separately and includes any surplus.
+            </Typography>
+          </>
+        )}
 
         {v.message !== "" && (
           <Typography accessibilityRole="alert" variant="negative">
@@ -228,7 +242,7 @@ export function RobinhoodWithdrawalPanel({
                   : void v.refresh()
               }
             />
-          ) : returned?.status === "credited" ? null : redeemable ? (
+          ) : returnConfirmed ? null : redeemable ? (
             <Button
               label="Review withdrawal"
               disabled={disabled}
@@ -252,7 +266,7 @@ export function RobinhoodWithdrawalPanel({
           ))
         )}
 
-        {returned?.status === "credited" && !saved && (
+        {returnConfirmed && !saved && (
           <ExitCompletionPanel
             intent={intent}
             aggregate

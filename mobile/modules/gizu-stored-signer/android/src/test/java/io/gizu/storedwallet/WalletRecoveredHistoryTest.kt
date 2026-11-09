@@ -176,6 +176,152 @@ class WalletRecoveredHistoryTest {
     )
   }
 
+  private fun confirmedMinimumReturn(kind: String): JSONObject {
+    val f = EarnPayoutFixtures
+    val op = withdrawalReturn().put("walletId", wallet)
+    op.remove("settlement")
+    val sponsored = kind == "hoodTokenReturn"
+    op
+      .getJSONObject("proposal")
+      .put("kind", kind)
+      .put("chainId", if (sponsored) 4663 else 1)
+      .put("nonce", "0x0")
+    if (sponsored) op.put("signedUserOperation", "original signed UserOperation")
+    op
+      .getJSONObject("stateBinding")
+      .put("privateBaseline", JSONObject().put("baselineEnvelope", "original-baseline"))
+      .getJSONObject("routeProof")
+      .put("originAsset", if (sponsored) EARN_HOOD_ASSET else ETH_USDC_ORIGIN_ASSET)
+      .put("recoveryEnvelope", "original-quote")
+      .put("maximumCreditAtoms", "1000010")
+    val receipt =
+      JSONObject()
+        .put("operationId", op.getString("operationId"))
+        .put("revision", 10)
+        .put("confidentialAddress", f.C)
+        .put("assetId", EARN_MONAD_ASSET)
+        .put("depositAddress", op.getJSONObject("proposal").getString("recipient"))
+        .put("transactionHash", f.hash)
+        .put("verifiedMinimumAtoms", "1000000")
+        .put("timestampMs", f.now)
+        .put("observedAtMs", 1)
+        .put("authenticated", true)
+        .put("operationScoped", true)
+        .put("spendingAuthorized", false)
+        .put("exactAmountKnown", false)
+        .put("status", "minimumReceived")
+        .put("verification", "minimum-return-v1")
+        .put("minimumReturnEnvelope", "original-minimum-envelope")
+    op.put("minimumReturnReceipt", bindMinimumReturnReceipt(op, receipt, wallet, old))
+    return op
+  }
+
+  @Test
+  fun restoredMinimumReturnsRemainReadableAndSequentialAcrossBothJournalsAndAnotherRestore() {
+    val nextGeneration = "fa1a6a80-80f0-45b8-8ad2-a5a09f762f2a"
+    for ((domain, kind) in
+      listOf("gizu-earn-sponsored" to "hoodTokenReturn", "gizu-earn-liquidity" to "returnUsdc")) {
+      files.clear()
+      val original = confirmedMinimumReturn(kind)
+      val root =
+        JSONObject()
+          .put("version", 1)
+          .put("walletId", wallet)
+          .put("operations", JSONArray().put(original))
+      val archive = JSONArray().put(row(domain, root))
+      importer().import(archive)
+      importer().import(archive)
+      val restored = JSONObject(read(domain)).getJSONArray("operations").getJSONObject(0)
+      assertNotNull(savedMinimumReturnReceipt(restored, wallet, current))
+      val public =
+        if (kind == "hoodTokenReturn") {
+          val journal =
+            EarnSponsoredJournal(files.getValue("$domain-$current.enc"), { key }, wallet, current)
+          journal.all().map(journal::public).single()
+        } else {
+          val journal =
+            EarnLiquidityJournal(files.getValue("$domain-$current.enc"), { key }, wallet, current)
+          journal.all().map(journal::public).single()
+        }
+      assertEquals("minimumReceived", public["status"])
+      assertEquals("1000000", public["verifiedMinimumAtoms"])
+      assertFalse(public.containsKey("creditedAtoms"))
+      assertEquals(
+        "original-minimum-envelope",
+        restored.getJSONObject("minimumReturnReceipt").getString("minimumReturnEnvelope"),
+      )
+      assertEquals(1L, restored.getJSONObject("minimumReturnReceipt").getLong("observedAtMs"))
+      assertEquals(original.getString("raw"), restored.getString("raw"))
+      if (kind == "hoodTokenReturn")
+        assertEquals(
+          original.getString("signedUserOperation"),
+          restored.getString("signedUserOperation"),
+        )
+      val expected = JSONObject(original.toString())
+      expected
+        .getJSONObject("minimumReturnReceipt")
+        .getJSONObject("nativeBinding")
+        .put("generation", current)
+      assertTrue(nativeJsonEqual(expected, restored))
+      val next =
+        JSONObject()
+          .put("operationId", "next-slot")
+          .put(
+            "proposal",
+            JSONObject().put("kind", kind).put("confidentialAccount", EarnPayoutFixtures.C),
+          )
+      requireSequentialSourceCredit(listOf(restored), next, wallet, current)
+      val secondArchive =
+        row(domain, read(domain)).put("generation", current).put("name", "$domain-$current.enc")
+      RecoveredHistoryImporter(wallet, nextGeneration, key) { files.getOrPut(it) { MemoryFile() } }
+        .import(JSONArray().put(secondArchive))
+      val secondFile = files.getValue("$domain-$nextGeneration.enc")
+      val secondJournal =
+        if (kind == "hoodTokenReturn")
+          EarnSponsoredJournal(secondFile, { key }, wallet, nextGeneration).get("funding1")
+        else EarnLiquidityJournal(secondFile, { key }, wallet, nextGeneration).get("funding1")
+      assertNotNull(savedMinimumReturnReceipt(secondJournal, wallet, nextGeneration))
+      requireSequentialSourceCredit(listOf(secondJournal), next, wallet, nextGeneration)
+    }
+  }
+
+  @Test
+  fun minimumReturnImportRejectsTamperedOriginalBindingsBeforeAnyJournalWrite() {
+    for ((domain, kind) in
+      listOf("gizu-earn-sponsored" to "hoodTokenReturn", "gizu-earn-liquidity" to "returnUsdc")) {
+      for (variant in 0..5) {
+        files.clear()
+        val invalid = confirmedMinimumReturn(kind)
+        val receipt = invalid.getJSONObject("minimumReturnReceipt")
+        val binding = receipt.getJSONObject("nativeBinding")
+        when (variant) {
+          0 -> binding.put("generation", current)
+          1 -> binding.put("walletId", old)
+          2 ->
+            binding
+              .getJSONObject("stateBinding")
+              .getJSONObject("routeProof")
+              .put("recoveryEnvelope", "tampered")
+          3 ->
+            invalid
+              .getJSONObject("proposal")
+              .put("confidentialAccount", EarnPayoutFixtures.recipient)
+          4 -> receipt.put("verifiedMinimumAtoms", "1000001")
+          5 -> invalid.put("transactionHash", EarnPayoutFixtures.nativeHash)
+        }
+        val invalidRoot =
+          JSONObject()
+            .put("version", 1)
+            .put("walletId", wallet)
+            .put("operations", JSONArray().put(invalid))
+        assertThrows(Exception::class.java) {
+          importer().import(JSONArray().put(row()).put(row(domain, invalidRoot)))
+        }
+        assertTrue(files.values.none { it.exists() })
+      }
+    }
+  }
+
   @Test
   fun newerSnapshotProvenanceSelectsNonRevisionedSwapWithoutTrustingArrayOrder() {
     fun swap(revision: Int, state: String) =

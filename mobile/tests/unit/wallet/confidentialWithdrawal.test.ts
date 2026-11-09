@@ -51,6 +51,9 @@ test("native public withdrawal view preserves exact allocations and rejects fore
     { minimumDestinationAtoms: "9800001" },
     { receivedAtoms: "100" },
     { status: "paid" },
+    { verifiedMinimumAtoms: "9800000" },
+    { minimumReturnReceipt: {} },
+    { minimumReturnEnvelope: "private" },
     { payouts: [view().payouts[0], view().payouts[0]] },
     { canCancel: true, payouts: [{ ...view().payouts[0], status: "unknown" }, view().payouts[1]] },
   ])

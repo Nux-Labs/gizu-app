@@ -181,31 +181,45 @@ internal suspend fun confirmNativePayoutReceipt(
     .put("blockHash", receiptHash)
 }
 
-/**
- * Invalidate both sides before saving newly authenticated private credit to avoid cache overlap.
- */
+/** Select all affected owned assets; minimum evidence never narrows the user's holdings. */
+internal fun earnPrivateCreditInvalidationTargets(
+  operation: JSONObject,
+  proof: JSONObject,
+): Pair<Long, Set<String>>? {
+  if (proof.getString("status") !in setOf("credited", "minimumReceived")) return null
+  if (proof.getString("status") == "minimumReceived")
+    validateMinimumReturnReceipt(
+      proof.toString(),
+      sponsoredSettlementExpected(operation),
+      operation.getJSONObject("proposal").getString("kind"),
+      proof.getLong("timestampMs"),
+    )
+  check(proof.getBoolean("authenticated") && proof.getBoolean("operationScoped"))
+  return when (operation.getJSONObject("proposal").getString("kind")) {
+    "sourceFunding" -> 143L to setOf(io.gizu.storedwallet.swap.MainnetPortfolio.USDC, "native")
+    "hoodTokenReturn" -> 4663L to setOf(HOOD_EARN_USDG, HOOD_EARN_VAULT, "native")
+    "returnUsdc",
+    "returnEth" -> 1L to setOf(ETH_EARN_USDC, ETH_EARN_VAULT, ETH_EARN_WETH, "native")
+    else -> error("Unsupported authenticated private credit")
+  }
+}
+
+/** Invalidate both sides before saving authenticated private evidence to avoid cache overlap. */
 internal fun invalidateEarnPrivateCreditCaches(
   context: android.content.Context,
   record: WalletRecord,
   operation: JSONObject,
   proof: JSONObject,
 ) {
-  if (proof.getString("status") != "credited") return
-  check(proof.getBoolean("authenticated") && proof.getBoolean("operationScoped"))
-  val proposal = operation.getJSONObject("proposal")
-  val (chain, tokens) =
-    when (proposal.getString("kind")) {
-      "sourceFunding" -> 143L to setOf(io.gizu.storedwallet.swap.MainnetPortfolio.USDC, "native")
-      "hoodTokenReturn" -> 4663L to setOf(HOOD_EARN_USDG, HOOD_EARN_VAULT, "native")
-      "returnUsdc",
-      "returnEth" -> 1L to setOf(ETH_EARN_USDC, ETH_EARN_VAULT, ETH_EARN_WETH, "native")
-      else -> error("Unsupported authenticated private credit")
-    }
+  val (chain, tokens) = earnPrivateCreditInvalidationTargets(operation, proof) ?: return
   if (chain == 143L) io.gizu.storedwallet.swap.MainnetPortfolio(context).invalidate(record)
   io.gizu.storedwallet.portfolio
     .NativeOwnedPortfolio(context)
     .invalidateTokens(record, chain, tokens)
   io.gizu.storedwallet.portfolio
     .NativeOwnedConfidentialPortfolio(context)
-    .invalidateSources(record, setOf(proposal.getString("confidentialAccount")))
+    .invalidateSources(
+      record,
+      setOf(operation.getJSONObject("proposal").getString("confidentialAccount")),
+    )
 }

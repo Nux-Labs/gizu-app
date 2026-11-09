@@ -1,5 +1,32 @@
 import { hoodIntent } from "./robinhoodEarn";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
+import { monadConfidentialUsdcAssetId } from "@/domain/earn/types";
+export function minimumReturnRow(): SponsoredOperation {
+  const { creditedAtoms: _credit, ...row } = returnRow();
+  return {
+    ...row,
+    revision: 2,
+    status: "minimumReceived",
+    verifiedMinimumAtoms: "899000",
+    minimumReturnReceipt: {
+      operationId: row.operationId,
+      revision: 1,
+      confidentialAddress: hoodIntent.confidentialAddress,
+      assetId: monadConfidentialUsdcAssetId,
+      depositAddress: "0x" + "9".repeat(40),
+      transactionHash: row.transactionHash!,
+      verifiedMinimumAtoms: "899000",
+      status: "minimumReceived",
+      verification: "minimum-return-v1",
+      observedAtMs: 1000000,
+      timestampMs: Date.now(),
+      authenticated: true,
+      operationScoped: true,
+      spendingAuthorized: false,
+      exactAmountKnown: false,
+    },
+  };
+}
 export function returnRow(): SponsoredOperation {
   return {
     operationId: "return_1",

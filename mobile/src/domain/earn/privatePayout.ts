@@ -53,6 +53,8 @@ export function payoutRequest(
     (source.sourceAccountIndex === undefined &&
       source.from.toLowerCase() !== intent.sourceAddress.toLowerCase()) ||
     source.status !== "credited" ||
+    source.minimumReturnReceipt !== undefined ||
+    source.verifiedMinimumAtoms !== undefined ||
     source.blocked ||
     !source.transactionHash ||
     !source.creditedAtoms ||
@@ -84,6 +86,9 @@ export function parsePayoutOperations(value: unknown, intent: EarnIntent): Payou
       seen.has(operationId) ||
       q.walletId !== intent.walletId ||
       q.kind !== "confidentialPayout" ||
+      q.minimumReturnReceipt !== undefined ||
+      q.verifiedMinimumAtoms !== undefined ||
+      q.minimumReturnEnvelope !== undefined ||
       !payoutLegs(intent).includes(leg as PayoutLeg) ||
       q.chainId !== earnProfiles[intent.profileId].chainId ||
       typeof q.recipient !== "string" ||
