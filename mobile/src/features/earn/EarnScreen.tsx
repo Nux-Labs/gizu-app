@@ -177,7 +177,7 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
           ))}
       <Surface>
         <View className="gap-2 p-5">
-          <Typography variant="row">Source · Monad mainnet USDC</Typography>
+          <Typography variant="row">Source · USDC</Typography>
           <Typography selectable variant="caption">
             {wallet.session.address}
           </Typography>

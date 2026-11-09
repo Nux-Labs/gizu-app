@@ -190,7 +190,7 @@ test("disconnect ignores late native snapshots from the previous session", async
   const pending = deferred<import("@/domain/wallet/storedSigner").MainnetPortfolioSnapshot>();
   portfolio.getMainnetPortfolio.mockReturnValueOnce(pending.promise);
   await open();
-  await screen.findByText("Checking Monad mainnet balances…");
+  await screen.findByLabelText("Loading your balance");
   await userEvent.press(screen.getByLabelText("Settings tab"));
   await userEvent.press(await screen.findByRole("button", { name: "Disconnect" }));
   await screen.findByRole("button", { name: "Continue with passkey" });
@@ -212,7 +212,7 @@ test("a settled incomplete native cache is retryable and never exposes zero as s
   });
   await open();
   expect(await screen.findByRole("button", { name: "Retry balance" })).toBeVisible();
-  expect(screen.queryByText("Checking Monad mainnet balances…")).toBeNull();
+  expect(screen.queryByLabelText("Loading your balance")).toBeNull();
   expect(screen.queryByLabelText("0 USDC")).toBeNull();
   await openEarnLink();
   expect(
@@ -392,7 +392,7 @@ test("Activity has a simple empty state and pull-to-refresh with retry on failur
   await open();
   await userEvent.press(await screen.findByRole("button", { name: "View activity" }));
   expect(await screen.findByText("No activity yet")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Refresh mainnet balances" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refresh balance" })).toBeNull();
   portfolio.getMainnetPortfolio.mockRejectedValueOnce(new Error("secret-sentinel"));
   fireEvent(screen.UNSAFE_getAllByType(RefreshControl).at(-1)!, "refresh");
   expect(
@@ -494,7 +494,7 @@ test("Home shows aggregate USDG once while retaining native sale batches and oth
   expect(screen.getByText("5 GOOGL")).toBeVisible();
   fireEvent.press(await screen.findByRole("button", { name: "USDG swap tools" }));
   const balanceReads = portfolio.getMainnetPortfolio.mock.calls.length;
-  fireEvent.press(screen.getByRole("button", { name: "Sell USDG back to Monad USDC" }));
+  fireEvent.press(screen.getByRole("button", { name: "Sell USDG back to USDC" }));
   await act(async () => {});
   expect(sellHolding).toHaveBeenCalledWith(`${token}:6`, expect.any(String));
   expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(balanceReads + 1);

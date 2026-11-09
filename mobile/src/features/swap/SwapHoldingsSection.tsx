@@ -148,7 +148,7 @@ export function SwapHoldingsSection({
                   </Typography>
                 ) : null}
                 <Button
-                  label={`Sell ${holding.symbol} back to Monad USDC`}
+                  label={`Sell ${holding.symbol} back to USDC`}
                   disabled={
                     holdings.busy ||
                     !!holdings.error ||

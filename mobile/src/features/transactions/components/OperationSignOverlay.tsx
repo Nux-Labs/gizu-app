@@ -14,7 +14,7 @@ function signState(phase: Phase | undefined): SignState | null {
 
 const LABELS: Partial<Record<Phase, string>> = {
   signing: "Signing with passkey",
-  submitting: "Sending to Monad",
+  submitting: "Sending",
   confirmed: "Confirmed",
   failed: "Not completed",
   rejected: "Signature rejected",

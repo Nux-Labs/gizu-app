@@ -265,11 +265,11 @@ test("sign overlay follows signing and submission, then leaves an unknown outcom
   expect(await screen.findByText("Signing with passkey")).toBeVisible();
   expect(screen.getByRole("button", { name: "Cancel signing" })).toBeEnabled();
   await act(async () => signing.resolve("signature"));
-  expect(screen.getByText("Sending to Monad")).toBeVisible();
+  expect(screen.getByText("Sending")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Cancel signing" })).toBeNull();
   await act(async () => submission.reject(new Error("connection lost")));
   expect(await screen.findByRole("header", { name: "Submission status unknown" })).toBeVisible();
-  expect(screen.queryByText("Sending to Monad")).toBeNull();
+  expect(screen.queryByText("Sending")).toBeNull();
   expect(screen.queryByText("Confirmed")).toBeNull();
 });
 test("a rejected signature shows the rejection result over the recovery view", async () => {

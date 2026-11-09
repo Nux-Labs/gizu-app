@@ -169,7 +169,7 @@ export function NativeSwapScreen() {
           ) : null}
           {swap.canSell ? (
             <Button
-              label={swap.busy ? "Working" : "Sell back to Monad USDC"}
+              label={swap.busy ? "Working" : "Sell back to USDC"}
               onPress={swap.sell}
               disabled={swap.busy}
             />

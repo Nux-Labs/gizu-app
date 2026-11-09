@@ -60,18 +60,16 @@ beforeEach(() => {
 test("restores holdings and sell action independently of the latest swap after remount", async () => {
   const view = open();
   expect(await screen.findByText("1.2345 GOOGL")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Sell GOOGL back to Monad USDC" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Sell GOOGL back to USDC" })).toBeNull();
   expect(screen.queryByText(token)).toBeNull();
   await showHoldingDetails();
   expect(screen.getByText(token)).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "GOOGL holding details", expanded: true }));
-  expect(screen.queryByRole("button", { name: "Sell GOOGL back to Monad USDC" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Sell GOOGL back to USDC" })).toBeNull();
   view.unmount();
   open();
   await showHoldingDetails();
-  expect(
-    await screen.findByRole("button", { name: "Sell GOOGL back to Monad USDC" }),
-  ).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Sell GOOGL back to USDC" })).toBeVisible();
   expect(sell).not.toHaveBeenCalled();
 });
 
@@ -89,10 +87,10 @@ test("failed refresh retains balances and disables selling stale data until retr
   expect(screen.getByText("Code: HOLDINGS_READ_FAILED")).toBeVisible();
   expect(screen.queryByText(/secret-sentinel/)).toBeNull();
   expect(screen.getByText("1.2345 GOOGL")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Sell GOOGL back to Monad USDC" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Sell GOOGL back to USDC" })).toBeDisabled();
   fireEvent.press(screen.getByRole("button", { name: "Retry holdings" }));
   await act(async () => {});
-  expect(screen.getByRole("button", { name: "Sell GOOGL back to Monad USDC" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Sell GOOGL back to USDC" })).toBeEnabled();
 });
 
 test("one sell invokes native approval with the saved batch and refreshes balances", async () => {
@@ -100,7 +98,7 @@ test("one sell invokes native approval with the saved batch and refreshes balanc
   sell.mockReturnValueOnce(pending.promise);
   open();
   await showHoldingDetails();
-  const button = await screen.findByRole("button", { name: "Sell GOOGL back to Monad USDC" });
+  const button = await screen.findByRole("button", { name: "Sell GOOGL back to USDC" });
   fireEvent.press(button);
   fireEvent.press(button);
   expect(sell).toHaveBeenCalledTimes(1);
@@ -142,7 +140,7 @@ test("shared native holdings retain exact precision and sell the selected alloca
   open();
   expect(await screen.findByText("0.009007199254741003 GOOGL")).toBeVisible();
   await showHoldingDetails();
-  fireEvent.press(screen.getByRole("button", { name: "Sell GOOGL back to Monad USDC" }));
+  fireEvent.press(screen.getByRole("button", { name: "Sell GOOGL back to USDC" }));
   await act(async () => {});
   expect(sell).toHaveBeenCalledWith(`${holdingsFixture.token}:3`, expect.any(String));
 });
@@ -152,7 +150,7 @@ test("a balance without a complete allocated batch remains visible but cannot se
   open();
   expect(await screen.findByText("1.2345 GOOGL")).toBeVisible();
   await showHoldingDetails();
-  const button = screen.getByRole("button", { name: "Sell GOOGL back to Monad USDC" });
+  const button = screen.getByRole("button", { name: "Sell GOOGL back to USDC" });
   expect(button).toBeDisabled();
   fireEvent.press(button);
   expect(sell).not.toHaveBeenCalled();
@@ -163,13 +161,13 @@ test("failed sale offers status review instead of resubmission or raw errors", a
   sell.mockRejectedValueOnce(new Error("secret-sentinel provider payload"));
   open();
   await showHoldingDetails();
-  fireEvent.press(screen.getByRole("button", { name: "Sell GOOGL back to Monad USDC" }));
+  fireEvent.press(screen.getByRole("button", { name: "Sell GOOGL back to USDC" }));
   await screen.findByText(
     "Couldn’t finish the sale. Check its status in Swap before trying again.",
   );
   await act(async () => {});
   expect(screen.queryByText(/secret-sentinel/)).toBeNull();
-  expect(screen.getByRole("button", { name: "Sell GOOGL back to Monad USDC" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Sell GOOGL back to USDC" })).toBeDisabled();
   fireEvent.press(screen.getByRole("button", { name: "Error details", expanded: false }));
   expect(screen.getByText("Code: SALE_STATUS_REQUIRES_REVIEW")).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "Review swap" }));
@@ -204,7 +202,7 @@ test("token search failure retries the catalog without signing", async () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Retry holdings" })).toBeVisible();
     await showHoldingDetails();
-    expect(screen.getByRole("button", { name: "Sell GOOGL back to Monad USDC" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sell GOOGL back to USDC" })).toBeDisabled();
     expect(sell).not.toHaveBeenCalled();
   } finally {
     global.fetch = original;

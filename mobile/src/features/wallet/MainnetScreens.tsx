@@ -42,21 +42,24 @@ function usePortfolio() {
   );
   return wallet;
 }
-function BalanceStatus({ showRefresh = true }: { showRefresh?: boolean }) {
+/** Home omits the loading line: pull-to-refresh and the balance skeleton already show progress. */
+function BalanceStatus({
+  showRefresh = true,
+  showLoading = true,
+}: {
+  showRefresh?: boolean;
+  showLoading?: boolean;
+}) {
   const wallet = useMainnetWallet();
   return (
     <>
-      {wallet.loading ? (
+      {showLoading && wallet.loading ? (
         <Typography variant="micro" accessibilityLiveRegion="polite">
-          Checking Monad mainnet balances…
+          Updating your balance…
         </Typography>
       ) : null}
-      {wallet.snapshot?.stale && !wallet.error && (
-        <Typography variant="micro">
-          {wallet.loading
-            ? "Previously cached balances are being checked."
-            : "Showing cached balances."}
-        </Typography>
+      {wallet.snapshot?.stale && !wallet.error && !wallet.loading && (
+        <Typography variant="micro">Showing your last known balance.</Typography>
       )}
       {wallet.error || (!wallet.loading && wallet.snapshot?.balanceComplete === false) ? (
         <ErrorNotice
@@ -70,7 +73,7 @@ function BalanceStatus({ showRefresh = true }: { showRefresh?: boolean }) {
       ) : null}
       {showRefresh && !wallet.error && wallet.snapshot?.balanceComplete !== false && (
         <Button
-          label="Refresh mainnet balances"
+          label="Refresh balance"
           variant="quiet"
           disabled={wallet.loading}
           onPress={() => void wallet.refresh()}
@@ -326,11 +329,7 @@ function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) 
 function BalanceSkeleton() {
   return (
     <Surface>
-      <View
-        className="gap-4 p-5"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-      >
+      <View className="gap-4 p-5" accessible accessibilityLabel="Loading your balance">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-10 w-2/3" />
         <View className="flex-row gap-3">
@@ -371,7 +370,7 @@ export function MainnetPortfolioScreen({
           onPress={() => root.navigate("Notifications")}
         />
       </View>
-      <BalanceStatus showRefresh={false} />
+      <BalanceStatus showRefresh={false} showLoading={false} />
       {wallet.snapshot && ready ? (
         <BalanceCard snapshot={wallet.snapshot} actions={actions} />
       ) : wallet.loading ? (
