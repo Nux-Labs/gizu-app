@@ -165,8 +165,7 @@ test("refresh replaces vault results and reuses successful sparkline history", a
   await screen.findByText("Second vault");
   list.mockResolvedValueOnce({ ...page, total: 1 });
   fireEvent(screen.getByLabelText("vaults list"), "refresh");
-  await screen.findByText("All vaults loaded.");
-  expect(screen.queryByText("Second vault")).toBeNull();
+  await waitFor(() => expect(screen.queryByText("Second vault")).toBeNull());
   expect(list.mock.lastCall?.[0].page).toBe(0);
   expect(tvl.mock.calls.filter(([id]) => id === "1")).toHaveLength(1);
 });
@@ -224,7 +223,8 @@ test("chainless catalog combines supported chains, retains protocol filters and 
   await userEvent.press(screen.getByRole("button", { name: "Load more" }));
   expect(await screen.findByText("all vault 143 page 1")).toBeVisible();
   expect(screen.getByText("all vault 1 page 0")).toBeVisible();
-  expect(await screen.findByText("All vaults loaded.")).toBeVisible();
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
+  expect(screen.queryByText("All vaults loaded.")).toBeNull();
   expect(
     list.mock.calls.filter(([query]) => query.page === 1).map(([query]) => query.chainId),
   ).toEqual([143]);

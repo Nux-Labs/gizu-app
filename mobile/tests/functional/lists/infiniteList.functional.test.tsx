@@ -81,7 +81,8 @@ test("serializes duplicate end events, merges identities in order and stops at e
   expect(screen.queryByText("First")).toBeNull();
   expect(screen.getByText("Updated first")).toBeVisible();
   expect(screen.getByText("Second")).toBeVisible();
-  expect(screen.getByText("All examples loaded.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  expect(screen.queryByText("All examples loaded.")).toBeNull();
   endReached();
   expect(loader).toHaveBeenCalledTimes(2);
 });
