@@ -11,10 +11,7 @@ export function MainTabs() {
     <Tabs.Navigator
       tabBar={(props) => <FloatingTabs {...props} />}
       backBehavior="initialRoute"
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarAccessibilityLabel: `${route.name === "Exchange" ? "Swap" : route.name} tab`,
-      })}
+      screenOptions={{ headerShown: false }}
     >
       <Tabs.Screen name="Home" component={PortfolioScreen} />
       <Tabs.Screen name="Vaults" component={VaultsScreen} />

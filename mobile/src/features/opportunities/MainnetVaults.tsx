@@ -34,7 +34,8 @@ export function MainnetVaults({ onOpen }: { onOpen: (id: string) => void }) {
       header={
         <>
           <FadeIn delay={sectionDelay(0)} className="gap-2 pb-2">
-            <Typography variant="pageTitle">Confidential vaults</Typography>
+            <Typography variant="pageTitle">Earn</Typography>
+            <Typography variant="body">Earn yield on your USDC with selected vaults.</Typography>
           </FadeIn>
           <View
             className="flex-row flex-wrap gap-2"

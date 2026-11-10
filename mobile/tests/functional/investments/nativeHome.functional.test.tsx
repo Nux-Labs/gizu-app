@@ -91,7 +91,7 @@ test("Home and Vaults cards open the mainnet vault detail and back returns", asy
   await userEvent.press(screen.getByRole("button", { name: "Back" }));
   expect(await screen.findByRole("button", { name: "See all vaults" })).toBeVisible();
 
-  await userEvent.press(screen.getByLabelText("Vaults tab"));
+  await userEvent.press(screen.getByLabelText("Earn tab"));
   await screen.findByLabelText("Search opportunities");
   const cards = await screen.findAllByRole("button", { name: "View Mainnet vault 1" });
   await userEvent.press(cards.at(-1)!);

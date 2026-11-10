@@ -38,7 +38,8 @@ function DemoVaults({ navigation }: BottomTabScreenProps<MainTabParamList, "Vaul
   return (
     <Screen>
       <FadeIn delay={sectionDelay(0)} className="gap-2 pb-2">
-        <Typography variant="pageTitle">Confidential vaults</Typography>
+        <Typography variant="pageTitle">Earn</Typography>
+        <Typography variant="body">Earn yield on your USDC with selected vaults.</Typography>
       </FadeIn>
       <SearchInput
         label="Search name, ticker, strategy or manager"
