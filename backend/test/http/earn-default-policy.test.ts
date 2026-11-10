@@ -27,8 +27,6 @@ test("Render-style configuration admits known source preview fees without fee JS
     NODE_ENV: "test",
     PORT: "3000",
     DATABASE_URL: "postgresql://test:test@localhost/test",
-    MERKL_API_KEY: "test",
-    MERKL_API_URL: "https://api.merkl.xyz",
     ONEINCH_API_KEY: "test",
     AURORA_API_KEY: "test",
     PIMLICO_API_KEY: "test",

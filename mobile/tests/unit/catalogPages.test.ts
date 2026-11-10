@@ -38,3 +38,34 @@ test("all chains failing reports an error instead of an empty catalog", async ()
     ),
   ).rejects.toThrow("unavailable");
 });
+
+test("featured vaults lead the combined page regardless of chain order", async () => {
+  const service = mockOpportunityService();
+  service.list.mockImplementation(async (query) => ({
+    list: [
+      ...(query.chainId === 143
+        ? [{ ...mainnetOpportunity(9), chainId: 143, featured: true }]
+        : []),
+      { ...mainnetOpportunity(query.chainId!), chainId: query.chainId! },
+    ],
+    total: query.chainId === 143 ? 2 : 1,
+    items: 8,
+    page: 0,
+  }));
+  const result = await readCatalogPage(
+    service,
+    { search: "" },
+    catalogCursor([
+      { id: 1, name: "Ethereum" },
+      { id: 4663, name: "Robinhood" },
+      { id: 143, name: "Monad" },
+    ]),
+    new AbortController().signal,
+  );
+  expect(result.items.map((row) => [row.chainId, row.featured === true])).toEqual([
+    [143, true],
+    [1, false],
+    [4663, false],
+    [143, false],
+  ]);
+});

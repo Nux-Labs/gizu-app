@@ -1,5 +1,5 @@
 import { AppRoot } from "@/application/AppRoot";
-import { act, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { SwapScreen } from "@/features/swap/SwapScreen";
 import { TokenCatalogContext } from "@/features/swap/useTokenCatalog";
@@ -32,7 +32,7 @@ test("defaults to Robinhood RWA and exposes catalog metadata without transaction
   expect(screen.queryByText(catalogToken.address)).toBeNull();
   expect(screen.getByText(/does not establish Fusion/)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
-  expect(screen.getByText("All tokens loaded.")).toBeVisible();
+  expect(screen.queryByText("All tokens loaded.")).toBeNull();
   fireEvent(screen.getByLabelText("AMZN logo"), "error");
   expect(screen.getByLabelText("AMZN logo unavailable")).toBeVisible();
 });
@@ -180,7 +180,8 @@ test("appends tokens and refreshes the first page without losing filters", async
   await screen.findByRole("button", { name: "Retry refresh" });
   expect(screen.getByText("Second token")).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "Retry refresh" }));
-  await screen.findByText("All tokens loaded.");
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(4));
+  await act(async () => {});
   expect(screen.queryByText("Second token")).toBeNull();
   expect(list.mock.lastCall?.[0]).toEqual({ chainId: 4663, category: "rwa", search: "", page: 0 });
 });

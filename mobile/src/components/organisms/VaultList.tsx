@@ -7,13 +7,11 @@ import {
   type ImageSourcePropType,
   type TextProps,
 } from "react-native";
-import { Lock } from "lucide-react-native";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { FadeIn } from "@/components/molecules/FadeIn";
 import { Sparkline } from "@/components/molecules/Sparkline";
 import type { Vault } from "@/domain/investments";
 import { cardDelay } from "@/theme/motion";
-import colors from "@/theme/colors.json";
 
 const tabular = { fontVariant: ["tabular-nums" as const] };
 const trailingTones = {
@@ -60,7 +58,7 @@ function CardText(props: TextProps) {
 function TickerChip({ ticker, logo }: { ticker: string; logo?: ImageSourcePropType }) {
   // Frontend: `h-10 w-10 rounded-xl bg-neon/10 font-mono text-[11px] font-bold text-neon`.
   return (
-    <View className="relative min-h-10 min-w-10 max-w-[72px] items-center justify-center rounded-xl bg-neon/10 px-1.5">
+    <View className="min-h-10 min-w-10 max-w-[72px] items-center justify-center rounded-xl bg-neon/10 px-1.5">
       {logo ? (
         <Image
           source={logo}
@@ -73,13 +71,6 @@ function TickerChip({ ticker, logo }: { ticker: string; logo?: ImageSourcePropTy
           {ticker}
         </CardText>
       )}
-      <View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        className="absolute -right-0.5 -top-0.5 rounded-full bg-ink p-px"
-      >
-        <Lock size={8} color={colors.neon.DEFAULT} opacity={0.7} />
-      </View>
     </View>
   );
 }
