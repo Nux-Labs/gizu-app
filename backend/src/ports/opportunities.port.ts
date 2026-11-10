@@ -1,4 +1,3 @@
-import type { ProtocolSelection } from "../domain/protocol.ts";
 import type { CatalogAsset } from "../domain/catalog.ts";
 
 export type Opportunity = {
@@ -30,7 +29,8 @@ export type TvlRecord = {
 };
 
 export type ListOpportunitiesQuery = {
-  protocol: ProtocolSelection;
+  /** Protocol id from the catalog, or "all". */
+  protocol: string;
   search: string;
   page: number;
   items: number;
@@ -39,10 +39,18 @@ export type ListOpportunitiesQuery = {
   signal?: AbortSignal;
 };
 
+export type ProtocolFacet = {
+  id: string;
+  name: string;
+  count: number;
+};
+
 export type OpportunityPage = {
   list: Opportunity[];
   total: number;
   partial?: boolean;
+  /** Filter options present in this catalog. Counts apply search but not the protocol filter. */
+  facets?: { protocols: ProtocolFacet[] };
 };
 
 export type TvlRecordsQuery = {

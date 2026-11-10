@@ -8,6 +8,7 @@ import type {
   OpportunityDetail,
   OpportunityPage,
   ListOpportunitiesQuery,
+  ProtocolFacet,
   TvlRecordsQuery,
 } from "../../ports/opportunities.port.ts";
 import type { VaultMetadata, VaultMetadataSource } from "./morpho-vaults.ts";
@@ -112,13 +113,15 @@ export class ConfiguredOpportunities implements Opportunities {
       ),
     ];
     const search = query.search.toLowerCase().trim();
-    const filtered = combined.filter(
+    const searched = combined.filter(
       (row) =>
-        (query.protocol === "all" || row.protocol.id === query.protocol) &&
-        (!search ||
-          `${row.name} ${contractAddress(row) ?? ""}`
-            .toLowerCase()
-            .includes(search)),
+        !search ||
+        `${row.name} ${contractAddress(row) ?? ""}`
+          .toLowerCase()
+          .includes(search),
+    );
+    const filtered = searched.filter(
+      (row) => query.protocol === "all" || row.protocol.id === query.protocol,
     );
     return {
       list: filtered.slice(
@@ -127,6 +130,7 @@ export class ConfiguredOpportunities implements Opportunities {
       ),
       total: filtered.length,
       ...(snapshot.partial ? { partial: true } : {}),
+      facets: { protocols: protocolFacets(searched) },
     };
   }
 
@@ -338,4 +342,17 @@ export class ConfiguredOpportunities implements Opportunities {
       ? []
       : this.merkl.tvlRecords(query);
   }
+}
+
+/** Options come from listed rows, so unsupported protocols never appear as filters. */
+export function protocolFacets(rows: Opportunity[]): ProtocolFacet[] {
+  const facets = new Map<string, ProtocolFacet>();
+  for (const { protocol } of rows) {
+    const facet = facets.get(protocol.id);
+    if (facet) facet.count += 1;
+    else facets.set(protocol.id, { ...protocol, count: 1 });
+  }
+  return [...facets.values()].sort(
+    (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+  );
 }

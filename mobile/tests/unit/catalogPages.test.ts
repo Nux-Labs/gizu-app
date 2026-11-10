@@ -14,7 +14,7 @@ test("one failed chain keeps the other chains visible and remains retryable", as
   });
   const result = await readCatalogPage(
     service,
-    { protocol: "all", search: "" },
+    { search: "" },
     catalogCursor([
       { id: 143, name: "Monad" },
       { id: 4663, name: "Robinhood" },
@@ -32,7 +32,7 @@ test("all chains failing reports an error instead of an empty catalog", async ()
   await expect(
     readCatalogPage(
       service,
-      { protocol: "all", search: "" },
+      { search: "" },
       catalogCursor([{ id: 143, name: "Monad" }]),
       new AbortController().signal,
     ),

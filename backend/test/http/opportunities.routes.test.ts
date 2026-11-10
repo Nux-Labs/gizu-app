@@ -277,3 +277,50 @@ test("a Monad promotion adds to Ethereum/Robinhood vault routes without replacin
   }
   await app.close();
 });
+
+test("the opportunity list accepts a catalog protocol filter and returns its facets", async () => {
+  const queries: ListOpportunitiesQuery[] = [];
+  const facets = { protocols: [{ id: "morpho", name: "Morpho", count: 2 }] };
+  const opportunities = {
+    list: async (query: ListOpportunitiesQuery) => {
+      queries.push(query);
+      return { list: [], total: 0, facets };
+    },
+    getById: async () => {
+      throw new Error("unused");
+    },
+    tvlRecords: async () => [],
+  };
+  const cache: Cache = {
+    get: async () => null,
+    set: async () => {},
+    deleteExpired: async () => 0,
+  };
+  const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  app.setErrorHandler(mapRequestError);
+  registerOpportunityRoutes(
+    app,
+    new OpportunitiesController(
+      new ListOpportunitiesUseCase(opportunities, cache),
+      new GetOpportunityUseCase(opportunities, cache),
+      new GetOpportunityTvlRecordsUseCase(opportunities, cache),
+    ),
+    [{ id: 143, name: "Monad" }],
+  );
+  const base = "/v1/opportunities?search=&page=0&items=8&chainId=143";
+  const all = await app.inject({ method: "GET", url: base });
+  assert.equal(all.statusCode, 200);
+  assert.deepEqual(all.json().facets, facets);
+  const scoped = await app.inject({ method: "GET", url: `${base}&protocol=morpho` });
+  assert.equal(scoped.statusCode, 200);
+  assert.deepEqual(
+    queries.map((query) => query.protocol),
+    ["all", "morpho"],
+  );
+  const invalid = await app.inject({ method: "GET", url: `${base}&protocol=Bad%20id` });
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(queries.length, 2);
+  await app.close();
+});
