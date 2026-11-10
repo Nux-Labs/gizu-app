@@ -113,10 +113,10 @@ export const mainnetInformationPages: Partial<Record<AccountPage, InformationPag
   },
   "transaction-signing": {
     title: "Transaction signing",
-    body: "Opening your wallet and checking USDC do not authorize spending. Confidential Earn requires separate native reviews and passkey approval for funding, investment, withdrawal and returns. Each action depends on current provider and device availability.",
+    body: "Opening your wallet and checking USDC do not authorize spending. Earn requires separate native reviews and passkey approval for funding, investment, withdrawal and returns. Each action depends on current provider and device availability.",
     rows: [
       { label: "Balance network", value: "Monad mainnet" },
-      { label: "Confidential Earn", value: "Separate review and passkey approval" },
+      { label: "Earn", value: "Separate review and passkey approval" },
       { label: "Vault withdrawal", value: "Only after you request Withdraw" },
     ],
   },

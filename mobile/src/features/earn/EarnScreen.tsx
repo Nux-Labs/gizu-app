@@ -161,8 +161,8 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
   return (
     <Screen>
       <BackAction fallback="Home" />
-      <Typography variant="title">Confidential earn</Typography>
-      <Typography>Use USDC from your funded Monad mainnet accounts.</Typography>
+      <Typography variant="title">Deposit</Typography>
+      <Typography>Use USDC from your wallet.</Typography>
       {earn.cycles.length > 1 &&
         earn.cycles
           .filter((cycle) => !profile || cycle.profileId === profile)

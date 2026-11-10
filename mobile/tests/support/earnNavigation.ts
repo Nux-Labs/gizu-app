@@ -3,7 +3,7 @@ import { Linking } from "react-native";
 
 /** Exercise the retained Earn route while its Home shortcut is hidden. */
 export async function openEarnLink() {
-  expect(screen.queryByRole("button", { name: "Confidential earn" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Earn" })).toBeNull();
   const listener = jest
     .mocked(Linking.addEventListener)
     .mock.calls.filter(([type]) => type === "url")

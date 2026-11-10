@@ -232,7 +232,7 @@ export function SourceFundingPanel({
       <View className="gap-3 p-5">
         {presentation === "deposit" && (
           <>
-            <Typography variant="heading">Fund confidential earn</Typography>
+            <Typography variant="heading">Fund your deposit</Typography>
             <Typography>
               Choose the total Monad USDC budget. Gas is paid in USDC; retain at least 0.01 USDC.
               The 10/90 split uses the actual confirmed confidential credit.

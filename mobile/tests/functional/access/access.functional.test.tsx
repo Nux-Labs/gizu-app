@@ -23,7 +23,7 @@ async function signIn() {
 test("welcome, access, all tabs and disconnect form a complete demo journey", async () => {
   renderApp();
   await signIn();
-  for (const name of ["Vaults", "Swap", "Settings"]) {
+  for (const name of ["Earn", "Swap", "Settings"]) {
     await userEvent.press(screen.getByLabelText(`${name} tab`));
   }
   expect(screen.getByText("Access method: Passkey")).toBeVisible();
@@ -163,18 +163,18 @@ test("account actions open secondary pages and the selected capsule tab is acces
   expect(await screen.findByRole("button", { name: "Continue with passkey" })).toBeVisible();
 });
 
-test("updated branding, confidential vaults and Swap availability retain navigation", async () => {
+test("updated branding, Earn vaults and Swap availability retain navigation", async () => {
   renderApp();
   expect(await screen.findByRole("header", { name: /DeFi.*Stealth.*Mode/s })).toBeVisible();
   await signIn();
-  expect(screen.queryByRole("header", { name: "Confidential vaults" })).toBeNull();
+  expect(screen.queryByRole("header", { name: "Earn" })).toBeNull();
   await userEvent.press(screen.getByLabelText("Swap tab"));
   expect(await screen.findByRole("header", { name: "Swap" })).toBeVisible();
   expect(screen.queryByText("Buy tokens with USDC.")).toBeNull();
   expect(screen.getByRole("button", { name: "Review swap" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Buy vault units" })).toBeNull();
-  await userEvent.press(screen.getByLabelText("Vaults tab"));
-  expect(await screen.findByRole("header", { name: "Confidential vaults" })).toBeVisible();
+  await userEvent.press(screen.getByLabelText("Earn tab"));
+  expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
 });
 
 test.each([true, false])(

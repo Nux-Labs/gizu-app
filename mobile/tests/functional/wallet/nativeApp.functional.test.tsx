@@ -66,7 +66,7 @@ test("native access opens existing Home and Account with live units and no fixtu
   expect(screen.getByRole("button", { name: "Receive" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "View activity" })).toBeEnabled();
-  await userEvent.press(screen.getByLabelText("Vaults tab"));
+  await userEvent.press(screen.getByLabelText("Earn tab"));
   expect(await screen.findByLabelText("Search opportunities")).toBeVisible();
   expect(screen.queryByRole("button", { name: "View Helix Alpha" })).toBeNull();
   await userEvent.press(screen.getByLabelText("Swap tab"));

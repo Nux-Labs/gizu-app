@@ -29,7 +29,7 @@ function SeeAll({ onPress }: { onPress: () => void }) {
   );
 }
 
-/** Frontend Home "Confidential vaults" section backed by the real mainnet catalog. */
+/** Frontend Home "Earn" section backed by the real mainnet catalog. */
 export function VaultPreview({
   onSeeAll,
   onOpen,
@@ -41,7 +41,7 @@ export function VaultPreview({
   return (
     <View className="gap-4">
       <View className="flex-row flex-wrap items-center justify-between gap-3">
-        <Typography variant="section">Confidential vaults</Typography>
+        <Typography variant="section">Earn</Typography>
         <SeeAll onPress={onSeeAll} />
       </View>
       {load.kind === "loading" && <CardGridSkeleton count={PREVIEW_SIZE} label="Loading vaults…" />}

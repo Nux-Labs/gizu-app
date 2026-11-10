@@ -18,7 +18,8 @@ import colors from "@/theme/colors.json";
 import { springs } from "@/theme/motion";
 
 const icons = { Home: House, Vaults: PieChart, Exchange: ArrowLeftRight, Settings };
-const titles = { Home: "Home", Vaults: "Vaults", Exchange: "Swap", Settings: "Settings" };
+// Visible tab names; route names stay stable for navigation and deep links.
+const titles = { Home: "Home", Vaults: "Earn", Exchange: "Swap", Settings: "Settings" };
 /** Frontend BottomNav enters from `y: 60` with a fade. */
 const ENTRANCE_OFFSET = 60;
 
@@ -111,7 +112,8 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={
-                  descriptors[route.key]!.options.tabBarAccessibilityLabel ?? `${route.name} tab`
+                  descriptors[route.key]!.options.tabBarAccessibilityLabel ??
+                  `${titles[route.name as keyof typeof titles] ?? route.name} tab`
                 }
                 accessibilityState={{ selected }}
                 onPress={() => {

@@ -26,7 +26,7 @@ export function OpportunityCard({
   opportunity: Opportunity;
   index: number;
   virtualized?: boolean;
-  /** Small suffix after the rate, e.g. ` total APR` on the Vaults tab. */
+  /** Small suffix after the rate, e.g. ` total APR` on the Earn tab. */
   rateSuffix?: string;
   onOpen: (id: string) => void;
 }) {
