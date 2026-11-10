@@ -166,9 +166,6 @@ struct Plan {
     /// to the return wallet in the same position.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     legs_random: Option<String>,
-    /// Debug sweep only: the public address that receives each wallet's USDG directly.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    destination: Option<Address>,
     /// Recovery only: recipient indices below this (the registry's next index) are scanned.
     #[serde(default)]
     scan_to: Option<u32>,
@@ -565,9 +562,9 @@ impl Engine {
     fn recipient_index(&self, i: usize) -> u32 {
         self.m.plan.recipient_indices[i]
     }
-    /// Everything that sells held tokens through Fusion; the debug sweep shares that machinery.
+    /// Everything that sells held tokens through Fusion.
     fn sell(&self) -> bool {
-        self.m.plan.kind == "confidentialSell" || self.sweep()
+        self.m.plan.kind == "confidentialSell"
     }
     /// A sell that pools every holder's proceeds in C and then splits them over randomly sized
     /// payouts, as a buy does. Older sells pay each holder's proceeds straight through.
@@ -586,16 +583,8 @@ impl Engine {
             self.legs()
         }
     }
-    /// Temporary debug mode: sells each holder's tokens and pays the USDG straight to a chosen
-    /// address. Aurora and the confidential balance are not used at all.
-    fn sweep(&self) -> bool {
-        self.m.plan.kind == "debugSweep"
-    }
-    /// Where a sale's USDG is delivered: the Aurora deposit address, or the sweep destination.
+    /// Where a sale's USDG is delivered: the Aurora deposit address.
     fn sale_receiver(&self, index: usize) -> Result<Address, SignerError> {
-        if self.sweep() {
-            return self.m.plan.destination.ok_or(SignerError::InvalidInput);
-        }
         evm::addr(
             &self.m.data.orders[index]
                 .inbound
@@ -1824,12 +1813,7 @@ impl Engine {
                         return Ok(());
                     }
                     self.m.data.leg = index;
-                    // A sweep delivers to its destination: no Aurora quote to take first.
-                    self.go(if self.sweep() {
-                        Step::FusionPermit { index }
-                    } else {
-                        Step::SellQuote { index }
-                    });
+                    self.go(Step::SellQuote { index });
                     return Ok(());
                 }
                 let floor =
@@ -2174,14 +2158,6 @@ impl Engine {
                         }
                         return Ok(());
                     }
-                    if self.sweep() {
-                        // The USDG is already at the destination: nothing is credited or paid out.
-                        let order = &mut self.m.data.orders[index];
-                        order.received_total += o.received;
-                        order.complete = true;
-                        self.after_order(index);
-                        return Ok(());
-                    }
                     let inbound = o.inbound.clone().ok_or(SignerError::InvalidInput)?;
                     self.m.data.funding_quote = Some(inbound);
                     self.m.data.orders[index].received_total += o.received;
@@ -2471,9 +2447,6 @@ impl Engine {
     }
 
     fn review(&self) -> String {
-        if self.sweep() {
-            return self.review_sweep();
-        }
         if self.pooled_sell() {
             return self.review_pooled_sell();
         }
@@ -2579,30 +2552,6 @@ impl Engine {
                 skipped.concat()
             )
         }
-    }
-
-    fn review_sweep(&self) -> String {
-        let d = &self.m.data;
-        let destination = self.m.plan.destination.unwrap_or(Address::ZERO);
-        let mut out = format!(
-            "DEBUG SWEEP · MAINNET\n{sym} → USDG (Fusion) → sent to an outside address\nNo confidential balance and no Aurora step: each wallet's USDG goes straight to the address below.\n\nSelling {sym} ({dec} decimals)\nContract {target}\n\nSEND ALL PROCEEDS TO {to}\nThis is a public Robinhood Chain address you chose; check every character.\n",
-            sym = d.target_symbol,
-            dec = d.target_decimals,
-            target = self.m.plan.target.to_checksum(None),
-            to = destination.to_checksum(None),
-        );
-        for i in (0..self.sales()).filter(|i| !d.orders[*i].amount.is_zero() && !d.orders[*i].dust)
-        {
-            out.push_str(&format!(
-                "\nWallet {holder}\n  {amount} {sym} → USDG\n",
-                holder = self.m.holders[i].to_checksum(None),
-                amount = units(d.orders[i].amount, d.target_decimals),
-                sym = d.target_symbol,
-            ));
-        }
-        out.push_str(&self.skipped_note());
-        out.push_str("\nEach order sells for at least 99% of its auction end price. Steps cannot be undone once submitted: USDG sent to the address above cannot be recalled.\n\nOne approval authorizes a permit and an order per wallet for 15 minutes. After 15 minutes you unlock again for this same plan. This temporary mode exists only in debug builds.");
-        out
     }
 
     fn review_pooled_sell(&self) -> String {
@@ -2817,7 +2766,6 @@ impl SwapOperation {
         if legs == 0 || legs > MAX_LEGS {
             return Err(SignerError::InvalidInput);
         }
-        let sweep = plan.kind == "debugSweep";
         let private_sell = plan.kind == "confidentialSell"
             && plan.completion_target.as_deref() == Some("confidential");
         if plan.completion_target.is_some() && !private_sell {
@@ -2826,7 +2774,7 @@ impl SwapOperation {
         if private_sell && (plan.legs_random.is_some() || plan.weights.is_some()) {
             return Err(SignerError::InvalidInput);
         }
-        let sell = plan.kind == "confidentialSell" || sweep;
+        let sell = plan.kind == "confidentialSell";
         let payout = plan.kind == "confidentialPayout";
         let recovery = plan.kind == "confidentialRecovery";
         // Only recovery scans, and it scans only indices the registry already allocated.
@@ -2846,10 +2794,6 @@ impl SwapOperation {
                 .len()
                 != legs
         {
-            return Err(SignerError::InvalidInput);
-        }
-        // Only a sweep has a destination, and it must be a real, non-zero address.
-        if sweep != plan.destination.is_some_and(|to| !to.is_zero()) {
             return Err(SignerError::InvalidInput);
         }
         // Only a sell carries payout randomness, as exactly 32 bytes of hex.
@@ -2891,9 +2835,8 @@ impl SwapOperation {
             {
                 return Err(SignerError::InvalidInput);
             }
-            if sweep || private_sell {
+            if private_sell {
                 // No public payouts: internal slots name exactly the existing holders.
-                // A sweep pays no return wallets; its recipients are the holders themselves.
                 if plan.recipient_indices != held {
                     return Err(SignerError::InvalidInput);
                 }
@@ -3041,7 +2984,6 @@ impl SwapOperation {
             // Continue with exactly the quote that was shown; a later requote is checked again.
             e.m.step = match e.m.step.clone() {
                 Step::PayoutQuote { index } => Step::PayoutIntent { index },
-                Step::FusionPreview { index } if e.sweep() => Step::FusionPermit { index },
                 Step::FusionPreview { index } if e.sell() => Step::SellQuote { index },
                 Step::FusionPreview { index } => Step::FusionPermit { index },
                 Step::SellQuote { index } => Step::FusionPermit { index },

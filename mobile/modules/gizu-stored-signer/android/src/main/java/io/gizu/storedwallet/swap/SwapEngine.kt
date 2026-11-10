@@ -1,7 +1,6 @@
 package io.gizu.storedwallet.swap
 
 import android.util.Log
-import io.gizu.storedwallet.BuildConfig
 import io.gizu.storedwallet.FundingReservations
 import io.gizu.storedwallet.NativeFundingPlanner
 import io.gizu.storedwallet.NativeRpcTransport
@@ -208,15 +207,7 @@ internal class SwapEngine(
     persist()
   }
 
-  /**
-   * [sweepTo] switches the sale to the temporary debug sweep: each holder's proceeds are paid
-   * straight to that public address, with no Aurora step. Debug builds only.
-   */
-  fun startSell(record: WalletRecord, holdingId: String? = null, sweepTo: String? = null) {
-    if (sweepTo != null) {
-      check(BuildConfig.DEBUG) { "The debug sweep is not available in this build." }
-      check(holdingId != null && sweepTo.matches(Regex("0x[0-9a-fA-F]{40}")))
-    }
+  fun startSell(record: WalletRecord, holdingId: String? = null) {
     check(record.verified && record.id == saved.walletId)
     assertExecutionAvailable(record)
     check(operation == null)
@@ -259,20 +250,6 @@ internal class SwapEngine(
         }
         plan.getString("target") to plan.getJSONArray("recipientIndices")
       }
-    if (sweepTo != null) {
-      // No return wallets are needed, so nothing is reserved; the holders are their own recipients.
-      val sweep =
-        JSONObject()
-          .put("kind", "debugSweep")
-          .put("target", target)
-          .put("holderIndices", holders)
-          .put("recipientIndices", holders)
-          .put("destination", sweepTo)
-      fundingAddress = deriveAccountAddressRange(record.entropy, 1u, 1u).single()
-      operation = SwapOperation.start(sweep.toString(), record.entropy, gateway, now())
-      persist()
-      return
-    }
     // New sales stop privately. The core uses existing holder indices only as
     // internal order slots; no public recipient roles or randomness are reserved.
     val next = confidentialSalePlan(target, holders)

@@ -46,7 +46,6 @@ internal object SwapHost {
   var payout: Boolean = false
   var recovery: Boolean = false
   var holdingId: String? = null
-  var sweepTo: String? = null
 
   suspend fun open(
     activity: Activity,
@@ -58,7 +57,6 @@ internal object SwapHost {
     payout: Boolean = false,
     recovery: Boolean = false,
     holdingId: String? = null,
-    sweepTo: String? = null,
   ): Map<String, Any?> {
     try {
       return suspendCancellableCoroutine { continuation ->
@@ -72,7 +70,6 @@ internal object SwapHost {
         this.payout = payout
         this.recovery = recovery
         this.holdingId = holdingId
-        this.sweepTo = sweepTo
         completion = continuation
         continuation.invokeOnCancellation { activity.runOnUiThread { close(null) } }
         try {
@@ -197,7 +194,7 @@ class SwapActivity : Activity() {
             active.restore()
             active.retry()
           } else if (SwapHost.sell) {
-            active.startSell(record, SwapHost.holdingId, SwapHost.sweepTo)
+            active.startSell(record, SwapHost.holdingId)
           } else if (SwapHost.recovery) {
             active.startRecovery(record, checkNotNull(SwapHost.target))
           } else if (SwapHost.payout) {

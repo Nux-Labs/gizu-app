@@ -65,7 +65,7 @@ struct World {
     bridge_min: U256,
     /// C accumulates every sale credit and each payout spends from it, as on mainnet.
     pool_credit: bool,
-    /// USDG a sale delivered to its receiver (an Aurora deposit or a sweep destination).
+    /// USDG a sale delivered to its receiver (an Aurora deposit).
     delivered: HashMap<Address, U256>,
     target: HashMap<Address, U256>,
     monad_usdc: HashMap<Address, U256>,
@@ -564,7 +564,7 @@ impl World {
                 .get("receiver")
                 .and_then(Value::as_str)
                 .expect("sell must send its bridge receiver");
-            // Aurora sells deliver to the quoted deposit; a sweep has no quote and names its own.
+            // Aurora sells deliver to the quoted deposit.
             if let Some(deposit) = self.origin_deposit.get(&wallet) {
                 assert_eq!(evm::addr(receiver).unwrap(), evm::addr(deposit).unwrap());
             }
@@ -1850,173 +1850,27 @@ fn a_sell_group_with_an_empty_wallet_sells_only_the_real_legs() {
     );
 }
 
-const SWEEP_TO: Address = address!("0x4b4FC9122E79C06e279FD8E3c612056ea61c856F");
-
-fn sweep_plan(holders: &[u32], destination: Option<Address>) -> Value {
-    let mut p = json!({
-        "kind": "debugSweep", "target": AMZN.to_checksum(None),
-        "holderIndices": holders, "recipientIndices": holders,
-    });
-    if let Some(d) = destination {
-        p["destination"] = json!(d.to_checksum(None));
-    }
-    p
-}
-
 #[test]
-fn a_debug_sweep_pays_every_wallets_usdg_to_the_destination_and_never_uses_aurora() {
-    let (mut world, mut now) = (World::new(), T0);
-    let buy = start(Some("2000000"));
-    review(&buy, &mut world, &mut now);
-    buy.approve(now).unwrap();
-    assert_eq!(drive(&buy, &mut world, &mut now), SwapStep::Finished);
-    let held: Vec<U256> = (3..6).map(|i| world.target[&addr(i)]).collect();
-    assert!(held.iter().all(|h| !h.is_zero()));
-    let (intents_before, orders_before, paths_before) =
-        (world.intents, world.orders, world.paths.len());
-
-    let sweep = start_plan(sweep_plan(&[3, 4, 5], Some(SWEEP_TO)).to_string());
-    let text = review(&sweep, &mut world, &mut now);
-    assert!(text.contains("DEBUG SWEEP"), "{text}");
-    assert!(text.contains(&format!(
-        "SEND ALL PROCEEDS TO {}",
-        SWEEP_TO.to_checksum(None)
-    )));
-    for i in 3..6 {
-        assert!(
-            text.contains(&addr(i).to_checksum(None)),
-            "wallet {i} not listed"
-        );
-    }
-    assert_eq!(
-        world.orders, orders_before,
-        "nothing is signed before approval"
-    );
-
-    sweep.approve(now).unwrap();
-    assert_eq!(drive(&sweep, &mut world, &mut now), SwapStep::Finished);
-    assert_eq!(status(&sweep)["phase"], "COMPLETE");
-    assert_eq!(status(&sweep)["ordersComplete"], 3);
-    assert_eq!(world.orders, orders_before + 3);
-    assert_eq!(
-        world.intents, intents_before,
-        "no confidential payout was signed"
-    );
-    for i in 3..6 {
-        assert!(
-            world.target[&addr(i)].is_zero(),
-            "wallet {i} still holds tokens"
-        );
-    }
-    let expected: U256 = held
-        .iter()
-        .fold(U256::ZERO, |a, h| a + *h / U256::from(WEI_PER_ATOM));
-    assert_eq!(
-        world.delivered[&SWEEP_TO], expected,
-        "USDG did not all reach the destination"
-    );
-    assert!(world.monad_usdc.values().all(|v| v.is_zero()));
-    let used: Vec<&String> = world.paths[paths_before..]
-        .iter()
-        .filter(|p| {
-            [
-                "aurora/quote",
-                "generate-intent",
-                "submit-intent",
-                "authenticate",
-                "balances",
-                "aurora/status",
-            ]
-            .iter()
-            .any(|k| p.contains(k))
-        })
-        .collect();
-    assert!(used.is_empty(), "a sweep used Aurora: {used:?}");
-}
-
-#[test]
-fn a_sweep_skips_empty_wallets_and_only_sweeps_real_holdings() {
-    let (mut world, mut now) = (World::new(), T0);
-    let buy = start_plan(legs_plan(3, 2, None));
-    review(&buy, &mut world, &mut now);
-    buy.approve(now).unwrap();
-    assert_eq!(drive(&buy, &mut world, &mut now), SwapStep::Finished);
-    let sweep = start_plan(sweep_plan(&[3, 4, 5], Some(SWEEP_TO)).to_string());
-    let text = review(&sweep, &mut world, &mut now);
-    assert!(!text.contains(&addr(5).to_checksum(None)), "{text}");
-    sweep.approve(now).unwrap();
-    assert_eq!(drive(&sweep, &mut world, &mut now), SwapStep::Finished);
-    assert_eq!(status(&sweep)["ordersComplete"], 2);
-}
-
-#[test]
-fn a_sweep_plan_needs_a_real_destination_and_nothing_else_may_carry_one() {
+fn removed_debug_sweep_plans_and_destinations_are_refused() {
     let bad = |plan: Value| {
         assert!(
             SwapOperation::start(plan.to_string(), ENTROPY.to_vec(), GATEWAY.into(), T0).is_err(),
             "{plan}"
         )
     };
-    bad(sweep_plan(&[3, 4, 5], None));
-    bad(sweep_plan(&[3, 4, 5], Some(Address::ZERO)));
-    // Recipients must be the holders themselves; weights and amounts do not apply.
-    let mut p = sweep_plan(&[3, 4, 5], Some(SWEEP_TO));
-    p["recipientIndices"] = json!([6, 7, 8]);
-    bad(p);
-    let mut p = sweep_plan(&[3, 4, 5], Some(SWEEP_TO));
-    p["weights"] = json!([1, 1, 1]);
-    bad(p);
-    let mut p = sweep_plan(&[3, 4, 5], Some(SWEEP_TO));
-    p["amountAtoms"] = json!("1000000");
-    bad(p);
-    bad(sweep_plan(&[3, 3, 5], Some(SWEEP_TO)));
-    // A destination on a buy, sell or payout plan is refused rather than ignored.
+    let to = "0x4b4FC9122E79C06e279FD8E3c612056ea61c856F";
+    bad(json!({
+        "kind": "debugSweep", "target": AMZN.to_checksum(None),
+        "holderIndices": [3, 4, 5], "recipientIndices": [3, 4, 5], "destination": to,
+    }));
+    // No plan may name an outside destination for its proceeds.
     for plan in [
         serde_json::from_str::<Value>(&plan(Some("2000000"))).unwrap(),
         serde_json::from_str::<Value>(&sell_plan([3, 4, 5], [6, 7, 8])).unwrap(),
     ] {
         let mut p = plan;
-        p["destination"] = json!(SWEEP_TO.to_checksum(None));
+        p["destination"] = json!(to);
         bad(p);
-    }
-    assert!(
-        SwapOperation::start(
-            sweep_plan(&[3, 4, 5], Some(SWEEP_TO)).to_string(),
-            ENTROPY.to_vec(),
-            GATEWAY.into(),
-            T0
-        )
-        .is_ok()
-    );
-}
-
-#[test]
-fn a_sweep_order_paying_anyone_else_is_never_signed() {
-    for tamper in [Tamper::OrderReceiver, Tamper::OrderTopReceiver] {
-        let (mut world, mut now) = (World::new(), T0);
-        let buy = start(Some("2000000"));
-        review(&buy, &mut world, &mut now);
-        buy.approve(now).unwrap();
-        assert_eq!(drive(&buy, &mut world, &mut now), SwapStep::Finished);
-        let before = world.orders;
-        let sweep = start_plan(sweep_plan(&[3, 4, 5], Some(SWEEP_TO)).to_string());
-        review(&sweep, &mut world, &mut now);
-        sweep.approve(now).unwrap();
-        world.tamper = tamper;
-        let step = drive(&sweep, &mut world, &mut now);
-        assert!(
-            matches!(&step, SwapStep::Paused { code } if code.contains("ORDER")),
-            "{step:?}"
-        );
-        assert_eq!(
-            world.orders, before,
-            "an order with another receiver was signed"
-        );
-        assert!(
-            !world
-                .delivered
-                .contains_key(&address!("0x00000000000000000000000000000000000BAd00"))
-        );
     }
 }
 
@@ -2101,19 +1955,6 @@ fn a_sale_where_every_wallet_is_too_small_stops_before_review_with_a_clear_code(
         }
     );
     assert_eq!(world.orders, 0);
-}
-
-#[test]
-fn a_debug_sweep_also_skips_a_wallet_too_small_for_fusion() {
-    let (mut world, mut now) = (dusty_world(1), T0);
-    let sweep = start_plan(sweep_plan(&[3, 4, 5], Some(SWEEP_TO)).to_string());
-    review(&sweep, &mut world, &mut now);
-    sweep.approve(now).unwrap();
-    assert_eq!(drive(&sweep, &mut world, &mut now), SwapStep::Finished);
-    assert_eq!(status(&sweep)["ordersComplete"], 2);
-    assert_eq!(world.orders, 2);
-    assert_eq!(world.target[&addr(4)], U256::from(1_000_000_000_000u64));
-    assert!(world.delivered[&SWEEP_TO] > U256::ZERO);
 }
 
 #[test]
@@ -2352,9 +2193,6 @@ fn sell_plans_validate_their_randomness_and_wallet_counts() {
     let mut buy: Value = serde_json::from_str(&plan(Some("2000000"))).unwrap();
     buy["legsRandom"] = json!(RANDOM);
     bad(buy.to_string());
-    let mut sweep = sweep_plan(&[3, 4, 5], Some(SWEEP_TO));
-    sweep["legsRandom"] = json!(RANDOM);
-    bad(sweep.to_string());
     // Holders and return wallets may not overlap; shares are drawn by the engine, not given.
     let mut p: Value = serde_json::from_str(&pooled_plan(RANDOM)).unwrap();
     p["recipientIndices"] = json!([5, 11, 12]);

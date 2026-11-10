@@ -151,21 +151,10 @@ internal object SwapScreens {
   private fun stages(view: Map<String, Any?>): List<Stage> {
     val symbol = (view["targetSymbol"] as? String).orEmpty().ifBlank { "token" }
     val phase = view["phase"] as? String ?: ""
-    val kind = view["kind"] as? String ?: ""
     val sell = view["direction"] == "sell"
     val names: List<String>
     val index: Int
     when {
-      kind == "debugSweep" -> {
-        names = listOf("Check holdings", "Sell $symbol and send USDG", "Done")
-        index =
-          when (phase) {
-            "PLANNING",
-            "REVIEW" -> 0
-            "COMPLETE" -> 2
-            else -> 1
-          }
-      }
       sell -> {
         names = listOf("Check holdings", "Sell $symbol", "Private credit", "Pay out USDC", "Done")
         index =
@@ -250,7 +239,6 @@ internal object SwapScreens {
   fun progress(context: Context, view: Map<String, Any?>, approved: Boolean): View {
     val symbol = (view["targetSymbol"] as? String).orEmpty().ifBlank { "token" }
     val sell = view["direction"] == "sell"
-    val kind = view["kind"] as? String ?: ""
     val legs = number(view, "legs", 3).coerceAtLeast(1)
     // A sell sells from its holders and pays out to `legs` fresh wallets.
     val sales = number(view, "holders", legs).coerceAtLeast(1)
@@ -261,7 +249,6 @@ internal object SwapScreens {
       chip(
         context,
         when {
-          kind == "debugSweep" -> "DEBUG SWEEP"
           sell -> "SELLING"
           else -> "BUYING"
         },
@@ -311,7 +298,6 @@ internal object SwapScreens {
       counter(context, filledLabel, number(view, "ordersComplete"), if (sell) sales else legs),
       params(context, 14),
     )
-    if (kind == "debugSweep") counters.removeViewAt(0)
     column.addView(counters, params(context, 12))
 
     val note = card(context, NativeStyle.glassSoft, NativeStyle.glassBorder)
