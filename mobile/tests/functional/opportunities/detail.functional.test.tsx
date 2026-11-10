@@ -286,8 +286,8 @@ test("returning from vault details retains appended catalog pages without reload
   await userEvent.press(await screen.findByRole("button", { name: `View ${second.name}` }));
   await screen.findByLabelText(second.name);
   await userEvent.press(screen.getByRole("button", { name: "Back" }));
-  expect(await screen.findByText("All vaults loaded.")).toBeVisible();
-  expect(screen.getByText(first.name)).toBeVisible();
+  expect(await screen.findByText(first.name)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   expect(screen.getByText(second.name)).toBeVisible();
   expect(service.list).toHaveBeenCalledTimes(2);
 });

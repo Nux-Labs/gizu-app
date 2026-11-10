@@ -10,6 +10,11 @@ export const ListOpportunitiesQuerySchema = z.object({
   page: z.coerce.number().int().nonnegative(),
   items: z.coerce.number().int().min(1).max(100),
   chainId: z.coerce.number().int().positive(),
+  /** Catalog protocol id from `facets.protocols`; omitted means every protocol. */
+  protocol: z
+    .string()
+    .regex(/^[a-z0-9-]{1,32}$/)
+    .optional(),
 });
 
 export type ListOpportunitiesQuery = z.infer<typeof ListOpportunitiesQuerySchema>;

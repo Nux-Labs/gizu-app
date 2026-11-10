@@ -113,11 +113,9 @@ export function InfiniteListScreen<T>({
               !list.loadingMore &&
               !list.refreshing &&
               !list.error &&
-              (list.hasMore ? (
+              list.hasMore && (
                 <Button label="Load more" variant="secondary" onPress={list.loadMore} />
-              ) : list.items.length > 0 ? (
-                <Typography variant="caption">All {noun} loaded.</Typography>
-              ) : null)}
+              )}
           </View>
         }
         onEndReached={list.loadMore}

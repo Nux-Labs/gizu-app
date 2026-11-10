@@ -10,7 +10,7 @@ const row = {
   tvl: 10,
 };
 const body = { list: [row], page: 0, items: 8, total: 1 };
-const query = { search: "USDC & MON", protocol: "all" as const, page: 0, chainId: 1 };
+const query = { search: "USDC & MON", page: 0, chainId: 1 };
 const originalFetch = global.fetch;
 const fetchMock = jest.fn();
 beforeEach(() => {
@@ -55,7 +55,18 @@ test("pins mainnet and encodes search with no signing or secret headers", async 
     { ...query, protocol: "morpho" },
     new AbortController().signal,
   );
-  expect(fetchMock.mock.calls[1][0]).toContain("/v1/protocols/morpho/opportunities?");
+  expect(fetchMock.mock.calls[1][0]).toBe(
+    "http://localhost:3000/v1/opportunities?chainId=1&page=0&items=8&search=USDC%20%26%20MON&protocol=morpho",
+  );
+});
+test("passes catalog protocol facets through", async () => {
+  const facets = { protocols: [{ id: "morpho", name: "Morpho", count: 1 }] };
+  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ ...body, facets }) });
+  const result = await createOpportunityService("http://localhost:3000").list(
+    query,
+    new AbortController().signal,
+  );
+  expect(result.facets).toEqual(facets);
 });
 test.each([
   { ...body, list: [{ ...row, chainId: 10143 }] },
@@ -66,6 +77,17 @@ test.each([
   { ...body, total: -1 },
   { ...body, page: 1 },
   { ...body, items: 100 },
+  { ...body, facets: { protocols: [{ id: "Bad id", name: "Bad", count: 1 }] } },
+  { ...body, facets: { protocols: [{ id: "morpho", name: "Morpho", count: 0 }] } },
+  {
+    ...body,
+    facets: {
+      protocols: [
+        { id: "morpho", name: "Morpho", count: 1 },
+        { id: "morpho", name: "Morpho", count: 1 },
+      ],
+    },
+  },
   null,
 ])("rejects malformed or wrong-network response %#", async (value) => {
   fetchMock.mockResolvedValue({ ok: true, json: async () => value });

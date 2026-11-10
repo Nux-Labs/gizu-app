@@ -1,4 +1,9 @@
-import type { CatalogChain, OpportunityQuery, OpportunityService } from "@/domain/opportunities";
+import type {
+  CatalogChain,
+  OpportunityQuery,
+  OpportunityService,
+  ProtocolFacet,
+} from "@/domain/opportunities";
 
 type Position = { chainId?: number; page: number };
 
@@ -23,11 +28,16 @@ export async function readCatalogPage(
     const failure = results.find((result) => result.status === "rejected");
     throw failure?.status === "rejected" ? failure.reason : new Error("Vault catalog unavailable.");
   }
-  // Interleave so the Home preview and first screen include the supported chains together.
-  const items = Array.from(
+  // Interleave so the Home preview and first screen include the supported chains together,
+  // then lift featured vaults; each chain already returns its featured vaults first.
+  const interleaved = Array.from(
     { length: Math.max(0, ...pages.map((page) => page.list.length)) },
     (_, i) => pages.flatMap((page) => (page.list[i] ? [page.list[i]!] : [])),
   ).flat();
+  const items = [
+    ...interleaved.filter((row) => row.featured === true),
+    ...interleaved.filter((row) => row.featured !== true),
+  ];
   const remaining = positions.flatMap((position, i) => {
     const result = results[i]!;
     // A failed chain stays at its current cursor for an explicit retry/load more.
@@ -40,5 +50,16 @@ export async function readCatalogPage(
     nextCursor: remaining.length ? JSON.stringify(remaining) : null,
     total: pages.reduce((total, page) => total + page.total, 0),
     partial: pages.length !== positions.length || pages.some((page) => page.partial === true),
+    facets: mergeProtocolFacets(pages.map((page) => page.facets?.protocols ?? [])),
   };
+}
+
+/** Each chain reports its own protocols; the list shows one option per protocol across chains. */
+export function mergeProtocolFacets(perChain: ProtocolFacet[][]): ProtocolFacet[] {
+  const merged = new Map<string, ProtocolFacet>();
+  for (const facet of perChain.flat()) {
+    const current = merged.get(facet.id);
+    merged.set(facet.id, current ? { ...current, count: current.count + facet.count } : facet);
+  }
+  return [...merged.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }

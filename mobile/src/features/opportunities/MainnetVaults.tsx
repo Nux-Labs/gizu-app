@@ -5,14 +5,14 @@ import { SearchInput } from "@/components/atoms/SearchInput";
 import { Button } from "@/components/atoms/Button";
 import { Choice } from "@/components/molecules/Choice";
 import { FadeIn } from "@/components/molecules/FadeIn";
-import { opportunityProtocols } from "@/domain/opportunities";
 import { sectionDelay } from "@/theme/motion";
 import { useInfiniteOpportunities, opportunityIdentity } from "./useInfiniteOpportunities";
 import { OpportunityCard } from "./components/OpportunityCard";
-const labels = { all: "All protocols", aave: "Aave", morpho: "Morpho", curvance: "Curvance" };
 export function MainnetVaults({ onOpen }: { onOpen: (id: string) => void }) {
-  const { query, queryKey, list, change, partial } = useInfiniteOpportunities();
-  const filtered = query.search !== "" || query.protocol !== "all";
+  const { query, queryKey, list, change, partial, protocols } = useInfiniteOpportunities();
+  const filtered = query.search !== "" || query.protocol !== undefined;
+  // One protocol is not a choice; keep the row while a selection is active so it can be undone.
+  const showProtocols = protocols.length > 1 || query.protocol !== undefined;
   return (
     <InfiniteListScreen
       list={list}
@@ -34,22 +34,30 @@ export function MainnetVaults({ onOpen }: { onOpen: (id: string) => void }) {
       header={
         <>
           <FadeIn delay={sectionDelay(0)} className="gap-2 pb-2">
-            <Typography variant="pageTitle">Confidential vaults</Typography>
+            <Typography variant="pageTitle">Earn</Typography>
+            <Typography variant="body">Earn yield on your USDC with selected vaults.</Typography>
           </FadeIn>
-          <View
-            className="flex-row flex-wrap gap-2"
-            accessibilityRole="radiogroup"
-            accessibilityLabel="Protocol filter"
-          >
-            {opportunityProtocols.map((protocol) => (
-              <Choice
-                key={protocol}
-                label={labels[protocol]}
-                selected={query.protocol === protocol}
-                onPress={() => change({ ...query, protocol })}
-              />
-            ))}
-          </View>
+          {showProtocols && (
+            <View
+              className="flex-row flex-wrap gap-2"
+              accessibilityRole="radiogroup"
+              accessibilityLabel="Protocol filter"
+            >
+              {protocols.map((protocol) => (
+                <Choice
+                  key={protocol.id}
+                  label={protocol.name}
+                  selected={query.protocol === protocol.id}
+                  onPress={() =>
+                    change({
+                      ...query,
+                      protocol: query.protocol === protocol.id ? undefined : protocol.id,
+                    })
+                  }
+                />
+              ))}
+            </View>
+          )}
           <SearchInput
             label="Search opportunities"
             value={query.search}
@@ -65,7 +73,7 @@ export function MainnetVaults({ onOpen }: { onOpen: (id: string) => void }) {
               <Button
                 label="Clear filters"
                 variant="quiet"
-                onPress={() => change({ ...query, search: "", protocol: "all" })}
+                onPress={() => change({ search: "" })}
               />
             </View>
           )}

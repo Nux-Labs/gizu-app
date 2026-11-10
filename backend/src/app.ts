@@ -54,7 +54,6 @@ import { registerEarnReturnRoutes } from "./http/routes/earn-return.routes.ts";
 import { EarnExitSnapshot } from "./adapters/earn/exit-snapshot.ts";
 import { registerEarnExitRoutes } from "./http/routes/earn-exit.routes.ts";
 import { registerEarnPayoutRoutes } from "./http/routes/earn-payout.routes.ts";
-import { HttpMerklOpportunities } from "./adapters/merkl/http-merkl-opportunities.ts";
 import { PgCache } from "./adapters/postgres/pg-cache.ts";
 import { PgEarlyAccess } from "./adapters/postgres/pg-early-access.ts";
 import { registerEarlyAccessRoutes } from "./http/routes/early-access.routes.ts";
@@ -154,12 +153,11 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   const chains = resolveCatalogChains(secret);
   const vaults = resolveCatalogVaults(secret, chains);
   const namespace = `catalog:v4:${createHash("sha256")
-    .update(JSON.stringify({ chains, vaults, morpho: secret.MORPHO_API_URL, merkl: secret.MERKL_API_URL }))
+    .update(JSON.stringify({ chains, vaults, morpho: secret.MORPHO_API_URL }))
     .digest("hex")}`;
   const opportunities = new ConfiguredOpportunities(
     chains,
     vaults,
-    new HttpMerklOpportunities(secret.MERKL_API_URL, secret.MERKL_API_KEY),
     new MorphoVaults(secret.MORPHO_API_URL),
   );
   const cache = new PgCache(pgPool);

@@ -21,6 +21,12 @@ const page: OpportunityPage = {
   page: 0,
   items: 8,
   total: 9,
+  facets: {
+    protocols: [
+      { id: "aave", name: "Aave", count: 5 },
+      { id: "morpho", name: "Morpho", count: 4 },
+    ],
+  },
   list: [
     {
       id: "1",
@@ -95,10 +101,7 @@ test("mainnet listing shows real metrics without investment actions and supports
   );
   await userEvent.press(screen.getByRole("button", { name: "Clear filters" }));
   await screen.findByText("Lend USDC on Aave");
-  expect(list).toHaveBeenLastCalledWith(
-    { search: "", protocol: "all", page: 0 },
-    expect.anything(),
-  );
+  expect(list).toHaveBeenLastCalledWith({ search: "", page: 0 }, expect.anything());
 });
 test("failure can be retried and old responses cannot replace new results", async () => {
   const { list } = setup(true);
@@ -111,10 +114,7 @@ test("failure can be retried and old responses cannot replace new results", asyn
   list.mockReturnValueOnce(old.promise);
   fireEvent.changeText(screen.getByLabelText("Search opportunities"), "old");
   await waitFor(() =>
-    expect(list).toHaveBeenLastCalledWith(
-      { search: "old", protocol: "all", page: 0 },
-      expect.anything(),
-    ),
+    expect(list).toHaveBeenLastCalledWith({ search: "old", page: 0 }, expect.anything()),
   );
   const signal = list.mock.calls.at(-1)![1];
   list.mockResolvedValueOnce({ ...page, list: [], total: 0 });
@@ -165,7 +165,8 @@ test("refresh replaces vault results and reuses successful sparkline history", a
   await screen.findByText("Second vault");
   list.mockResolvedValueOnce({ ...page, total: 1 });
   fireEvent(screen.getByLabelText("vaults list"), "refresh");
-  await screen.findByText("All vaults loaded.");
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(3));
+  await act(async () => {});
   expect(screen.queryByText("Second vault")).toBeNull();
   expect(list.mock.lastCall?.[0].page).toBe(0);
   expect(tvl.mock.calls.filter(([id]) => id === "1")).toHaveLength(1);
@@ -180,12 +181,22 @@ test("chainless catalog combines supported chains, retains protocol filters and 
     page: query.page,
     total: query.chainId === 143 ? 9 : 1,
     partial: query.chainId === 1,
+    // Per-chain options merge into one chip per protocol; Curvance is never offered.
+    facets: {
+      protocols:
+        query.chainId === 143
+          ? [
+              { id: "morpho", name: "Morpho", count: 2 },
+              { id: "aave", name: "Aave", count: 1 },
+            ]
+          : [{ id: "morpho", name: "Morpho", count: 1 }],
+    },
     list: [
       {
         ...page.list[0]!,
-        id: `${query.chainId}-${query.protocol}-${query.page}`,
+        id: `${query.chainId}-${query.protocol ?? "all"}-${query.page}`,
         chainId: query.chainId!,
-        name: `${query.protocol} vault ${query.chainId} page ${query.page}`,
+        name: `${query.protocol ?? "all"} vault ${query.chainId} page ${query.page}`,
       },
     ],
   }));
@@ -203,15 +214,19 @@ test("chainless catalog combines supported chains, retains protocol filters and 
   expect(screen.queryByRole("radiogroup", { name: "Chain filter" })).toBeNull();
   for (const name of ["Robinhood", "Ethereum", "Monad"])
     expect(screen.queryByRole("radio", { name })).toBeNull();
-  for (const name of ["Aave", "Morpho", "Curvance"])
-    expect(screen.getByRole("radio", { name })).toBeVisible();
+  expect(screen.getAllByRole("radio").map((radio) => radio.props.accessibilityLabel)).toEqual([
+    "Morpho",
+    "Aave",
+  ]);
+  expect(screen.queryByRole("radio", { name: "All protocols" })).toBeNull();
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Some vaults are unavailable. Showing the available catalog.",
   );
   await userEvent.press(screen.getByRole("button", { name: "Load more" }));
   expect(await screen.findByText("all vault 143 page 1")).toBeVisible();
   expect(screen.getByText("all vault 1 page 0")).toBeVisible();
-  expect(await screen.findByText("All vaults loaded.")).toBeVisible();
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
+  expect(screen.queryByText("All vaults loaded.")).toBeNull();
   expect(
     list.mock.calls.filter(([query]) => query.page === 1).map(([query]) => query.chainId),
   ).toEqual([143]);
@@ -220,9 +235,24 @@ test("chainless catalog combines supported chains, retains protocol filters and 
   expect(screen.getByText("morpho vault 1 page 0")).toBeVisible();
   expect(screen.getByText("morpho vault 4663 page 0")).toBeVisible();
   expect(screen.queryByText("all vault 143 page 1")).toBeNull();
+  // Choosing the selected protocol again clears it.
+  await userEvent.press(screen.getByRole("radio", { name: "Morpho" }));
+  expect(await screen.findByText("all vault 143 page 0")).toBeVisible();
+  await userEvent.press(screen.getByRole("radio", { name: "Aave" }));
+  expect(await screen.findByText("aave vault 143 page 0")).toBeVisible();
   await userEvent.press(screen.getByRole("button", { name: "Clear filters" }));
   expect(await screen.findByText("all vault 143 page 0")).toBeVisible();
   expect(screen.getByText("all vault 4663 page 0")).toBeVisible();
+});
+
+test("a catalog with one protocol shows no protocol filter", async () => {
+  const { list } = setup(false, jest.fn().mockResolvedValue([{ id: 143, name: "Monad" }]));
+  list.mockResolvedValue({
+    ...page,
+    facets: { protocols: [{ id: "morpho", name: "Morpho", count: 1 }] },
+  });
+  expect(await screen.findByText("Lend USDC on Aave")).toBeVisible();
+  expect(screen.queryByRole("radiogroup", { name: "Protocol filter" })).toBeNull();
 });
 
 test("chain endpoint failure retries without issuing a default-chain vault request", async () => {
@@ -237,10 +267,7 @@ test("chain endpoint failure retries without issuing a default-chain vault reque
   expect(list).not.toHaveBeenCalled();
   await userEvent.press(screen.getByRole("button", { name: "Retry vaults" }));
   await screen.findByText("Lend USDC on Aave");
-  expect(list).toHaveBeenCalledWith(
-    { search: "", protocol: "all", chainId: 4663, page: 0 },
-    expect.anything(),
-  );
+  expect(list).toHaveBeenCalledWith({ search: "", chainId: 4663, page: 0 }, expect.anything());
 });
 
 test("Home preview combines the configured chains without a chain selector", async () => {

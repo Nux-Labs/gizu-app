@@ -135,15 +135,6 @@ test("VAULT_CHAINS exposes Ethereum/Robinhood and pinned USDC/USDG vault details
       },
     ],
     {
-      list: async () => {
-        throw new Error("Merkl unavailable");
-      },
-      getById: async () => {
-        throw new Error("Merkl unavailable");
-      },
-      tvlRecords: async () => [],
-    },
-    {
       lookup: async () => {
         throw new Error("Morpho unavailable");
       },
@@ -193,7 +184,7 @@ test("VAULT_CHAINS exposes Ethereum/Robinhood and pinned USDC/USDG vault details
     assert.equal(response.statusCode, 200);
     const page = response.json();
     assert.equal(page.total, 1);
-    assert.equal(page.partial, true);
+    assert.equal(page.partial, undefined);
     assert.equal(page.list[0].vaultAddress, contract);
     assert.equal(page.list[0].asset.symbol, symbol);
     const detail = await app.inject({
@@ -230,13 +221,6 @@ test("a Monad promotion adds to Ethereum/Robinhood vault routes without replacin
   const adapter = new ConfiguredOpportunities(
     chains,
     entries,
-    {
-      list: async () => ({ list: [], total: 0 }),
-      getById: async () => {
-        throw new Error("unused");
-      },
-      tvlRecords: async () => [],
-    },
     { lookup: async () => null },
   );
   const cache: Cache = {
@@ -275,5 +259,52 @@ test("a Monad promotion adds to Ethereum/Robinhood vault routes without replacin
     if (chain.id === 143) assert.equal(list[0].name, "Gizu Prime AUSD");
     else assert.ok(["USDC", "USDG"].includes(list[0].asset.symbol));
   }
+  await app.close();
+});
+
+test("the opportunity list accepts a catalog protocol filter and returns its facets", async () => {
+  const queries: ListOpportunitiesQuery[] = [];
+  const facets = { protocols: [{ id: "morpho", name: "Morpho", count: 2 }] };
+  const opportunities = {
+    list: async (query: ListOpportunitiesQuery) => {
+      queries.push(query);
+      return { list: [], total: 0, facets };
+    },
+    getById: async () => {
+      throw new Error("unused");
+    },
+    tvlRecords: async () => [],
+  };
+  const cache: Cache = {
+    get: async () => null,
+    set: async () => {},
+    deleteExpired: async () => 0,
+  };
+  const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  app.setErrorHandler(mapRequestError);
+  registerOpportunityRoutes(
+    app,
+    new OpportunitiesController(
+      new ListOpportunitiesUseCase(opportunities, cache),
+      new GetOpportunityUseCase(opportunities, cache),
+      new GetOpportunityTvlRecordsUseCase(opportunities, cache),
+    ),
+    [{ id: 143, name: "Monad" }],
+  );
+  const base = "/v1/opportunities?search=&page=0&items=8&chainId=143";
+  const all = await app.inject({ method: "GET", url: base });
+  assert.equal(all.statusCode, 200);
+  assert.deepEqual(all.json().facets, facets);
+  const scoped = await app.inject({ method: "GET", url: `${base}&protocol=morpho` });
+  assert.equal(scoped.statusCode, 200);
+  assert.deepEqual(
+    queries.map((query) => query.protocol),
+    ["all", "morpho"],
+  );
+  const invalid = await app.inject({ method: "GET", url: `${base}&protocol=Bad%20id` });
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(queries.length, 2);
   await app.close();
 });

@@ -28,7 +28,7 @@ test("selection follows accepted navigation and preserves long-press events", as
       </NavigationContainer>
     </SafeAreaProvider>,
   );
-  for (const [index, name] of ["Home", "Vaults", "Exchange", "Settings"].entries()) {
+  for (const [index, name] of ["Home", "Earn", "Swap", "Settings"].entries()) {
     fireEvent(screen.getByRole("button", { name: `${name} tab` }), "layout", {
       nativeEvent: { layout: { x: 8 + 56 * index, y: 8, width: 56, height: 48 } },
     });
@@ -36,15 +36,15 @@ test("selection follows accepted navigation and preserves long-press events", as
   await userEvent.press(screen.getByRole("button", { name: "Settings tab" }));
   expect(blocked).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("button", { name: "Home tab", selected: true })).toBeVisible();
-  for (const name of ["Vaults", "Exchange", "Home", "Vaults", "Vaults"]) {
+  for (const name of ["Earn", "Swap", "Home", "Earn", "Earn"]) {
     await userEvent.press(screen.getByRole("button", { name: `${name} tab` }));
     expect(screen.getByRole("button", { name: `${name} tab`, selected: true })).toBeVisible();
   }
-  fireEvent(screen.getByRole("button", { name: "Vaults tab" }), "longPress");
+  fireEvent(screen.getByRole("button", { name: "Earn tab" }), "longPress");
   expect(longPress).toHaveBeenCalledTimes(1);
   // Relayout must not change the selected destination.
-  fireEvent(screen.getByRole("button", { name: "Vaults tab" }), "layout", {
+  fireEvent(screen.getByRole("button", { name: "Earn tab" }), "layout", {
     nativeEvent: { layout: { x: 70, y: 8, width: 60, height: 48 } },
   });
-  expect(screen.getByRole("button", { name: "Vaults tab", selected: true })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Earn tab", selected: true })).toBeVisible();
 });

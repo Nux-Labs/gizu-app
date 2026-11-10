@@ -128,7 +128,7 @@ function DemoPortfolio({ navigation }: Props) {
               <>
                 <Typography variant="body">No holdings yet.</Typography>
                 <SectionHeading
-                  title="Confidential vaults"
+                  title="Earn"
                   action={
                     <Button
                       label="See all vaults"

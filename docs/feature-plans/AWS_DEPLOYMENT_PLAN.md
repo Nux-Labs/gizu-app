@@ -225,7 +225,7 @@ public configuration, never places for provider keys.
 | Configuration | Treatment |
 | --- | --- |
 | `DATABASE_URL` | Dedicated application credential to the managed endpoint; private/restricted connectivity and verified TLS/CA/hostname checks with the actual pg client. Do not disable certificate verification or expose the database for CI convenience |
-| `MERKL_API_KEY`, `ONEINCH_API_KEY`, `AURORA_API_KEY`, `PIMLICO_API_KEY` | Backend-only, never image/build arguments/static bundles; verify provider access and quotas from AWS |
+| `ONEINCH_API_KEY`, `AURORA_API_KEY`, `PIMLICO_API_KEY` | Backend-only, never image/build arguments/static bundles; verify provider access and quotas from AWS |
 | `ETHEREUM_RPC_URL`, `ROBINHOOD_RPC_URL` | Treat embedded credentials as secrets; test pinned-block storage reads and full simulation, not only a basic RPC call |
 | `EARN_GATEWAY_RECOVERY_KEY` | Secure transfer of existing value and protected off-host recovery; do not print or replace |
 | `EARN_ANVIL_PATH` | Image path to the verified wrapper |

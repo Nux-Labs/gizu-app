@@ -6,7 +6,7 @@ export const OpportunityServiceContext = createContext<OpportunityService>(oppor
 type Load = { kind: "loading" } | { kind: "failed" } | { kind: "ready"; data: OpportunityPage };
 export function useOpportunities() {
   const service = useContext(OpportunityServiceContext);
-  const [query, setQuery] = useState<OpportunityQuery>({ search: "", protocol: "all", page: 0 });
+  const [query, setQuery] = useState<OpportunityQuery>({ search: "", page: 0 });
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [revision, setRevision] = useState(0);
   useEffect(() => {

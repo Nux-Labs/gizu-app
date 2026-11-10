@@ -360,7 +360,7 @@ test.each(["ios", "android"])(
     setup();
     await open();
     expect(await screen.findByText("1.2345 GOOGL")).toBeVisible();
-    expect(screen.queryByText("Confidential vaults")).toBeNull();
+    expect(screen.queryByRole("header", { name: "Earn" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Wallet details" })).toBeNull();
     expect(readHoldings).toHaveBeenCalledWith("");
     expect(capabilities).toHaveBeenCalled();
@@ -374,13 +374,13 @@ test("Home shows a retryable holdings error when the native build lacks swap cap
   await open();
   expect(await screen.findByRole("button", { name: "Retry holdings" })).toBeVisible();
   expect(readHoldings).not.toHaveBeenCalled();
-  expect(screen.queryByText("Confidential vaults")).toBeNull();
+  expect(screen.queryByRole("header", { name: "Earn" })).toBeNull();
 });
 
-test("Home offers confidential vaults instead of an empty holdings section", async () => {
+test("Home offers Earn vaults instead of an empty holdings section", async () => {
   setup();
   await open();
-  expect(await screen.findByText("Confidential vaults")).toBeVisible();
+  expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
   expect(screen.queryByText("Holdings")).toBeNull();
   expect(screen.queryByRole("button", { name: "Wallet details" })).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "See all vaults" }));
@@ -417,7 +417,7 @@ test("returning to Home reuses balances without refreshing portfolio or token ho
   const { portfolio } = setup();
   await open();
   await screen.findByLabelText("19.990574 USDC");
-  await screen.findByText("Confidential vaults");
+  await screen.findByRole("header", { name: "Earn" });
   const balanceReads = portfolio.getMainnetPortfolio.mock.calls.length;
   const holdingReads = readHoldings.mock.calls.length;
   await userEvent.press(screen.getByLabelText("Settings tab"));

@@ -7,8 +7,6 @@ test("health reports database unavailable when postgres is unreachable", async (
     NODE_ENV: "test",
     PORT: 3000,
     DATABASE_URL: "postgres://private_investment:private_investment@127.0.0.1:1/none",
-    MERKL_API_URL: "https://api.merkl.xyz",
-    MERKL_API_KEY: "merkl-api-key",
     ONEINCH_API_KEY: "oneinch-api-key",
     AURORA_API_KEY: "aurora-api-key",
     PIMLICO_API_KEY: "pimlico-api-key",

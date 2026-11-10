@@ -1,5 +1,3 @@
-export const opportunityProtocols = ["all", "aave", "morpho", "curvance"] as const;
-export type OpportunityProtocol = (typeof opportunityProtocols)[number];
 export type Opportunity = {
   id: string;
   name: string;
@@ -17,9 +15,12 @@ export type Opportunity = {
   tvl: number | null;
 };
 export type CatalogChain = { id: number; name: string; explorerUrl?: string };
+/** A protocol present in the catalog; filter options come from the backend, never a fixed list. */
+export type ProtocolFacet = { id: string; name: string; count: number };
 export type OpportunityQuery = {
   search: string;
-  protocol: OpportunityProtocol;
+  /** Catalog protocol id; omitted means every protocol. */
+  protocol?: string;
   page: number;
   chainId?: number;
 };
@@ -29,6 +30,8 @@ export type OpportunityPage = {
   page: number;
   items: number;
   partial?: boolean;
+  /** Counts apply the search but not the protocol filter, so options stay visible once one is chosen. */
+  facets?: { protocols: ProtocolFacet[] };
 };
 export type OpportunityToken = {
   id: string;

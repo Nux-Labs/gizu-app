@@ -789,7 +789,7 @@ test.each([true, false])(
     }
     expect(screen.getByText(/Operation-specific settlement access is not qualified/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Authorize USDC funding" })).toBeDisabled();
-    expect(screen.getAllByText("Fund confidential earn")).toHaveLength(1);
+    expect(screen.getAllByText("Fund your deposit")).toHaveLength(1);
     expect(native.executeEarnSponsored).not.toHaveBeenCalled();
   },
 );
