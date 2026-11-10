@@ -2039,7 +2039,7 @@ class GizuStoredSignerModule : Module() {
               val op =
                 uniffi.gizu_stored_signer_core.SwapOperation.restore(
                   root.getString("state"),
-                  "https://gizu-app.onrender.com",
+                  "https://api.gizu.io",
                 )
               try {
                 saved.portfolio.remember(root.getString("state"), op.publicStatus())
@@ -2123,7 +2123,7 @@ class GizuStoredSignerModule : Module() {
               val previous =
                 uniffi.gizu_stored_signer_core.SwapOperation.restore(
                   root.getString("state"),
-                  "https://gizu-app.onrender.com",
+                  "https://api.gizu.io",
                 )
               try {
                 saved.portfolio.remember(root.getString("state"), previous.publicStatus())

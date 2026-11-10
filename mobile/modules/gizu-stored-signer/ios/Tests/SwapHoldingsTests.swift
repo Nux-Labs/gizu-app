@@ -5,7 +5,7 @@ import XCTest
 final class SwapHoldingsTests: WalletTestCase {
   private let token = "0x" + String(repeating: "1", count: 40)
   private let other = "0x" + String(repeating: "2", count: 40)
-  private let gateway = "https://gizu-app.onrender.com"
+  private let gateway = "https://api.gizu.io"
   private func allocated(_ store: WalletStorage) throws -> WalletRecord {
     let initial = try record(verified: true)
     defer { initial.close() }

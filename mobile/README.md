@@ -69,7 +69,7 @@ from `mobile/android/` on this Mac:
 JAVA_HOME=/opt/homebrew/opt/openjdk@17 \
 NODE_ENV=production \
 GIZU_BUILD_VARIANT=production \
-EXPO_PUBLIC_API_URL=https://gizu-app.onrender.com \
+EXPO_PUBLIC_API_URL=https://api.gizu.io \
 EXPO_PUBLIC_PASSKEY_MODE=native \
 ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a
 ```
@@ -357,7 +357,7 @@ behavior; no simulator authentication bypass is included.
 ## Production builds and TestFlight distribution
 
 The `production` EAS profile builds **Gizu** with the production EAS environment
-and `https://gizu-app.onrender.com` backend. iOS uses bundle ID `io.gizo.ios`,
+and `https://api.gizu.io` backend. iOS uses bundle ID `io.gizo.ios`,
 Apple team `588X2UZY3L` and App Store Connect app `6815255408`.
 `testflight` remains a compatibility alias of `production`, not a separate app.
 `preview` inherits the same configuration for internal distribution.

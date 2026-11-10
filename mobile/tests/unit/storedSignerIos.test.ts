@@ -174,7 +174,7 @@ test.each([
 
 test("iOS retains holdings and recovery while new private sales require the updated Android signer", async () => {
   const target = "0x" + "11".repeat(20);
-  const gateway = "https://gizu-app.onrender.com";
+  const gateway = "https://api.gizu.io";
   const native = {
     getCapabilities: jest
       .fn()

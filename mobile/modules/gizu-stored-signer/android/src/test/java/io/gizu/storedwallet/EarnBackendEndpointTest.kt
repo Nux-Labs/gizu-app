@@ -5,7 +5,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class EarnBackendEndpointTest {
-  private val hosted = "https://gizu-app.onrender.com/v1/earn/native"
+  private val hosted = "https://api.gizu.io/v1/earn/native"
 
   @Test
   fun onlyExplicitUsbDebugBuildUsesLoopback() {

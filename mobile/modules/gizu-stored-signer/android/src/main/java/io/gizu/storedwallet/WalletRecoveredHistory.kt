@@ -720,7 +720,7 @@ internal suspend fun reconcileRecoveredHistory(context: Context, store: WalletSt
           val saved = JSONObject(String(clear, Charsets.UTF_8))
           check(saved.getString("walletId") == record.id)
           // Restore contains no seed. The existing UI owns subsequent read/review/resume steps.
-          SwapOperation.restore(saved.getString("state"), "https://gizu-app.onrender.com").use {
+          SwapOperation.restore(saved.getString("state"), "https://api.gizu.io").use {
             it.publicStatus()
           }
         } finally {

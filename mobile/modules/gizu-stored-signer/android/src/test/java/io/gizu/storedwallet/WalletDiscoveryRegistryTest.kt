@@ -115,7 +115,7 @@ class WalletDiscoveryRegistryTest {
         "/v1/swap/monad/submit",
         "/v1/swap/aurora/submit-intent",
         "/v1/swap/fusion/submit",
-      )) assertTrue(requiresRecoveryPersistence("https://gizu-app.onrender.com$path", "{}"))
+      )) assertTrue(requiresRecoveryPersistence("https://api.gizu.io$path", "{}"))
     for (method in listOf("eth_sendRawTransaction", "eth_sendUserOperation")) assertTrue(
       requiresRecoveryPersistence(
         "https://rpc.monad.xyz",
@@ -123,7 +123,7 @@ class WalletDiscoveryRegistryTest {
       )
     )
     for (path in listOf("/quote", "/status", "/private-balance", "/settlement")) assertFalse(
-      requiresRecoveryPersistence("https://gizu-app.onrender.com$path", "{}")
+      requiresRecoveryPersistence("https://api.gizu.io$path", "{}")
     )
     assertFalse(
       requiresRecoveryPersistence(

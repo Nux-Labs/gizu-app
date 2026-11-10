@@ -32,7 +32,7 @@ internal struct SwapHoldings {
       .filter { selected.contains($0.accountIndex) }
     }
     // Backfill pre-upgrade active journals without deleting or rewriting them.
-    try portfolio.rememberActive(saved, gateway: "https://gizu-app.onrender.com")
+    try portfolio.rememberActive(saved, gateway: "https://api.gizu.io")
     let requested = target.lowercased()
     if !requested.isEmpty { try SwapPortfolioStore.validateTarget(requested) }
     var targets = try portfolio.targets()

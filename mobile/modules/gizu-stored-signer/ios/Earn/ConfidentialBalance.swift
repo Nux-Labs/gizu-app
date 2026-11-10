@@ -38,7 +38,7 @@ internal final class ConfidentialBalance: NSObject, URLSessionTaskDelegate {
     return out
   }
   func read(_ auth: EarnReadAuthentication,address: String) async throws -> [String:Any] {
-    let row=try await post("https://gizu-app.onrender.com/v1/earn/private-balance",["signedData":["standard":"erc191","payload":auth.payload,"signature":auth.signature]])
+    let row=try await post("https://api.gizu.io/v1/earn/private-balance",["signedData":["standard":"erc191","payload":auth.payload,"signature":auth.signature]])
     return try Self.publicBalance(row,address:address,now:Int64(Date().timeIntervalSince1970*1000))
   }
   static func publicBalance(_ row:[String:Any],address:String,now:Int64) throws -> [String:Any] {
