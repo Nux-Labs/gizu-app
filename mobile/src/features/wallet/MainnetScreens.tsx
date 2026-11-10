@@ -1,3 +1,4 @@
+import { swapDirection } from "@/domain/swap";
 import type { OwnedPortfolioAsset, OwnedPortfolioPosition } from "@/domain/wallet/storedSigner";
 import { useCallback, useState } from "react";
 import { Pressable, View } from "react-native";
@@ -467,9 +468,7 @@ export function MainnetActivity() {
       {wallet.snapshot?.history.map((item) => (
         <Surface key={item.operationId}>
           <View className="gap-2 p-5">
-            <Typography variant="rowTitle">
-              {item.direction === "sell" ? "Sell" : "Buy"} {item.symbol}
-            </Typography>
+            <Typography variant="rowTitle">{swapDirection(item.direction, item.symbol)}</Typography>
             <Typography>{item.phase === "COMPLETE" ? "Completed" : "Cancelled"}</Typography>
             {item.direction === "sell" && item.phase === "COMPLETE" ? (
               <Typography>

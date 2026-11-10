@@ -110,8 +110,10 @@ import Foundation
           .joined()
         let id = try engine.view()["operationId"] as? String ?? ""
         _ = try await authorize(credential, walletId: walletId, purpose: "swap:v1:\(id):\(digest)")
+        let fresh = try store.load()
+        defer { fresh.close() }
         try checkAuthorization()
-        try engine.approve()
+        try engine.approve(record: fresh)
       case .unlock:
         try await screen.confirm(
           "New unlock required",

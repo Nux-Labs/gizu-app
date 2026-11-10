@@ -381,7 +381,7 @@ test("Home offers Earn vaults instead of an empty holdings section", async () =>
   setup();
   await open();
   expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
-  expect(screen.queryByText("Token holdings")).toBeNull();
+  expect(screen.queryByText("Holdings")).toBeNull();
   expect(screen.queryByRole("button", { name: "Wallet details" })).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "See all vaults" }));
   expect(await screen.findByLabelText("vaults list")).toBeVisible();
@@ -494,9 +494,9 @@ test("Home shows aggregate USDG once while retaining native sale batches and oth
   expect(screen.getByText("5 GOOGL")).toBeVisible();
   fireEvent.press(await screen.findByRole("button", { name: "USDG swap tools" }));
   const balanceReads = portfolio.getMainnetPortfolio.mock.calls.length;
-  fireEvent.press(screen.getByRole("button", { name: "Sell USDG back to USDC" }));
+  fireEvent.press(screen.getByRole("button", { name: "Swap USDG to USDC" }));
   await act(async () => {});
-  expect(sellHolding).toHaveBeenCalledWith(`${token}:6`, expect.any(String));
+  expect(sellHolding).toHaveBeenCalledWith(`${token}:all`, expect.any(String));
   expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(balanceReads + 1);
 });
 

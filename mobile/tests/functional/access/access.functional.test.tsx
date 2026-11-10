@@ -171,7 +171,7 @@ test("updated branding, Earn vaults and Swap availability retain navigation", as
   await userEvent.press(screen.getByLabelText("Swap tab"));
   expect(await screen.findByRole("header", { name: "Swap" })).toBeVisible();
   expect(screen.queryByText("Buy tokens with USDC.")).toBeNull();
-  expect(screen.getByRole("button", { name: "Review swap" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Swap" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Buy vault units" })).toBeNull();
   await userEvent.press(screen.getByLabelText("Earn tab"));
   expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();

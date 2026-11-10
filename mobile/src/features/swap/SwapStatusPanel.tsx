@@ -4,7 +4,7 @@ import { PressableScale } from "@/components/atoms/PressableScale";
 import { Typography } from "@/components/atoms/Typography";
 import { HoldingDetails } from "@/components/molecules/HoldingDetails";
 import { Surface } from "@/components/molecules/Surface";
-import { formatSwapAmount } from "@/domain/swap";
+import { formatSwapAmount, swapDirection } from "@/domain/swap";
 import { groupDigits } from "@/domain/wallet/amounts";
 import { formatTokenAtoms, swapGasMessage } from "./confidentialSwap";
 import type { StoredSwapView } from "@/domain/wallet/storedSigner";
@@ -21,8 +21,7 @@ function Facts({ status, fullRows }: { status: StoredSwapView; fullRows: boolean
         <>
           <Typography variant="micro">{status.phase}</Typography>
           <Typography variant="micro">
-            {status.direction === "sell" ? "Sell" : "Buy"} · {status.targetSymbol || "Target"} ·
-            step {status.step || "—"}
+            {swapDirection(status.direction, status.targetSymbol)} · step {status.step || "—"}
             {status.pausedCode ? ` · ${status.pausedCode}` : ""}
           </Typography>
         </>
@@ -55,7 +54,7 @@ export function ActiveSwapCard({ status }: { status: StoredSwapView }) {
           {status.phase === "PAUSED" ? "Swap paused" : "Swap in progress"}
         </Typography>
         <Typography variant="caption">
-          {status.direction === "sell" ? "Selling" : "Buying"} {status.targetSymbol || "tokens"}
+          {swapDirection(status.direction, status.targetSymbol)}
         </Typography>
         {gasMessage ? <Typography variant="caption">{gasMessage}</Typography> : null}
         <HoldingDetails label="Swap details" accessibilityLabel="Swap details">
@@ -126,17 +125,11 @@ export function LastSwapSummary({ status, canSell }: { status: StoredSwapView; c
       : null;
   const untouched = status.ordersComplete === 0 && status.payoutsSubmitted === 0;
   const Icon = done ? CircleCheck : CircleX;
-  const title = done
-    ? sell
-      ? `Sold ${symbol}`
-      : received
-        ? `Bought ${received}`
-        : `Bought ${symbol}`
-    : "Swap cancelled";
+  const title = done ? `Swapped ${swapDirection(status.direction, symbol)}` : "Swap cancelled";
   const detail = done
     ? "Finished successfully."
     : untouched
-      ? `Nothing was ${sell ? "sold" : "bought"} and nothing is pending.`
+      ? "Nothing was swapped and nothing is pending."
       : "Stopped partway. Anything already completed stays in your wallets.";
   return (
     <Surface>
@@ -151,10 +144,10 @@ export function LastSwapSummary({ status, canSell }: { status: StoredSwapView; c
         {done || !untouched ? (
           <View className="gap-3 rounded-2xl bg-well p-3">
             {!sell && spent && done ? <Row label="You paid" value={spent} /> : null}
-            {!sell && received && !done ? <Row label="You got" value={received} /> : null}
+            {!sell && received ? <Row label="You received" value={received} /> : null}
             {sell ? (
               <Row
-                label={done ? "Sold from" : "Sold so far from"}
+                label={done ? "Swapped from" : "Swapped so far from"}
                 value={`${status.ordersComplete} of ${wallets(sold)}`}
               />
             ) : (
@@ -207,7 +200,7 @@ export function LastSwapSummary({ status, canSell }: { status: StoredSwapView; c
         ) : null}
         {done && !sell && canSell ? (
           <Typography variant="micro">
-            Your tokens are in Token holdings on Home, and you can sell them from this page.
+            Your tokens are in Holdings on Home, and you can swap them from this page.
           </Typography>
         ) : null}
       </View>

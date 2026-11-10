@@ -113,6 +113,127 @@ final class SwapHoldingsTests: WalletTestCase {
     XCTAssertThrowsError(try second.startSell(record: fresh, holdingId: "\(token):3"))
     XCTAssertEqual(try saved.load()!["state"] as? String, state)
   }
+  func testSellAllUsesEveryAllocatedGroupWithoutAllocatingReturnWallets() throws {
+    let store = try storage()
+    let initial = try allocated(store)
+    initial.close()
+    try store.persistRegistry(#"{"version":1,"nextRecipient":11}"#, expectedId: id)
+    let record = try store.load()
+    defer { record.close() }
+    let saved = StoredSwapFile(store: store, record: record)
+    try saved.portfolio.watch(token)
+    let engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
+    try engine.startSell(record: record, holdingId: "\(token):all")
+    let plan = try swapObject(saved.load()!["state"] as! String)["plan"] as! [String: Any]
+    XCTAssertEqual(plan["holderIndices"] as? [Int], [3, 4, 5, 6, 7, 8, 9, 10])
+    XCTAssertEqual(plan["recipientIndices"] as? [Int], [3, 4, 5, 6, 7, 8, 9, 10])
+    XCTAssertEqual(plan["completionTarget"] as? String, "confidential")
+    let fresh = try store.load()
+    defer { fresh.close() }
+    XCTAssertEqual(fresh.roleRegistry, record.roleRegistry)
+    engine.close()
+    let resumed = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
+    try resumed.restore()
+    XCTAssertEqual(try resumed.view()["completionTarget"] as? String, "confidential")
+    XCTAssertEqual(try resumed.view()["returnAddresses"] as? [String], [])
+  }
+
+  func testResumedReviewReloadsSigningAuthorityAfterPasskeyApproval() throws {
+    let store = try storage()
+    let record = try allocated(store)
+    defer { record.close() }
+    let saved = StoredSwapFile(store: store, record: record)
+    try saved.portfolio.watch(token)
+    let engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
+    try engine.startSell(record: record, holdingId: "\(token):all")
+    engine.close()
+    let root = try saved.load()!
+    var state = try swapObject(root["state"] as! String)
+    state["approvedMs"] = state["createdMs"]
+    state["reapproval"] = "Review updated sale quote"
+    state["step"] = ["step": "fusionPreview", "index": 0]
+    try saved.save(
+      operationId: state["id"] as! String,
+      state: String(decoding: JSONSerialization.data(withJSONObject: state), as: UTF8.self),
+      fundingAddress: root["fundingAddress"] as! String)
+    let resumed = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
+    try resumed.restore()
+    let fresh = try store.load()
+    defer { fresh.close() }
+    // This is the method the ceremony invokes only after a successful passkey assertion.
+    try resumed.approve(record: fresh)
+    let after = try swapObject(saved.load()!["state"] as! String)
+    XCTAssertTrue(after["reapproval"] is NSNull)
+    XCTAssertEqual(after["id"] as? String, state["id"] as? String)
+    XCTAssertEqual(after["plan"] as? NSDictionary, state["plan"] as? NSDictionary)
+  }
+
+  func testCompletedBuyShortcutSellsAllTokenGroupsWithoutNewRecipients() throws {
+    let store = try storage()
+    let record = try allocated(store)
+    defer { record.close() }
+    let saved = StoredSwapFile(store: store, record: record)
+    let buy = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
+    try buy.start(record: record, target: token, amountAtoms: "1000000")
+    buy.close()
+    let root = try saved.load()!
+    var state = try swapObject(root["state"] as! String)
+    // A completed earlier buy may name only one group in a much larger wallet registry.
+    state["step"] = ["step": "done"]
+    try saved.save(
+      operationId: state["id"] as! String,
+      state: String(decoding: JSONSerialization.data(withJSONObject: state), as: UTF8.self),
+      fundingAddress: root["fundingAddress"] as! String)
+    try store.persistRegistry(#"{"version":1,"nextRecipient":15}"#, expectedId: id)
+    let fresh = try store.load()
+    defer { fresh.close() }
+    let sale = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
+    try sale.startSell(record: fresh)
+    let plan = try swapObject(saved.load()!["state"] as! String)["plan"] as! [String: Any]
+    XCTAssertEqual(plan["holderIndices"] as? [Int], Array(3..<15))
+    XCTAssertEqual(plan["completionTarget"] as? String, "confidential")
+    let after = try store.load()
+    defer { after.close() }
+    XCTAssertEqual(after.roleRegistry, fresh.roleRegistry)
+  }
+
+  func testLargeSaleJournalRoundTripsThroughProtectedFiles() throws {
+    let store = try storage()
+    let record = try allocated(store)
+    defer { record.close() }
+    let saved = StoredSwapFile(store: store, record: record)
+    let state = String(repeating: "x", count: 5 * 1024 * 1024)
+    try saved.save(
+      operationId: "large-sale", state: state,
+      fundingAddress: "0x" + String(repeating: "1", count: 40))
+    XCTAssertEqual(try saved.load()?["state"] as? String, state)
+  }
+
+  func testPrivateSaleHistoryUsesVerifiedCreditAndKeepsLegacyRowsPublic() throws {
+    let store = try storage()
+    let record = try allocated(store)
+    defer { record.close() }
+    let saved = StoredSwapFile(store: store, record: record)
+    let state = "{\"plan\":{\"target\":\"\(token)\"}}"
+    try saved.portfolio.remember(
+      state: state,
+      status:
+        #"{"operationId":"legacy-sale","phase":"COMPLETE","direction":"sell","receivedTargetAtoms":"9000000"}"#
+    )
+    try saved.portfolio.remember(
+      state: state,
+      status:
+        #"{"operationId":"private-sale","phase":"COMPLETE","direction":"sell","receivedTargetAtoms":"9000000","completionTarget":"confidential","privateCreditedAtoms":"7000000"}"#
+    )
+    let history = try saved.portfolio.history()
+    let legacy = history.first { $0["operationId"] as? String == "legacy-sale" }!
+    let current = history.first { $0["operationId"] as? String == "private-sale" }!
+    XCTAssertEqual(legacy["completionTarget"] as? String, "public")
+    XCTAssertEqual(legacy["receivedAtoms"] as? String, "9000000")
+    XCTAssertEqual(current["completionTarget"] as? String, "confidential")
+    XCTAssertEqual(current["receivedAtoms"] as? String, "7000000")
+  }
+
   func testRecoveryUsesAllocatedAccountsAndResumeKeepsOperationIdentity() throws {
     let store = try storage()
     let record = try allocated(store)

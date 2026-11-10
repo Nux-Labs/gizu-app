@@ -2759,3 +2759,197 @@ fn gas_policy_swap_small_caps_and_full_balance_match_the_shared_backend_vectors(
         );
     }
 }
+
+#[test]
+fn all_wallet_sale_resumes_after_first_credit_and_sells_later_groups_once() {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    let holders: Vec<u32> = (3..11).collect();
+    for i in [6u32, 7, 9, 10] {
+        world
+            .target
+            .insert(addr(i), U256::from(40_000_000_000_000_000u64));
+    }
+    // Index 8 is empty; 9 and 10 form an incomplete final three-wallet group.
+    let plan = json!({"kind":"confidentialSell", "completionTarget":"confidential", "target":AMZN.to_checksum(None),
+        "holderIndices":holders, "recipientIndices":holders}).to_string();
+    let sale = start_plan(plan);
+    let text = review(&sale, &mut world, &mut now);
+    assert!(
+        text.contains(&addr(10).to_checksum(None)),
+        "last wallet must be reviewed: {text}"
+    );
+    sale.approve(now).unwrap();
+    let SwapStep::Request { id, url, body, .. } = drive_until(&sale, &mut world, &mut now, |url| {
+        url.ends_with("/aurora/history")
+    }) else {
+        panic!()
+    };
+    let (code, reply) = world.handle(&url, body.as_deref(), now);
+    sale.on_response(id, code, reply, now).unwrap();
+    assert_eq!(world.orders, 1);
+    let first = sale.export_state().unwrap();
+    let restored = SwapOperation::restore(first.clone(), GATEWAY.into()).unwrap();
+    assert_eq!(restored.operation_id(), sale.operation_id());
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!(
+        world.orders, 7,
+        "one sale per funded wallet, without replaying the first"
+    );
+    assert_eq!(status(&restored)["ordersComplete"], 7);
+    assert_eq!(status(&restored)["payoutsSubmitted"], 0);
+    for i in [3u32, 4, 5, 6, 7, 9, 10] {
+        assert_eq!(world.target[&addr(i)], U256::ZERO, "wallet {i}");
+    }
+    assert_eq!(world.intents, 0);
+}
+
+#[test]
+fn all_wallet_balance_scan_is_bounded_resumable_and_compacts_empty_holders() {
+    let (mut world, mut now) = (pooled_world(0), T0);
+    for i in [3u32, 46] {
+        world
+            .target
+            .insert(addr(i), U256::from(40_000_000_000_000_000u64));
+    }
+    let holders: Vec<u32> = (3..48).collect();
+    let sale = start_plan(json!({"kind":"confidentialSell", "completionTarget":"confidential", "target":AMZN.to_checksum(None),
+        "holderIndices":holders, "recipientIndices":holders}).to_string());
+    let SwapStep::Request { id, url, body, .. } =
+        drive_until(&sale, &mut world, &mut now, |url| url == ROBINHOOD_RPC)
+    else {
+        panic!()
+    };
+    // First Robinhood request is metadata, then the first balance chunk.
+    let (code, reply) = world.handle(&url, body.as_deref(), now);
+    sale.on_response(id, code, reply, now).unwrap();
+    let SwapStep::Request { id, url, body, .. } =
+        drive_until(&sale, &mut world, &mut now, |url| url == ROBINHOOD_RPC)
+    else {
+        panic!()
+    };
+    let calls: Value = serde_json::from_str(body.as_ref().unwrap()).unwrap();
+    assert_eq!(calls.as_array().unwrap().len(), 40);
+    let (code, mut reply) = world.handle(&url, body.as_deref(), now);
+    // An unrelated zero-token wallet holding ETH must not block the token sale.
+    let mut values: Value = serde_json::from_str(&reply).unwrap();
+    values[3]["result"] = json!("0x1");
+    reply = values.to_string();
+    sale.on_response(id, code, reply, now).unwrap();
+    let state = sale.export_state().unwrap();
+    let resumed = SwapOperation::restore(state, GATEWAY.into()).unwrap();
+    resumed.unlock(ENTROPY.to_vec(), now).unwrap();
+    let SwapStep::Request { id, url, body, .. } = resumed.next_step(now).unwrap() else {
+        panic!()
+    };
+    let calls: Value = serde_json::from_str(body.as_ref().unwrap()).unwrap();
+    assert_eq!(calls.as_array().unwrap().len(), 40);
+    assert!(
+        body.as_ref().unwrap().contains(&addr(23).to_checksum(None)),
+        "resume starts at the next chunk"
+    );
+    let (code, reply) = world.handle(&url, body.as_deref(), now);
+    resumed.on_response(id, code, reply, now).unwrap();
+    review(&resumed, &mut world, &mut now);
+    let compact: Value = serde_json::from_str(&resumed.export_state().unwrap()).unwrap();
+    assert_eq!(compact["plan"]["holderIndices"], json!([3, 46]));
+    assert_eq!(compact["data"]["payouts"], json!([]));
+    resumed.approve(now).unwrap();
+    assert_eq!(drive(&resumed, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!(world.orders, 2);
+}
+
+#[test]
+fn an_approved_all_wallet_sale_can_renew_native_authorization_after_a_day() {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    let sale = start_plan(confidential_sale_plan());
+    review(&sale, &mut world, &mut now);
+    sale.approve(now).unwrap();
+    let state = sale.export_state().unwrap();
+    let resumed = SwapOperation::restore(state, GATEWAY.into()).unwrap();
+    now += OPERATION_MS + 1;
+    resumed
+        .unlock(ENTROPY.to_vec(), now)
+        .expect("a fresh native unlock resumes the same approved private sale");
+    assert_eq!(resumed.operation_id(), sale.operation_id());
+    assert_eq!(drive(&resumed, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!(world.orders, 3);
+}
+
+#[test]
+fn private_sale_reapproval_after_a_day_uses_the_renewed_native_session() {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    let sale = start_plan(confidential_sale_plan());
+    review(&sale, &mut world, &mut now);
+    sale.approve(now).unwrap();
+    // Restore a journal already awaiting native review of an updated quote.
+    let mut state: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+    state["reapproval"] = json!("Review updated sale quote");
+    state["step"] = json!({"step":"fusionPreview","index":0});
+    let resumed = SwapOperation::restore(state.to_string(), GATEWAY.into()).unwrap();
+    now += OPERATION_MS + 1;
+    assert!(
+        resumed.approve(now).is_err(),
+        "restore alone cannot approve without native unlock"
+    );
+    resumed.unlock(ENTROPY.to_vec(), now).unwrap();
+    assert!(matches!(
+        resumed.next_step(now).unwrap(),
+        SwapStep::Review { .. }
+    ));
+    resumed.approve(now).unwrap();
+    assert_eq!(resumed.operation_id(), sale.operation_id());
+    let after: Value = serde_json::from_str(&resumed.export_state().unwrap()).unwrap();
+    assert_eq!(after["reapproval"], Value::Null);
+    assert_eq!(after["plan"], state["plan"]);
+    assert_eq!(world.orders, 0, "review changes never submit transactions");
+}
+
+#[test]
+fn all_wallet_invalid_balance_replies_never_complete_a_partial_sale() {
+    for malformed in ["empty", "short", "duplicate", "missing"] {
+        let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+        let sale = start_plan(confidential_sale_plan());
+        for _ in 0..1 {
+            let SwapStep::Request { id, url, body, .. } =
+                drive_until(&sale, &mut world, &mut now, |url| url == ROBINHOOD_RPC)
+            else {
+                panic!()
+            };
+            let (code, reply) = world.handle(&url, body.as_deref(), now);
+            sale.on_response(id, code, reply, now).unwrap();
+        }
+        let SwapStep::Request { id, url, body, .. } =
+            drive_until(&sale, &mut world, &mut now, |url| url == ROBINHOOD_RPC)
+        else {
+            panic!()
+        };
+        let (code, reply) = world.handle(&url, body.as_deref(), now);
+        let mut bad: Value = serde_json::from_str(&reply).unwrap();
+        match malformed {
+            "empty" => bad[0]["result"] = json!("0x"),
+            "short" => bad[0]["result"] = json!("0x01"),
+            "duplicate" => bad[1]["id"] = json!(0),
+            "missing" => {
+                bad.as_array_mut().unwrap().pop();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            sale.on_response(id, code, bad.to_string(), now).is_err(),
+            "reject {malformed}"
+        );
+        assert_eq!(world.orders, 0);
+        let state: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+        assert_eq!(state["data"]["holdingsCursor"], 0);
+        assert_eq!(state["plan"]["holderIndices"], json!([3, 4, 5]));
+        sale.retry();
+        review(&sale, &mut world, &mut now);
+        sale.approve(now).unwrap();
+        assert_eq!(drive(&sale, &mut world, &mut now), SwapStep::Finished);
+        assert_eq!(
+            world.orders, 3,
+            "the failed observation never drops a funded holder"
+        );
+    }
+}

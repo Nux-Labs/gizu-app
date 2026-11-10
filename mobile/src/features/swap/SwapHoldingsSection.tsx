@@ -66,8 +66,8 @@ export function SwapHoldingsSection({
           holdings.snapshot.holdings.every((holding) =>
             includedInOwnedBalances(holding.chainId, holding.token),
           )
-            ? "Swap holdings tools"
-            : "Token holdings"}
+            ? "Holdings tools"
+            : "Holdings"}
         </Typography>
       )}
       {holdings.busy ? (
@@ -97,8 +97,8 @@ export function SwapHoldingsSection({
       {holdings.saleFailed && (
         <ErrorNotice
           kind="sale"
-          message="Couldn’t finish the sale. Check its status in Swap before trying again."
-          actionLabel="Review swap"
+          message="Couldn’t finish the swap. Check its status in Swap before trying again."
+          actionLabel="Open Swap"
           onAction={onReviewSale}
           busy={holdings.busy}
         />
@@ -136,28 +136,20 @@ export function SwapHoldingsSection({
                   {holding.token}
                 </Typography>
                 <Typography variant="micro">A verified USDC value is not available.</Typography>
-                {holding.batches.length > 1 ? (
-                  <Typography variant="micro">
-                    Each sale handles up to three receiving wallets. Refresh after selling to see
-                    what remains.
-                  </Typography>
-                ) : null}
-                {!holding.batches.length ? (
-                  <Typography variant="micro">
-                    Balance found, but no complete receiving-wallet group is available to sell.
-                  </Typography>
-                ) : null}
+                <Typography variant="micro">
+                  One sale covers all swap receiving wallets holding this token.
+                </Typography>
                 <Button
-                  label={`Sell ${holding.symbol} back to USDC`}
+                  label="Swap to USDC"
+                  accessibilityLabel={`Swap ${holding.symbol} to USDC`}
                   disabled={
                     holdings.busy ||
                     !!holdings.error ||
                     holdings.saleFailed ||
-                    !holding.batches.length
+                    BigInt(holding.balanceAtoms) === 0n
                   }
                   onPress={() => {
-                    const batch = holding.batches[0];
-                    if (batch) void holdings.sell(batch.id);
+                    void holdings.sell(`${holding.token}:all`);
                   }}
                 />
                 <Button
@@ -173,7 +165,7 @@ export function SwapHoldingsSection({
       })}
       {holdings.snapshot && !holdings.snapshot.holdings.length ? (
         <Typography variant="micro">
-          No balances found for tracked tokens. Use Holdings tools to find an earlier purchase.
+          No balances found for tracked tokens. Use Holdings tools to find an earlier swap.
         </Typography>
       ) : null}
       <HoldingDetails label="Holdings tools" accessibilityLabel="Holdings tools">
@@ -189,7 +181,7 @@ export function SwapHoldingsSection({
           onPress={() => void refreshHoldings()}
         />
         <Button
-          label="Find an earlier purchase"
+          label="Find an earlier swap"
           variant="quiet"
           disabled={holdings.busy}
           onPress={() => void holdings.findTokens()}
@@ -200,7 +192,7 @@ export function SwapHoldingsSection({
               Choose the token you bought. This only checks balances; it does not start a swap.
             </Typography>
             <SearchInput
-              label="Find purchased token"
+              label="Find swapped token"
               value={holdings.search}
               onChangeText={holdings.setSearch}
             />

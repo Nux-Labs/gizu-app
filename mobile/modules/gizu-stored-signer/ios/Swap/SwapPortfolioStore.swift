@@ -13,11 +13,17 @@ internal final class SwapPortfolioStore {
     let symbol: String
     let receivedAtoms: String
     let recordedAt: UInt64
+    // Optional fields keep historical public-sale summaries decodable.
+    let completionTarget: String?
+    let privateCreditedAtoms: String?
     var publicValue: [String: Any] {
-      [
+      var value: [String: Any] = [
         "operationId": operationId, "phase": phase, "direction": direction,
         "symbol": symbol, "receivedAtoms": receivedAtoms, "recordedAt": recordedAt,
+        "completionTarget": completionTarget ?? "public",
       ]
+      if let privateCreditedAtoms { value["privateCreditedAtoms"] = privateCreditedAtoms }
+      return value
     }
   }
   private struct Contents: Codable {
@@ -83,8 +89,12 @@ internal final class SwapPortfolioStore {
     root.history[id] = Summary(
       operationId: id, phase: phase, direction: direction,
       symbol: view["targetSymbol"] as? String ?? "",
-      receivedAtoms: view["receivedTargetAtoms"] as? String ?? "0",
-      recordedAt: UInt64(Date().timeIntervalSince1970 * 1000))
+      receivedAtoms: view[
+        view["completionTarget"] as? String == "confidential"
+          ? "privateCreditedAtoms" : "receivedTargetAtoms"] as? String ?? "0",
+      recordedAt: UInt64(Date().timeIntervalSince1970 * 1000),
+      completionTarget: view["completionTarget"] as? String,
+      privateCreditedAtoms: view["privateCreditedAtoms"] as? String)
     try save(root)
   }
   func rememberActive(_ saved: StoredSwapFile, gateway: String) throws {

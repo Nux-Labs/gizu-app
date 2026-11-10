@@ -88,9 +88,9 @@ export function useSwapHoldings(onSaleSettled?: () => void) {
         setNotice(
           status.phase === "COMPLETE"
             ? status.completionTarget === "confidential"
-              ? "Sale completed. Verified USDC proceeds remain in your confidential balance."
-              : "Sale completed. Proceeds returned to the new Monad wallets shown in Swap."
-            : "Sale is not complete. Open Swap to review or resume it.",
+              ? "Swap completed. Verified USDC proceeds remain in your confidential balance."
+              : "Swap completed. Proceeds returned to the new wallets shown in Swap."
+            : "Swap is not complete. Open Swap to review or resume it.",
         );
     } catch {
       if (alive.current) setSaleFailed(true);

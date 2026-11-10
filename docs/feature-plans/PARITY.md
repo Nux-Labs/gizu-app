@@ -242,7 +242,7 @@ The first iOS execution stage supports Ethereum vault deposits/full redemptions 
 ### Simplified native Swap layout
 
 Swap uses a compact USDC amount card and a You receive selector opening a searchable,
-virtualized token list. Review swap sits directly below the selection and stays disabled
+virtualized token list. The Swap button sits directly below the selection and stays disabled
 until the existing amount/target validation passes. The funding address remains on
 Receive. Progress uses plain-language headings with expandable Swap details; resume,
 cancel eligibility, recovery, native review and passkey approval are unchanged.
@@ -252,6 +252,22 @@ network, across all categories with debounced server search and paginated infini
 scrolling. Identity is chain ID plus normalized contract address. Ethereum/Monad and
 unlisted tokens are visible but cannot be selected for execution; the current native
 swap route still targets Robinhood. Catalog listing does not guarantee a quote.
+
+Pay and receive boxes share one layout (a label row with a short note, then the amount row),
+so buy and sell keep one height. Without holdings, the sell side previews any swap token and
+amount with a gross market estimate before fees; nothing can be swapped until it is held.
+
+#### Swap wording
+
+User-facing Swap copy uses one verb. Internal names (`sell`, `direction`, `startSell`) and the
+native review text are unchanged.
+
+- Never show buy, sell, purchase or sale; the action is always **swap**.
+- Direction is written **FROM → TO**: `USDC → AMZN`, `AMZN → USDC`.
+- Amounts pair **You pay / You receive** before a swap and **You paid / You received** after.
+- Buttons are short verbs: **Swap**, **Swap to USDC**, **Swap to AMZN**, **Resume**,
+  **Cancel swap**, **Open Swap**; busy buttons read **Preparing…**.
+- Held tokens are **Holdings**; finished swaps are titled **Swapped FROM → TO**.
 
 Home's Tokens and vault positions section starts collapsed. Cards, per-asset loading
 messages and valuation details render only after expansion. The shared native portfolio

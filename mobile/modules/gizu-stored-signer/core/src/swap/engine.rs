@@ -177,6 +177,9 @@ fn legacy_source_index() -> u32 {
 
 /// Most payout legs one operation may run: signatures, review length and fees all grow with it.
 pub(crate) const MAX_LEGS: usize = 5;
+const MAX_PRIVATE_HOLDERS: usize = 8192 - FIRST_RECIPIENT as usize;
+const HOLDINGS_READ_SIZE: usize = 20; // balanceOf + ETH balance: at most 40 RPC calls.
+
 const MAX_WEIGHT_SUM: u64 = 10_000;
 
 fn leg_weights(plan: &Plan) -> Vec<u32> {
@@ -330,6 +333,9 @@ struct Data {
     private_token_id: Option<String>,
     payouts: Vec<Payout>,
     orders: Vec<Order>,
+    /// Cursor for bounded balance reads. Historical journals start at the first holder.
+    #[serde(default)]
+    holdings_cursor: usize,
     /// Pooled sell: expected USDG from all sales, used to size the payouts before review.
     #[serde(default)]
     sale_estimate: U256,
@@ -529,13 +535,17 @@ impl Engine {
     fn key(&self, index: u32) -> Result<bip32::XPrv, SignerError> {
         derive_key(self.seed.as_ref().ok_or(SignerError::InvalidInput)?, index)
     }
+    // Completed groups must remain recoverable after a long interruption. A fresh native
+    // unlock still renews only the existing 15-minute session for this immutable sale.
+    fn operation_expired(&self, now: u64) -> bool {
+        now >= self.m.created_ms + OPERATION_MS
+            && !(self.private_sell() && self.m.approved_ms.is_some())
+    }
     fn can_sign(&mut self, now: u64) -> bool {
         if now >= self.m.session_until_ms {
             self.seed = None;
         }
-        self.seed.is_some()
-            && self.m.approved_ms.is_some()
-            && now < self.m.created_ms + OPERATION_MS
+        self.seed.is_some() && self.m.approved_ms.is_some() && !self.operation_expired(now)
     }
     fn pause(&mut self, code: &str) -> SwapStep {
         self.m.paused = Some(code.into());
@@ -694,7 +704,9 @@ impl Engine {
             Step::Holdings => {
                 let t = self.m.plan.target;
                 let mut calls = Vec::new();
-                for i in 0..self.sales() {
+                let start = self.m.data.holdings_cursor;
+                let end = (start + HOLDINGS_READ_SIZE).min(self.sales());
+                for i in start..end {
                     let h = self.m.holders[i];
                     calls.push(("eth_call", Self::eth_call(t, call_data("balanceOf(address)", &[h]))));
                     calls.push(("eth_getBalance", json!([h.to_checksum(None), "latest"])));
@@ -964,7 +976,7 @@ impl Engine {
     }
 
     fn unlock_or_expire(&mut self, now: u64) -> SwapStep {
-        if now >= self.m.created_ms + OPERATION_MS {
+        if self.operation_expired(now) {
             return self.pause("OPERATION_EXPIRED");
         }
         SwapStep::Unlock
@@ -1213,21 +1225,73 @@ impl Engine {
                 self.go(Step::FusionEstimate);
             }
             (Step::Holdings, None) => {
-                let mut any = false;
-                for i in 0..self.sales() {
-                    let amount = rpc_uint(&value, (i * 2) as u64)?;
-                    let eth = rpc_quantity(&value, (i * 2 + 1) as u64)?;
-                    if !eth.is_zero() {
+                let start = self.m.data.holdings_cursor;
+                let end = (start + HOLDINGS_READ_SIZE).min(self.sales());
+                let rows = value.as_array().ok_or(SignerError::InvalidInput)?;
+                let count = (end - start) * 2;
+                let mut ids = std::collections::HashSet::new();
+                if rows.len() != count
+                    || rows.iter().any(|row| {
+                        row.get("id")
+                            .and_then(Value::as_u64)
+                            .is_none_or(|id| id >= count as u64 || !ids.insert(id))
+                    })
+                {
+                    return Err(SignerError::InvalidInput);
+                }
+                // ERC-20 balanceOf returns exactly one ABI word. An empty/truncated response
+                // must never become a zero balance and remove a funded wallet from the plan.
+                let observations = (start..end)
+                    .map(|i| {
+                        let id = ((i - start) * 2) as u64;
+                        let encoded = rpc_result(&value, id)?
+                            .as_str()
+                            .ok_or(SignerError::InvalidInput)?;
+                        let amount =
+                            evm::decimal(&crate::decode_portfolio_balance(encoded.into())?)?;
+                        Ok((amount, rpc_quantity(&value, id + 1)?))
+                    })
+                    .collect::<Result<Vec<_>, SignerError>>()?;
+                for (i, (amount, eth)) in (start..end).zip(observations) {
+                    if !eth.is_zero() && (!self.private_sell() || !amount.is_zero()) {
                         self.m.paused = Some(format!("HOLDER_{}_HOLDS_ETH", i + 1));
                         return Ok(());
                     }
                     self.m.data.orders[i].amount = amount;
                     self.m.data.orders[i].before_target = amount;
-                    any |= !amount.is_zero();
                 }
-                if !any {
+                self.m.data.holdings_cursor = end;
+                if end < self.sales() {
+                    self.go(Step::Holdings);
+                    return Ok(());
+                }
+                self.m.data.holdings_cursor = 0;
+                if !self.m.data.orders.iter().any(|o| !o.amount.is_zero()) {
                     self.m.paused = Some("NO_HOLDINGS".into());
                     return Ok(());
+                }
+                if self.private_sell() {
+                    // Drop empty accounts before review; never allocate payout records for a
+                    // private sale. The remaining plan is frozen before native approval.
+                    let live: Vec<usize> = (0..self.sales())
+                        .filter(|i| !self.m.data.orders[*i].amount.is_zero())
+                        .collect();
+                    let indices = self
+                        .m
+                        .plan
+                        .holder_indices
+                        .as_ref()
+                        .ok_or(SignerError::InvalidInput)?;
+                    let held: Vec<u32> = live.iter().map(|i| indices[*i]).collect();
+                    self.m.plan.holder_indices = Some(held.clone());
+                    self.m.plan.recipient_indices = held;
+                    self.m.holders = live.iter().map(|i| self.m.holders[*i]).collect();
+                    self.m.recipients = self.m.holders.clone();
+                    self.m.data.orders = live
+                        .iter()
+                        .map(|i| self.m.data.orders[*i].clone())
+                        .collect();
+                    self.m.data.payouts.clear();
                 }
                 self.go(Step::FusionEstimate);
             }
@@ -2754,7 +2818,8 @@ impl SwapOperation {
         gateway: String,
         now_ms: u64,
     ) -> Result<Arc<Self>, SignerError> {
-        if plan.len() > 2048 {
+        let plan_bytes = plan.len();
+        if plan_bytes > 131_072 {
             return Err(SignerError::InvalidInput);
         }
         let plan: Plan = serde_json::from_str(&plan).map_err(|_| SignerError::InvalidInput)?;
@@ -2763,11 +2828,22 @@ impl SwapOperation {
             return Err(SignerError::InvalidInput);
         }
         let legs = plan.recipient_indices.len();
-        if legs == 0 || legs > MAX_LEGS {
-            return Err(SignerError::InvalidInput);
-        }
         let private_sell = plan.kind == "confidentialSell"
             && plan.completion_target.as_deref() == Some("confidential");
+        if !private_sell && plan_bytes > 2048 {
+            return Err(SignerError::InvalidInput);
+        }
+        let max_legs = if private_sell {
+            MAX_PRIVATE_HOLDERS
+        } else {
+            MAX_LEGS
+        };
+        if legs == 0
+            || legs > max_legs
+            || (private_sell && plan.recipient_indices.iter().any(|i| *i >= 8192))
+        {
+            return Err(SignerError::InvalidInput);
+        }
         if plan.completion_target.is_some() && !private_sell {
             return Err(SignerError::InvalidInput);
         }
@@ -2829,7 +2905,7 @@ impl SwapOperation {
             // A pooled sell sizes its payouts later from up to `legs` reserved wallets; an older
             // sell pairs each holder with the return wallet of the same position.
             if held.is_empty()
-                || held.len() > MAX_LEGS
+                || held.len() > max_legs
                 || (!pooled && held.len() != legs)
                 || held.iter().any(|i| *i < FIRST_RECIPIENT)
             {
@@ -2905,7 +2981,11 @@ impl SwapOperation {
             failures: 0,
             wait_until_ms: 0,
             data: Data {
-                payouts: vec![Payout::default(); legs],
+                payouts: if private_sell {
+                    Vec::new()
+                } else {
+                    vec![Payout::default(); legs]
+                },
                 orders: vec![Order::default(); sales],
                 ..Data::default()
             },
@@ -2975,7 +3055,7 @@ impl SwapOperation {
         if e.m.cancelled
             || e.seed.is_none()
             || now_ms >= e.m.session_until_ms
-            || now_ms >= e.m.created_ms + OPERATION_MS
+            || e.operation_expired(now_ms)
         {
             e.seed = None;
             return Err(SignerError::Expired);
@@ -3007,7 +3087,7 @@ impl SwapOperation {
     /// New passkey unlock for the same approved plan; the entropy must derive the same wallets.
     pub fn unlock(&self, entropy: Vec<u8>, now_ms: u64) -> Result<(), SignerError> {
         let mut e = self.inner.lock().map_err(|_| SignerError::CryptoFailed)?;
-        if e.m.cancelled || now_ms >= e.m.created_ms + OPERATION_MS {
+        if e.m.cancelled || e.operation_expired(now_ms) {
             return Err(SignerError::Expired);
         }
         let seed = seed_from_entropy(entropy)?;
