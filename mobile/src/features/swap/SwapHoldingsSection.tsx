@@ -136,17 +136,9 @@ export function SwapHoldingsSection({
                   {holding.token}
                 </Typography>
                 <Typography variant="micro">A verified USDC value is not available.</Typography>
-                {holding.batches.length > 1 ? (
-                  <Typography variant="micro">
-                    Each sale handles up to three receiving wallets. Refresh after selling to see
-                    what remains.
-                  </Typography>
-                ) : null}
-                {!holding.batches.length ? (
-                  <Typography variant="micro">
-                    Balance found, but no complete receiving-wallet group is available to sell.
-                  </Typography>
-                ) : null}
+                <Typography variant="micro">
+                  One sale covers all swap receiving wallets holding this token.
+                </Typography>
                 <Button
                   label="Swap to USDC"
                   accessibilityLabel={`Swap ${holding.symbol} to USDC`}
@@ -154,11 +146,10 @@ export function SwapHoldingsSection({
                     holdings.busy ||
                     !!holdings.error ||
                     holdings.saleFailed ||
-                    !holding.batches.length
+                    BigInt(holding.balanceAtoms) === 0n
                   }
                   onPress={() => {
-                    const batch = holding.batches[0];
-                    if (batch) void holdings.sell(batch.id);
+                    void holdings.sell(`${holding.token}:all`);
                   }}
                 />
                 <Button

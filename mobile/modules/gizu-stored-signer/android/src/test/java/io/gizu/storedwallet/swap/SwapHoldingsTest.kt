@@ -61,6 +61,15 @@ class SwapHoldingsTest {
   }
 
   @Test
+  fun allWalletSelectionIncludesPartialGroupsAndExcludesEarn() {
+    assertEquals(
+      token to listOf(3, 4, 5, 7, 8, 9, 10, 11),
+      SwapHoldings.selection("$token:all", 12, listOf(token), setOf(6)),
+    )
+    assertThrows(Exception::class.java) { SwapHoldings.selection("$token:all", 12, emptyList()) }
+  }
+
+  @Test
   fun balancesMatchResponseIdsRatherThanProviderOrder() {
     assertEquals(
       listOf("0x5", "0xa"),

@@ -21,11 +21,23 @@ class SwapSalePolicyTest {
       plan.toString(),
       confidentialSalePlan("0x" + "a".repeat(40), JSONArray(listOf(3, 7, 11))).toString(),
     )
-    for (bad in listOf(emptyList(), listOf(2), listOf(3, 3), listOf(3, 4, 5, 6, 7, 8))) {
+    for (bad in listOf(emptyList(), listOf(2), listOf(3, 3), listOf(8192))) {
       assertThrows(Exception::class.java) {
         confidentialSalePlan("0x" + "a".repeat(40), JSONArray(bad))
       }
     }
+  }
+
+  @Test
+  fun allWalletGroupsShareOnePrivateSalePlan() {
+    val indices = listOf(3, 4, 5, 7, 8, 9, 10, 11)
+    val plan = confidentialSalePlan("0x" + "a".repeat(40), JSONArray(indices))
+    assertEquals(JSONArray(indices).toString(), plan.getJSONArray("holderIndices").toString())
+    assertEquals("confidential", plan.getString("completionTarget"))
+    assertEquals(
+      plan.getJSONArray("holderIndices").toString(),
+      plan.getJSONArray("recipientIndices").toString(),
+    )
   }
 
   @Test

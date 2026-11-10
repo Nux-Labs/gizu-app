@@ -57,7 +57,7 @@ internal class SwapStore(val context: Context, record: WalletRecord) {
   }
 
   companion object {
-    private const val SWAP_FILE_LIMIT = 33_554_432
-    private const val SWAP_STATE_LIMIT = 900_000
+    private const val SWAP_FILE_LIMIT = 268_435_456
+    private const val SWAP_STATE_LIMIT = 67_108_864
   }
 }

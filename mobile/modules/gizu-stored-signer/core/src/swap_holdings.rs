@@ -44,6 +44,19 @@ pub fn select_swap_holding(
 ) -> Result<SwapHoldingSelection, SignerError> {
     let (token, first) = id.split_once(':').ok_or(SignerError::InvalidInput)?;
     target(token)?;
+    if first == "all" {
+        if !tracked.iter().any(|t| t == token) {
+            return Err(SignerError::InvalidInput);
+        }
+        let indices = swap_holding_indices(registry, excluded)?;
+        if indices.is_empty() {
+            return Err(SignerError::InvalidInput);
+        }
+        return Ok(SwapHoldingSelection {
+            target: token.into(),
+            indices,
+        });
+    }
     let first: u32 = first.parse().map_err(|_| SignerError::InvalidInput)?;
     if id != format!("{token}:{first}") || !tracked.iter().any(|t| t == token) {
         return Err(SignerError::InvalidInput);
@@ -220,6 +233,26 @@ mod tests {
             select_swap_holding(format!("{TOKEN}:3"), registry.into(), vec![], vec![]).is_err()
         );
         assert!(swap_holding_indices(registry.into(), vec![10]).is_err());
+    }
+    #[test]
+    fn all_selection_includes_later_and_partial_groups_but_excludes_earn() {
+        let selected = select_swap_holding(
+            format!("{TOKEN}:all"),
+            r#"{"version":1,"nextRecipient":12}"#.into(),
+            vec![6],
+            vec![TOKEN.into()],
+        )
+        .unwrap();
+        assert_eq!(selected.indices, vec![3, 4, 5, 7, 8, 9, 10, 11]);
+        assert!(
+            select_swap_holding(
+                format!("{TOKEN}:all"),
+                r#"{"version":1,"nextRecipient":12}"#.into(),
+                vec![],
+                vec![]
+            )
+            .is_err()
+        );
     }
     #[test]
     fn exact_abi_amounts_zero_batches_and_overflow() {

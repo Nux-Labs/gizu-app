@@ -49,7 +49,12 @@ internal final class ProtectedFiles: WalletFiles {
   }
 
   func write(_ name: String, bytes: Data) throws {
-    try require(!bytes.isEmpty && bytes.count <= WalletLimits.protectedFileBytes)
+    // Only the encrypted swap journal may grow with a multi-wallet sale. Other wallet files
+    // retain their original limit.
+    let limit =
+      name.hasPrefix("gizu-swap-") && name.hasSuffix(".enc")
+      ? WalletLimits.swapFileBytes : WalletLimits.protectedFileBytes
+    try require(!bytes.isEmpty && bytes.count <= limit)
     let target = try url(name)
     let temporary = root.appendingPathComponent(UUID().uuidString + ".tmp")
     defer { try? FileManager.default.removeItem(at: temporary) }
@@ -66,6 +71,6 @@ internal final class ProtectedFiles: WalletFiles {
     let committed = fsync(directory)
     let directoryClosed = Darwin.close(directory)
     try require(committed == 0 && directoryClosed == 0)
-    try require(try read(name) == bytes)
+    try require(try read(name, limit: limit) == bytes)
   }
 }

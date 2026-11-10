@@ -93,7 +93,7 @@ test("failed refresh retains balances and disables selling stale data until retr
   expect(screen.getByRole("button", { name: "Swap GOOGL to USDC" })).toBeEnabled();
 });
 
-test("one sell invokes native approval with the saved batch and refreshes balances", async () => {
+test("one sell invokes native approval for all wallets and refreshes balances", async () => {
   const pending = deferred<{ phase: string }>();
   sell.mockReturnValueOnce(pending.promise);
   open();
@@ -102,7 +102,7 @@ test("one sell invokes native approval with the saved batch and refreshes balanc
   fireEvent.press(button);
   fireEvent.press(button);
   expect(sell).toHaveBeenCalledTimes(1);
-  expect(sell).toHaveBeenCalledWith(`${token}:6`, expect.any(String));
+  expect(sell).toHaveBeenCalledWith(`${token}:all`, expect.any(String));
   read.mockResolvedValueOnce({ ...snapshot, holdings: [] });
   await act(async () => pending.resolve({ phase: "COMPLETE" }));
   expect(await screen.findByText(/No balances found/)).toBeVisible();
@@ -142,19 +142,18 @@ test("shared native holdings retain exact precision and sell the selected alloca
   await showHoldingDetails();
   fireEvent.press(screen.getByRole("button", { name: "Swap GOOGL to USDC" }));
   await act(async () => {});
-  expect(sell).toHaveBeenCalledWith(`${holdingsFixture.token}:3`, expect.any(String));
+  expect(sell).toHaveBeenCalledWith(`${holdingsFixture.token}:all`, expect.any(String));
 });
 
-test("a balance without a complete allocated batch remains visible but cannot sell", async () => {
+test("a balance in a partial allocated group remains visible and can sell", async () => {
   read.mockResolvedValue({ ...snapshot, holdings: [{ ...snapshot.holdings[0], batches: [] }] });
   open();
   expect(await screen.findByText("1.2345 GOOGL")).toBeVisible();
   await showHoldingDetails();
   const button = screen.getByRole("button", { name: "Swap GOOGL to USDC" });
-  expect(button).toBeDisabled();
+  expect(button).toBeEnabled();
   fireEvent.press(button);
-  expect(sell).not.toHaveBeenCalled();
-  expect(screen.getByText(/no complete receiving-wallet group/)).toBeVisible();
+  expect(sell).toHaveBeenCalledWith(`${token}:all`, expect.any(String));
 });
 
 test("failed sale offers status review instead of resubmission or raw errors", async () => {

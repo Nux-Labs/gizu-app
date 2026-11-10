@@ -53,10 +53,25 @@ See [GIZU-1](../feature-plans/GIZU-1_IOS_MONAD_PORTFOLIO.md) for verification an
 ## Shared swap holdings and iOS recovery
 
 `core/src/swap_holdings.rs` owns allocated recipient selection, Earn-withdrawal
-exclusions, exact ABI balance validation, checked uint256 totals and three-account
-sell-batch selection. Swift/Kotlin perform RPC transport; neither accepts a set of
-holder addresses chosen by JavaScript. IDs bind a tracked lowercase contract to
-an allocated batch. `ios/Tests/Fixtures/swap-holdings.json` runs through all three
+exclusions, exact ABI balance validation and checked uint256 totals. The Swap form and
+holdings sale action use `<token>:all`: native selection includes every eligible allocated
+recipient for that tracked token, including partial groups, and excludes Earn withdrawal
+accounts. Legacy three-account batch IDs remain accepted for compatibility. Swift/Kotlin
+perform RPC transport; neither accepts holder addresses chosen by JavaScript.
+
+An all-wallet sale uses one persisted confidential operation. Balance discovery reads at
+most 20 holders (40 RPC calls) per request and saves its cursor; empty token wallets are
+removed before native review. One approval covers the funded wallets, and every sale's
+verified private credit is reconciled before advancing. Restoring resumes the saved plan
+rather than rebuilding it from current holdings. A fresh native unlock can resume an
+approved private sale after a long interruption; each signing session still expires after
+15 minutes. Buy and legacy public payout limits are unchanged. The JavaScript estimate
+continues to use the full token balance and remains an estimate before provider fees.
+Wallets below Fusion or bridge minimums are reported and left in place.
+
+Multi-wallet journals allow up to 64 MiB of state and a bounded 256 MiB encrypted journal
+file on both platforms; other iOS protected files keep their existing 4 MiB write limit.
+These storage bounds are not device or live-provider capacity measurements. `ios/Tests/Fixtures/swap-holdings.json` runs through all three
 languages, including amounts above JavaScript's safe-integer range.
 
 The iOS `SwapHoldings` reader pins Robinhood chain 4663 reads to one latest block

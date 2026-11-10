@@ -248,7 +248,14 @@ internal class SwapEngine(
         } finally {
           previous.close()
         }
-        plan.getString("target") to plan.getJSONArray("recipientIndices")
+        val selected =
+          SwapHoldings.selection(
+            plan.getString("target").lowercase() + ":all",
+            JSONObject(record.roleRegistry).getInt("nextRecipient"),
+            saved.portfolio.targets(),
+            earnWithdrawalIndices(record),
+          )
+        selected.first to JSONArray(selected.second)
       }
     // New sales stop privately. The core uses existing holder indices only as
     // internal order slots; no public recipient roles or randomness are reserved.
@@ -991,11 +998,11 @@ private fun swapBatchCanonical(value: Any?): String =
 /** Private sale plans contain existing holders, never freshly allocated receivers. */
 internal fun confidentialSalePlan(target: String, holders: JSONArray): JSONObject {
   require(target.matches(Regex("0x[0-9a-fA-F]{40}")))
-  require(holders.length() in 1..5)
+  require(holders.length() in 1..8189)
   val indices =
     (0 until holders.length()).map { index ->
       val value = holders.getInt(index)
-      require(holders.getDouble(index) == value.toDouble() && value >= 3)
+      require(holders.getDouble(index) == value.toDouble() && value in 3..8191)
       value
     }
   require(indices.distinct().size == indices.size)

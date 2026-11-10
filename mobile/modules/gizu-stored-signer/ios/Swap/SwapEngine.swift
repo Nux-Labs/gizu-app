@@ -87,34 +87,48 @@ internal final class StoredSwapEngine {
         let plan = try swapObject(state)["plan"] as? [String: Any],
         let kind = plan["kind"] as? String,
         ["confidentialSwap", "confidentialPayout"].contains(kind),
-        let token = plan["target"] as? String, let indices = plan["recipientIndices"] as? [UInt32]
+        let token = plan["target"] as? String
       else { throw WalletFailure.invalid }
       let previous = try SwapOperation.restore(state: state, gateway: gateway)
       try require(try swapObject(previous.publicStatus())["phase"] as? String == "COMPLETE")
-      target = token
-      holders = indices
+      let selected = try selectSwapHolding(
+        id: "\(token.lowercased()):all", registry: record.roleRegistry,
+        excluded: SwapHoldings.excluded(record), tracked: saved.portfolio.targets())
+      target = selected.target
+      holders = selected.indices
     }
-    let owned = Set(
-      try swapHoldingIndices(registry: record.roleRegistry, excluded: SwapHoldings.excluded(record))
-    )
-    try require(
-      holders.count == 3 && Set(holders).count == 3 && holders.allSatisfy { owned.contains($0) })
-    // A sell returns to as many fresh wallets as it sells from.
-    // Like a buy, a sell pays out to a randomly sized set of fresh wallets: reserve the most it
-    // can use and let the engine draw the count and shares once the sale is priced.
-    let reserved: RecipientAllocation
-    if Self.randomLegs {
-      reserved = try allocateSwapRecipientsN(registry: record.roleRegistry, count: 5)
+    var next: [String: Any]
+    if holdingId == nil || holdingId?.hasSuffix(":all") == true {
+      // The shared selector freezes owned holders, including partial groups and excluding Earn.
+      // Private sales need no new public receiving accounts.
+      next = [
+        "kind": "confidentialSell", "completionTarget": "confidential", "target": target,
+        "holderIndices": holders, "recipientIndices": holders,
+      ]
     } else {
-      reserved = try allocateSwapRecipients(registry: record.roleRegistry)
-    }
-    try storage.persistRegistry(reserved.registry, expectedId: record.id)
-    var next: [String: Any] = [
-      "kind": "confidentialSell", "target": target, "holderIndices": holders,
-      "recipientIndices": reserved.indices,
-    ]
-    if Self.randomLegs {
-      next["legsRandom"] = try randomBytes(32).map { String(format: "%02x", $0) }.joined()
+      let owned = Set(
+        try swapHoldingIndices(
+          registry: record.roleRegistry, excluded: SwapHoldings.excluded(record))
+      )
+      try require(
+        holders.count == 3 && Set(holders).count == 3 && holders.allSatisfy { owned.contains($0) })
+      // A sell returns to as many fresh wallets as it sells from.
+      // Like a buy, a sell pays out to a randomly sized set of fresh wallets: reserve the most it
+      // can use and let the engine draw the count and shares once the sale is priced.
+      let reserved: RecipientAllocation
+      if Self.randomLegs {
+        reserved = try allocateSwapRecipientsN(registry: record.roleRegistry, count: 5)
+      } else {
+        reserved = try allocateSwapRecipients(registry: record.roleRegistry)
+      }
+      try storage.persistRegistry(reserved.registry, expectedId: record.id)
+      next = [
+        "kind": "confidentialSell", "target": target, "holderIndices": holders,
+        "recipientIndices": reserved.indices,
+      ]
+      if Self.randomLegs {
+        next["legsRandom"] = try randomBytes(32).map { String(format: "%02x", $0) }.joined()
+      }
     }
     fundingAddress = try deriveAccountAddressRange(entropy: record.entropy, start: 1, count: 1)
       .first
@@ -195,7 +209,11 @@ internal final class StoredSwapEngine {
     }
   }
 
-  func approve() throws {
+  func approve(record: WalletRecord) throws {
+    // The ceremony calls this only after a successful passkey assertion. Restored operations
+    // have no in-memory key, and a long review may have outlived the previous session.
+    try require(record.verified && record.id == saved.walletId)
+    try current().unlock(entropy: record.entropy, nowMs: now())
     try current().approve(nowMs: now())
     try persist()
   }
@@ -223,6 +241,10 @@ internal final class StoredSwapEngine {
       "ordersComplete": status["ordersComplete"] as Any,
       "receivedTargetAtoms": status["receivedTargetAtoms"] as Any,
       "direction": status["direction"] as Any,
+      "completionTarget": status["completionTarget"] as Any,
+      "privateCreditedAtoms": status["privateCreditedAtoms"] as Any,
+      "soldAtoms": status["soldAtoms"] as Any,
+      "receivedUsdgAtoms": status["receivedUsdgAtoms"] as Any,
       "returnAddresses": returnAddresses(), "fundingAddress": fundingAddress as Any,
     ]
   }
@@ -232,6 +254,7 @@ internal final class StoredSwapEngine {
       let data = state.data(using: .utf8),
       let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let plan = root["plan"] as? [String: Any], plan["kind"] as? String == "confidentialSell",
+      plan["completionTarget"] as? String != "confidential",
       let recipients = root["recipients"] as? [String]
     else { return [] }
     return recipients

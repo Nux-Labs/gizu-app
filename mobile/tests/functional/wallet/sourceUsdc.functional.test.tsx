@@ -496,7 +496,7 @@ test("Home shows aggregate USDG once while retaining native sale batches and oth
   const balanceReads = portfolio.getMainnetPortfolio.mock.calls.length;
   fireEvent.press(screen.getByRole("button", { name: "Swap USDG to USDC" }));
   await act(async () => {});
-  expect(sellHolding).toHaveBeenCalledWith(`${token}:6`, expect.any(String));
+  expect(sellHolding).toHaveBeenCalledWith(`${token}:all`, expect.any(String));
   expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(balanceReads + 1);
 });
 

@@ -177,7 +177,7 @@ export function NativeSwapScreen() {
               disabled={swap.busy}
             />
           ) : null}
-          {swap.canSell ? (
+          {mode === "buy" && swap.canSell ? (
             <Button
               label={swap.busy ? "Preparing…" : "Swap to USDC"}
               onPress={swap.sell}

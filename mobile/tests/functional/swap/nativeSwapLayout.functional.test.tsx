@@ -476,3 +476,27 @@ test("native action failures keep provider details out of the screen", async () 
   ).toBeVisible();
   expect(screen.queryByText(providerDetail)).toBeNull();
 });
+
+test("sell mode offers only the selected holding sale after an earlier completed buy", async () => {
+  readStatus.mockResolvedValue({
+    ...status,
+    phase: "COMPLETE",
+    direction: "buy",
+    receivedTargetAtoms: "1000000",
+    targetSymbol: "COIN",
+  });
+  jest.mocked(getStoredSwapSigner).mockReturnValue({
+    getSwapDeposit: jest.fn().mockResolvedValue({ fundingAddress: status.fundingAddress }),
+    getSwapStatus: readStatus,
+    getSwapHoldings: jest.fn().mockResolvedValue({ holdings: [], checkedAt: 1, block: "0x1" }),
+  } as unknown as NonNullable<ReturnType<typeof getStoredSwapSigner>>);
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  expect(await screen.findByRole("button", { name: "Swap to USDC" })).toBeVisible();
+  fireEvent.press(screen.getByRole("button", { name: "Reverse direction" }));
+  expect(screen.queryByRole("button", { name: "Swap to USDC" })).toBeNull();
+  expect(await screen.findByRole("button", { name: "Choose token to sell" })).toBeVisible();
+});

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react-native";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NativeSwapScreen } from "@/features/swap/NativeSwapScreen";
 import { ROBINHOOD_USDG } from "@/features/swap/confidentialSwap";
@@ -84,6 +84,41 @@ test("a held token shows the estimated USDC for its full balance", async () => {
     amount: "1234500",
     preset: "fast",
   });
+  expect(screen.getByRole("button", { name: "Swap" })).toBeEnabled();
+});
+
+test("one Swap sells all wallet groups while estimating the total balance", async () => {
+  holdingsRead.mockResolvedValue({
+    ...withHolding,
+    holdings: [
+      {
+        ...withHolding.holdings[0],
+        balanceAtoms: "9000000",
+        batches: [
+          { id: `${held}:3`, balanceAtoms: "3000000" },
+          { id: `${held}:6`, balanceAtoms: "6000000" },
+        ],
+      },
+    ],
+  });
+  sell.mockResolvedValue({ phase: "COMPLETE", completionTarget: "confidential" });
+  openSell();
+  expect(await screen.findByLabelText("Estimated 12.5 USDC")).toBeVisible();
+  expect(screen.getByText("Available: 9 GOOGL")).toBeVisible();
+  expect(previewBodies.at(-1)).toMatchObject({ srcToken: held, amount: "9000000" });
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
+  await waitFor(() => expect(sell).toHaveBeenCalledWith(`${held}:all`, expect.any(String)));
+  expect(sell).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(holdingsRead.mock.calls.length).toBeGreaterThan(1));
+});
+
+test("a balance in a partial wallet group can still be sold", async () => {
+  holdingsRead.mockResolvedValue({
+    ...withHolding,
+    holdings: [{ ...withHolding.holdings[0], batches: [] }],
+  });
+  openSell();
+  expect(await screen.findByLabelText("Estimated 12.5 USDC")).toBeVisible();
   expect(screen.getByRole("button", { name: "Swap" })).toBeEnabled();
 });
 

@@ -34,7 +34,7 @@ export function SwapSellForm({
   const list = holdings.snapshot?.holdings ?? [];
   const [chosen, setChosen] = useState("");
   const holding = list.find((item) => item.token === chosen) ?? list[0];
-  const batch = holding?.batches[0];
+
   const previewing = !!holdings.snapshot && !holding;
   const [previewToken, setPreviewToken] = useState<CatalogToken | null>(null);
   const [previewAmount, setPreviewAmount] = useState("");
@@ -163,11 +163,6 @@ export function SwapSellForm({
         />
       ) : null}
       {holdings.notice ? <Notice message={holdings.notice} /> : null}
-      {holding && !batch ? (
-        <Typography variant="micro">
-          Balance found, but no complete receiving-wallet group is available to sell.
-        </Typography>
-      ) : null}
       <Modal visible={picking} animationType="slide" onRequestClose={() => setPicking(false)}>
         {picking && previewing && (
           <TokenChoices
@@ -218,9 +213,15 @@ export function SwapSellForm({
       </Modal>
       <Button
         label={holdings.busy ? "Preparing…" : "Swap"}
-        disabled={holdings.busy || !!holdings.error || holdings.saleFailed || !batch}
+        disabled={
+          holdings.busy ||
+          !!holdings.error ||
+          holdings.saleFailed ||
+          !holding ||
+          BigInt(holding.balanceAtoms) === 0n
+        }
         onPress={() => {
-          if (batch) void holdings.sell(batch.id);
+          if (holding) void holdings.sell(`${holding.token}:all`);
         }}
       />
     </>
