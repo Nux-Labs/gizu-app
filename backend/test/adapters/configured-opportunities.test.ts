@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ConfiguredOpportunities } from "../../src/adapters/catalog/configured-opportunities.ts";
+import {
+  ConfiguredOpportunities,
+  protocolFacets,
+} from "../../src/adapters/catalog/configured-opportunities.ts";
 import type {
   Opportunities,
   Opportunity,
@@ -609,10 +612,55 @@ test("enabled chains without native deposit profiles return empty without provid
   assert.deepEqual(await catalog.list({ ...query, chainId: 143 }), {
     list: [],
     total: 0,
+    facets: { protocols: [] },
   });
   await assert.rejects(
     catalog.getById(`configured:143:${address.toLowerCase()}`),
     /not found/,
   );
   assert.equal(providerCalls, 0);
+});
+
+test("protocol facets list catalog protocols, apply search and ignore the protocol filter", async () => {
+  const featured = (name: string, address: string) => ({
+    chainId: 143,
+    address,
+    name,
+    featured: true,
+  });
+  const catalog = new ConfiguredOpportunities(
+    [{ id: 143, name: "Monad" }],
+    [
+      featured("Gizu Prime AUSD", "0x997D5064A7B48305c15C9D55AC2D94D7069Fc008"),
+      featured("Gizu Core USDC", "0x1111111111111111111111111111111111111111"),
+    ],
+    provider([]),
+    { lookup: async () => null },
+  );
+  const base = { ...query, chainId: 143, items: 8 };
+  const morpho = [{ id: "morpho", name: "Morpho", count: 2 }];
+  assert.deepEqual((await catalog.list(base)).facets, { protocols: morpho });
+  const other = await catalog.list({ ...base, protocol: "aave" });
+  assert.equal(other.total, 0);
+  assert.deepEqual(other.facets, { protocols: morpho });
+  assert.deepEqual((await catalog.list({ ...base, search: "prime" })).facets, {
+    protocols: [{ id: "morpho", name: "Morpho", count: 1 }],
+  });
+});
+
+test("protocol facets count rows per protocol, most vaults first", () => {
+  const protocol = (id: string, name: string) => ({ ...row, protocol: { id, name } });
+  assert.deepEqual(
+    protocolFacets([
+      protocol("curvance", "Curvance"),
+      protocol("morpho", "Morpho"),
+      protocol("aave", "Aave"),
+      protocol("morpho", "Morpho"),
+    ]),
+    [
+      { id: "morpho", name: "Morpho", count: 2 },
+      { id: "aave", name: "Aave", count: 1 },
+      { id: "curvance", name: "Curvance", count: 1 },
+    ],
+  );
 });

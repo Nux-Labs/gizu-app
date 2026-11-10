@@ -8,6 +8,7 @@ import type {
   OpportunityPage,
   OpportunityService,
   OpportunityToken,
+  ProtocolFacet,
   TvlRecord,
   CatalogChain,
 } from "@/domain/opportunities";
@@ -114,6 +115,26 @@ function isDetail(value: unknown): value is OpportunityDetail {
     value.campaigns.every(isCampaign)
   );
 }
+function isFacets(value: unknown): value is { protocols: ProtocolFacet[] } {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.protocols) &&
+    value.protocols.length <= 64 &&
+    value.protocols.every(
+      (facet) =>
+        isRecord(facet) &&
+        typeof facet.id === "string" &&
+        /^[a-z0-9-]{1,32}$/.test(facet.id) &&
+        typeof facet.name === "string" &&
+        facet.name.trim().length > 0 &&
+        typeof facet.count === "number" &&
+        Number.isSafeInteger(facet.count) &&
+        facet.count > 0,
+    ) &&
+    new Set(value.protocols.map((facet) => (facet as ProtocolFacet).id)).size ===
+      value.protocols.length
+  );
+}
 function isTvlRecord(value: unknown): value is TvlRecord {
   return isRecord(value) && isFiniteNumber(value.total) && value.total >= 0;
 }
@@ -158,21 +179,23 @@ export function createOpportunityService(baseUrl: string): OpportunityService {
     },
     async list(query, signal) {
       configured();
-      const path =
-        query.protocol === "all"
-          ? "/v1/opportunities"
-          : `/v1/protocols/${query.protocol}/opportunities`;
       const chainId = query.chainId ?? 143;
       if (hasChainCatalog && !enabledChains.has(chainId))
         throw new Error("Chain is not available in the vault catalog.");
-      const params = `chainId=${chainId}&page=${query.page}&items=8&search=${encodeURIComponent(query.search)}`;
-      const body = await getJson(`${root}${path}?${params}`, signal, "Vault catalog unavailable.");
+      const protocol = query.protocol ? `&protocol=${encodeURIComponent(query.protocol)}` : "";
+      const params = `chainId=${chainId}&page=${query.page}&items=8&search=${encodeURIComponent(query.search)}${protocol}`;
+      const body = await getJson(
+        `${root}/v1/opportunities?${params}`,
+        signal,
+        "Vault catalog unavailable.",
+      );
       if (
         !isRecord(body) ||
         !Array.isArray(body.list) ||
         !body.list.every(isOpportunity) ||
         body.list.some((row) => row.chainId !== chainId) ||
         (body.partial !== undefined && typeof body.partial !== "boolean") ||
+        (body.facets !== undefined && !isFacets(body.facets)) ||
         body.page !== query.page ||
         body.items !== 8 ||
         typeof body.total !== "number" ||

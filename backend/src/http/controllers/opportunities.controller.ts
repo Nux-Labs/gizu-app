@@ -27,7 +27,7 @@ export class OpportunitiesController {
     reply: FastifyReply,
   ) => {
     const response = await this.listOpportunities.execute({
-      protocol: "all",
+      protocol: request.query.protocol ?? "all",
       search: request.query.search,
       page: request.query.page,
       items: request.query.items,
@@ -39,6 +39,7 @@ export class OpportunitiesController {
       items: request.query.items,
       total: response.total,
       ...(response.partial ? { partial: true } : {}),
+      ...(response.facets ? { facets: response.facets } : {}),
     });
   };
 
@@ -62,6 +63,7 @@ export class OpportunitiesController {
       items: request.query.items,
       total: response.total,
       ...(response.partial ? { partial: true } : {}),
+      ...(response.facets ? { facets: response.facets } : {}),
     });
   };
 

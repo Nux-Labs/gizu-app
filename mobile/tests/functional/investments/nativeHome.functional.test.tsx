@@ -72,10 +72,7 @@ test("Home previews the first four real mainnet vaults without invented performa
   expect(screen.getByRole("button", { name: "View Mainnet vault 4" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "View Mainnet vault 5" })).toBeNull();
   expect(within(first).getByText("6.1%")).toBeVisible();
-  expect(service.list).toHaveBeenCalledWith(
-    { search: "", protocol: "all", page: 0 },
-    expect.anything(),
-  );
+  expect(service.list).toHaveBeenCalledWith({ search: "", page: 0 }, expect.anything());
   expect(screen.getByRole("button", { name: "Refresh balance" })).toBeEnabled();
   await userEvent.press(screen.getByRole("button", { name: "See all vaults" }));
   expect(await screen.findByLabelText("Search opportunities")).toBeVisible();
