@@ -30,6 +30,7 @@ phases:
           --file backend/Dockerfile \
           --label "org.opencontainers.image.revision=$CODEBUILD_RESOLVED_SOURCE_VERSION" \
           --tag "$IMAGE_URI" .
+        bash backend/scripts/smoke-container.sh "$IMAGE_URI"
   post_build:
     commands:
       - |

@@ -64,7 +64,13 @@ test("Gizu browser requests receive CORS headers and other origins are rejected"
   assert.equal(allowed.headers["access-control-allow-origin"], "https://www.gizu.io");
   const denied = await app.inject({ method: "POST", url: "/v1/early-access", headers: { origin: "https://other.example" }, payload: { email: "tester@example.com" } });
   assert.equal(denied.statusCode, 403);
-  assert.equal(saves, 1);
+  const appPreflight = await app.inject({ method: "OPTIONS", url: "/v1/early-access", headers: { origin: "https://app.gizu.io", "access-control-request-method": "POST" } });
+  assert.equal(appPreflight.statusCode, 204);
+  assert.equal(appPreflight.headers["access-control-allow-origin"], "https://app.gizu.io");
+  const appSignup = await app.inject({ method: "POST", url: "/v1/early-access", headers: { origin: "https://app.gizu.io" }, payload: { email: "app@example.com" } });
+  assert.equal(appSignup.statusCode, 200);
+  assert.equal(appSignup.headers["access-control-allow-origin"], "https://app.gizu.io");
+  assert.equal(saves, 2);
   await app.close();
 });
 

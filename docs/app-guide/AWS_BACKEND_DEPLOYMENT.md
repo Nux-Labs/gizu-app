@@ -22,8 +22,8 @@ only build inputs and excludes local credentials and dependencies.
    `gizu-backend-build` and select region `eu-central-1`.
 2. Select **GitHub** as the source, connect the repository, and set the source
    version to `refs/heads/main`. Leave webhook/automatic builds disabled.
-3. Use a managed Linux **EC2** build environment, **Ubuntu**, **Standard**,
-   **x86_64**, and a current supported `aws/codebuild/standard` image. Do not
+3. Use a managed Linux **EC2** build environment, **Amazon Linux**, **Standard**,
+   **x86_64**, and `aws/codebuild/amazonlinux-x86_64-standard:6.0`. Do not
    choose an ARM or Lambda build environment. Enable **Privileged** mode for
    Docker builds. Start with the small compute size; enlarge it if builds run
    out of memory.
@@ -52,6 +52,21 @@ Linux AMD64 Anvil release, compiles TypeScript, and runs `npm prune --omit=dev`.
 The runtime runs as the `node` user and contains the official RDS
 CA bundle. Tests requiring explicitly supplied live providers or disposable
 databases remain skipped in the credential-free build.
+
+Before ECR push, CodeBuild runs `backend/scripts/smoke-container.sh` against the
+exact local image it will publish. The same check runs in the backend GitHub
+workflow. It uses a disposable PostgreSQL 18 instance on an internal Docker
+network, dummy credentials and unpublished ports. It verifies database-backed
+health, non-root execution, the packaged Anvil wrapper, presence of the RDS CA
+bundle and a zero exit code after SIGTERM. A failure stops publication. This is
+not a live RDS TLS or funded-operation acceptance test.
+
+To run the image check locally from the repository root:
+
+```sh
+docker build --platform linux/amd64 -f backend/Dockerfile -t gizu-backend:local .
+bash backend/scripts/smoke-container.sh gizu-backend:local
+```
 
 ## Configure the ECS backend after the first build
 
@@ -96,6 +111,15 @@ backend security group on TCP 3000. The backend needs outbound internet access
 to provider APIs and RPC endpoints as well as access to ECR, logs, and secrets.
 Configure public-subnet outbound access or private-subnet NAT/endpoints
 explicitly; merely placing a task in a subnet does not establish internet access.
+
+On SIGTERM or SIGINT, the API stops accepting new work, drains active HTTP
+requests and closes existing application resources. Responses finishing during
+shutdown close their HTTP/1 connections instead of leaving ALB keep-alive sockets
+open. Repeated signals do not interrupt the drain. Shutdown errors or a
+20-second deadline produce a nonzero exit, within ECS's default 30-second
+container `stopTimeout`. Keep `stopTimeout` at 30 seconds or greater; this change
+does not update a live task definition. Verify longer-running simulations before
+changing the shutdown budget.
 
 Configure HTTPS for `api.gizu.io` on the load balancer before directing clients
 to the service. Keep the default single-proxy topology when using the app's
