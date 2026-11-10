@@ -86,7 +86,7 @@ export function NativeSwapScreen() {
                   {wallet && (
                     <Typography variant="micro">
                       {wallet.snapshot && wallet.snapshot.balanceComplete !== false
-                        ? `Available${wallet.error || wallet.snapshot.stale ? " (cached)" : ""}: ${groupDigits(formatSwapAmount(BigInt(wallet.snapshot.totalAtoms)))} USDC`
+                        ? `Available: ${groupDigits(formatSwapAmount(BigInt(wallet.snapshot.totalAtoms)))} USDC`
                         : "Checking available USDC…"}
                     </Typography>
                   )}
@@ -133,18 +133,14 @@ export function NativeSwapScreen() {
             onPress={swap.start}
             disabled={!swap.canStart}
           />
-          {!swap.busy && !swap.canStart && (
-            // Say why review is unavailable instead of leaving a silent grey button.
+          {!swap.busy && !swap.canStart && (!swap.target || Number(swap.amount) > 0) && (
+            // Say why review is unavailable; an empty amount field needs no prompt.
             <Typography
               variant="micro"
               className="-mt-2 px-1 text-center"
               accessibilityLiveRegion="polite"
             >
-              {!swap.target
-                ? "Choose a token to receive."
-                : Number(swap.amount) > 0
-                  ? "Check the amount to pay."
-                  : "Enter an amount to pay."}
+              {!swap.target ? "Choose a token to receive." : "Check the amount to pay."}
             </Typography>
           )}
         </>
