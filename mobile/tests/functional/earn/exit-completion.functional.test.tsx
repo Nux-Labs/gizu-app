@@ -131,8 +131,8 @@ function setup(saved: SponsoredOperation[] = [], available = true, privateAtoms 
   return service;
 }
 async function open() {
-  await screen.findByRole("button", { name: "Continue with passkey" });
-  await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
+  await screen.findByRole("button", { name: "Unlock wallet" });
+  await userEvent.press(screen.getByRole("button", { name: "Unlock wallet" }));
   await openEarnLink();
 }
 test("real AppRoot explicit exit check uses injected refreshed native return journal and clears completion after reorg", async () => {

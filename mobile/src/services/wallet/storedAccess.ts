@@ -45,9 +45,10 @@ export function createStoredWalletAccess(
   }
   return {
     method: "Passkey",
-    async canRestore() {
-      const state = await bridge().getWalletState();
-      return state.status === "absent" || state.status === "recoveryRequired";
+    async localWallet() {
+      const { status } = await bridge().getWalletState();
+      if (status === "absent") return "absent";
+      return status === "recoveryRequired" ? "unreadable" : "present";
     },
     async request() {
       const attempt = ++generation;

@@ -37,6 +37,7 @@ import OSLog
       switch failure {
       case .cancelled: return "WALLET_CANCELLED"
       case .busy: return "BUSY"
+      case .walletExists: return "WALLET_EXISTS"
       default: return "WALLET_STOPPED"
       }
     }
@@ -56,6 +57,7 @@ import OSLog
       case .cancelled: return "wallet.cancelled"
       case .busy: return "wallet.busy"
       case .insufficientBalance: return "wallet.insufficientBalance"
+      case .walletExists: return "wallet.exists"
       }
     }
     if error is CancellationError { return "task.cancelled" }

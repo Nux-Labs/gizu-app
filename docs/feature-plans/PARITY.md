@@ -178,8 +178,10 @@ focused on reusable approaches. They supplement the journey statuses above.
   in the background or with reduced motion, and text sizes above 130% keep native
   heading wrapping without glitch slices. Negative display tracking applies on iOS only;
   Android mis-measures tracked text and can clip a wrapped word.
-- Welcome directly offers Continue with passkey and Restore wallet from backup
-  whenever the wallet service supports recovery, including when a local wallet exists. Both actions stay at the bottom with safe-area padding.
+- Welcome follows the local wallet: with none it offers Continue with passkey and Restore
+  wallet from backup; a readable wallet shows only Unlock wallet, since restore never
+  replaces it; an unreadable wallet explains why and offers only restore. The actions stay
+  at the bottom with safe-area padding.
   Errors and cancellation remain available, and native verified backup remains required.
   The separate Access screen is removed; old signed-out access links open Welcome.
 - Request access remains a sentence-case text action for the demo flow. Request access uses the

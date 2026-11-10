@@ -93,8 +93,8 @@ function setup() {
   return { native, balance, portfolio, transfers, clipboard };
 }
 async function open() {
-  await screen.findByRole("button", { name: "Continue with passkey" });
-  await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
+  await screen.findByRole("button", { name: "Unlock wallet" });
+  await userEvent.press(screen.getByRole("button", { name: "Unlock wallet" }));
 }
 
 test("Home combines vault value with liquid USDC and shows one named vault position", async () => {
@@ -193,7 +193,7 @@ test("disconnect ignores late native snapshots from the previous session", async
   await screen.findByLabelText("Loading your balance");
   await userEvent.press(screen.getByLabelText("Settings tab"));
   await userEvent.press(await screen.findByRole("button", { name: "Disconnect" }));
-  await screen.findByRole("button", { name: "Continue with passkey" });
+  await screen.findByRole("button", { name: "Unlock wallet" });
   portfolio.getMainnetPortfolio.mockResolvedValue(mainnetPortfolio(walletId, address, "0"));
   await open();
   expect(await screen.findByLabelText("0 USDC")).toBeVisible();

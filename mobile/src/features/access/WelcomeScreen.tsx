@@ -40,6 +40,8 @@ export function WelcomeScreen({
 }: NativeStackScreenProps<RootStackParamList, "Welcome">) {
   const native = useSession().accessService.method === "Passkey";
   const controller = useAccessController();
+  // An unreadable local wallet cannot be unlocked; restore is the only way forward.
+  const unreadable = controller.localWallet === "unreadable" && controller.canRestore;
   const animate = useWelcomeMotion();
   return (
     <View className="flex-1 bg-ink">
@@ -63,16 +65,27 @@ export function WelcomeScreen({
           <View className="mt-10">
             <Reveal delay={1700} offset={20} className="gap-3">
               {controller.error && <Notice error message={controller.error} />}
-              <AccessCard
-                icon={Fingerprint}
-                label={controller.pending ? "Opening access" : "Continue with passkey"}
-                loading={controller.pending}
-                onPress={() => void controller.start()}
-              />
+              {unreadable && (
+                <Notice message="The wallet on this device can't be opened. Restore it with your encrypted backup and original passkey." />
+              )}
+              {!unreadable && (
+                <AccessCard
+                  icon={Fingerprint}
+                  label={
+                    controller.pending
+                      ? "Opening access"
+                      : controller.localWallet === "present"
+                        ? "Unlock wallet"
+                        : "Continue with passkey"
+                  }
+                  loading={controller.pending}
+                  onPress={() => void controller.start()}
+                />
+              )}
               {controller.canRestore && (
                 <Button
                   label="Restore wallet from backup"
-                  variant="secondary"
+                  variant={unreadable ? "primary" : "secondary"}
                   disabled={controller.pending}
                   onPress={() => void controller.restore()}
                 />

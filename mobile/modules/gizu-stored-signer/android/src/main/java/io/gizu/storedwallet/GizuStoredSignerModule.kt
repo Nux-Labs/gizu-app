@@ -310,6 +310,8 @@ class GizuStoredSignerModule : Module() {
         promise.reject("CANCELLED", nativeWalletFailureMessage(error), null)
       } catch (error: EarnGatewayFailure) {
         promise.reject(error.code, error.message ?: "Earn provider request is unavailable.", null)
+      } catch (error: WalletExists) {
+        promise.reject("WALLET_EXISTS", error.message, null)
       } catch (error: Exception) {
         // Record code locations only: exception messages may contain provider
         // payloads, account addresses or other private operation data.
@@ -1870,11 +1872,12 @@ class GizuStoredSignerModule : Module() {
     }
     AsyncFunction("restoreWallet") { promise: Promise ->
       runCeremony(promise) { activity, store ->
-        check(
+        if (
           withContext(Dispatchers.IO) {
-            store.state()["status"] in listOf("absent", "recoveryRequired")
+            store.state()["status"] !in listOf("absent", "recoveryRequired")
           }
         )
+          throw WalletExists()
         withProviderUi(activity) { BackupHost.open(activity, true) }
         withContext(Dispatchers.IO) { publicState(store) }
       }

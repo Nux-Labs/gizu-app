@@ -56,11 +56,11 @@ test.each([pending, { status: "recoveryRequired" } as StoredWalletState])(
     expect(native.createWallet).not.toHaveBeenCalled();
   },
 );
-test("restore availability reflects native storage health", async () => {
+test("local wallet status reflects native storage health", async () => {
   const { native, service } = setup();
-  expect(await service.canRestore?.()).toBe(true);
+  expect(await service.localWallet?.()).toBe("absent");
   native.getWalletState.mockResolvedValue(pending);
-  expect(await service.canRestore?.()).toBe(false);
+  expect(await service.localWallet?.()).toBe("present");
   native.getWalletState.mockResolvedValue({ status: "recoveryRequired" });
-  expect(await service.canRestore?.()).toBe(true);
+  expect(await service.localWallet?.()).toBe("unreadable");
 });

@@ -1,13 +1,15 @@
 import { WalletUnavailableError } from "@/services/wallet/nativeBridge";
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "@/application/SessionProvider";
-import { AccessRejectedError } from "@/services/access";
+import { AccessRejectedError, type LocalWalletStatus } from "@/services/access";
 type AccessViewModel = {
   pending: boolean;
   error: string | null;
   start: () => Promise<void>;
   restore: () => Promise<void>;
   canRestore: boolean;
+  /** Null while unknown or when the access service has no local wallet. */
+  localWallet: LocalWalletStatus | null;
   cancel: () => void;
 };
 
@@ -15,10 +17,30 @@ export function useAccessController(): AccessViewModel {
   const { accessService, signIn } = useSession();
   const attempt = useRef(0);
   const inFlight = useRef(false);
-  // Recovery stays discoverable; native storage checks decide whether it can proceed.
-  const canRestore = typeof accessService.restore === "function";
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [localWallet, setLocalWallet] = useState<LocalWalletStatus | null>(null);
+  // Bumped after every attempt: a fast failure can batch pending true/false into one render.
+  const [attempts, setAttempts] = useState(0);
+  // Native restore never replaces a readable wallet, so only offer it when it can proceed.
+  const canRestore =
+    typeof accessService.restore === "function" &&
+    (localWallet === "absent" || localWallet === "unreadable");
+  useEffect(() => {
+    let current = true;
+    if (!pending)
+      accessService
+        .localWallet?.()
+        .then((value) => {
+          if (current) setLocalWallet(value);
+        })
+        .catch(() => {
+          if (current) setLocalWallet(null);
+        });
+    return () => {
+      current = false;
+    };
+  }, [accessService, pending, attempts]);
   useEffect(
     () => () => {
       attempt.current += 1;
@@ -33,6 +55,7 @@ export function useAccessController(): AccessViewModel {
     inFlight.current = false;
     setPending(false);
     setError(null);
+    setAttempts((value) => value + 1);
   }
   async function start(restoring = false) {
     if (inFlight.current) return;
@@ -66,10 +89,11 @@ export function useAccessController(): AccessViewModel {
       if (id === attempt.current) {
         inFlight.current = false;
         setPending(false);
+        setAttempts((value) => value + 1);
       }
     }
   }
-  return { pending, error, start, cancel, canRestore, restore: () => start(true) };
+  return { pending, error, start, cancel, canRestore, localWallet, restore: () => start(true) };
 }
 
 function passkeyErrorMessage(cause: unknown): string {
@@ -85,6 +109,8 @@ function passkeyErrorMessage(cause: unknown): string {
       return "Apple could not complete the passkey request. Try again. If it keeps failing, contact support with your app version and the step where it stopped.";
     case "UNAVAILABLE":
       return "Wallet access is unavailable right now. Bring the app to the foreground and try again.";
+    case "WALLET_EXISTS":
+      return "This device already has a wallet, so no restore is needed. Unlock it with your passkey.";
     default:
       return "Wallet access or backup was not completed. Continue to retry the same wallet. If local storage cannot be read, restore your backup with the original passkey.";
   }

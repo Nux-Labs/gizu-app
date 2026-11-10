@@ -38,11 +38,13 @@ function setup() {
 }
 beforeEach(() => jest.spyOn(Linking, "getInitialURL").mockResolvedValue(null));
 afterEach(() => jest.restoreAllMocks());
+// The passkey action reads "Unlock wallet" once a local wallet exists.
+const passkeyAction = { name: /^(Continue with passkey|Unlock wallet)$/ };
 async function access() {
-  await screen.findByRole("button", { name: "Continue with passkey" });
+  await screen.findByRole("button", passkeyAction);
 }
 async function proceed() {
-  await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
+  await userEvent.press(await screen.findByRole("button", passkeyAction));
 }
 
 test("onboarding waits for verified backup then opens existing Home", async () => {
@@ -89,6 +91,41 @@ test("restore uses the native ceremony and never creates a replacement wallet", 
   expect(native.createWallet).not.toHaveBeenCalled();
 });
 
+test("an existing wallet is unlocked instead of offering restore", async () => {
+  const native = setup();
+  native.getWalletState.mockResolvedValue(ready);
+  await userEvent.press(await screen.findByRole("button", { name: "Unlock wallet" }));
+  expect(screen.queryByRole("button", { name: "Restore wallet from backup" })).toBeNull();
+  expect(await screen.findByRole("header", { name: "Your portfolio" })).toBeVisible();
+  expect(native.openWallet).toHaveBeenCalledTimes(1);
+  expect(native.restoreWallet).not.toHaveBeenCalled();
+});
+
+test("an unreadable wallet offers only restore", async () => {
+  const native = setup();
+  native.getWalletState.mockResolvedValue({ status: "recoveryRequired" });
+  const restore = await screen.findByRole("button", { name: "Restore wallet from backup" });
+  expect(screen.getByText(/The wallet on this device can't be opened/)).toBeVisible();
+  expect(screen.queryByRole("button", passkeyAction)).toBeNull();
+  await userEvent.press(restore);
+  expect(await screen.findByRole("header", { name: "Your portfolio" })).toBeVisible();
+  expect(native.restoreWallet).toHaveBeenCalledTimes(1);
+});
+
+test("restore refused by an existing wallet guides the user to unlock it", async () => {
+  const native = setup();
+  native.restoreWallet.mockImplementationOnce(async () => {
+    native.getWalletState.mockResolvedValue(ready);
+    throw Object.assign(new Error("exists"), { code: "WALLET_EXISTS" });
+  });
+  await access();
+  await userEvent.press(await screen.findByRole("button", { name: "Restore wallet from backup" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/already has a wallet/);
+  expect(await screen.findByRole("button", { name: "Unlock wallet" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Restore wallet from backup" })).toBeNull();
+  expect(native.createWallet).not.toHaveBeenCalled();
+});
+
 test("cancel ignores a late backup result and keeps protected screens closed", async () => {
   const native = setup();
   const backup = deferred<StoredWalletState>();
@@ -99,7 +136,7 @@ test("cancel ignores a late backup result and keeps protected screens closed", a
   await act(async () => backup.resolve(ready));
   expect(native.lock).toHaveBeenCalled();
   expect(screen.queryByRole("header", { name: "Your portfolio" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Continue with passkey" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Unlock wallet" })).toBeVisible();
 });
 
 test("Account can reverify backup and recover from cancellation without disconnecting", async () => {
@@ -158,7 +195,7 @@ test("successful passkey login preserves native balance-read permission until di
   expect(native.lock).not.toHaveBeenCalled();
   await userEvent.press(screen.getByLabelText("Settings tab"));
   await userEvent.press(await screen.findByRole("button", { name: "Disconnect" }));
-  expect(await screen.findByRole("button", { name: "Continue with passkey" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Unlock wallet" })).toBeVisible();
   expect(native.lock).toHaveBeenCalledTimes(1);
 });
 test("leaving an unfinished passkey login still cancels native access", async () => {

@@ -144,8 +144,8 @@ function setup(
   return vault;
 }
 async function open() {
-  await screen.findByRole("button", { name: "Continue with passkey" });
-  await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
+  await screen.findByRole("button", { name: "Unlock wallet" });
+  await userEvent.press(screen.getByRole("button", { name: "Unlock wallet" }));
   await openEarnLink();
 }
 test("Earn stops invested; withdrawal is planned and signed only after separate user actions", async () => {

@@ -1,5 +1,9 @@
 package io.gizu.storedwallet
 
+/** Restore refuses to replace a readable wallet; JS offers unlocking instead. */
+internal class WalletExists :
+  IllegalStateException("A readable wallet already exists on this device.")
+
 internal fun nativeWalletFailureMessage(error: Exception): String =
   when (error) {
     is NativeCeremonyTimeout ->

@@ -22,10 +22,12 @@ export type AppSession = DemoSession | WalletSession;
 export function isWalletSession(session: AppSession | null): session is WalletSession {
   return session?.kind === "mainnet" || session?.kind === "testnet";
 }
+// "present" can be unlocked with its passkey; "unreadable" can only be restored from backup.
+export type LocalWalletStatus = "absent" | "present" | "unreadable";
 export interface AccessService {
   method?: AccessMethod;
   cancel?(): void;
-  canRestore?(): Promise<boolean>;
+  localWallet?(): Promise<LocalWalletStatus>;
   restore?(): Promise<AppSession>;
   request(method: AccessMethod): Promise<AppSession>;
 }

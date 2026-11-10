@@ -115,8 +115,8 @@ function setup(saved: SponsoredOperation[] = [], available = true) {
   return service;
 }
 async function open() {
-  await screen.findByRole("button", { name: "Continue with passkey" });
-  await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
+  await screen.findByRole("button", { name: "Unlock wallet" });
+  await userEvent.press(screen.getByRole("button", { name: "Unlock wallet" }));
   await openEarnLink();
 }
 test("Hood deposit stops invested; withdrawal and return each require fresh review, native authorization and explicit credit check", async () => {

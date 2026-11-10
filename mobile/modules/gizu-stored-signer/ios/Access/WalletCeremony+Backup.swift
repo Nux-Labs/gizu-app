@@ -79,7 +79,9 @@ import UIKit
   }
 
   func restore() async throws -> [String: Any] {
-    try require(["absent", "recoveryRequired"].contains(store.state()))
+    guard ["absent", "recoveryRequired"].contains(store.state()) else {
+      throw WalletFailure.walletExists
+    }
     let screen = try await presentWalletUI()
     try await screen.confirm(
       "Restore wallet",

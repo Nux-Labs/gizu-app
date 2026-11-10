@@ -165,8 +165,8 @@ test("checks the selected vault using only wallet 2 and keeps spending disabled"
   expect(screen.getByRole("button", { name: "Review investment" })).toBeDisabled();
 });
 async function open() {
-  await screen.findByRole("button", { name: "Continue with passkey" });
-  await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
+  await screen.findByRole("button", { name: "Unlock wallet" });
+  await userEvent.press(screen.getByRole("button", { name: "Unlock wallet" }));
   await openEarnLink();
 }
 test("wallets are created only after explicit intent and retained on reopening", async () => {
@@ -308,8 +308,8 @@ test("catalog Deposit uses the exact supported vault and allocates only after ex
     vaultAddress: earnProfiles["ethereum-usdc"].vault,
   };
   const { earn } = setup(vault);
-  await screen.findByRole("button", { name: "Continue with passkey" });
-  await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
+  await screen.findByRole("button", { name: "Unlock wallet" });
+  await userEvent.press(screen.getByRole("button", { name: "Unlock wallet" }));
   await userEvent.press(await screen.findByRole("button", { name: `View ${vault.name}` }));
   await userEvent.press(await screen.findByRole("button", { name: "Deposit" }));
   expect(await screen.findByText("Ethereum · Pendle")).toBeVisible();
@@ -342,8 +342,8 @@ test("catalog Deposit starts a fresh cycle rather than reusing an existing inves
   const pending = deferred<typeof next>();
   const prepareDistribution = jest.fn().mockReturnValue(pending.promise);
   Object.assign(earn, { prepareDistribution });
-  await screen.findByRole("button", { name: "Continue with passkey" });
-  await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
+  await screen.findByRole("button", { name: "Unlock wallet" });
+  await userEvent.press(screen.getByRole("button", { name: "Unlock wallet" }));
   await userEvent.press(await screen.findByRole("button", { name: `View ${vault.name}` }));
   await userEvent.press(await screen.findByRole("button", { name: "Deposit" }));
   await userEvent.type(await screen.findByLabelText("USDC deposit amount"), "3");
@@ -369,7 +369,7 @@ test("USDG vault Deposit opens the Robinhood native flow", async () => {
     vaultAddress: earnProfiles["robinhood-usdg"].vault,
   };
   const { earn } = setup(vault);
-  await userEvent.press(await screen.findByRole("button", { name: "Continue with passkey" }));
+  await userEvent.press(await screen.findByRole("button", { name: "Unlock wallet" }));
   await userEvent.press(await screen.findByRole("button", { name: `View ${vault.name}` }));
   await userEvent.press(await screen.findByRole("button", { name: "Deposit" }));
   expect(await screen.findByLabelText("USDC deposit amount")).toBeVisible();
