@@ -135,15 +135,6 @@ test("VAULT_CHAINS exposes Ethereum/Robinhood and pinned USDC/USDG vault details
       },
     ],
     {
-      list: async () => {
-        throw new Error("Merkl unavailable");
-      },
-      getById: async () => {
-        throw new Error("Merkl unavailable");
-      },
-      tvlRecords: async () => [],
-    },
-    {
       lookup: async () => {
         throw new Error("Morpho unavailable");
       },
@@ -193,7 +184,7 @@ test("VAULT_CHAINS exposes Ethereum/Robinhood and pinned USDC/USDG vault details
     assert.equal(response.statusCode, 200);
     const page = response.json();
     assert.equal(page.total, 1);
-    assert.equal(page.partial, true);
+    assert.equal(page.partial, undefined);
     assert.equal(page.list[0].vaultAddress, contract);
     assert.equal(page.list[0].asset.symbol, symbol);
     const detail = await app.inject({
@@ -230,13 +221,6 @@ test("a Monad promotion adds to Ethereum/Robinhood vault routes without replacin
   const adapter = new ConfiguredOpportunities(
     chains,
     entries,
-    {
-      list: async () => ({ list: [], total: 0 }),
-      getById: async () => {
-        throw new Error("unused");
-      },
-      tvlRecords: async () => [],
-    },
     { lookup: async () => null },
   );
   const cache: Cache = {

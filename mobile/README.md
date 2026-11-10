@@ -315,11 +315,11 @@ profiles are Pendle USDC on Ethereum and Steakhouse USDG on Robinhood.
 `[]` disables promotions only. The example features Gizu Prime AUSD on Monad
 (`0x997D5064A7B48305c15C9D55AC2D94D7069Fc008`). Duplicate chain/contract pairs merge
 into one card. Promotions on disabled chains remain hidden.
-Merkl discovery remains scoped to enabled chains and supported native profiles.
-The existing Aave/Morpho/Curvance protocol choices, search, paging and retry controls share one screen.
+Protocol filter options come from the catalog's `facets.protocols`; the filter is hidden
+when fewer than two protocols are listed. Search, paging and retry controls share one screen.
 Paging tracks each chain independently and stops querying exhausted chains.
 Details show contract addresses and share symbols; unknown metrics show `Unavailable`,
-and Morpho net APY is labeled separately from Merkl APR. Protocol logos resolve by
+and Morpho net APY is labeled as APY. Protocol logos resolve by
 stable protocol ID before display name. Wallet balances still use Monad mainnet USDC.
 Deposit stays inside Gizu and rechecks the selected vault. An exact match to an
 existing Ethereum/Robinhood native profile prepares a fresh Earn cycle only after
@@ -338,7 +338,7 @@ Development mobile defaults to `http://127.0.0.1:3000`. With an Android phone co
 by USB, run `adb reverse tcp:3000 tcp:3000` in addition to the Metro port forwarding.
 For other hosts, set `EXPO_PUBLIC_API_URL` to a reachable backend URL and restart Metro.
 Release builds require an explicit HTTPS URL. The public configuration contains no
-Merkl API key; that stays on the backend.
+provider API keys; those stay on the backend.
 
 ### iOS stored-wallet development
 

@@ -17,10 +17,6 @@ const profiles = [
   },
 ] as const;
 
-export function nativeCatalogChain(chainId: number): boolean {
-  return profiles.some((profile) => profile.chainId === chainId);
-}
-
 export function nativeCatalogProfile(chainId: number, address?: string) {
   return profiles.find((profile) =>
     profile.chainId === chainId &&

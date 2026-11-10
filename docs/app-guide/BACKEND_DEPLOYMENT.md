@@ -33,7 +33,6 @@ Set production values in Render; keep provider keys out of mobile/frontend bundl
 | Variables                               | Purpose                                                                              |
 | --------------------------------------- | ------------------------------------------------------------------------------------ |
 | `DATABASE_URL`                          | Database connection.                                                                 |
-| `MERKL_API_URL`, `MERKL_API_KEY`        | Vault catalog provider.                                                              |
 | `ONEINCH_API_KEY`                       | Token quotes and Fusion gateway.                                                     |
 | `AURORA_API_KEY`                        | Confidential quotes, balances and history.                                           |
 | `PIMLICO_API_KEY`                       | Gas sponsorship and bundler gateway.                                                 |

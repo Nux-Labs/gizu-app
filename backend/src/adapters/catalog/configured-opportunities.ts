@@ -1,5 +1,4 @@
 import type { CatalogChain, CatalogEntry } from "../../domain/catalog.ts";
-import { catalogAddress } from "../../domain/catalog.ts";
 import { DomainError } from "../../domain/errors/domain-error.ts";
 import { NotFoundError } from "../../domain/errors/not-found-error.ts";
 import type {
@@ -12,15 +11,9 @@ import type {
   TvlRecordsQuery,
 } from "../../ports/opportunities.port.ts";
 import type { VaultMetadata, VaultMetadataSource } from "./morpho-vaults.ts";
-import {
-  nativeCatalogAsset,
-  nativeCatalogChain,
-  nativeCatalogProfile,
-} from "./native-catalog.ts";
+import { nativeCatalogAsset, nativeCatalogProfile } from "./native-catalog.ts";
 
 const TTL_MS = 5 * 60 * 1000;
-const SNAPSHOT_ITEMS = 100;
-const MAX_SNAPSHOT_PAGES = 10;
 const METADATA_CONCURRENCY = 8;
 async function mapConcurrent<T, U>(
   rows: T[],
@@ -41,31 +34,17 @@ async function mapConcurrent<T, U>(
   );
   return result;
 }
-export function contractAddress(row: Opportunity): string | undefined {
-  const fields = row as Opportunity & {
-    explorerAddress?: string;
-    identifier?: string;
-  };
-  for (const value of [
-    fields.vaultAddress,
-    fields.explorerAddress,
-    fields.identifier,
-  ]) {
-    if (catalogAddress.safeParse(value).success) return value;
-  }
-  return undefined;
-}
 const configuredId = (vault: CatalogEntry) =>
   `configured:${vault.chainId}:${vault.address.toLowerCase()}`;
 
+/**
+ * The catalog is the configured vault list: built-in native deposit profiles plus explicit
+ * promotions. Morpho supplies names, rates, TVL and the underlying asset.
+ */
 export class ConfiguredOpportunities implements Opportunities {
   private readonly metadata = new Map<
     string,
     { expires: number; promise: Promise<VaultMetadata | null> }
-  >();
-  private readonly snapshots = new Map<
-    number,
-    { expires: number; promise: Promise<OpportunityPage> }
   >();
   private readonly details = new Map<
     string,
@@ -74,7 +53,6 @@ export class ConfiguredOpportunities implements Opportunities {
   constructor(
     private readonly chains: CatalogChain[],
     private readonly vaults: CatalogEntry[],
-    private readonly merkl: Opportunities,
     private readonly morpho: VaultMetadataSource,
   ) {}
 
@@ -97,28 +75,15 @@ export class ConfiguredOpportunities implements Opportunities {
           nativeCatalogProfile(vault.chainId, vault.address)),
     );
     const metadataSignal = AbortSignal.timeout(5_000);
-    const [snapshot, additions] = await Promise.all([
-      this.snapshot(query.chainId),
-      mapConcurrent(configured, (vault) =>
-        this.configuredDetail(vault, metadataSignal),
-      ),
-    ]);
-    const addresses = new Set(
-      configured.map((vault) => vault.address.toLowerCase()),
+    const details = await mapConcurrent(configured, (vault) =>
+      this.configuredDetail(vault, metadataSignal),
     );
-    const combined = [
-      ...additions.filter((row) => row.featured === true || row.asset),
-      ...snapshot.list.filter(
-        (row) => !addresses.has(contractAddress(row)?.toLowerCase() ?? ""),
-      ),
-    ];
+    const listed = details.filter((row) => row.featured === true || row.asset);
     const search = query.search.toLowerCase().trim();
-    const searched = combined.filter(
+    const searched = listed.filter(
       (row) =>
         !search ||
-        `${row.name} ${contractAddress(row) ?? ""}`
-          .toLowerCase()
-          .includes(search),
+        `${row.name} ${row.vaultAddress ?? ""}`.toLowerCase().includes(search),
     );
     const filtered = searched.filter(
       (row) => query.protocol === "all" || row.protocol.id === query.protocol,
@@ -129,98 +94,8 @@ export class ConfiguredOpportunities implements Opportunities {
         (query.page + 1) * query.items,
       ),
       total: filtered.length,
-      ...(snapshot.partial ? { partial: true } : {}),
       facets: { protocols: protocolFacets(searched) },
     };
-  }
-
-  private snapshot(chainId: number): Promise<OpportunityPage> {
-    if (!nativeCatalogChain(chainId))
-      return Promise.resolve({ list: [], total: 0 });
-    const cached = this.snapshots.get(chainId);
-    if (cached && cached.expires > Date.now()) return cached.promise;
-    const promise = (async () => {
-      const rows = new Map<string, Opportunity>();
-      const signal = AbortSignal.timeout(8_000);
-      const read = (page: number) =>
-        this.merkl.list({
-          chainId,
-          protocol: "all",
-          search: "",
-          page,
-          items: SNAPSHOT_ITEMS,
-          signal,
-        });
-      const append = (result: OpportunityPage) => {
-        for (const row of result.list) {
-          const address = contractAddress(row);
-          if (
-            row.chainId !== chainId ||
-            row.protocol.id !== "morpho" ||
-            !address ||
-            !nativeCatalogProfile(chainId, address)
-          )
-            continue;
-          const key = address.toLowerCase();
-          if (!rows.has(key))
-            rows.set(key, {
-              ...row,
-              vaultAddress: address,
-              featured: undefined,
-            });
-        }
-      };
-      try {
-        const first = await read(0);
-        append(first);
-        const pages = Math.min(
-          MAX_SNAPSHOT_PAGES,
-          Math.ceil(first.total / SNAPSHOT_ITEMS),
-        );
-        const results = await Promise.allSettled(
-          Array.from({ length: Math.max(0, pages - 1) }, (_, i) => read(i + 1)),
-        );
-        let partial =
-          first.total > MAX_SNAPSHOT_PAGES * SNAPSHOT_ITEMS ||
-          first.partial === true;
-        for (const result of results) {
-          if (result.status === "fulfilled") {
-            append(result.value);
-            if (result.value.partial) partial = true;
-          } else partial = true;
-        }
-        const candidates = [...rows.values()];
-        const verified = await mapConcurrent(candidates, async (row) => {
-          if (signal.aborted) {
-            partial = true;
-            return null;
-          }
-          const metadata = await this.lookup(
-            chainId,
-            contractAddress(row)!,
-            signal,
-          );
-          const asset = nativeCatalogAsset(
-            chainId,
-            contractAddress(row)!,
-            metadata?.asset,
-          );
-          if (!metadata?.asset) partial = true;
-          return asset ? { ...row, asset } : null;
-        });
-        const list = verified.filter((row) => row !== null);
-        return {
-          list,
-          total: list.length,
-          ...(partial ? { partial: true } : {}),
-        };
-      } catch {
-        /* Keep configured entries accessible when Merkl is unavailable. */
-      }
-      return { list: [], total: 0, partial: true };
-    })();
-    this.snapshots.set(chainId, { expires: Date.now() + TTL_MS, promise });
-    return promise;
   }
 
   private lookup(
@@ -321,26 +196,13 @@ export class ConfiguredOpportunities implements Opportunities {
         throw new NotFoundError({ name: "opportunity" }, id);
       return detail;
     }
-    const detail = await this.merkl.getById(id);
-    this.chain(detail.chainId);
-    const address = contractAddress(detail);
-    if (
-      detail.protocol.id !== "morpho" ||
-      !address ||
-      !nativeCatalogProfile(detail.chainId, address)
-    )
-      throw new NotFoundError({ name: "opportunity" }, id);
-    const metadata = await this.lookup(detail.chainId, address);
-    const asset = nativeCatalogAsset(detail.chainId, address, metadata?.asset);
-    if (!asset) throw new NotFoundError({ name: "opportunity" }, id);
-    return { ...detail, vaultAddress: address, asset };
+    throw new NotFoundError({ name: "opportunity" }, id);
   }
 
+  /** Configured vaults have no TVL history source yet; cards draw a flat line. */
   async tvlRecords(query: TvlRecordsQuery) {
     await this.getById(query.id); // Same enabled-chain / configured-contract boundary as detail.
-    return query.id.startsWith("configured:")
-      ? []
-      : this.merkl.tvlRecords(query);
+    return [];
   }
 }
 
