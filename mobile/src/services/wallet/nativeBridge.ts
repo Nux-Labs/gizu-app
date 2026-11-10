@@ -266,7 +266,6 @@ export type StoredSwapBridge = Pick<
   | "getSwapDeposit"
   | "getSwapHoldings"
   | "sellSwapHolding"
-  | "sweepSwapHolding"
   | "startSwap"
   | "startSell"
   | "startPayout"
@@ -312,13 +311,6 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
       if (typeof native.sellSwapHolding !== "function")
         throw new Error("Selling holdings is not available in this build.");
       return native.sellSwapHolding(holdingId, gateway);
-    },
-    async sweepSwapHolding(holdingId, destination, gateway) {
-      if (!__DEV__) throw new Error("The debug sweep is not available in this build.");
-      await checked(native, "swaps");
-      if (typeof native.sweepSwapHolding !== "function")
-        throw new Error("The debug sweep is not available in this build.");
-      return native.sweepSwapHolding(holdingId, destination, gateway);
     },
     async startSell(gateway) {
       await checked(native, "swaps");
