@@ -54,3 +54,14 @@ jobs:
           path: backend/test-results.log
           retention-days: 7
           if-no-files-found: ignore
+  container:
+    name: Backend container smoke
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the ECS runtime image
+        run: docker build --platform linux/amd64 --file backend/Dockerfile --tag gizu-backend:ci .
+      - name: Verify startup and ECS shutdown with disposable PostgreSQL 18
+        run: bash backend/scripts/smoke-container.sh gizu-backend:ci
