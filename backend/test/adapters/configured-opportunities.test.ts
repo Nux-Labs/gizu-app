@@ -393,3 +393,24 @@ test("protocol facets count rows per protocol, most vaults first", () => {
     ],
   );
 });
+
+test("featured vaults are listed before regular vaults on the same chain", async () => {
+  const catalog = new ConfiguredOpportunities(
+    chains,
+    [
+      { chainId: 1, address, name: "Regular", asset: usdc },
+      {
+        chainId: 1,
+        address: "0x997D5064A7B48305c15C9D55AC2D94D7069Fc008",
+        name: "Promoted",
+        featured: true,
+      },
+    ],
+    { lookup: async () => null },
+  );
+  const page = await catalog.list({ ...query, items: 8 });
+  assert.deepEqual(
+    page.list.map((row) => row.name),
+    ["Promoted", "Regular"],
+  );
+});

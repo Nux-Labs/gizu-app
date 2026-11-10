@@ -28,11 +28,16 @@ export async function readCatalogPage(
     const failure = results.find((result) => result.status === "rejected");
     throw failure?.status === "rejected" ? failure.reason : new Error("Vault catalog unavailable.");
   }
-  // Interleave so the Home preview and first screen include the supported chains together.
-  const items = Array.from(
+  // Interleave so the Home preview and first screen include the supported chains together,
+  // then lift featured vaults; each chain already returns its featured vaults first.
+  const interleaved = Array.from(
     { length: Math.max(0, ...pages.map((page) => page.list.length)) },
     (_, i) => pages.flatMap((page) => (page.list[i] ? [page.list[i]!] : [])),
   ).flat();
+  const items = [
+    ...interleaved.filter((row) => row.featured === true),
+    ...interleaved.filter((row) => row.featured !== true),
+  ];
   const remaining = positions.flatMap((position, i) => {
     const result = results[i]!;
     // A failed chain stays at its current cursor for an explicit retry/load more.

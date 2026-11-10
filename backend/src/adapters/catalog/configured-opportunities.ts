@@ -78,7 +78,11 @@ export class ConfiguredOpportunities implements Opportunities {
     const details = await mapConcurrent(configured, (vault) =>
       this.configuredDetail(vault, metadataSignal),
     );
-    const listed = details.filter((row) => row.featured === true || row.asset);
+    // Featured vaults lead each chain so clients can show them first.
+    const listed = [
+      ...details.filter((row) => row.featured === true),
+      ...details.filter((row) => row.featured !== true && row.asset),
+    ];
     const search = query.search.toLowerCase().trim();
     const searched = listed.filter(
       (row) =>
