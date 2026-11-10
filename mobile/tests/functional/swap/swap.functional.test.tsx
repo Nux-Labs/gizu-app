@@ -150,7 +150,7 @@ test("release-mode navigation opens native Swap and handles an unavailable token
     fireEvent.press(await screen.findByLabelText("Swap tab"));
     expect(await screen.findByText("Token list unavailable.")).toBeVisible();
     expect(screen.getByLabelText("Amount in USDC")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Review swap" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Swap" })).toBeDisabled();
     expect(screen.queryByLabelText("Search tokens")).toBeNull();
   } finally {
     fetchTokens.mockRestore();

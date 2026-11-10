@@ -5,6 +5,7 @@ import { ArrowDown } from "lucide-react-native";
 import { Button } from "@/components/atoms/Button";
 import { SwapTokenPicker } from "./SwapTokenPicker";
 import { SwapSellForm } from "./SwapSellForm";
+import { SwapAmountBox } from "./SwapAmountBox";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { Typography } from "@/components/atoms/Typography";
 import { Notice } from "@/components/molecules/Notice";
@@ -42,7 +43,7 @@ export function NativeSwapScreen() {
   const flip = (
     <PressableScale
       accessibilityRole="button"
-      accessibilityLabel={mode === "buy" ? "Switch to selling" : "Switch to buying"}
+      accessibilityLabel="Reverse direction"
       disabled={swap.busy}
       onPress={() => setMode(mode === "buy" ? "sell" : "buy")}
       className="z-10 -my-4 h-9 w-9 items-center justify-center self-center rounded-full border border-cardEdge bg-card"
@@ -74,50 +75,51 @@ export function NativeSwapScreen() {
       ) : null}
       {active && swap.status ? <ActiveSwapCard status={swap.status} /> : null}
       {!active && mode === "sell" && (
-        <SwapSellForm flip={flip} onSettled={() => void swap.refresh()} />
+        <SwapSellForm
+          flip={flip}
+          fundingAddress={swap.fundingAddress}
+          onSettled={() => void swap.refresh()}
+        />
       )}
       {!active && mode === "buy" && (
         <>
           <Surface>
             <View className="gap-1.5 p-2">
-              <View className="gap-3 rounded-[20px] bg-well p-4">
-                <View className="flex-row flex-wrap items-center justify-between gap-2">
-                  <Typography variant="label11">You pay</Typography>
-                  {wallet && (
-                    <Typography variant="micro">
-                      {wallet.snapshot && wallet.snapshot.balanceComplete !== false
-                        ? `Available: ${groupDigits(formatSwapAmount(BigInt(wallet.snapshot.totalAtoms)))} USDC`
-                        : "Checking available USDC…"}
-                    </Typography>
-                  )}
-                </View>
-                <View className="flex-row items-center gap-3">
-                  <TextInput
-                    accessibilityLabel="Amount in USDC"
-                    value={swap.amount}
-                    onChangeText={swap.setAmount}
-                    editable={!swap.busy}
-                    keyboardType="decimal-pad"
-                    placeholder="0"
-                    placeholderTextColor={colors.fg["20"]}
-                    maxLength={21}
-                    className="font-sans min-h-14 flex-1 text-[36px] text-text"
-                    style={{ fontVariant: ["tabular-nums"] }}
-                  />
-                  <Typography variant="rowTitle" className="!text-fg-55">
-                    USDC
-                  </Typography>
-                  <Button
-                    label="Max"
-                    accessibilityLabel="Use maximum USDC amount"
-                    variant="quiet"
-                    disabled={swap.busy || maxAmount === null}
-                    onPress={() => {
-                      if (maxAmount !== null) swap.setAmount(maxAmount);
-                    }}
-                  />
-                </View>
-              </View>
+              <SwapAmountBox
+                label="You pay"
+                note={
+                  !wallet
+                    ? undefined
+                    : wallet.snapshot && wallet.snapshot.balanceComplete !== false
+                      ? `Available: ${groupDigits(formatSwapAmount(BigInt(wallet.snapshot.totalAtoms)))} USDC`
+                      : "Checking available USDC…"
+                }
+              >
+                <TextInput
+                  accessibilityLabel="Amount in USDC"
+                  value={swap.amount}
+                  onChangeText={swap.setAmount}
+                  editable={!swap.busy}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  placeholderTextColor={colors.fg["20"]}
+                  maxLength={21}
+                  className="font-sans min-h-14 flex-1 text-[36px] text-text"
+                  style={{ fontVariant: ["tabular-nums"] }}
+                />
+                <Typography variant="rowTitle" className="!text-fg-55">
+                  USDC
+                </Typography>
+                <Button
+                  label="Max"
+                  accessibilityLabel="Use maximum USDC amount"
+                  variant="quiet"
+                  disabled={swap.busy || maxAmount === null}
+                  onPress={() => {
+                    if (maxAmount !== null) swap.setAmount(maxAmount);
+                  }}
+                />
+              </SwapAmountBox>
               {flip}
               <SwapTokenPicker
                 tokens={swap.tokens}
@@ -129,7 +131,7 @@ export function NativeSwapScreen() {
             </View>
           </Surface>
           <Button
-            label={swap.busy ? "Working" : "Review swap"}
+            label={swap.busy ? "Preparing…" : "Swap"}
             onPress={swap.start}
             disabled={!swap.canStart}
           />
@@ -149,7 +151,7 @@ export function NativeSwapScreen() {
       {active ? (
         <View className="gap-3">
           <Button
-            label={swap.busy ? "Working" : "Resume"}
+            label={swap.busy ? "Preparing…" : "Resume"}
             onPress={swap.resume}
             disabled={swap.busy}
           />
@@ -170,16 +172,14 @@ export function NativeSwapScreen() {
         <View className="gap-3">
           {swap.canPayout ? (
             <Button
-              label={
-                swap.busy ? "Working" : `Buy ${selected?.symbol ?? "token"} with private balance`
-              }
+              label={swap.busy ? "Preparing…" : `Swap to ${selected?.symbol ?? "token"}`}
               onPress={swap.payout}
               disabled={swap.busy}
             />
           ) : null}
           {swap.canSell ? (
             <Button
-              label={swap.busy ? "Working" : "Sell back to USDC"}
+              label={swap.busy ? "Preparing…" : "Swap to USDC"}
               onPress={swap.sell}
               disabled={swap.busy}
             />

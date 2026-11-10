@@ -11,6 +11,7 @@ import { Badge } from "@/components/atoms/Badge";
 import { tokenIdentity, tokenNetworks, type CatalogToken } from "@/domain/tokenCatalog";
 import { useTokenCatalog } from "./useTokenCatalog";
 import type { ListedToken } from "./confidentialSwap";
+import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
 
 const tokenKinds = [
   { category: "rwa", label: "Stocks" },
@@ -34,43 +35,34 @@ export function SwapTokenPicker({
   const selected = tokens.find((token) => token.address === target);
   return (
     <>
-      <PressableScale
-        accessibilityRole="button"
-        accessibilityLabel="Choose receive token"
-        accessibilityState={{ disabled, expanded: open }}
-        disabled={disabled}
-        onPress={() => {
-          setOpen(true);
-        }}
-        className="gap-3 rounded-[20px] bg-well p-4"
+      <SwapAmountBox
+        label="You receive"
+        note={selected?.name}
+        info={estimate && !estimate.loading ? ESTIMATE_INFO : undefined}
       >
-        <Typography variant="label11">You receive</Typography>
-        <View className="flex-row items-center justify-between gap-3">
-          <Typography
-            variant="rowTitle"
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            className={`flex-1 !text-[36px] ${estimate && !estimate.loading ? "" : "!text-fg-20"}`}
-            style={{ fontVariant: ["tabular-nums"] }}
-          >
-            {estimate && !estimate.loading ? estimate.text : estimate ? "…" : "0"}
+        <Typography
+          variant="rowTitle"
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          className={`flex-1 !text-[36px] ${estimate && !estimate.loading ? "" : "!text-fg-20"}`}
+          style={{ fontVariant: ["tabular-nums"] }}
+        >
+          {estimate && !estimate.loading ? estimate.text : estimate ? "…" : "0"}
+        </Typography>
+        <PressableScale
+          accessibilityRole="button"
+          accessibilityLabel="Choose receive token"
+          accessibilityState={{ disabled, expanded: open }}
+          disabled={disabled}
+          onPress={() => setOpen(true)}
+          className="flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2"
+        >
+          <Typography variant="rowTitle" className="!text-neon">
+            {selected?.symbol ?? "Choose"}
           </Typography>
-          <View className="flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2">
-            <Typography variant="rowTitle" className="!text-neon">
-              {selected?.symbol ?? "Choose"}
-            </Typography>
-            <ChevronDown size={14} color={colors.fg["70"]} />
-          </View>
-        </View>
-        <View className="flex-row items-center justify-between gap-3">
-          <Typography variant="micro" numberOfLines={1} className="flex-1">
-            {selected?.name ?? ""}
-          </Typography>
-          {estimate && !estimate.loading ? (
-            <Typography variant="micro">Market estimate before fees</Typography>
-          ) : null}
-        </View>
-      </PressableScale>
+          <ChevronDown size={14} color={colors.fg["70"]} />
+        </PressableScale>
+      </SwapAmountBox>
       <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
         {open && (
           <TokenChoices
@@ -88,7 +80,7 @@ export function SwapTokenPicker({
   );
 }
 
-function TokenChoices({
+export function TokenChoices({
   target,
   disabled,
   onClose,

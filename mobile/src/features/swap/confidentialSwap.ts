@@ -107,6 +107,9 @@ export async function loadSwapTokens(fetchImpl: typeof fetch = fetch): Promise<L
   });
 }
 
+/** Sales are priced into Robinhood USDG, which Aurora credits as confidential USDC 1:1. */
+export const ROBINHOOD_USDG = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+
 /** Gross market preview only: source gas, bridge/payout fees and auction slippage are excluded. */
 export async function previewSwapOut(
   wallet: string,
@@ -114,10 +117,30 @@ export async function previewSwapOut(
   sourceAtomsValue: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
+  return fusionMarketOut({ wallet, dstToken: target, amount: sourceAtomsValue }, fetchImpl);
+}
+
+/** Gross USDG (6 decimals) for selling `tokenAtoms` of `token`; fees and slippage excluded. */
+export async function previewSellOut(
+  wallet: string,
+  token: string,
+  tokenAtoms: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  return fusionMarketOut(
+    { wallet, srcToken: token, dstToken: ROBINHOOD_USDG, amount: tokenAtoms },
+    fetchImpl,
+  );
+}
+
+async function fusionMarketOut(
+  request: { wallet: string; dstToken: string; amount: string; srcToken?: string },
+  fetchImpl: typeof fetch,
+): Promise<string> {
   const response = await fetchImpl(`${swapGateway}/v1/swap/fusion/preview`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ wallet, dstToken: target, amount: sourceAtomsValue, preset: "fast" }),
+    body: JSON.stringify({ ...request, preset: "fast" }),
   });
   if (!response.ok) throw new Error("Estimate unavailable.");
   const body = (await response.json()) as { marketOut?: unknown };

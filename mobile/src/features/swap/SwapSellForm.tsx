@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { Modal, TextInput, View } from "react-native";
 import { ChevronDown } from "lucide-react-native";
 import { Button } from "@/components/atoms/Button";
 import { PressableScale } from "@/components/atoms/PressableScale";
@@ -7,24 +7,80 @@ import { Typography } from "@/components/atoms/Typography";
 import { ErrorNotice } from "@/components/molecules/ErrorNotice";
 import { Notice } from "@/components/molecules/Notice";
 import { Surface } from "@/components/molecules/Surface";
+import { Screen } from "@/components/templates/Screen";
 import colors from "@/theme/colors.json";
+import { parseTokenAmount } from "@/domain/swap";
+import type { CatalogToken } from "@/domain/tokenCatalog";
 import { holdingAmount } from "./SwapHoldingsSection";
+import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
+import { TokenChoices } from "./SwapTokenPicker";
+import { useSellEstimate } from "./useSellEstimate";
 import { useSwapHoldings } from "./useSwapHoldings";
 
-/** Sells a held token back to Monad USDC, the only destination the sale route supports. */
-export function SwapSellForm({ flip, onSettled }: { flip: ReactNode; onSettled: () => void }) {
+/**
+ * Sells a held token into confidential USDC. Without holdings it becomes a preview: any swap
+ * token and amount can be priced, but nothing can be sold until the wallet holds it.
+ */
+export function SwapSellForm({
+  flip,
+  fundingAddress,
+  onSettled,
+}: {
+  flip: ReactNode;
+  fundingAddress: string;
+  onSettled: () => void;
+}) {
   const holdings = useSwapHoldings(onSettled);
   const list = holdings.snapshot?.holdings ?? [];
   const [chosen, setChosen] = useState("");
   const holding = list.find((item) => item.token === chosen) ?? list[0];
   const batch = holding?.batches[0];
+  const previewing = !!holdings.snapshot && !holding;
+  const [previewToken, setPreviewToken] = useState<CatalogToken | null>(null);
+  const [previewAmount, setPreviewAmount] = useState("");
+  const [picking, setPicking] = useState(false);
+  const previewAtoms =
+    previewToken && previewToken.decimals > 0
+      ? parseTokenAmount(previewAmount, previewToken.decimals)
+      : null;
+  const estimate = useSellEstimate(
+    fundingAddress,
+    previewing ? previewToken?.address : holding?.token,
+    previewing
+      ? previewAtoms !== null
+        ? previewAtoms.toString()
+        : null
+      : (holding?.balanceAtoms ?? null),
+  );
   return (
     <>
       <Surface>
         <View className="gap-1.5 p-2">
-          <View className="gap-3 rounded-[20px] bg-well p-4">
-            <Typography variant="label11">You pay</Typography>
-            <View className="flex-row items-center justify-between gap-3">
+          <SwapAmountBox
+            label="You pay"
+            note={
+              previewing
+                ? previewToken
+                  ? `Available: 0 ${previewToken.symbol}`
+                  : undefined
+                : holding
+                  ? `Available: ${holdingAmount(holding.balanceAtoms, holding.decimals)} ${holding.symbol}`
+                  : undefined
+            }
+          >
+            {previewing ? (
+              <TextInput
+                accessibilityLabel="Amount to sell"
+                value={previewAmount}
+                onChangeText={setPreviewAmount}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                placeholderTextColor={colors.fg["20"]}
+                maxLength={40}
+                className="font-sans min-h-14 flex-1 text-[36px] text-text"
+                style={{ fontVariant: ["tabular-nums"] }}
+              />
+            ) : (
               <Typography
                 variant="rowTitle"
                 numberOfLines={1}
@@ -34,60 +90,57 @@ export function SwapSellForm({ flip, onSettled }: { flip: ReactNode; onSettled: 
               >
                 {holding ? holdingAmount(holding.balanceAtoms, holding.decimals) : "0"}
               </Typography>
+            )}
+            {previewing || list.length > 1 ? (
+              <PressableScale
+                accessibilityRole="button"
+                accessibilityLabel={previewing ? "Choose token to sell" : "Choose held token"}
+                accessibilityState={{ expanded: picking, disabled: holdings.busy }}
+                disabled={holdings.busy}
+                onPress={() => setPicking(true)}
+                className="flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2"
+              >
+                <Typography variant="rowTitle" className="!text-neon">
+                  {(previewing ? previewToken?.symbol : holding?.symbol) ?? "Choose"}
+                </Typography>
+                <ChevronDown size={14} color={colors.fg["70"]} />
+              </PressableScale>
+            ) : (
               <View className="rounded-full bg-neon/15 px-3 py-2">
                 <Typography variant="rowTitle" className="!text-neon">
                   {holding?.symbol ?? "—"}
                 </Typography>
               </View>
-            </View>
-            {list.length > 1 ? (
-              <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
-                {list.map((item) => (
-                  <PressableScale
-                    key={item.token}
-                    accessibilityRole="radio"
-                    accessibilityLabel={item.symbol}
-                    accessibilityState={{ checked: item.token === holding?.token }}
-                    disabled={holdings.busy}
-                    onPress={() => setChosen(item.token)}
-                    className={`rounded-full px-3 py-1.5 ${item.token === holding?.token ? "bg-neon/15" : "bg-card"}`}
-                  >
-                    <Typography
-                      variant="caption"
-                      className={item.token === holding?.token ? "!text-neon" : ""}
-                    >
-                      {item.symbol}
-                    </Typography>
-                  </PressableScale>
-                ))}
-              </View>
-            ) : null}
-            <Typography variant="micro">
-              {holdings.snapshot && !holding
-                ? "No sellable tokens found in your swap wallets."
-                : holdings.busy && !holding
-                  ? "Checking holdings…"
-                  : "Sells this token's full balance in your swap wallets."}
-            </Typography>
-          </View>
+            )}
+          </SwapAmountBox>
           {flip}
-          <View className="gap-3 rounded-[20px] bg-well p-4">
-            <Typography variant="label11">You receive</Typography>
-            <View className="flex-row items-center justify-between gap-3">
-              <Typography variant="micro" className="flex-1">
-                Kept in your confidential balance
-              </Typography>
-              <View className="flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2">
-                <Typography variant="rowTitle" className="!text-neon">
-                  USDC
-                </Typography>
-                <ChevronDown size={14} color={colors.fg["20"]} />
-              </View>
-            </View>
-            <Typography variant="micro">
-              Confidential USDC · withdraw from Gizu separately
+          <SwapAmountBox
+            label="You receive"
+            note={estimate?.kind === "unavailable" ? "Estimate unavailable" : undefined}
+            info={estimate?.kind === "ready" ? ESTIMATE_INFO : undefined}
+          >
+            <Typography
+              variant="rowTitle"
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              accessibilityLabel={
+                estimate?.kind === "ready" ? `Estimated ${estimate.text} USDC` : undefined
+              }
+              className={`flex-1 !text-[36px] ${estimate?.kind === "ready" ? "" : "!text-fg-20"}`}
+              style={{ fontVariant: ["tabular-nums"] }}
+            >
+              {estimate?.kind === "ready"
+                ? estimate.text
+                : estimate?.kind === "loading"
+                  ? "…"
+                  : "0"}
             </Typography>
-          </View>
+            <View className="rounded-full bg-neon/15 px-3 py-2">
+              <Typography variant="rowTitle" className="!text-neon">
+                USDC
+              </Typography>
+            </View>
+          </SwapAmountBox>
         </View>
       </Surface>
       {holdings.error ? (
@@ -103,7 +156,7 @@ export function SwapSellForm({ flip, onSettled }: { flip: ReactNode; onSettled: 
       {holdings.saleFailed ? (
         <ErrorNotice
           kind="sale"
-          message="Couldn’t finish the sale. Check its status in Swap before trying again."
+          message="Couldn’t finish the swap. Check its status in Swap before trying again."
           actionLabel="Check status"
           onAction={onSettled}
           busy={holdings.busy}
@@ -115,8 +168,56 @@ export function SwapSellForm({ flip, onSettled }: { flip: ReactNode; onSettled: 
           Balance found, but no complete receiving-wallet group is available to sell.
         </Typography>
       ) : null}
+      <Modal visible={picking} animationType="slide" onRequestClose={() => setPicking(false)}>
+        {picking && previewing && (
+          <TokenChoices
+            target={previewToken?.address ?? ""}
+            disabled={false}
+            onClose={() => setPicking(false)}
+            onSelect={(token) => {
+              setPreviewToken(token);
+              setPicking(false);
+            }}
+          />
+        )}
+        {picking && !previewing && (
+          <Screen>
+            <View className="flex-row items-center justify-between gap-3">
+              <Typography variant="heading" accessibilityRole="header" className="flex-1">
+                Choose token
+              </Typography>
+              <Button label="Close" variant="quiet" onPress={() => setPicking(false)} />
+            </View>
+            <View className="gap-2" accessibilityRole="radiogroup">
+              {list.map((item) => (
+                <PressableScale
+                  key={item.token}
+                  accessibilityRole="radio"
+                  accessibilityLabel={item.symbol}
+                  accessibilityState={{ checked: item.token === holding?.token }}
+                  onPress={() => {
+                    setChosen(item.token);
+                    setPicking(false);
+                  }}
+                  className={`flex-row items-center justify-between gap-3 rounded-2xl px-4 py-3 ${item.token === holding?.token ? "bg-neon/10" : "bg-well"}`}
+                >
+                  <Typography
+                    variant="rowTitle"
+                    className={item.token === holding?.token ? "!text-neon" : ""}
+                  >
+                    {item.symbol}
+                  </Typography>
+                  <Typography variant="micro">
+                    {holdingAmount(item.balanceAtoms, item.decimals)}
+                  </Typography>
+                </PressableScale>
+              ))}
+            </View>
+          </Screen>
+        )}
+      </Modal>
       <Button
-        label={holdings.busy ? "Working" : `Sell ${holding?.symbol ?? "token"} for USDC`}
+        label={holdings.busy ? "Preparing…" : "Swap"}
         disabled={holdings.busy || !!holdings.error || holdings.saleFailed || !batch}
         onPress={() => {
           if (batch) void holdings.sell(batch.id);

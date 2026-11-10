@@ -66,8 +66,8 @@ export function SwapHoldingsSection({
           holdings.snapshot.holdings.every((holding) =>
             includedInOwnedBalances(holding.chainId, holding.token),
           )
-            ? "Swap holdings tools"
-            : "Token holdings"}
+            ? "Holdings tools"
+            : "Holdings"}
         </Typography>
       )}
       {holdings.busy ? (
@@ -97,8 +97,8 @@ export function SwapHoldingsSection({
       {holdings.saleFailed && (
         <ErrorNotice
           kind="sale"
-          message="Couldn’t finish the sale. Check its status in Swap before trying again."
-          actionLabel="Review swap"
+          message="Couldn’t finish the swap. Check its status in Swap before trying again."
+          actionLabel="Open Swap"
           onAction={onReviewSale}
           busy={holdings.busy}
         />
@@ -148,7 +148,8 @@ export function SwapHoldingsSection({
                   </Typography>
                 ) : null}
                 <Button
-                  label={`Sell ${holding.symbol} back to USDC`}
+                  label="Swap to USDC"
+                  accessibilityLabel={`Swap ${holding.symbol} to USDC`}
                   disabled={
                     holdings.busy ||
                     !!holdings.error ||
@@ -173,7 +174,7 @@ export function SwapHoldingsSection({
       })}
       {holdings.snapshot && !holdings.snapshot.holdings.length ? (
         <Typography variant="micro">
-          No balances found for tracked tokens. Use Holdings tools to find an earlier purchase.
+          No balances found for tracked tokens. Use Holdings tools to find an earlier swap.
         </Typography>
       ) : null}
       <HoldingDetails label="Holdings tools" accessibilityLabel="Holdings tools">
@@ -189,7 +190,7 @@ export function SwapHoldingsSection({
           onPress={() => void refreshHoldings()}
         />
         <Button
-          label="Find an earlier purchase"
+          label="Find an earlier swap"
           variant="quiet"
           disabled={holdings.busy}
           onPress={() => void holdings.findTokens()}
@@ -200,7 +201,7 @@ export function SwapHoldingsSection({
               Choose the token you bought. This only checks balances; it does not start a swap.
             </Typography>
             <SearchInput
-              label="Find purchased token"
+              label="Find swapped token"
               value={holdings.search}
               onChangeText={holdings.setSearch}
             />

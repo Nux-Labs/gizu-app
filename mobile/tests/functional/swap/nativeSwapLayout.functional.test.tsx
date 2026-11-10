@@ -98,7 +98,7 @@ test("selects a searched token and reviews the exact amount without exposing tec
   );
   await screen.findByText("COIN");
   expect(screen.queryByText("Funding wallet")).toBeNull();
-  expect(screen.getByRole("button", { name: "Review swap" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Swap" })).toBeDisabled();
   fireEvent.press(screen.getByRole("button", { name: "Choose receive token" }));
   fireEvent.changeText(screen.getByLabelText("Search tokens"), "missing");
   expect(await screen.findByText("No tokens found.")).toBeVisible();
@@ -107,9 +107,9 @@ test("selects a searched token and reviews the exact amount without exposing tec
   fireEvent.press(await screen.findByRole("radio", { name: "GOOGL · Alphabet" }));
   expect(screen.queryByLabelText("Search tokens")).toBeNull();
   fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1.25");
-  expect(screen.getByRole("button", { name: "Review swap" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Swap" })).toBeEnabled();
   expect(start).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole("button", { name: "Review swap" }));
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
   await waitFor(() =>
     expect(start).toHaveBeenCalledWith(secondToken, "1250000", expect.any(String)),
   );
@@ -132,7 +132,7 @@ test("a fresh wallet with no saved swap shows no status warning", async () => {
   await waitFor(() => expect(readStatus).toHaveBeenCalled());
   expect(screen.queryByText(/Saved swap status unavailable/)).toBeNull();
   expect(screen.queryByText("Swap in progress")).toBeNull();
-  expect(screen.getByRole("button", { name: "Review swap" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Swap" })).toBeVisible();
 });
 
 test("a failed status read still shows the warning", async () => {
@@ -207,7 +207,7 @@ test("a native HTTP failure shows actionable guidance instead of a bare code", a
   );
   await screen.findByText("COIN");
   fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1");
-  fireEvent.press(screen.getByRole("button", { name: "Review swap" }));
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
   expect(
     await screen.findByText(/A balance or swap service could not complete the request/),
   ).toBeVisible();
@@ -269,7 +269,7 @@ const finished = (over: Record<string, unknown>) => ({
 });
 
 test.each([
-  ["COMPLETE", "Last swap completed", /Bought AMZN/],
+  ["COMPLETE", "Last swap completed", /Swapped USDC → AMZN/],
   ["CANCELLED", "Last swap cancelled", /Swap cancelled/],
 ])(
   "a %s swap leaves the swap form in front and keeps its status behind an info button",
@@ -281,7 +281,7 @@ test.each([
       </SafeAreaProvider>,
     );
     const info = await screen.findByRole("button", { name: label });
-    expect(screen.getByRole("button", { name: "Review swap" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Swap" })).toBeVisible();
     expect(screen.queryByText("Swap completed")).toBeNull();
     expect(screen.queryByText("Swap cancelled")).toBeNull();
     expect(screen.queryByText(summary)).toBeNull();
@@ -315,7 +315,7 @@ test("a finished buy says what was paid, what arrived and how it was split, in p
     }),
   );
   await openSummary("Last swap completed");
-  expect(await screen.findByText("Bought 0.00221 AMZN")).toBeVisible();
+  expect(await screen.findByText("Swapped USDC → AMZN")).toBeVisible();
   expect(screen.getByText("You paid")).toBeVisible();
   expect(screen.getByText("1.997 USDC")).toBeVisible();
   expect(screen.getByText("Split across")).toBeVisible();
@@ -330,7 +330,7 @@ test("a swap cancelled before anything happened says nothing was bought", async 
   );
   await openSummary("Last swap cancelled");
   expect(await screen.findByText("Swap cancelled")).toBeVisible();
-  expect(screen.getByText(/Nothing was bought and nothing is pending/)).toBeVisible();
+  expect(screen.getByText(/Nothing was swapped and nothing is pending/)).toBeVisible();
   expect(screen.queryByText("Finished")).toBeNull();
 });
 
@@ -364,7 +364,7 @@ test("a finished sale names what was sold, where it went and tucks addresses awa
     }),
   );
   await openSummary("Last swap completed");
-  expect(await screen.findByText("Sold AMZN")).toBeVisible();
+  expect(await screen.findByText("Swapped AMZN → USDC")).toBeVisible();
   expect(screen.getByText("2 of 3 wallets")).toBeVisible();
   expect(screen.getByText("2 wallets on Monad")).toBeVisible();
   expect(screen.queryByText(address)).toBeNull();
@@ -397,7 +397,7 @@ test("a pooled sale reports how many wallets it sold from and how many it paid",
     }),
   );
   await openSummary("Last swap completed");
-  expect(await screen.findByText("Sold AMZN")).toBeVisible();
+  expect(await screen.findByText("Swapped AMZN → USDC")).toBeVisible();
   expect(screen.getByText("3 of 3 wallets")).toBeVisible();
   expect(screen.getByText("2 wallets on Monad")).toBeVisible();
   expect(screen.getByText("Paid out")).toBeVisible();
@@ -418,7 +418,7 @@ test("a token gas allowance rejection shows a recovery action without raw provid
   );
   await screen.findByText("COIN");
   fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1.25");
-  fireEvent.press(screen.getByRole("button", { name: "Review swap" }));
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
   expect(
     await screen.findByText(
       "The USDC gas approval is below the required maximum. Resume to prepare it again before signing.",
@@ -455,7 +455,9 @@ test("the market preview states that fees are excluded", async () => {
   );
   await screen.findByText("COIN");
   fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1.25");
-  expect(await screen.findByText("Market estimate before fees")).toBeVisible();
+  expect(screen.queryByText(/Market estimate before fees/)).toBeNull();
+  fireEvent.press(await screen.findByRole("button", { name: "About this estimate" }));
+  expect(screen.getByText(/Market estimate before fees/)).toBeVisible();
 });
 
 test("native action failures keep provider details out of the screen", async () => {
@@ -468,7 +470,7 @@ test("native action failures keep provider details out of the screen", async () 
   );
   await screen.findByText("COIN");
   fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1.25");
-  fireEvent.press(screen.getByRole("button", { name: "Review swap" }));
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
   expect(
     await screen.findByText("Swap stopped. Refresh the saved swap status before trying again."),
   ).toBeVisible();
