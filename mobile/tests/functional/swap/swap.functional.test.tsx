@@ -180,6 +180,8 @@ test("appends tokens and refreshes the first page without losing filters", async
   await screen.findByRole("button", { name: "Retry refresh" });
   expect(screen.getByText("Second token")).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "Retry refresh" }));
-  await waitFor(() => expect(screen.queryByText("Second token")).toBeNull());
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(4));
+  await act(async () => {});
+  expect(screen.queryByText("Second token")).toBeNull();
   expect(list.mock.lastCall?.[0]).toEqual({ chainId: 4663, category: "rwa", search: "", page: 0 });
 });

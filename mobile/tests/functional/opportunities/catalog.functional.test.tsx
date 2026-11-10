@@ -165,7 +165,9 @@ test("refresh replaces vault results and reuses successful sparkline history", a
   await screen.findByText("Second vault");
   list.mockResolvedValueOnce({ ...page, total: 1 });
   fireEvent(screen.getByLabelText("vaults list"), "refresh");
-  await waitFor(() => expect(screen.queryByText("Second vault")).toBeNull());
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(3));
+  await act(async () => {});
+  expect(screen.queryByText("Second vault")).toBeNull();
   expect(list.mock.lastCall?.[0].page).toBe(0);
   expect(tvl.mock.calls.filter(([id]) => id === "1")).toHaveLength(1);
 });
