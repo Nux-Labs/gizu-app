@@ -10,13 +10,13 @@ import {
   type PayoutLeg,
 } from "./distribution.ts";
 import { EarnRecoveryEnvelope } from "./recovery-envelope.ts";
+import { evmReadTransport } from "../evm/read-transport.ts";
 import { base58 } from "@scure/base";
 import {
   createPublicClient,
   defineChain,
   erc20Abi,
   getAddress,
-  http,
   keccak256,
   toHex,
   bytesToHex,
@@ -811,11 +811,7 @@ export class PrivatePayoutGateway {
           : chain === 1
             ? mainnet
             : robinhoodChain,
-      transport: http(url, {
-        fetchFn: this.fetcher,
-        timeout: 12000,
-        retryCount: 0,
-      }),
+      transport: evmReadTransport(url, this.fetcher),
       cacheTime: 0,
     });
   }

@@ -89,6 +89,11 @@ export class RobinhoodPlanFailure extends InfrastructureError {
     let codeLocation: string | undefined;
     for (let depth = 0; depth < 16 && current instanceof Error; depth++) {
       reason = reasons.get(current.message) ?? reason;
+      if (
+        ("code" in current && current.code === 429) ||
+        ("status" in current && current.status === 429)
+      )
+        reason = "rpc-throttled";
       accountAbstractionCode ??= current.message
         .slice(0, 8192)
         .match(/\bAA[0-9]{2}\b/)?.[0];
@@ -115,8 +120,8 @@ export class RobinhoodPlanFailure extends InfrastructureError {
       if (
         "code" in current &&
         Number.isSafeInteger(current.code) &&
-        Number(current.code) < 0 &&
-        Number(current.code) >= -32768
+        ((Number(current.code) < 0 && Number(current.code) >= -32768) ||
+          current.code === 429)
       )
         rpcCode ??= Number(current.code);
       current = current.cause;

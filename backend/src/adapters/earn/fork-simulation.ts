@@ -27,7 +27,8 @@ export type DepositSimulation = {
   postDepositShares: bigint;
 };
 const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-// Global bounded fork concurrency protects the host even across planner instances.
+// Two forks share at most 300CU/s, leaving live reads room in a 500CU/s account.
+// This is per process; deployment replicas must share an operator capacity budget.
 let activeForks = 0;
 async function freePort() {
   const server = createServer();
@@ -88,7 +89,7 @@ export async function withPinnedFork<T>(
         "0",
         "--silent",
         "--compute-units-per-second",
-        "1000",
+        "150",
       ],
       { stdio: "ignore", env: { PATH: process.env.PATH } },
     );

@@ -2,7 +2,6 @@ import {
   createPublicClient,
   erc20Abi,
   getAddress,
-  http,
   keccak256,
   stringToHex,
 } from "viem";
@@ -10,6 +9,7 @@ import type { Address, PublicClient } from "viem";
 import { entryPoint08Address } from "viem/account-abstraction";
 import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
 import { mulDiv } from "../evm/gas-policy.ts";
+import { evmReadTransport } from "../evm/read-transport.ts";
 import type { ReferenceBlock } from "./policy.ts";
 import { balance } from "./vault.ts";
 import {
@@ -245,7 +245,7 @@ export function createRobinhoodPlannerProviders(
 ): RobinhoodPlannerProviders {
   const client = createPublicClient({
     chain: robinhoodChain,
-    transport: http(config.rpcUrl, { retryCount: 0, timeout: 12000 }),
+    transport: evmReadTransport(config.rpcUrl),
     cacheTime: 0,
   });
   let paymaster:
