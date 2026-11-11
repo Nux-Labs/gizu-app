@@ -12,6 +12,8 @@ const querySchema = z.object({
   search: z.string().max(200),
   page: z.coerce.number().int().nonnegative(),
   items: z.coerce.number().int().min(1).max(100),
+  // The swap picker lists only tokens a buy can target; browsing and earlier-swap lookup still see every token.
+  liquidOnly: z.literal("true").optional(),
 });
 
 export function registerTokenRoutes(
@@ -26,11 +28,13 @@ export function registerTokenRoutes(
       const chainIds = chainId === undefined ? CATALOG_CHAIN_IDS : [chainId];
       const tokens = (await Promise.all(chainIds.map((id) => catalog.list(id, category)))).flat();
       const search = request.query.search.trim().toLowerCase();
+      const liquidOnly = request.query.liquidOnly === "true";
       const matches = tokens.filter((token) =>
+        (!liquidOnly || token.buyable) && (
         token.symbol.toLowerCase().includes(search) ||
         token.name.toLowerCase().includes(search) ||
         token.address.toLowerCase().includes(search) ||
-        (token.issuer !== null && token.issuer.toLowerCase().includes(search)),
+        (token.issuer !== null && token.issuer.toLowerCase().includes(search))),
       );
       const { page, items } = request.query;
       const list = matches.slice(page * items, (page + 1) * items);

@@ -12,6 +12,8 @@ export interface TokenQuery {
   category: TokenCategory;
   search: string;
   page: number;
+  /** List only tokens a buy can target; the swap picker sets it, browsing does not. */
+  liquidOnly?: boolean;
 }
 export interface CatalogToken {
   chainId: TokenChainId;
@@ -23,6 +25,8 @@ export interface CatalogToken {
   category: "rwa" | "other";
   issuer: "Robinhood" | null;
   swapListed: boolean;
+  /** `false` marks a listed stock outside the curated liquid set; older gateways omit it. */
+  buyable?: boolean;
   fusionStatus: "quote-required";
 }
 export interface TokenPage {
@@ -33,6 +37,10 @@ export interface TokenPage {
 }
 export interface TokenCatalogService {
   list(query: TokenQuery, signal: AbortSignal): Promise<TokenPage>;
+}
+/** Robinhood names every stock "Name • Robinhood Token"; the network mark already says where it lives. */
+export function tokenDisplayName(name: string): string {
+  return name.replace(/\s*•\s*Robinhood Token$/, "") || name;
 }
 export function tokenIdentity(token: Pick<CatalogToken, "chainId" | "address">): string {
   return `${token.chainId}:${token.address.toLowerCase()}`;

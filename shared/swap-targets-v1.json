@@ -1,0 +1,233 @@
+{
+  "version": "gizu-swap-targets-v1",
+  "description": "Robinhood stock tokens a new buy may target, deepest USDG market first. Ranked by 1inch aggregator price impact of 25,000, 5,000 and 1,000 USDG buys against a 10 USDG probe. The native engine, backend catalog and this file must list the same addresses in the same order.",
+  "chainId": 4663,
+  "measuredAt": "2026-11-11",
+  "targets": [
+    {
+      "symbol": "QQQ",
+      "address": "0xD5f3879160bc7c32ebb4dC785F8a4F505888de68",
+      "impactBps": {
+        "1000": 0,
+        "5000": 0,
+        "25000": 0
+      }
+    },
+    {
+      "symbol": "NVDA",
+      "address": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "impactBps": {
+        "1000": 0,
+        "5000": 1,
+        "25000": 2
+      }
+    },
+    {
+      "symbol": "SPCX",
+      "address": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+      "impactBps": {
+        "1000": 1,
+        "5000": 3,
+        "25000": 3
+      }
+    },
+    {
+      "symbol": "TSLA",
+      "address": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+      "impactBps": {
+        "1000": 3,
+        "5000": 0,
+        "25000": 5
+      }
+    },
+    {
+      "symbol": "META",
+      "address": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+      "impactBps": {
+        "1000": 2,
+        "5000": 3,
+        "25000": 7
+      }
+    },
+    {
+      "symbol": "USO",
+      "address": "0xa30FA36Db767ad9eD3f7a60fC79526fB4d56D344",
+      "impactBps": {
+        "1000": 9,
+        "5000": 1,
+        "25000": 8
+      }
+    },
+    {
+      "symbol": "MU",
+      "address": "0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD",
+      "impactBps": {
+        "1000": 0,
+        "5000": 3,
+        "25000": 9
+      }
+    },
+    {
+      "symbol": "GOOGL",
+      "address": "0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3",
+      "impactBps": {
+        "1000": 3,
+        "5000": 4,
+        "25000": 10
+      }
+    },
+    {
+      "symbol": "GLD",
+      "address": "0xC9a981FEE1F9DEc688bb123ccDeCc63D0deBFC4e",
+      "impactBps": {
+        "1000": 0,
+        "5000": 1,
+        "25000": 11
+      }
+    },
+    {
+      "symbol": "AAPL",
+      "address": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+      "impactBps": {
+        "1000": 9,
+        "5000": 6,
+        "25000": 11
+      }
+    },
+    {
+      "symbol": "SNDK",
+      "address": "0xB90A19fF0Af67f7779afF50A882A9CfF42446400",
+      "impactBps": {
+        "1000": 0,
+        "5000": 0,
+        "25000": 13
+      }
+    },
+    {
+      "symbol": "CRWV",
+      "address": "0x5f10A1C971B69e47e059e1dC91901B59b3fB49C3",
+      "impactBps": {
+        "1000": 0,
+        "5000": 1,
+        "25000": 24
+      }
+    },
+    {
+      "symbol": "SGOV",
+      "address": "0x92FD66527192E3e61d4DDd13322Aa222DE86F9B5",
+      "impactBps": {
+        "1000": 0,
+        "5000": 4,
+        "25000": 27
+      }
+    },
+    {
+      "symbol": "AMZN",
+      "address": "0x12f190a9F9d7D37a250758b26824B97CE941bF54",
+      "impactBps": {
+        "1000": 0,
+        "5000": 10,
+        "25000": 29
+      }
+    },
+    {
+      "symbol": "BE",
+      "address": "0x822CC93fFD030293E9842c30BBD678F530701867",
+      "impactBps": {
+        "1000": 0,
+        "5000": 0,
+        "25000": 33
+      }
+    },
+    {
+      "symbol": "AMAT",
+      "address": "0x36046893810a7E7fCE501229d57dc3FC8c8716d0",
+      "impactBps": {
+        "1000": 0,
+        "5000": 12,
+        "25000": 33
+      }
+    },
+    {
+      "symbol": "IBM",
+      "address": "0x980dcf6766FA79f5Cf0c4AAdb3ab477ff15a9619",
+      "impactBps": {
+        "1000": 0,
+        "5000": 1,
+        "25000": 34
+      }
+    },
+    {
+      "symbol": "MSFT",
+      "address": "0xe93237C50D904957Cf27E7B1133b510C669c2e74",
+      "impactBps": {
+        "1000": 0,
+        "5000": 1,
+        "25000": 35
+      }
+    },
+    {
+      "symbol": "SLV",
+      "address": "0x411eFb0E7f985935DAec3D4C3ebaEa0d0AD7D89f",
+      "impactBps": {
+        "1000": 0,
+        "5000": 2,
+        "25000": 35
+      }
+    },
+    {
+      "symbol": "LLY",
+      "address": "0x8005d266423c7ea827372c9c864491e5786600ea",
+      "impactBps": {
+        "1000": 0,
+        "5000": 2,
+        "25000": 38
+      }
+    },
+    {
+      "symbol": "RDDT",
+      "address": "0x05b37Fb53A299a1b874A619e1c4C404D52C36F4C",
+      "impactBps": {
+        "1000": 0,
+        "5000": 2,
+        "25000": 38
+      }
+    },
+    {
+      "symbol": "MRVL",
+      "address": "0x62fd0668e10D8B72339BE2DCF7643001688ff13B",
+      "impactBps": {
+        "1000": 0,
+        "5000": 11,
+        "25000": 38
+      }
+    },
+    {
+      "symbol": "TTWO",
+      "address": "0x5e81213613b6B86EaB4c6c50d718d34359459786",
+      "impactBps": {
+        "1000": 10,
+        "5000": 4,
+        "25000": 39
+      }
+    },
+    {
+      "symbol": "INTC",
+      "address": "0xc72b96e0E48ecd4DC75E1e45396e26300BC39681",
+      "impactBps": {
+        "1000": 4,
+        "5000": 6,
+        "25000": 39
+      }
+    },
+    {
+      "symbol": "AVGO",
+      "address": "0x156E175DD063a8cE274C50654eF40e0032b3fbcF",
+      "impactBps": {
+        "1000": 0,
+        "5000": 8,
+        "25000": 39
+      }
+    }
+  ]
+}

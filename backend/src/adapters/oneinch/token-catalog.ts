@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
+import { robinhoodBuyRank } from "./swap-targets.ts";
 
 const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 const tokenSchema = z.object({
@@ -33,6 +34,8 @@ export type CatalogToken = {
   category: "rwa" | "other";
   issuer: "Robinhood" | null;
   swapListed: boolean;
+  /** Only the curated deep-liquidity Robinhood stocks can start a buy; the native engine enforces the same list. */
+  buyable: boolean;
   fusionStatus: "quote-required";
 };
 
@@ -82,6 +85,7 @@ export class OneInchTokenCatalog {
         category: token.tags.some((tag) => tag.toLowerCase() === "rwa") ? "rwa" : "other",
         issuer: null,
         swapListed: true,
+        buyable: false,
         fusionStatus: "quote-required",
       });
     }
@@ -111,11 +115,14 @@ export class OneInchTokenCatalog {
             category: "rwa",
             issuer: "Robinhood",
             swapListed: found !== undefined,
+            buyable: found !== undefined && robinhoodBuyRank(address) !== undefined,
             fusionStatus: "quote-required",
           });
         }
       }
     }
-    return [...listed.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+    // Buyable stocks lead in liquidity order so the picker opens on what a buy can actually use.
+    const rank = (token: CatalogToken) => (token.buyable ? robinhoodBuyRank(token.address) ?? Infinity : Infinity);
+    return [...listed.values()].sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol));
   }
 }

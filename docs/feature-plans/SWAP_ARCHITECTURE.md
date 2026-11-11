@@ -19,7 +19,14 @@ Read alongside:
 This describes the stored-wallet swap implementation, not Earn's independent
 execution pipeline or the retired signer. Catalog browsing across multiple networks
 does not expand executable swap support: the inspected UI gates selections to
-chain 4663 and `swapListed`, and native/provider policy is separately enforced.
+chain 4663, `swapListed` and `buyable`, and native/provider policy is separately enforced.
+A new buy (`confidentialSwap`, `confidentialPayout`) may only target one of the 25
+Robinhood stocks in [`shared/swap-targets-v1.json`](../../shared/swap-targets-v1.json),
+ranked by 1inch price impact at 25,000, 5,000 and 1,000 USDG. The Rust engine
+(`pins.rs`), the backend catalog (`swap-targets.ts`) and that file must list the same
+addresses; tests in both languages compare them. Sell and recovery are not limited, so a
+holding stays sellable after its token leaves the list. The per-order liquidity check in
+Fusion preview still runs for every buy.
 The current execution path uses Monad USDC, confidential credit and Robinhood USDG
 as the intermediate asset for a Fusion token trade.
 

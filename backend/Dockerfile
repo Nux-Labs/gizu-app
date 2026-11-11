@@ -10,6 +10,7 @@ COPY backend/src ./src
 COPY backend/scripts ./scripts
 COPY backend/test ./test
 COPY shared/gas-policy-v1.json /app/shared/gas-policy-v1.json
+COPY shared/swap-targets-v1.json /app/shared/swap-targets-v1.json
 RUN npm run typecheck && npm test
 RUN npm run build:render && npm prune --omit=dev
 

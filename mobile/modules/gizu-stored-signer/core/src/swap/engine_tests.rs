@@ -2953,3 +2953,40 @@ fn all_wallet_invalid_balance_replies_never_complete_a_partial_sale() {
         );
     }
 }
+
+#[test]
+fn a_new_buy_only_targets_a_curated_liquid_stock() {
+    let other = address!("0x1111111111111111111111111111111111111111").to_checksum(None);
+    let begin =
+        |plan: Value| SwapOperation::start(plan.to_string(), ENTROPY.to_vec(), GATEWAY.into(), T0);
+    for kind in ["confidentialSwap", "confidentialPayout"] {
+        assert!(
+            begin(json!({"kind": kind, "target": other, "recipientIndices": [3, 4, 5]})).is_err(),
+            "{kind}"
+        );
+        assert!(begin(json!({"kind": kind, "target": AMZN.to_checksum(None), "recipientIndices": [3, 4, 5]})).is_ok(), "{kind}");
+    }
+    // A holding of a delisted stock stays sellable and a started buy stays recoverable.
+    assert!(begin(json!({"kind": "confidentialSell", "target": other, "holderIndices": [3, 4, 5], "recipientIndices": [6, 7, 8]})).is_ok());
+    assert!(begin(json!({"kind": "confidentialRecovery", "target": other, "recipientIndices": [3, 4, 5], "scanTo": 15})).is_ok());
+}
+
+#[test]
+fn buy_targets_match_the_shared_liquidity_list() {
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../shared/swap-targets-v1.json"
+    )))
+    .unwrap();
+    assert_eq!(fixture["version"], "gizu-swap-targets-v1");
+    assert_eq!(fixture["chainId"], ROBINHOOD_CHAIN_ID);
+    let shared: Vec<Address> = fixture["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["address"].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(shared, ROBINHOOD_BUY_TARGETS.to_vec());
+    assert_eq!(shared.iter().collect::<HashSet<_>>().len(), shared.len());
+    assert!(!shared.contains(&ROBINHOOD_USDG));
+}
