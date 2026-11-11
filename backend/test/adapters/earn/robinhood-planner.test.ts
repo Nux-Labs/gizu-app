@@ -184,6 +184,69 @@ test("unbounded fee increases and simulation failures still fail closed", async 
       e.code === "EARN_ROBINHOOD_PLAN_UNAVAILABLE",
   );
 });
+test("funded planning retains the failing stage without retaining provider details in diagnostics", async () => {
+  for (const [method, stage] of [
+    ["readState", "read-state"],
+    ["market", "fee-market"],
+    ["simulate", "vault-simulation"],
+    ["prepare", "deposit-sponsorship"],
+    ["assertFresh", "freshness"],
+  ] as const) {
+    const p = new RobinhoodDepositPlanner(
+      { rpcUrl: "https://sensitive-key.invalid" },
+      {
+        ...deps,
+        [method]: async () => {
+          throw Object.assign(new Error("sensitive-account-and-key"), {
+            name: "HttpRequestError",
+            status: 429,
+            code: "sensitive-provider-code",
+          });
+        },
+      },
+      () => 1000000,
+    );
+    await assert.rejects(
+      p.plan({ owner, revision: 1, operationId: "cycle" }),
+      (e: any) => {
+        assert.equal(e.code, "EARN_ROBINHOOD_PLAN_UNAVAILABLE");
+        assert.equal(e.diagnostic.stage, stage);
+        assert.equal(e.diagnostic.httpStatus, 429);
+        assert.equal(
+          JSON.stringify(e.diagnostic).includes("sensitive-"),
+          false,
+        );
+        return true;
+      },
+    );
+  }
+});
+
+test("withdrawal sponsorship failure is distinct from deposit sponsorship", async () => {
+  const p = new RobinhoodDepositPlanner(
+    { rpcUrl: "https://offline.invalid" },
+    {
+      ...deps,
+      prepare: async (calls) => {
+        if (calls === simulation.withdrawalCalls)
+          throw Object.assign(new Error("sensitive-provider-body"), {
+            code: -32500,
+          });
+        return deps.prepare();
+      },
+    },
+    () => 1000000,
+  );
+  await assert.rejects(
+    p.plan({ owner, revision: 1, operationId: "cycle" }),
+    (e: any) => {
+      assert.equal(e.diagnostic.stage, "withdrawal-sponsorship");
+      assert.equal(e.diagnostic.rpcCode, -32500);
+      assert.equal(JSON.stringify(e.diagnostic).includes("sensitive-"), false);
+      return true;
+    },
+  );
+});
 test("final fee drift inside the approved headroom retains the conservative reserve basis", async () => {
   let preparations = 0;
   const p = new RobinhoodDepositPlanner(

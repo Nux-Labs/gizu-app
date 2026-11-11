@@ -3,6 +3,7 @@ import test from "node:test";
 import Fastify from "fastify";
 import { mapRequestError } from "../../src/http/map-request-error.ts";
 import { InfrastructureError } from "../../src/domain/errors/infrastructure-error.ts";
+import { RobinhoodPlanFailure } from "../../src/adapters/earn/robinhood-plan-error.ts";
 import * as implementation from "../../src/http/private-http.ts";
 test("all private request paths use safe allowlisted logging and errors before and after validation", async () => {
   assert.ok(implementation, "safe private HTTP configuration must exist");
@@ -47,6 +48,56 @@ test("all private request paths use safe allowlisted logging and errors before a
     assert.equal(logged.includes("sensitive-"), false);
     assert.ok(logged.includes("/v1/earn/test/:address"));
     assert.ok(logged.includes("PROVIDER_FAILED"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("private plan failures log the safe failing stage while keeping diagnostic details out of responses", async () => {
+  const lines: string[] = [];
+  const app = Fastify({
+    ...implementation.privateHttpOptions,
+    logger: { stream: { write: (line: string) => lines.push(line) } },
+  });
+  implementation.registerPrivateHttp(app);
+  app.setErrorHandler(mapRequestError);
+  app.post("/v1/earn/robinhood/deposit-plan", async () => {
+    throw new RobinhoodPlanFailure(
+      "vault-simulation",
+      new Error("Changed USDG funded state"),
+    );
+  });
+  app.post("/v1/earn/untrusted-diagnostic", async () => {
+    throw Object.assign(
+      new InfrastructureError(502, "OTHER_FAILURE", "sensitive-error"),
+      {
+        diagnostic: {
+          stage: "sensitive-stage",
+          httpStatus: "sensitive-status",
+        },
+      },
+    );
+  });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/earn/robinhood/deposit-plan",
+    });
+    assert.equal(response.statusCode, 502);
+    assert.deepEqual(response.json(), {
+      code: "EARN_ROBINHOOD_PLAN_UNAVAILABLE",
+      message: "The private request could not be completed.",
+    });
+    await app.inject({ method: "POST", url: "/v1/earn/untrusted-diagnostic" });
+    const errors = lines
+      .map((line) => JSON.parse(line))
+      .filter((row) => row.event === "private.error");
+    assert.deepEqual(errors[0].planning, {
+      stage: "vault-simulation",
+      reason: "funded-state",
+    });
+    assert.equal(errors[1].planning, undefined);
+    assert.equal(lines.join("").includes("sensitive-"), false);
   } finally {
     await app.close();
   }
