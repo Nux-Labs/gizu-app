@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { isPrivateRoute } from "./private-http.ts";
 import { DomainError } from "../domain/errors/domain-error.ts";
 import { GasPolicyError } from "../adapters/evm/gas-errors.ts";
+import { RobinhoodPlanFailure } from "../adapters/earn/robinhood-plan-error.ts";
 import { InfrastructureError } from "../domain/errors/infrastructure-error.ts";
 import { NotFoundError } from "../domain/errors/not-found-error.ts";
 
@@ -43,6 +44,9 @@ export function mapRequestError(
           : "private.error",
         code,
         route: request.routeOptions.url ?? "unmatched",
+        ...(error instanceof RobinhoodPlanFailure
+          ? { planning: error.diagnostic }
+          : {}),
       },
       "private request failed",
     );

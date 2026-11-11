@@ -20,6 +20,10 @@ import {
 import { simulateRobinhoodDeposit } from "./robinhood-simulation.ts";
 import type { RobinhoodSimulation } from "./robinhood-simulation.ts";
 import { createRobinhoodPaymaster } from "./robinhood-paymaster.ts";
+import {
+  RobinhoodPlanFailure,
+  robinhoodPlanStage,
+} from "./robinhood-plan-error.ts";
 import type {
   RobinhoodFeePrice,
   RobinhoodPrepared,
@@ -332,7 +336,9 @@ export class RobinhoodDepositPlanner {
         this.providers ??
         createRobinhoodPlannerProviders(this.config, this.now);
       const owner = getAddress(request.owner),
-        state = await providers.readState(owner);
+        state = await robinhoodPlanStage("read-state", () =>
+          providers.readState(owner),
+        );
       if (
         state.owner.toLowerCase() !== owner.toLowerCase() ||
         this.now() - Number(state.block.timestamp) * 1000 > 60000 ||
@@ -357,7 +363,9 @@ export class RobinhoodDepositPlanner {
           "EARN_RESIDUAL_ASSET_RECONCILIATION_REQUIRED",
           "Reconcile Robinhood native and wrapped ETH before a USDG-only deposit.",
         );
-      const market = await providers.market(),
+      const market = await robinhoodPlanStage("fee-market", () =>
+          providers.market(),
+        ),
         fees = {
           maxFeePerGas: mulDiv(market.maxFeePerGas, 110n, 100n, "ceil"),
           maxPriorityFeePerGas: mulDiv(market.maxPriorityFeePerGas, 110n, 100n, "ceil"),
@@ -371,18 +379,24 @@ export class RobinhoodDepositPlanner {
           this.now() >= Number(state.block.timestamp) * 1000 + 60000
         )
           throw new Error("Insufficient or stale USDG budget");
-        const simulation = await providers.simulate(state, amount);
+        const simulation = await robinhoodPlanStage("vault-simulation", () =>
+          providers.simulate(state, amount),
+        );
         // Both preparations are read-only and use the same pinned simulation and fee ceiling.
         const [deposit, withdrawal] = await Promise.all([
-          providers.prepare(
-            simulation.depositCalls,
-            fees,
-            simulation.fundingOverride,
+          robinhoodPlanStage("deposit-sponsorship", () =>
+            providers.prepare(
+              simulation.depositCalls,
+              fees,
+              simulation.fundingOverride,
+            ),
           ),
-          providers.prepare(
-            simulation.withdrawalCalls,
-            fees,
-            simulation.stateOverride,
+          robinhoodPlanStage("withdrawal-sponsorship", () =>
+            providers.prepare(
+              simulation.withdrawalCalls,
+              fees,
+              simulation.stateOverride,
+            ),
           ),
         ]);
         // Keep a conservative feasible budget instead of chasing smaller moving quotes.
@@ -400,14 +414,18 @@ export class RobinhoodDepositPlanner {
           amount = next;
           continue;
         }
-        const final = await providers.prepare(
-          simulation.depositCalls,
-          fees,
-          simulation.fundingOverride,
+        const final = await robinhoodPlanStage("final-sponsorship", () =>
+          providers.prepare(
+            simulation.depositCalls,
+            fees,
+            simulation.fundingOverride,
+          ),
         );
         if (final.feeCap > depositFeeBudget)
           throw new Error("Final USDG cap exceeds deposit budget");
-        await providers.assertFresh(state, fees);
+        await robinhoodPlanStage("freshness", () =>
+          providers.assertFresh(state, fees),
+        );
         if (this.now() >= Number(state.block.timestamp) * 1000 + 60000)
           throw new Error("Robinhood plan expired");
         const {
@@ -504,11 +522,7 @@ export class RobinhoodDepositPlanner {
       throw new Error("USDG deposit funding did not converge");
     } catch (error) {
       if (error instanceof InfrastructureError) throw error;
-      throw new InfrastructureError(
-        502,
-        "EARN_ROBINHOOD_PLAN_UNAVAILABLE",
-        "Could not verify a fresh USDG deposit, token gas sponsorship and post-deposit redemption simulation. Execution remains unavailable.",
-      );
+      throw new RobinhoodPlanFailure("plan-validation", error);
     }
   }
 }
