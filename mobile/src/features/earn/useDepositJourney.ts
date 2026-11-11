@@ -48,6 +48,8 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
   const [amount, setAmountText] = useState(""),
     [snapshot, setSnapshot] = useState<DepositSnapshot | null>(null),
     [available, setAvailable] = useState(false),
+    [discovered, setDiscovered] = useState(false),
+    [lookupAttempt, setLookupAttempt] = useState(0),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [preparingReview, setPreparingReview] = useState(false),
@@ -148,6 +150,8 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
       .then(() => {
         if (epoch.current !== lifecycleEpoch) return false;
         setSnapshot(null);
+        setDiscovered(false);
+        setMessage("");
         setAmountText("");
         setLoading(true);
         setAuthorizing(false);
@@ -157,9 +161,17 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
       .then(async (enabled) => {
         if (!mounted.current || attempt !== request.current) return;
         setAvailable(enabled);
-        if (enabled && savedJourneyId) {
-          const next = await service.status(owner, savedJourneyId);
-          if (mounted.current && attempt === request.current) accept(next);
+        if (enabled) {
+          const next = savedJourneyId
+            ? await service.status(owner, savedJourneyId)
+            : await service.pending(owner, profileId);
+          if (mounted.current && attempt === request.current) {
+            if (next) {
+              if (!savedJourneyId) setAmountText(formatUsdc(next.budgetAtoms));
+              accept(next);
+            }
+            setDiscovered(true);
+          }
         }
       })
       .catch((error) => {
@@ -188,7 +200,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
       subscription.remove();
       revoke();
     };
-  }, [service, owner, savedJourneyId, accept, revoke]);
+  }, [service, owner, savedJourneyId, accept, revoke, profileId, lookupAttempt]);
   useEffect(() => {
     if (!isFocused) {
       ++request.current;
@@ -318,6 +330,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
   };
   const atoms = depositBudgetAtoms(amount),
     editable =
+      discovered &&
       !authorizing &&
       (!snapshot ||
         ["draft", "review", "preparing"].includes(snapshot.phase) ||
@@ -345,6 +358,8 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     snapshot,
     available,
     loading,
+    discoveryFailed: available && !loading && !discovered,
+    retryDiscovery: () => setLookupAttempt((value) => value + 1),
     busy,
     preparing: preparingReview,
     message,

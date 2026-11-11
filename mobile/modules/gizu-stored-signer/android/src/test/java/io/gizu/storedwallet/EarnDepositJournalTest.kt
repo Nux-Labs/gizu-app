@@ -7,6 +7,45 @@ import org.junit.Test
 
 class EarnDepositJournalTest {
   @Test
+  fun pendingLookupRecoversConvertedDepositWithoutWritingOrExposingPrivateData() {
+    distributionDepositRecord(budgetAtoms = "2400000").use { record ->
+      val file = File()
+      val journal = journal(file)
+      assertNull(journal.pendingSnapshot(record, "robinhood-usdg"))
+      assertNull(file.bytes)
+      val first = journal.loadOrCreate(record, 4663, null)
+      val id = first.getString("journeyId")
+      assertEquals(
+        "2400000",
+        JSONObject(journal.pendingSnapshot(record, "robinhood-usdg")!!).getString("budgetAtoms"),
+      )
+      journal.update(id, first.getInt("revision")) {
+        it
+          .put("budgetAtoms", "2400000")
+          .put("creditedAtoms", "2370000")
+          .put("privateProof", "secret-native-proof")
+          .put("completedSteps", org.json.JSONArray(listOf("funding", "credit")))
+      }
+      journal.pause(id, "providerUnavailable")
+      val before = file.bytes!!.copyOf()
+      val restored = JSONObject(journal(file).pendingSnapshot(record, "robinhood-usdg")!!)
+      assertEquals(id, restored.getString("journeyId"))
+      assertEquals("2400000", restored.getString("budgetAtoms"))
+      assertEquals("paused", restored.getString("phase"))
+      assertFalse(restored.toString().contains("secret-native-proof"))
+      assertArrayEquals(before, file.bytes)
+      assertThrows(IllegalStateException::class.java) {
+        journal(file, "another-generation").pendingSnapshot(record, "robinhood-usdg")
+      }
+      assertThrows(IllegalStateException::class.java) {
+        journal.pendingSnapshot(record, "ethereum-usdc")
+      }
+      journal.update(id, journal.get(id).getInt("revision")) { it.put("phase", "invested") }
+      assertNull(journal.pendingSnapshot(record, "robinhood-usdg"))
+    }
+  }
+
+  @Test
   fun distributionJournalPersistsSlotsAndAllowsOnlyTheirIndependentChildren() {
     distributionDepositRecord().use { record ->
       val file = File()

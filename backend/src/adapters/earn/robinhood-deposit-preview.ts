@@ -42,7 +42,9 @@ export class RobinhoodDepositPreviewPlanner {
       ...actual,
       readState: async (owner) => {
         real = await actual.readState(owner);
-        if (real.token !== BigInt(starting) || real.shares !== 0n)
+        // Delivery may precede local receipt reconciliation. Extra live tokens are excluded:
+        // this read-only simulation still uses exactly the requested hypothetical budget.
+        if (real.token < BigInt(starting) || real.shares !== 0n)
           throw new Error("Preview requires unused destination");
         return { ...real, token: expected };
       },

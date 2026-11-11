@@ -69,6 +69,20 @@ the shared receipt proof and remaining allocations together. Later deposits
 cannot alter completed delivery. Exact signed membership and receipt-event
 commitments prevent replay across groups without storing an address catalogue.
 
+Opening a Robinhood deposit first reads the local encrypted journal for unfinished
+progress. It restores that deposit and budget before offering new funding; a
+failed lookup offers a retry instead of an empty amount form. This does not read
+balances or request signing permission. Sufficient independently confirmed
+delivery receipts can complete a group before its historical scan reaches the
+current head; the accepted event set stays fixed across retries and later gifts.
+
+Vault fee previews remain hypothetical and cannot authorize spending. They use
+only the requested budget even when USDG has already arrived before its local
+receipt verification completes. Additional live tokens never increase that
+budget, and claimed starting funds must still exist. The funded execution path
+separately requires verified attribution. A failed remaining fee preview retains
+its preview failure reason and allows the existing remaining review to retry.
+
 Private funding uses the same qualified `payoutRobinhood` service fee policy as
 the preview. The backend seals the actual fee proof into recovery; native review
 binds it to the quote and enforces the reviewed fee cap and minimum output.

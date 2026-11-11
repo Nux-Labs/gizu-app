@@ -31,6 +31,10 @@ internal class EarnDepositRemaining(
   suspend fun refresh(record: WalletRecord, id: String, revision: Int): JSONObject {
     try {
       return refreshChecked(record, id, revision)
+    } catch (failure: EarnGatewayFailure) {
+      if (failure.code == "EARN_DEPOSIT_PREVIEW_UNAVAILABLE")
+        journal.pause(id, "previewUnavailable")
+      throw failure
     } catch (failure: RpcFailure) {
       if (failure.code == RpcFailureCode.INSUFFICIENT_FUNDS) journal.pause(id, "insufficientFunds")
       throw failure

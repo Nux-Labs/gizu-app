@@ -8,8 +8,9 @@ import type { EarnOwner } from "@/domain/earn/types";
 import { getStoredEarnDepositSigner } from "@/services/wallet/nativeBridge";
 type DepositBridge = Omit<
   NonNullable<ReturnType<typeof getStoredEarnDepositSigner>>,
-  "readEarnDepositFundingBalance"
+  "readEarnDepositFundingBalance" | "findEarnDeposit"
 > & {
+  findEarnDeposit?: (walletId: string, profileId: string) => Promise<unknown>;
   readEarnDepositFundingBalance?: (request: { walletId: string }) => Promise<unknown>;
 };
 export function createEarnDepositService(
@@ -54,6 +55,17 @@ export function createEarnDepositService(
   return {
     async available() {
       return bridgeFactory() !== null;
+    },
+    async pending(owner, profileId) {
+      const native = bridge();
+      if (!native.findEarnDeposit)
+        throw new Error("Checking saved deposits requires the updated native app.");
+      const raw = await native.findEarnDeposit(owner.walletId, profileId);
+      if (raw === null) return null;
+      const saved = parseDepositSnapshot(raw, owner);
+      if (saved.profileId !== profileId || saved.phase === "invested")
+        throw new Error("Native pending deposit identity changed.");
+      return saved;
     },
     async fundingBalance(owner) {
       const native = bridge();

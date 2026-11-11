@@ -7,6 +7,71 @@ import org.junit.Test
 
 class EarnDepositRemainingTest {
   @Test
+  fun failedVaultFeePreviewAfterDeliveryKeepsItsStageAndAllSavedChildren() = runBlocking {
+    DepositFixtures.record().use { record ->
+      val journal = testDepositJournal()
+      val root = journal.loadOrCreate(record, 4663, null)
+      val id = root.getString("journeyId")
+      val review = DepositFixtures.review(record).put("journeyId", id)
+      journal.saveReview(id, root.getInt("revision"), review)
+      for (leg in listOf("hold", "invest")) journal.attachChild(
+        id,
+        journal.get(id).getInt("revision"),
+        leg,
+        "paid_$leg",
+      )
+      journal.pause(id, "providerUnavailable")
+      val gateway =
+        EarnDepositGateway({ path, _ ->
+          check(path == "/robinhood/deposit-preview")
+          throw EarnGatewayFailure("EARN_DEPOSIT_PREVIEW_UNAVAILABLE", "Fee estimates unavailable")
+        })
+      val remaining =
+        EarnDepositRemaining(
+          journal,
+          gateway,
+          {
+            DepositRemainingSource(
+              DepositFixtures.funding(record).put("signedUserOperation", "immutable"),
+              "990000",
+            )
+          },
+          { childId ->
+            val leg = childId.removePrefix("paid_")
+            DepositFixtures.payout(record)
+              .put("operationId", childId)
+              .put("status", "paid")
+              .put("signedData", "immutable")
+              .put("receivedAtoms", if (leg == "hold") "99000" else "880000")
+              .also {
+                it
+                  .getJSONObject("proposal")
+                  .put("leg", leg)
+                  .put("amountAtoms", if (leg == "hold") "99000" else "891000")
+              }
+          },
+          { it.getString("receivedAtoms") },
+          { review.getJSONObject("reservation") },
+          { error("No vault operation has been prepared") },
+          { 100000 },
+        )
+      try {
+        remaining.refresh(record, id, journal.get(id).getInt("revision"))
+        fail("Expected fee preview error")
+      } catch (failure: EarnGatewayFailure) {
+        assertEquals("EARN_DEPOSIT_PREVIEW_UNAVAILABLE", failure.code)
+      }
+      val saved = journal.get(id)
+      assertEquals("previewUnavailable", saved.getString("pauseReason"))
+      assertEquals(
+        "paid_invest",
+        saved.getJSONObject("children").getJSONArray("invest").getString(0),
+      )
+      assertTrue(nativeJsonEqual(review, saved.getJSONObject("review")))
+    }
+  }
+
+  @Test
   fun distributionRefreshPreservesCompletedSlotAndOnlyPreviewsItsUnfinishedSibling() = runBlocking {
     distributionDepositRecord().use { record ->
       val journal = testDepositJournal()

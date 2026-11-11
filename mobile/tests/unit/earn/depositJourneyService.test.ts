@@ -30,6 +30,23 @@ test("does not offer a missing native implementation", async () => {
   expect(await service.available()).toBe(false);
   await expect(service.prepare(owner, "robinhood-usdg", "3000000")).rejects.toThrow(/native/i);
 });
+test("pending lookup distinguishes verified absence from failed or foreign saved progress", async () => {
+  const { native } = fixture();
+  const findEarnDeposit = jest.fn().mockResolvedValue(null);
+  const service = createEarnDepositService(() => ({ ...native, findEarnDeposit }));
+  expect(await service.pending(owner, "robinhood-usdg")).toBeNull();
+  findEarnDeposit.mockResolvedValue({
+    ...depositSnapshot(),
+    phase: "paused",
+    pauseReason: "providerUnavailable",
+  });
+  expect((await service.pending(owner, "robinhood-usdg"))?.journeyId).toBe("deposit_1");
+  findEarnDeposit.mockResolvedValue({ ...depositSnapshot(), walletId: "other" });
+  await expect(service.pending(owner, "robinhood-usdg")).rejects.toThrow(/Invalid native/);
+  findEarnDeposit.mockRejectedValue(new Error("encrypted read failed"));
+  await expect(service.pending(owner, "robinhood-usdg")).rejects.toThrow(/encrypted read failed/);
+  expect(native.prepareEarnDeposit).not.toHaveBeenCalled();
+});
 test("reads saved native progress after an uncertain prepare before preparing again", async () => {
   const { native, service } = fixture();
   native.prepareEarnDeposit.mockRejectedValueOnce(new Error("bridge interrupted"));

@@ -195,6 +195,7 @@ export interface StoredSignerContract {
   readEarnDepositFundingBalance?(request: { walletId: string }): Promise<unknown>;
   confirmEarnDeposit?(walletId: string, journeyId: string, revision: number): Promise<unknown>;
   getEarnDepositStatus?(walletId: string, journeyId: string): Promise<unknown>;
+  findEarnDeposit?(walletId: string, profileId: string): Promise<unknown>;
   resumeEarnDeposit?(walletId: string, journeyId: string, revision: number): Promise<unknown>;
   cancelEarnDeposit?(walletId: string, journeyId: string, revision: number): Promise<unknown>;
   discardEarnDepositDraft?(walletId: string, journeyId: string): Promise<void>;

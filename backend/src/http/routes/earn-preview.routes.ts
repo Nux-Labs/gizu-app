@@ -49,7 +49,7 @@ export function registerEarnPreviewRoutes(
         return reply.code(503).send({
           code: "EARN_DEPOSIT_PREVIEW_UNAVAILABLE",
           message:
-            "Fresh deposit estimates are unavailable. No funds have moved.",
+            "Fresh deposit estimates are unavailable. Saved progress is preserved.",
         });
       }
     },

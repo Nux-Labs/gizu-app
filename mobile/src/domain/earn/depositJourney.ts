@@ -122,6 +122,8 @@ export type DepositFundingBalance = {
 };
 export interface EarnDepositService {
   available(): Promise<boolean>;
+  /** Local native journal lookup; null is verified absence, not a failed read. */
+  pending(owner: EarnOwner, profileId: EarnProfileId): Promise<DepositSnapshot | null>;
   /** Null means this native build supports public funding only. */
   fundingBalance?(owner: EarnOwner): Promise<DepositFundingBalance | null>;
   prepare(

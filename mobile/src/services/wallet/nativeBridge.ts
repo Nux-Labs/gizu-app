@@ -23,6 +23,7 @@ const coalescedReads = new Set([
   "getSwapHoldings",
   "getSwapStatus",
   "getEarnDepositStatus",
+  "findEarnDeposit",
   "listEarnInvestmentPositions",
   "getWalletRecoveryStatus",
   "getConfidentialWithdrawal",
@@ -60,7 +61,9 @@ function nativeModule(): StoredSignerContract | null {
           ? JSON.stringify([property, ...args])
           : undefined;
         if (
-          (property === "getEarnDepositStatus" || property === "getWalletRecoveryStatus") &&
+          (property === "getEarnDepositStatus" ||
+            property === "findEarnDeposit" ||
+            property === "getWalletRecoveryStatus") &&
           readKey
         )
           return calls.snapshot(work, readKey);
@@ -603,6 +606,12 @@ export function getStoredEarnDepositSigner() {
     resume = native.resumeEarnDeposit.bind(native),
     cancel = native.cancelEarnDeposit.bind(native);
   return {
+    async findEarnDeposit(walletId: string, profileId: string) {
+      await checked(native, "earnDepositJourney");
+      if (!native.findEarnDeposit)
+        throw new Error("Checking saved deposits requires the updated native app.");
+      return native.findEarnDeposit(walletId, profileId);
+    },
     async readEarnDepositFundingBalance(request: { walletId: string }) {
       await checked(native, "earnDepositJourney");
       if (!(await getSignerCapabilities()).earnDepositPrivateFunding) return null;
