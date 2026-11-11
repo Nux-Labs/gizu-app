@@ -53,6 +53,25 @@ internal fun distributionDepositRecord(
   )
 
 class EarnDepositPreparerTest {
+  @Test
+  fun freshSourceShortfallIsInsufficientFundsRatherThanUnavailablePreview() = runBlocking {
+    DepositFixtures.record().use { record ->
+      val journal = testDepositJournal()
+      val preparer =
+        EarnDepositPreparer(
+          journal,
+          EarnDepositGateway({ _, _ -> error("No preview should run without funds") }),
+          { _, _ -> throw RpcFailure(RpcFailureCode.INSUFFICIENT_FUNDS) },
+          {},
+        )
+      val result = preparer.prepare(record, 4663, "1010000", null)
+      assertEquals("paused", result.getString("phase"))
+      assertEquals("insufficientFunds", result.getString("pauseReason"))
+      assertEquals(0, result.getJSONObject("children").length())
+      assertFalse(result.has("review"))
+    }
+  }
+
   private fun privateSourceDraft(record: WalletRecord, mixed: Boolean): DepositSourceDraft {
     val base =
       DistributionDepositFixtures.review(

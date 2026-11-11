@@ -15,6 +15,9 @@ internal fun requireDistributionFundingCapacity(
   payouts: List<JSONObject>,
   vaults: List<JSONObject>,
   liquidity: List<JSONObject>,
+  payoutJournalBytes: Long = org.json.JSONArray(payouts).toString().toByteArray().size.toLong(),
+  payoutGroupGrowthBytes: Long =
+    if (record.earnChain == 4663) EARN_PAYOUT_GROUP_STORAGE_BYTES.toLong() else 0L,
 ) {
   val distribution = savedCycleDistribution(record) ?: return
   val proposal = child.getJSONObject("proposal")
@@ -61,8 +64,9 @@ internal fun requireDistributionFundingCapacity(
   }
 
   check(
-    org.json.JSONArray(payouts).toString().toByteArray().size +
-      missingPayouts.toLong() * DISTRIBUTION_PAYOUT_STORAGE_BYTES <= 15L * 1024 * 1024
+    payoutJournalBytes +
+      missingPayouts.toLong() * DISTRIBUTION_PAYOUT_STORAGE_BYTES +
+      payoutGroupGrowthBytes <= EARN_PAYOUT_JOURNAL_STORAGE_BYTES
   ) {
     "Encrypted recovery storage has no space for every distribution payout. No funding was authorized."
   }

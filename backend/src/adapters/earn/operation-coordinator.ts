@@ -60,6 +60,32 @@ export class OperationCoordinator {
     if (!(await this.reserve(scope, identity, binding, expires, false)))
       throw new CoordinationError();
   }
+  /** Atomic proof + membership + global event claims, with exact legacy-owner recovery. */
+  async bindMany(
+    bindings: Array<{
+      scope: string;
+      identity: unknown;
+      binding: unknown;
+      compatible?: unknown[];
+    }>,
+    expiresAtMs: number,
+  ) {
+    if (!this.store.bindMany) throw new CoordinationError(true);
+    const opaque = bindings.map((row) => ({
+      opaqueKey: this.digest("identity", [row.scope, row.identity]),
+      commitments: [row.binding, ...(row.compatible ?? [])].map((binding) =>
+        this.digest("binding", [row.scope, binding]),
+      ),
+      expiresAtMs,
+    }));
+    let accepted: boolean;
+    try {
+      accepted = await this.store.bindMany(opaque);
+    } catch {
+      throw new CoordinationError(true);
+    }
+    if (!accepted) throw new CoordinationError();
+  }
   async claim(
     scope: string,
     identity: unknown,

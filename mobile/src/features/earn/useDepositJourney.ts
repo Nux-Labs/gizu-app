@@ -10,7 +10,6 @@ import type { EarnProfileId } from "@/domain/earn/types";
 import { useFundingWallet } from "@/features/wallet/WalletProvider";
 import { useEarn } from "./EarnProvider";
 import { formatUsdc } from "@/domain/wallet/amounts";
-import { useDepositFundingBalance } from "./useDepositFundingBalance";
 export const depositPauseCopy: Record<DepositPauseCode, string> = {
   quoteUnavailable: "The route is unavailable. Review again when the provider recovers.",
   previewUnavailable: "A fresh fee estimate is unavailable. No new spending can be approved.",
@@ -45,7 +44,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     () => ({ walletId: wallet.session.walletId ?? "", address: wallet.session.address }),
     [wallet.session.walletId, wallet.session.address],
   );
-  const funding = useDepositFundingBalance(service, owner, isFocused, wallet);
+  const funding = wallet.depositBalance ?? { balance: wallet.balance, breakdown: null };
   const [amount, setAmountText] = useState(""),
     [snapshot, setSnapshot] = useState<DepositSnapshot | null>(null),
     [available, setAvailable] = useState(false),
@@ -64,6 +63,26 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     started = useRef(0),
     epoch = useRef(0),
     ceremony = useRef(false);
+  const progress = useRef<string | null>(null);
+  const refreshAfterAction = wallet.refreshAfterAction;
+  useEffect(() => {
+    if (!snapshot) {
+      progress.current = null;
+      return;
+    }
+    const next = [
+      snapshot.journeyId,
+      snapshot.creditedAtoms,
+      snapshot.holdReceivedAtoms,
+      snapshot.investReceivedAtoms,
+      snapshot.depositedAtoms,
+      snapshot.sharesAtoms,
+      ["paused", "invested"].includes(snapshot.phase) ? snapshot.phase : "",
+    ].join(":");
+    if (progress.current !== null && progress.current !== next && foreground.current)
+      void refreshAfterAction();
+    progress.current = next;
+  }, [snapshot, refreshAfterAction]);
   const focused = useRef(isFocused);
   const preparingBudgetRef = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -294,6 +313,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
         setPreparingReview(false);
         setBusy(false);
       }
+      void refreshAfterAction();
     }
   };
   const atoms = depositBudgetAtoms(amount),
@@ -318,11 +338,8 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     !busy &&
     !!atoms &&
     editable &&
-    !funding.loading &&
-    !funding.error &&
-    funding.balance !== null &&
-    !!depositBudgetAtoms(funding.balance) &&
-    BigInt(atoms ?? "0") <= BigInt(depositBudgetAtoms(funding.balance) ?? "0");
+    (funding.balance === null ||
+      BigInt(atoms ?? "0") <= BigInt(depositBudgetAtoms(funding.balance) ?? "0"));
   return {
     amount,
     snapshot,
@@ -437,9 +454,9 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     refresh: () =>
       snapshot ? perform(() => service.status(owner, snapshot.journeyId)) : Promise.resolve(),
     balance: funding.balance,
-    balanceLoading: funding.loading,
-    balanceUnavailable: funding.error,
+    balanceLoading: wallet.loading,
+    balanceRefreshing: wallet.refreshing,
     balanceBreakdown: funding.breakdown,
-    retryBalance: funding.retry,
+    refreshBalance: wallet.refresh,
   };
 }

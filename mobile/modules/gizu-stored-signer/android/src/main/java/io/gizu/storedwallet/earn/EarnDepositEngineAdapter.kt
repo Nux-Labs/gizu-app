@@ -3,6 +3,7 @@ package io.gizu.storedwallet
 import android.content.Context
 import java.math.BigInteger
 import java.security.SecureRandom
+import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.EarnReadAuthentication
 import uniffi.gizu_stored_signer_core.NativeSponsoredState
@@ -103,6 +104,9 @@ internal class EarnDepositEngineAdapter(
         batch(id).also { rows -> check(rows.all { credit(it) != null }) }
       },
       readAuth = auth,
+      groupedDelivery = {
+        isGuidedEarnPayout(it, listOf(JSONObject().put("review", depositReview())))
+      },
       privateFundingOffset = {
         depositReview()
           .getJSONArray("sources")
@@ -163,7 +167,7 @@ internal class EarnDepositEngineAdapter(
         readAuthorization()
         store.load().use { r ->
           record {}
-          readPrivateDepositBalance(r, source, ::authority)
+          readPrivateDepositBalance(context, r, source, ::authority)
         }
       },
       ::authority,
@@ -397,6 +401,7 @@ internal class EarnDepositEngineAdapter(
     if (stage == "payouts") {
       val journal = payouts()
       val row = journal.get(id)
+      if (row.getJSONObject("proposal").has("distribution")) return row
       if (grant == null || !row.has("signedData") || row.getString("status") == "paid") return row
       if (row.getJSONObject("proposal").getString("kind") == "privateEarnPayout")
         return privatePayoutEngine().reconcile(id)
@@ -429,9 +434,97 @@ internal class EarnDepositEngineAdapter(
     return row
   }
 
+  override suspend fun reconcilePayoutGroup(review: JSONObject, grant: EarnDepositApproval?) {
+    if (grant == null || !review.has("distribution")) return
+    suspend fun auth() = readAuth(grant)
+    fun authority() {
+      foreground()
+      record { grant.assertRead(it, now()) }
+    }
+    reconcileDistributionGroup(review, ::auth, ::authority)
+  }
+
+  private suspend fun reconcileDistributionGroup(
+    review: JSONObject,
+    auth: suspend () -> EarnReadAuthentication,
+    readAuthority: () -> Unit,
+  ) {
+    fun authority() {
+      foreground()
+      readAuthority()
+      record {}
+    }
+    authority()
+    val group = earnPayoutGroup(review)
+    record { r ->
+      group.getJSONArray("recipients").let { recipients ->
+        for (slot in 0 until recipients.length()) check(
+          recipients.getString(slot).equals(cycleInvestmentAddress(r, slot), true)
+        )
+      }
+    }
+    val journal = payouts()
+    val id = depositDigest(depositCanonical(group))
+    val saved = journal.group(id)
+    if (saved?.optBoolean("recoveryRequired") == true) throw EarnGroupRecoveryRequired()
+    if (saved?.getString("status") == "paid") return
+    val children = earnPayoutGroupChildren(group, journal.all())
+    if (children.none { it?.has("signedData") == true }) return
+    val chain = EarnSponsoredChainRpc(4663)
+    val rpc =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any {
+          authority()
+          return chain.call(method, params).also { authority() }
+        }
+      }
+    fun signed(a: EarnReadAuthentication) =
+      JSONObject().put("standard", "erc191").put("payload", a.payload).put("signature", a.signature)
+    val gateway =
+      EarnPayoutGroupGateway(
+        rpc,
+        beforeCandidatePost = {
+          authority()
+          WalletRecoveryRuntime.beforeSubmission()
+          authority()
+        },
+        persistCandidates = { candidate ->
+          authority()
+          journal.saveGroup(group, children, candidate)
+        },
+        owners = {
+          authority()
+          // Invokes the existing bounded authenticator even for all-private journeys.
+          val funded = auth()
+          val proofs = JSONArray()
+          if (group.getJSONArray("members").objects().any { it.getString("kind") == "funded" })
+            proofs.put(signed(funded))
+          val sources =
+            review
+              .getJSONArray("fundingRows")
+              .objects()
+              .filter(::isPrivateDepositSource)
+              .map { it.getJSONObject("proposal").getJSONObject("source") }
+              .distinctBy { it.getString("address").lowercase() }
+          for (source in sources) {
+            authority()
+            val proof = store.load().use { r -> privateDepositReadAuth(r, source, ::authority) }
+            proofs.put(signed(proof))
+          }
+          check(proofs.length() in 1..128)
+          proofs
+        },
+      )
+    val proof = gateway.status(group, children, saved ?: JSONObject())
+    authority()
+    journal.saveGroup(group, children, proof)
+  }
+
   /**
    * Reconciles saved children using login's bounded read-only permission, never a spending grant.
    */
+  private var remainingGroupReconciled = false
+
   suspend fun reconcileBeforeRemaining(
     stage: String,
     id: String,
@@ -439,6 +532,14 @@ internal class EarnDepositEngineAdapter(
     readAuthority: () -> Unit = foreground,
   ): JSONObject {
     foreground()
+    if (stage == "payouts" && payouts().get(id).getJSONObject("proposal").has("distribution")) {
+      readAuthority()
+      if (!remainingGroupReconciled) {
+        reconcileDistributionGroup(depositReview(), auth, readAuthority)
+        remainingGroupReconciled = true
+      }
+      return payouts().get(id)
+    }
     if (stage == "payouts")
       return reconcileDepositPayoutBeforeReview(payouts().get(id)) { row ->
         if (row.getJSONObject("proposal").getString("kind") == "privateEarnPayout") {
@@ -488,6 +589,24 @@ internal class EarnDepositEngineAdapter(
 
   override fun payoutReceipt(row: JSONObject): String? {
     if (row.getString("status") != "paid") return null
+    if (row.has("groupId")) {
+      val group = earnPayoutGroup(depositReview())
+      val id = depositDigest(depositCanonical(group))
+      check(row.getString("groupId") == id && row.has("signedData"))
+      val proof = checkNotNull(payouts().group(id))
+      check(proof.getString("status") == "paid" && proof.getString("groupId") == id)
+      val slot = distributionSlot(row.getString("leg"), group.getJSONObject("distribution"))
+      check(
+        row.getJSONObject("receipt").getString("groupId") == id &&
+          row.getJSONObject("receipt").getInt("slot") == slot
+      )
+      check(earnPayoutGroupChildren(group, listOf(row)).count { it != null } == 1)
+      check(
+        depositAtoms(row.getString("receivedAtoms"), true) >=
+          depositAtoms(row.getJSONObject("proposal").getString("minimumDestinationAtoms"), true)
+      )
+      return row.getString("receivedAtoms")
+    }
     check(
       row.has("signedData") &&
         row.has("receipt") &&

@@ -71,6 +71,65 @@ class NativePrivateFundingGatewayTest {
     }
 
   @Test
+  fun savedPrivateFundingScansItsCanonicalRobinhoodReceiptWithoutHistoryOrNewSigning() = runBlocking {
+    val referenceHash = "0x" + "a".repeat(64)
+    val prepared = JSONObject()
+      .put("destinationChainId", 4663)
+      .put("destinationToken", HOOD_EARN_USDG)
+      .put("destinationRecipient", "0x" + "2".repeat(40))
+      .put("minimumDestinationAtoms", "98")
+      .put("observedAtMs", 1000000)
+      .put("referenceBlock", "10")
+      .put("referenceHash", referenceHash)
+      .put("recoveryEnvelope", "saved-sealed-quote")
+    val child = JSONObject()
+      .put("preparedText", prepared.toString())
+      .put("signedData", JSONObject().put("payload", "exact-saved-signature").toString())
+    val transaction = "0x" + "b".repeat(64)
+    val transfer = JSONObject().put("address", HOOD_EARN_USDG)
+      .put("topics", JSONArray().put("0x" + "d".repeat(64)).put("0x" + "0".repeat(64)).put("0x" + earnAddressWord("0x" + "2".repeat(40))))
+      .put("data", "0x" + earnNumberWord("100"))
+      .put("blockNumber", "0xb").put("blockHash", referenceHash)
+      .put("transactionHash", transaction).put("logIndex", "0x7").put("removed", false)
+    val rpc = object : TransferRpc {
+      override suspend fun call(method: String, params: JSONArray): Any = when (method) {
+        "eth_chainId" -> "0x1237"
+        "eth_getBlockByNumber" -> {
+          assertNotEquals("finalized", params.getString(0))
+          JSONObject().put("number", if(params.getString(0)=="0xa") "0xa" else "0xb").put("hash", referenceHash).put("timestamp", "0x3e8")
+        }
+        "eth_getLogs" -> {
+          assertEquals("0xb", params.getJSONObject(0).getString("fromBlock"))
+          JSONArray().put(transfer)
+        }
+        "eth_getTransactionReceipt" -> JSONObject().put("status", "0x1").put("transactionHash", transaction)
+          .put("blockNumber", "0xb").put("blockHash", referenceHash).put("logs", JSONArray().put(transfer))
+        else -> error("Unexpected RPC $method")
+      }
+    }
+    val gateway = NativeCashoutGateway(
+      auth = { JSONObject().put("payload", "fresh-read-only-auth") },
+      rpc = rpc,
+      route = "private-funding",
+      transport = { path, body ->
+        assertTrue(path.endsWith("/private-funding/status"))
+        assertEquals("exact-saved-signature", body.getJSONObject("submittedIntent").getString("payload"))
+        if (body.has("destinationTransactionHash")) {
+          assertEquals(transaction, body.getString("destinationTransactionHash"))
+          JSONObject().put("status", "paid").put("receivedAtoms", "100")
+            .put("authenticated", true).put("operationScoped", true)
+            .put("receipt", JSONObject().put("transactionHash", transaction).put("logIndex", 7))
+        } else JSONObject().put("status", "awaitingReceipt").put("verification", "signed-route-receipt-v1")
+          .put("receivedAtoms", "0").put("minimumDestinationAtoms", "98")
+      },
+      eventTopic = { "0x" + "d".repeat(64) },
+    )
+    val result = gateway.status(child, JSONObject(), emptySet())
+    assertEquals("paid", result.getString("status"))
+    assertEquals("100", result.getString("receivedAtoms"))
+  }
+
+  @Test
   fun callerCannotChooseAnArbitraryGatewayRoute() {
     for (route in
       listOf("https://foreign.example", "private-funding/../cashout", "withdrawal")) assertThrows(

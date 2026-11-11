@@ -99,7 +99,7 @@ export function useSwapHoldings(onSaleSettled?: () => void) {
       if (alive.current) {
         setBusy(false);
         void refresh();
-        if (mainnet) void mainnet.refresh();
+        if (mainnet) void mainnet.refreshAfterAction();
       }
       onSaleSettled?.();
     }

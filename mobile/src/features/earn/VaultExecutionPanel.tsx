@@ -9,7 +9,9 @@ import type { VaultKind, VaultOperation, VaultPlan } from "@/domain/earn/vaultEx
 import { formatGwei, formatMon, formatUsdc } from "@/domain/wallet/amounts";
 import { EthereumLiquidityPanel } from "./EthereumLiquidityPanel";
 import { useEarn } from "./EarnProvider";
+import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 function useVaultExecution(intent: EarnIntent) {
+  const portfolio = useOptionalMainnetWallet();
   const service = useEarn().vaultExecution;
   const [available, setAvailable] = useState(false),
     [loading, setLoading] = useState(true),
@@ -79,7 +81,10 @@ function useVaultExecution(intent: EarnIntent) {
         );
     } finally {
       occupied.current = false;
-      if (attempt === generation.current) setBusy(false);
+      if (attempt === generation.current) {
+        setBusy(false);
+      }
+      void portfolio?.refreshAfterAction();
     }
   };
   const review = (kind: VaultKind) =>

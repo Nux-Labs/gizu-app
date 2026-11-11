@@ -6,6 +6,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.*
 
+internal fun requireSponsoredFunds(p: JSONObject, state: NativeSponsoredState) {
+  val required =
+    p.getString("maximumTokenFeeAtoms").toBigInteger() +
+      p.getString("withdrawalReserveAtoms").toBigInteger() +
+      if (p.getString("kind") == "hoodRedeemAll") java.math.BigInteger.ZERO
+      else p.getString("amountAtoms").toBigInteger()
+  requireAvailableFunds(state.tokenBalanceAtoms.toBigInteger(), required)
+}
+
 private val sponsoredFields =
   setOf(
     "kind",
@@ -357,6 +366,7 @@ internal class EarnSponsoredEngine(
         )
         .also { displayed = it }
     }
+    requireSponsoredFunds(p, state)
     check(!op.optBoolean("cancelled"))
     if (state.senderCode == "0x" && !op.has("authorization")) {
       // Confirm configured infrastructure and native route binding before creating durable 7702
@@ -366,17 +376,6 @@ internal class EarnSponsoredEngine(
         (0 until supported.length()).any { supported.getString(it).equals(EARN_ENTRY_POINT, true) }
       )
       preparedQuote = quoteReader(p)
-      val required =
-        p.getString("amountAtoms").toBigInteger() +
-          p.getString("maximumTokenFeeAtoms").toBigInteger() +
-          p.getString("withdrawalReserveAtoms").toBigInteger()
-      check(
-        state.tokenBalanceAtoms.toBigInteger() >=
-          if (p.getString("kind") == "hoodRedeemAll")
-            required - p.getString("amountAtoms").toBigInteger()
-          else required
-      )
-
       delegation?.invalidate()
       delegation?.close()
       delegation =
@@ -487,6 +486,7 @@ internal class EarnSponsoredEngine(
         }
       } else null
     val state = stateReader(p)
+    requireSponsoredFunds(p, state)
     stateGuard(state)
     if (p.getString("kind") == "hoodTokenReturn") check(state.shares == "0")
     authority()
@@ -687,14 +687,7 @@ internal fun checkSponsoredRetry(op: JSONObject, state: NativeSponsoredState) {
     state.baseFeeWei.toBigInteger() + quantity(signed.getString("maxPriorityFeePerGas")) <=
       quantity(signed.getString("maxFeePerGas"))
   )
-  val required =
-    p.getString("maximumTokenFeeAtoms").toBigInteger() +
-      p.getString("withdrawalReserveAtoms").toBigInteger() +
-      if (p.getString("kind") == "hoodRedeemAll") java.math.BigInteger.ZERO
-      else p.getString("amountAtoms").toBigInteger()
-  check(state.tokenBalanceAtoms.toBigInteger() >= required) {
-    "Saved sponsored fee and reserve no longer funded"
-  }
+  requireSponsoredFunds(p, state)
   if (p.getString("kind") == "hoodRedeemAll")
   // Morpho Vault V2's maxRedeem view always returns zero. Retry only the
   // originally signed full share balance, with every binding above unchanged.

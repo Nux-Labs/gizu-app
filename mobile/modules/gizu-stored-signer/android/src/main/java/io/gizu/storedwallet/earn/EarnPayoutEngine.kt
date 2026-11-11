@@ -224,6 +224,7 @@ internal class EarnPayoutEngine(
   private val sourceBatchReader: (suspend (String) -> List<JSONObject>)? = null,
   private val sourceIdentity: (WalletRecord, Int) -> String = ::publicAccountAddress,
   private val privateFundingOffset: () -> String = { "0" },
+  private val groupedDelivery: (JSONObject) -> Boolean = { it.has("groupId") },
 ) : AutoCloseable {
   private var signer: NativePayoutSigner? = null
   private var displayed: EarnPayoutReview? = null
@@ -642,6 +643,8 @@ internal class EarnPayoutEngine(
     val op = journal.get(id)
     check(op.getInt("revision") == revision && op.has("signedData"))
     val p = op.getJSONObject("proposal")
+    // Distribution delivery is recipient-wide; only the journey group may reconcile it.
+    if (groupedDelivery(op)) return op
     store.load().use { walletCheck(it, p, recoveryRead = true) }
     val auth = readAuth()
     currentCoroutineContext().ensureActive()

@@ -606,7 +606,9 @@ class ConfidentialWithdrawalEngineTest {
     try {
       f.engine().prepare("4000000")
       fail()
-    } catch (_: IllegalStateException) {}
+    } catch (failure: RpcFailure) {
+      assertEquals(RpcFailureCode.INSUFFICIENT_FUNDS, failure.code)
+    }
     assertNull(f.journal.active())
     assertEquals(3, f.store.load().use { JSONObject(it.roleRegistry).getInt("nextRecipient") })
     f.rejectCompeting = true

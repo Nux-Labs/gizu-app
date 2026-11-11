@@ -73,6 +73,37 @@ class OwnedConfidentialPortfolioTest {
   }
 
   @Test
+  fun actionObservationsRemainSharedAfterLoginReadPermissionExpiresAndOlderReadsCannotReplaceThem() =
+    runBlocking {
+      val f = Fixture(cycleCount = 1)
+      val cache = f.cache()
+      val target = cache.ownedTargets(f.record).first { it.kind == "swap" }
+      val source =
+        JSONObject()
+          .put("address", target.address)
+          .put("kind", target.kind)
+          .put("profileChainId", target.profileChainId)
+          .put("cycleIndex", target.cycleIndex)
+      cache.recordSourceObservation(
+        f.record,
+        source,
+        f.observation(target) + ("available" to "430000"),
+      )
+      cache.recordSourceObservation(
+        f.record,
+        source,
+        f.observation(target) + mapOf("available" to "2430000", "timestampMs" to f.now - 1000),
+      )
+      f.now += 120000
+      val locked =
+        cache.refresh(f.record, false, { error("No background authentication") }) { _, _ ->
+          error("No background balance read")
+        }
+      assertEquals("430000", asset(locked)["observedAtoms"])
+      assertEquals("locked", locked["confidentialReadState"])
+    }
+
+  @Test
   fun outgoingCashoutCannotReuseCompletePreDebitPrivateBalance() = runBlocking {
     val f = Fixture(cycleCount = 1)
     val cache = f.cache()

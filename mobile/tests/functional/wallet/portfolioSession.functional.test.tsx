@@ -1,9 +1,10 @@
-import { act, render, screen } from "@testing-library/react-native";
-import { Text } from "react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { AppState, Button, Text, View } from "react-native";
 import { MainnetWalletProvider, useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
 import type { MainnetWalletSession } from "@/services/access";
 import { deferred } from "../../support/renderApp";
+import * as nativeBridge from "@/services/wallet/nativeBridge";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
 
 function Balance() {
@@ -188,3 +189,239 @@ test("an active display removes expired external prices while preserving native 
     jest.useRealTimers();
   }
 });
+
+test("foreground and price expiry keep the shared balance without another native balance request", async () => {
+  jest.useFakeTimers();
+  try {
+    const address = "0x" + "1".repeat(40);
+    const session: MainnetWalletSession = {
+      kind: "mainnet",
+      walletId: "observed",
+      address,
+      accountId: address,
+      accountIndex: 1,
+      chainId: 143,
+      method: "Passkey",
+    };
+    const raw = mainnetPortfolio("observed", address, "2670000");
+    const service = { getMainnetPortfolio: jest.fn().mockResolvedValue(raw) };
+    const valuation = {
+      value: jest.fn().mockResolvedValue({ ...raw, valuationExpiresAt: Date.now() + 1000 }),
+    };
+    render(
+      <MainnetWalletProvider session={session} service={service} valuation={valuation}>
+        <Balance />
+      </MainnetWalletProvider>,
+    );
+    await act(async () => {});
+    expect(screen.getByText("2670000 atoms")).toBeVisible();
+    const callbacks = jest
+      .mocked(AppState.addEventListener)
+      .mock.calls.filter(([event]) => event === "change")
+      .map(([, callback]) => callback);
+    act(() => callbacks.forEach((callback) => callback("background")));
+    act(() => callbacks.forEach((callback) => callback("active")));
+    await act(async () => {
+      jest.advanceTimersByTime(1001);
+    });
+    expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("2670000 atoms")).toBeVisible();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("an action supersedes an earlier balance read without letting its late result overwrite new funds", async () => {
+  const address = "0x" + "1".repeat(40);
+  const session: MainnetWalletSession = {
+    kind: "mainnet",
+    walletId: "observed",
+    address,
+    accountId: address,
+    accountIndex: 1,
+    chainId: 143,
+    method: "Passkey",
+  };
+  const old = deferred<MainnetPortfolioSnapshot>();
+  const service = {
+    getMainnetPortfolio: jest
+      .fn()
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValue(mainnetPortfolio("observed", address, "1000000")),
+  };
+  function Probe() {
+    const wallet = useMainnetWallet();
+    return (
+      <View>
+        <Text>{wallet.snapshot?.totalAtoms ?? "pending"}</Text>
+        <Button title="Wallet action finished" onPress={() => void wallet.refreshAfterAction()} />
+      </View>
+    );
+  }
+  render(
+    <MainnetWalletProvider session={session} service={service}>
+      <Probe />
+    </MainnetWalletProvider>,
+  );
+  await waitFor(() => expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(1));
+  fireEvent.press(screen.getByRole("button", { name: "Wallet action finished" }));
+  await act(async () => {});
+  expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+  await act(async () => old.resolve(mainnetPortfolio("observed", address, "9000000")));
+  expect(await screen.findByText("1000000")).toBeVisible();
+  expect(screen.getByText("1000000")).toBeVisible();
+  expect(screen.queryByText("9000000")).toBeNull();
+});
+
+test("an action during private balance authentication queues its read and always clears the unlock indicator", async () => {
+  const address = "0x" + "1".repeat(40);
+  const session: MainnetWalletSession = {
+    kind: "mainnet",
+    walletId: "observed",
+    address,
+    accountId: address,
+    accountIndex: 1,
+    chainId: 143,
+    method: "Passkey",
+  };
+  const open = deferred<import("@/domain/wallet/storedSigner").StoredWalletState>();
+  const signer = jest.spyOn(nativeBridge, "getStoredSigner").mockReturnValue({
+    openWallet: jest.fn().mockReturnValue(open.promise),
+  } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
+  const service = {
+    getMainnetPortfolio: jest
+      .fn()
+      .mockResolvedValue(mainnetPortfolio("observed", address, "1000000")),
+  };
+  function Probe() {
+    const wallet = useMainnetWallet();
+    return (
+      <View>
+        <Text>{wallet.snapshot?.totalAtoms ?? "pending"}</Text>
+        <Text>{wallet.unlockingPrivateBalance ? "Authenticating" : "Authentication finished"}</Text>
+        <Button
+          title="Refresh private balance"
+          onPress={() => void wallet.unlockPrivateBalance()}
+        />
+        <Button title="Wallet action finished" onPress={() => void wallet.refreshAfterAction()} />
+      </View>
+    );
+  }
+  try {
+    render(
+      <MainnetWalletProvider session={session} service={service}>
+        <Probe />
+      </MainnetWalletProvider>,
+    );
+    await screen.findByText("1000000");
+    fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
+    expect(await screen.findByText("Authenticating")).toBeVisible();
+    fireEvent.press(screen.getByRole("button", { name: "Wallet action finished" }));
+    await act(async () => {});
+    expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+    await act(async () => open.resolve({ status: "ready", walletId: "observed", accounts: [] }));
+    expect(await screen.findByText("Authentication finished")).toBeVisible();
+    await waitFor(() => expect(service.getMainnetPortfolio.mock.calls.length).toBeGreaterThan(1));
+  } finally {
+    signer.mockRestore();
+  }
+});
+
+test("a wallet action settling in the background waits for foreground without losing its balance update", async () => {
+  const address = "0x" + "1".repeat(40);
+  const session: MainnetWalletSession = {
+    kind: "mainnet",
+    walletId: "observed",
+    address,
+    accountId: address,
+    accountIndex: 1,
+    chainId: 143,
+    method: "Passkey",
+  };
+  const service = {
+    getMainnetPortfolio: jest
+      .fn()
+      .mockResolvedValueOnce(mainnetPortfolio("observed", address, "3000000"))
+      .mockResolvedValue(mainnetPortfolio("observed", address, "1000000")),
+  };
+  function Probe() {
+    const wallet = useMainnetWallet();
+    return (
+      <View>
+        <Text>{wallet.snapshot?.totalAtoms ?? "pending"}</Text>
+        <Button title="Wallet action finished" onPress={() => void wallet.refreshAfterAction()} />
+      </View>
+    );
+  }
+  render(
+    <MainnetWalletProvider session={session} service={service}>
+      <Probe />
+    </MainnetWalletProvider>,
+  );
+  await screen.findByText("3000000");
+  const callbacks = jest
+    .mocked(AppState.addEventListener)
+    .mock.calls.filter(([event]) => event === "change")
+    .map(([, callback]) => callback);
+  act(() => callbacks.forEach((callback) => callback("background")));
+  fireEvent.press(screen.getByRole("button", { name: "Wallet action finished" }));
+  await act(async () => {});
+  expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+  act(() => callbacks.forEach((callback) => callback("active")));
+  expect(await screen.findByText("1000000")).toBeVisible();
+  expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(2);
+});
+
+test.each([false, true])(
+  "an action refresh interrupted by backgrounding retries after foreground (resume before read finishes: %s)",
+  async (resumeFirst) => {
+    const address = "0x" + "1".repeat(40);
+    const session: MainnetWalletSession = {
+      kind: "mainnet",
+      walletId: "observed",
+      address,
+      accountId: address,
+      accountIndex: 1,
+      chainId: 143,
+      method: "Passkey",
+    };
+    const interrupted = deferred<MainnetPortfolioSnapshot>();
+    const service = {
+      getMainnetPortfolio: jest
+        .fn()
+        .mockResolvedValueOnce(mainnetPortfolio("observed", address, "3000000"))
+        .mockReturnValueOnce(interrupted.promise)
+        .mockResolvedValue(mainnetPortfolio("observed", address, "1000000")),
+    };
+    function Probe() {
+      const wallet = useMainnetWallet();
+      return (
+        <View>
+          <Text>{wallet.snapshot?.totalAtoms ?? "pending"}</Text>
+          <Button title="Wallet action finished" onPress={() => void wallet.refreshAfterAction()} />
+        </View>
+      );
+    }
+    render(
+      <MainnetWalletProvider session={session} service={service}>
+        <Probe />
+      </MainnetWalletProvider>,
+    );
+    await screen.findByText("3000000");
+    fireEvent.press(screen.getByRole("button", { name: "Wallet action finished" }));
+    await waitFor(() => expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(2));
+    const callbacks = jest
+      .mocked(AppState.addEventListener)
+      .mock.calls.filter(([event]) => event === "change")
+      .map(([, callback]) => callback);
+    act(() => callbacks.forEach((callback) => callback("background")));
+    if (resumeFirst) act(() => callbacks.forEach((callback) => callback("active")));
+    await act(async () => interrupted.reject(new Error("App backgrounded")));
+    if (!resumeFirst) {
+      expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(2);
+      act(() => callbacks.forEach((callback) => callback("active")));
+    }
+    expect(await screen.findByText("1000000")).toBeVisible();
+    expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(3);
+  },
+);

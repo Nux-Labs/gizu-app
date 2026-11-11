@@ -10,6 +10,32 @@ import uniffi.gizu_stored_signer_core.*
 
 class EarnSponsoredEngineTest {
   @Test
+  fun fundsMovedAfterReviewStopSigningWithAnInsufficientFundsResult() = runBlocking {
+    val journal = setup()
+    val rpc = Rpc()
+    var available = "10000000"
+    EarnSponsoredEngine(
+        store(),
+        journal,
+        rpc,
+        rpc,
+        { _, _ -> Signer() },
+        { state().copy(tokenBalanceAtoms = available) },
+        { null },
+      )
+      .use { engine ->
+        val review = engine.prepare("hood-1", 1)
+        available = "1"
+        val failure =
+          assertThrows(RpcFailure::class.java) { runBlocking { engine.execute(review) {} } }
+        assertEquals(RpcFailureCode.INSUFFICIENT_FUNDS, failure.code)
+        assertEquals(0, signatures)
+        assertEquals(0, rpc.sent)
+        assertFalse(journal.get("hood-1").has("signedUserOperation"))
+      }
+  }
+
+  @Test
   fun privateSnapshotCompletesBeforeFinalSigningStateIsReconstructed() = runBlocking {
     val journal = setup()
     val confidential = "0x" + "2".repeat(40)
@@ -400,9 +426,13 @@ class EarnSponsoredEngineTest {
     assertThrows(IllegalStateException::class.java) {
       checkSponsoredRetry(op, current.copy(shares = "1999999"))
     }
-    assertThrows(IllegalStateException::class.java) {
-      checkSponsoredRetry(op, current.copy(tokenBalanceAtoms = "1"))
-    }
+    assertEquals(
+      RpcFailureCode.INSUFFICIENT_FUNDS,
+      assertThrows(RpcFailure::class.java) {
+          checkSponsoredRetry(op, current.copy(tokenBalanceAtoms = "1"))
+        }
+        .code,
+    )
   }
 
   @Test
@@ -421,9 +451,13 @@ class EarnSponsoredEngineTest {
     assertThrows(IllegalStateException::class.java) {
       checkSponsoredRetry(op, state().copy(baseFeeWei = "10"))
     }
-    assertThrows(IllegalStateException::class.java) {
-      checkSponsoredRetry(op, state().copy(tokenBalanceAtoms = "1001000"))
-    }
+    assertEquals(
+      RpcFailureCode.INSUFFICIENT_FUNDS,
+      assertThrows(RpcFailure::class.java) {
+          checkSponsoredRetry(op, state().copy(tokenBalanceAtoms = "1001000"))
+        }
+        .code,
+    )
     p.put("deadline", System.currentTimeMillis() / 1000)
     assertThrows(IllegalStateException::class.java) { checkSponsoredRetry(op, state()) }
   }

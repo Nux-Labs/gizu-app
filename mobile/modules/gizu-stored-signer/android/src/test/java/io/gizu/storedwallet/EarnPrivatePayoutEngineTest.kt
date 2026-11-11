@@ -317,18 +317,26 @@ class EarnPrivatePayoutEngineTest {
       val first = engine.create(f.review, "source0", "invest:0").getString("operationId")
       // The first child is 396000 atoms, but all 990000 selected atoms must still be available.
       f.available = "989999"
-      assertThrows(IllegalStateException::class.java) {
-        runBlocking { engine.execute(first, f.grant, f::authorize) }
-      }
+      assertEquals(
+        RpcFailureCode.INSUFFICIENT_FUNDS,
+        assertThrows(RpcFailure::class.java) {
+            runBlocking { engine.execute(first, f.grant, f::authorize) }
+          }
+          .code,
+      )
       assertEquals(0, f.factories)
       f.available = "990000"
       engine.execute(first, f.grant, f::authorize)
       assertEquals(1, f.signed)
       val second = engine.create(f.review, "source0", "invest:1").getString("operationId")
       f.available = "593999"
-      assertThrows(IllegalStateException::class.java) {
-        runBlocking { engine.execute(second, f.grant, f::authorize) }
-      }
+      assertEquals(
+        RpcFailureCode.INSUFFICIENT_FUNDS,
+        assertThrows(RpcFailure::class.java) {
+            runBlocking { engine.execute(second, f.grant, f::authorize) }
+          }
+          .code,
+      )
       assertEquals(1, f.signed)
       f.available = "594000"
       engine.execute(second, f.grant, f::authorize)

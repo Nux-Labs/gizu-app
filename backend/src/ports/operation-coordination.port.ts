@@ -6,5 +6,13 @@ export interface OperationCoordinationStore {
     expiresAtMs: number,
     exclusive: boolean,
   ): Promise<boolean>;
+  /** All bindings succeed or none do. Existing exact compatible commitments are preserved. */
+  bindMany?(
+    bindings: Array<{
+      opaqueKey: string;
+      commitments: string[];
+      expiresAtMs: number;
+    }>,
+  ): Promise<boolean>;
   purgeExpired?(): Promise<void>;
 }

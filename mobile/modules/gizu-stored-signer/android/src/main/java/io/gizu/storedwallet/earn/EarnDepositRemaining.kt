@@ -29,6 +29,15 @@ internal class EarnDepositRemaining(
   private val now: () -> Long = System::currentTimeMillis,
 ) {
   suspend fun refresh(record: WalletRecord, id: String, revision: Int): JSONObject {
+    try {
+      return refreshChecked(record, id, revision)
+    } catch (failure: RpcFailure) {
+      if (failure.code == RpcFailureCode.INSUFFICIENT_FUNDS) journal.pause(id, "insufficientFunds")
+      throw failure
+    }
+  }
+
+  private suspend fun refreshChecked(record: WalletRecord, id: String, revision: Int): JSONObject {
     val root = journal.get(id)
     check(root.getInt("revision") == revision && root.getString("phase") == "paused")
     val old = root.getJSONObject("review")
@@ -359,10 +368,8 @@ internal fun nativeDepositRemaining(
             }
         val remaining = depositAtoms(source.getString("amountAtoms"), true) - signed
         if (remaining.signum() > 0) {
-          val balance = readPrivateDepositBalance(record, source, readAuthority)
-          check(depositAtoms(balance.getValue("available").toString()) >= remaining) {
-            "Private source funds changed"
-          }
+          val balance = readPrivateDepositBalance(context, record, source, readAuthority)
+          requireAvailableFunds(depositAtoms(balance.getValue("available").toString()), remaining)
         }
         return@EarnDepositRemaining DepositRemainingSource(
           JSONObject(original.toString()).also {

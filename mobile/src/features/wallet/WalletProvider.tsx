@@ -11,6 +11,7 @@ import { useWalletController } from "./useWalletController";
 import { monadUsdcBalanceService } from "@/services/wallet/usdcBalance";
 import { monadUsdc, monadTestnetMon } from "@/domain/wallet/assets";
 import { formatMon, formatUsdc } from "@/domain/wallet/amounts";
+import { portfolioUsdcBalance, portfolioPublicUsdcAtoms } from "@/domain/wallet/portfolioValue";
 
 const WalletContext = createContext<
   | (ReturnType<typeof useWalletController> & {
@@ -48,13 +49,12 @@ export function WalletProvider({
   // for the mainnet USDC view, including on foreground/history refresh.
   const operations = useWalletTransfers(session.address, service, state.refresh, !mainnet);
   const { refresh } = operations;
-  const { refresh: refreshBalance } = state;
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (next) => {
-      if (next === "active") void (mainnet ? refreshBalance() : refresh());
+      if (next === "active" && !mainnet) void refresh();
     });
     return () => subscription.remove();
-  }, [refresh, mainnet, refreshBalance]);
+  }, [refresh, mainnet]);
   return (
     <WalletContext.Provider
       value={{ ...state, session, asset, transfersAvailable: !mainnet, transfers: operations }}
@@ -73,17 +73,33 @@ export function useWallet() {
 export function useFundingWallet() {
   const legacy = useContext(WalletContext);
   const mainnet = useOptionalMainnetWallet();
-  if (mainnet)
+  if (mainnet) {
+    const observed = mainnet.snapshot ? portfolioUsdcBalance(mainnet.snapshot) : null;
+    const publicAtoms = mainnet.snapshot ? portfolioPublicUsdcAtoms(mainnet.snapshot) : null;
     return {
       session: mainnet.session,
-      balance:
-        mainnet.snapshot && mainnet.snapshot.balanceComplete !== false
-          ? formatUsdc(mainnet.snapshot.totalAtoms)
-          : null,
-      loading: mainnet.loading,
-      error: Boolean(mainnet.error) || mainnet.snapshot?.balanceComplete === false,
+      balance: publicAtoms !== null ? formatUsdc(publicAtoms) : null,
+      depositBalance: observed
+        ? {
+            balance: formatUsdc(observed.totalAtoms),
+            breakdown: {
+              privateBalance: formatUsdc(observed.privateAtoms),
+              publicBalance: formatUsdc(observed.publicAtoms),
+            },
+          }
+        : null,
+      loading: mainnet.loading && mainnet.snapshot === null,
+      refreshing: mainnet.loading,
+      error: Boolean(mainnet.error) && mainnet.snapshot === null,
       refresh: mainnet.refresh,
+      refreshAfterAction: mainnet.refreshAfterAction,
     };
+  }
   if (!legacy) throw new Error("Wallet provider required");
-  return legacy;
+  return {
+    ...legacy,
+    depositBalance: null,
+    refreshing: legacy.loading,
+    refreshAfterAction: legacy.refresh,
+  };
 }

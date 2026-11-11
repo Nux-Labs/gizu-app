@@ -207,7 +207,11 @@ internal class NativeOwnedPortfolio(
     save(record, root)
   }
 
-  suspend fun read(record: WalletRecord, cachedOnly: Boolean = false): Map<String, Any?> {
+  suspend fun read(
+    record: WalletRecord,
+    cachedOnly: Boolean = false,
+    forceRefresh: Boolean = false,
+  ): Map<String, Any?> {
     val now = clock()
     val root = load(record)
     val owners = owners(record, root)
@@ -266,7 +270,15 @@ internal class NativeOwnedPortfolio(
       val group = groups[index]
       val id = groupKey(group.chain, group.token)
       val snapshot =
-        tokenSnapshot(record, root, group, now, index in selected, chainRpc(group.chain))
+        tokenSnapshot(
+          record,
+          root,
+          group,
+          now,
+          index in selected,
+          chainRpc(group.chain),
+          forceRefresh,
+        )
       val metadata = root.getJSONObject("metadata")
       var decimals =
         group.decimals ?: metadata.optJSONObject(id)?.optInt("decimals", -1)?.takeIf { it >= 0 }
@@ -390,6 +402,7 @@ internal class NativeOwnedPortfolio(
     now: Long,
     refresh: Boolean,
     rpc: PortfolioRpc,
+    forceRefresh: Boolean,
   ): TokenSnapshot {
     val id = groupKey(group.chain, group.token)
     val snapshots = root.getJSONObject("snapshots")
@@ -435,7 +448,7 @@ internal class NativeOwnedPortfolio(
               group.token,
               rpc,
             )
-          if (index == refreshShard) sync.read(addresses, now)
+          if (index == refreshShard) sync.read(addresses, now, forceRefresh)
           else
             sync.cachedSnapshot(addresses, now)
               ?: TokenSnapshot(emptyMap(), "0x0", 0, false, true, true)

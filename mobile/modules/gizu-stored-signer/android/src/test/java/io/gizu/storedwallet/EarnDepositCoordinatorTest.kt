@@ -79,6 +79,8 @@ class EarnDepositCoordinatorTest {
 
   internal class Engines(val record: WalletRecord) : EarnDepositEngines {
     val rows = mutableMapOf<String, JSONObject>()
+    var groupDelivery = false
+    var groupCalls = 0
     var signed = 0
     var savedPayoutRetries = 0
     var payoutCreates = 0
@@ -181,7 +183,8 @@ class EarnDepositCoordinatorTest {
           row
             .put(
               "status",
-              if (investUnknown && row.getJSONObject("proposal").getString("leg") == "invest")
+              if (groupDelivery) "submitted"
+              else if (investUnknown && row.getJSONObject("proposal").getString("leg") == "invest")
                 "submissionUnknown"
               else if (
                 row.getJSONObject("proposal").getString("leg") == "invest:$pendingPayoutSlot"
@@ -211,6 +214,19 @@ class EarnDepositCoordinatorTest {
       if (failedPayoutRead && stage == "payouts" && child(stage, id).getString("status") == "paid")
         error("Provider unavailable during receipt refresh")
       return child(stage, id)
+    }
+
+    override suspend fun reconcilePayoutGroup(review: JSONObject, grant: EarnDepositApproval?) {
+      if (!groupDelivery) return
+      groupCalls++
+      val payouts =
+        rows.values.filter {
+          it.getJSONObject("proposal").has("distribution") &&
+            it.getString("operationId").startsWith("payout-")
+        }
+      check(payouts.size == 2 && payouts.all { it.has("signedData") })
+      for (row in payouts) rows[row.getString("operationId")] =
+        JSONObject(row.toString()).put("status", "paid")
     }
 
     override fun credit(row: JSONObject): String? =
@@ -542,6 +558,25 @@ class EarnDepositCoordinatorTest {
         coordinator.advance(id, null)
         assertEquals(1 + weights.size * 2, engines.signed)
       }
+    }
+  }
+
+  @Test
+  fun distributionReconcilesOnceAfterAllSignaturesAndConsumesFreshAtomicGroupRows() = runBlocking {
+    DistributionDepositFixtures.record(listOf(4000, 6000)).use { record ->
+      val journal = testDepositJournal()
+      val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+      val review = DistributionDepositFixtures.review(record).put("journeyId", id)
+      journal.saveReview(id, 1, review)
+      val grant = EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+      val engines =
+        Engines(record).apply {
+          creditReady = true
+          groupDelivery = true
+        }
+      EarnDepositCoordinator(journal, engines).confirmed(id, 2, grant)
+      assertEquals(1, engines.groupCalls)
+      assertEquals("invested", journal.get(id).getString("phase"))
     }
   }
 

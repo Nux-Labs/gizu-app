@@ -13,15 +13,26 @@ preserve earlier implementation stages.
 
 **Earn ends at an invested vault position.** The initial fee calculation simulates a future full redemption in a disposable server-side fork only to estimate the withdrawal reserve. It never withdraws the live position. The user must click Withdraw later, review fresh fees, and authorize redemption separately. Aurora return quotes and operations follow that requested exit; their future executable costs are excluded from the initial deposit estimate.
 
-New guided Android deposits show **available private USDC + public USDC**, with a
-breakdown of both. Private USDC means the Monad-origin USDC asset in the wallet's
-native confidential account catalogue; vault shares, USDG, other tokens and other
-chains' USDC are not counted as available deposit cash. A read-only native
-authentication checks these accounts, with four concurrent reads and at most 128
-catalogue accounts per review. Failed, incomplete or expired reads block review
-instead of treating private funds as zero. Native capabilities keep older builds
-on their supported public-only path. The funding snapshot returns aggregate atom
-strings to JavaScript; private identities remain native.
+New guided Android deposits display the same **observed private USDC + public
+USDC** owned by the shared wallet portfolio, with a breakdown of both. Private
+USDC means the Monad-origin USDC asset in the native confidential catalogue;
+vault shares, USDG, other tokens and other chains' USDC are not deposit cash.
+Opening a deposit or returning to the app does not start a separate balance
+verification or require a refresh. A missing display observation still permits
+native review of a valid amount. Explicit refresh and wallet actions update the
+shared observations; failed reads retain the prior display. Prices may expire
+without triggering balance RPCs. Reads triggered by an action wait for earlier
+reads/authentication and reject late results from before that action or a
+previous wallet. An action finishing after navigation still refreshes its wallet;
+an action finishing in the background defers that update until foreground.
+
+Native preparation and signing continue to authenticate fresh balances and
+reservations inside the requested action. Insufficient funds use a distinct
+outcome across public funding, private payouts, sponsored operations and
+confidential withdrawals; failed reads and unavailable previews remain distinct.
+Authenticated action reads update the shared encrypted private observations,
+and verified payout delivery attempts to record the remaining source balance.
+No frontend observation can authorize spending or establish settlement.
 
 Native preparation rechecks eligible private accounts and selects them first.
 Their USDC goes directly through an advanced-confidentiality, exact-input route
@@ -42,10 +53,22 @@ the existing authenticated read and signed intent boundaries. The server fixes
 the destination to Robinhood USDG; the Rust signer derives the source and saved
 investment recipient independently. Encrypted native journals retain exact
 signed bytes before submission. Lost responses preserve reservations and permit
-an explicit exact-byte retry; authenticated history and a finalized canonical
-destination transfer are required before vault funding is attributed. A
-marker-only interrupted local signing attempt can be resumed under a fresh
+an explicit exact-byte retry; the saved signed route and canonical destination
+transfers are required before vault funding is attributed. No history endpoint
+is required. A marker-only interrupted local signing attempt can be resumed under a fresh
 grant because submission is unreachable until signed bytes are durably saved.
+
+Distribution delivery is verified per investment wallet across all public-funded
+and existing-private payout members. The verifier reuses signed-route status and
+canonical receipt checks from Earn, with grouped transfer accounting from
+withdrawals. It does not assign a public transfer to a particular private source.
+Every sealed quote and saved signed payload must match the review membership;
+all member routes must succeed, and canonical transfers must cover the saved
+minima. Native verification preserves paid sibling amounts and durably commits
+the shared receipt proof and remaining allocations together. Later deposits
+cannot alter completed delivery. Exact signed membership and receipt-event
+commitments prevent replay across groups without storing an address catalogue.
+
 Private funding uses the same qualified `payoutRobinhood` service fee policy as
 the preview. The backend seals the actual fee proof into recovery; native review
 binds it to the quote and enforces the reviewed fee cap and minimum output.
@@ -65,7 +88,7 @@ The native cycle saves `distribution: {version: 1, weightsBps}` and the original
 
 Cycles without distribution metadata retain the legacy hold/invest policy: wallet 1 receives floor(total confirmed private input / 10), wallet 2 receives the remainder, and only wallet 2 invests. Their keys, signed operations, withdrawal ownership and recovery behavior are unchanged. The legacy holding balance must not be swept to finish an investment exit. Distribution wallets have no intentional holding allocation; each retains its own withdrawal reserve and is selected separately for withdrawal.
 
-Distribution investment slots use the new `145'` derivation domain; the cycle's existing confidential identity is unchanged. Wallet backup metadata preserves slot count, weights and budget. Restored local progress still requires reconciliation before spending. Updated native capability `earnDepositDistribution` is required for new preparation; older builds retain access to their legacy saved deposits. Full iOS deposit execution remains unavailable. Deploy the matching backend and rebuild the native app before trying the new flow; these changes do not update an installed app or Render automatically.
+Distribution investment slots use the new `145'` derivation domain; the cycle's existing confidential identity is unchanged. Wallet backup metadata preserves slot count, weights and budget. Restored local progress still requires reconciliation before spending. Updated native capability `earnDepositDistribution` is required for new preparation; older builds retain access to their legacy saved deposits. Full iOS deposit execution remains unavailable. Deploy the matching backend and rebuild the native app before trying the new flow; these changes do not update an installed app or the AWS service automatically.
 
 ## Implementation map
 
@@ -97,13 +120,20 @@ Verification for this stage: 51 Swift simulator tests, 148 Rust tests with stric
 
 ## Runtime and deployment
 
-The hosted native API is `https://gizu-app.onrender.com`; JavaScript uses `EXPO_PUBLIC_API_URL`. JavaScript updates load through Metro in the development app; native API changes require rebuilding and installing the APK. Local backend changes do not alter Render until deployed.
+The hosted native API is `https://api.gizu.io` on AWS ECS; JavaScript uses `EXPO_PUBLIC_API_URL`. JavaScript updates load through Metro in the development app; native API changes require rebuilding and installing the APK. Local backend changes do not alter the deployed service. Use the existing [AWS deployment pipeline](../app-guide/AWS_BACKEND_DEPLOYMENT.md) to release the matching backend from `main`.
+
+The history-free distribution build also requires `/v1/earn/native/payout/group-status`
+on that backend. Keep the existing gateway recovery key and coordination database
+when releasing it so saved signed quotes remain verifiable. After release, resume
+the existing deposit with **Review remaining steps**; do not create a replacement
+deposit for an already submitted payout. Delivery verification uses the saved
+signed payloads without signing or submitting them again.
 
 For the requested pre-deployment phone test, `-PgizuEarnBackend=usb` builds Android debug with a fixed native `http://127.0.0.1:3000` backend. Set Metro's `EXPO_PUBLIC_API_URL` to the same origin and reverse ports 3000 and 8081 over USB. This is compile-time local testing; JavaScript cannot select a native endpoint. Omitting the property keeps the hosted backend; release always uses the hosted HTTPS backend. See [native USB setup](NATIVE_SIGNER_EARN.md#android-usb-backend-test-build).
 
 The local server uses an ignored, permission-restricted `backend/.env` with provider credentials copied by name from the authorized research configuration and an isolated local PostgreSQL database. No research wallet keys or signing journals are imported. A new local-only durable recovery key is retained in that file; production must retain its own stable key. The qualified Aurora fee configuration and installed-certificate association remain required even when the backend runs locally. Publishing the frontend association can enable device signing without deploying the backend.
 
-Render build commands and the pinned Linux Anvil runtime are documented in [backend deployment](../app-guide/BACKEND_DEPLOYMENT.md). The service root is `backend`; use `npm start` for the deployed build. Keep provider keys on the server: the existing `ONEINCH_API_KEY`, plus `AURORA_API_KEY` and `PIMLICO_API_KEY` for their respective paths. `ETHEREUM_RPC_URL` can select a qualified HTTPS RPC. `EARN_ANVIL_PATH` must point to a working server-side Anvil binary with pinned-fork access; missing simulation blocks that proposal. No Anvil process or provider key belongs in the mobile app.
+The production container, pinned Linux Anvil runtime and release steps are documented in [AWS backend deployment](../app-guide/AWS_BACKEND_DEPLOYMENT.md). Keep provider keys on the server: the existing `ONEINCH_API_KEY`, plus `AURORA_API_KEY` and `PIMLICO_API_KEY` for their respective paths. `ETHEREUM_RPC_URL` can select a qualified HTTPS RPC. `EARN_ANVIL_PATH` must point to a working server-side Anvil binary with pinned-fork access; missing simulation blocks that proposal. No Anvil process or provider key belongs in the mobile app.
 
 The frontend service builds from `frontend` with `npm ci && npm run build`, publishing `dist`. The prepared `.well-known/assetlinks.json` adds this APK certificate and preserves the previous certificate. Verify its publication on `gizu.io`, particularly before new credential registration. Existing-wallet passkey access succeeded on the connected Android phone during the local test; this does not establish new registration or transaction authorization. Dashboard configuration and deployment credentials still need verification at deployment time.
 
@@ -758,6 +788,8 @@ hashes and attempts by old clients to consume new-version claims fail closed;
 existing claims are never cleared or reassigned to make recovery succeed.
 
 Old exact settlement/history methods remain available for compatible saved flows.
-Private-funded-deposit payout completion still uses its existing history contract;
-it is not silently upgraded to the cashout receipt policy. No financial transaction
-is submitted by minimum-return verification or receipt reconciliation.
+The November 11 deposit update replaces the private-funded-deposit history
+dependency with saved signed-route and canonical destination verification,
+including grouped delivery for guided distributions as described above. No
+financial transaction is submitted by minimum-return verification or receipt
+reconciliation.

@@ -14,6 +14,7 @@ import { ActiveSwapCard, LastSwapButton, LastSwapSummary, isFinished } from "./S
 import { Screen } from "@/components/templates/Screen";
 import { formatSwapAmount } from "@/domain/swap";
 import { groupDigits } from "@/domain/wallet/amounts";
+import { portfolioPublicUsdcAtoms } from "@/domain/wallet/portfolioValue";
 import colors from "@/theme/colors.json";
 import { useNativeSwap } from "./useNativeSwap";
 
@@ -22,10 +23,8 @@ export function NativeSwapScreen() {
   const [mode, setMode] = useState<"buy" | "sell">("buy");
   const [showLast, setShowLast] = useState(false);
   const wallet = useOptionalMainnetWallet();
-  const maxAmount =
-    wallet?.snapshot && wallet.snapshot.balanceComplete !== false
-      ? formatSwapAmount(BigInt(wallet.snapshot.totalAtoms))
-      : null;
+  const publicAtoms = wallet?.snapshot ? portfolioPublicUsdcAtoms(wallet.snapshot) : null;
+  const maxAmount = publicAtoms !== null ? formatSwapAmount(BigInt(publicAtoms)) : null;
   const selected = swap.tokens.find((token) => token.address === swap.target);
   const active =
     swap.status !== null && swap.status.phase !== "COMPLETE" && swap.status.phase !== "CANCELLED";
@@ -90,8 +89,8 @@ export function NativeSwapScreen() {
                 note={
                   !wallet
                     ? undefined
-                    : wallet.snapshot && wallet.snapshot.balanceComplete !== false
-                      ? `Available: ${groupDigits(formatSwapAmount(BigInt(wallet.snapshot.totalAtoms)))} USDC`
+                    : publicAtoms !== null
+                      ? `Available: ${groupDigits(formatSwapAmount(BigInt(publicAtoms)))} USDC`
                       : "Checking available USDC…"
                 }
               >

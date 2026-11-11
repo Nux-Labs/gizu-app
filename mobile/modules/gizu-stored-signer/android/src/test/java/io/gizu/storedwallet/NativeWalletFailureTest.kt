@@ -5,6 +5,14 @@ import org.junit.Test
 
 class NativeWalletFailureTest {
   @Test
+  fun insufficientFundsExplainsTheBalanceInsteadOfAskingForAnotherRefresh() {
+    val message = nativeWalletFailureMessage(RpcFailure(RpcFailureCode.INSUFFICIENT_FUNDS))
+    assertTrue(message, message.contains("balance", ignoreCase = true))
+    assertTrue(message, message.contains("cover"))
+    assertFalse(message, message.contains("refresh", ignoreCase = true))
+  }
+
+  @Test
   fun reviewExpiryAndWorkTimeoutGiveDifferentRecoveryInstructions() {
     assertTrue(nativeWalletFailureMessage(NativeCeremonyTimeout(true)).contains("fresh review"))
     assertTrue(nativeWalletFailureMessage(NativeCeremonyTimeout(false)).contains("saved progress"))

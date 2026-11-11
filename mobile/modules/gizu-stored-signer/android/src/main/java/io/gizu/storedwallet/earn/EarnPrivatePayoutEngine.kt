@@ -199,9 +199,7 @@ internal class EarnPrivatePayoutEngine(
             sum + depositAtoms(child.getJSONObject("proposal").getString("amountAtoms"), true)
           }
       val remaining = depositAtoms(p.getString("creditedAtoms"), true) - signed
-      check(depositAtoms(balance.getString("available")) >= remaining) {
-        "Private source funds changed"
-      }
+      requireAvailableFunds(depositAtoms(balance.getString("available")), remaining)
       val proof = evidence(row)
       val record = store.load()
       record.use { r ->
@@ -282,6 +280,7 @@ internal class EarnPrivatePayoutEngine(
   suspend fun reconcile(id: String): JSONObject {
     var row = journal.get(id)
     if (!row.has("signedData") || row.getString("status") == "paid") return row
+    if (row.getJSONObject("proposal").has("distribution")) return row
     authority()
     val used =
       journal
@@ -309,6 +308,15 @@ internal class EarnPrivatePayoutEngine(
     store.load().use {
       identity(it)
       invalidate(it, setOf(row.getJSONObject("proposal").getString("expectedSigner")))
+    }
+    if (row.getString("status") == "paid") {
+      try {
+        read(row.getJSONObject("proposal").getJSONObject("source"))
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        /* Receipt stays verified if a display observation is unavailable. */
+      }
     }
     return row
   }

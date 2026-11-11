@@ -40,7 +40,13 @@ internal class NativeRpcTransport(
           readTimeout(60, TimeUnit.SECONDS)
           callTimeout(70, TimeUnit.SECONDS)
         }
-        if (endpoint == "$EARN_NATIVE_BACKEND/cashout/group-status") {
+        if (
+          endpoint in
+            setOf(
+              "$EARN_NATIVE_BACKEND/cashout/group-status",
+              "$EARN_NATIVE_BACKEND/payout/group-status",
+            )
+        ) {
           // Read-only whole-plan verification uses bounded batches of route/receipt reads.
           readTimeout(180, TimeUnit.SECONDS)
           callTimeout(190, TimeUnit.SECONDS)
@@ -179,6 +185,10 @@ internal fun safeEarnGatewayFailure(body: String): EarnGatewayFailure? {
       "EARN_QUOTE_RECOVERY_REJECTED",
       "EARN_PAYOUT_RECOVERY_REJECTED" ->
         "Saved Earn recovery could not be verified. Reconcile before retrying."
+      "EARN_COORDINATION_CONFLICT" ->
+        "Saved payout receipt evidence conflicts with an accepted proof. Recovery reconciliation is required."
+      "EARN_COORDINATION_UNAVAILABLE" ->
+        "Payout verification storage is temporarily unavailable. Saved progress is preserved."
       "EARN_SETTLEMENT_UNAVAILABLE" ->
         "Operation-specific confidential credit is unavailable. Reconcile before proceeding."
       "CONFIDENTIAL_PRIVATE_FUNDING_UNAVAILABLE" ->

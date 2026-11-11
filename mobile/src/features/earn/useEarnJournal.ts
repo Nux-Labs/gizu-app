@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EarnIntent } from "@/domain/earn/types";
+import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 type JournalService<Row> = {
   available(): Promise<boolean>;
   list(intent: EarnIntent): Promise<Row[]>;
@@ -10,6 +11,7 @@ export function useEarnJournal<Row extends { operationId: string }>(
   intent: EarnIntent,
   service: JournalService<Row>,
 ) {
+  const portfolio = useOptionalMainnetWallet();
   const [rows, setRows] = useState<Row[]>([]),
     [available, setAvailable] = useState(false),
     [loading, setLoading] = useState(true),
@@ -76,7 +78,10 @@ export function useEarnJournal<Row extends { operationId: string }>(
       }
     } finally {
       occupied.current = false;
-      if (attempt === generation.current) setBusy(false);
+      if (attempt === generation.current) {
+        setBusy(false);
+      }
+      void portfolio?.refreshAfterAction();
     }
   }
   const update = (row: Row) =>

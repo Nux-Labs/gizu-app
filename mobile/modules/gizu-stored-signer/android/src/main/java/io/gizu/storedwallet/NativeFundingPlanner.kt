@@ -125,10 +125,9 @@ internal class NativeFundingPlanner(
       available += free
       if (free >= budget || available >= budget) break
     }
-    check(available >= budget) {
-      if (probed >= 128) "Account discovery is still syncing. Refresh before funding."
-      else "Available USDC does not cover this budget after reservations"
-    }
+    if (available < budget && probed >= 128)
+      error("Account discovery is still syncing. Retry funding shortly.")
+    requireAvailableFunds(available, budget)
     if (feature == "earn") {
       val minimum =
         sources.objects().minOf { source ->
