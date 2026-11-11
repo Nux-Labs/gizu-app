@@ -26,6 +26,40 @@ const reasons = new Map([
   ["Robinhood state/fees changed", "state-or-fees-changed"],
   ["Robinhood plan expired", "plan-expired"],
   ["USDG deposit funding did not converge", "budget-convergence"],
+  ["USDG paymaster unavailable", "paymaster-unavailable"],
+  ["Read-only USDG preview cannot sign", "unexpected-signing-request"],
+  ["Unknown Robinhood delegation", "account-delegation"],
+  ["Unsupported USDG sponsorship", "unsupported-sponsorship"],
+  ["Invalid USDG fees", "fee-market-values"],
+  ["USDG operation identity/fee changed", "operation-identity-or-fees"],
+  ["USDG vault calls changed", "vault-calls"],
+  ["Unknown USDG approval", "approval-target"],
+  ["USDG approval exceeds cap", "approval-cap"],
+  ["USDG allowance insufficient", "approval-allowance"],
+  ["Unexpected USDG factory", "account-factory"],
+  ["Pending Robinhood nonce", "pending-nonce"],
+  ["Changed Robinhood authorization binding", "authorization-binding"],
+  ["Invalid gas quantity", "gas-quantity"],
+  ["Malformed token paymaster data", "paymaster-format"],
+  ["Unsupported paymaster mode or token", "paymaster-mode-or-token"],
+  ["Invalid token gas prices", "gas-prices"],
+  ["Expired token paymaster terms", "paymaster-expiry"],
+]);
+const errorTypes = new Set([
+  "TypeError",
+  "RangeError",
+  "RpcRequestError",
+  "HttpRequestError",
+  "TimeoutError",
+  "UserOperationExecutionError",
+  "ExecutionRevertedError",
+  "ContractFunctionExecutionError",
+  "ContractFunctionRevertedError",
+  "ContractFunctionZeroDataError",
+  "UnknownRpcError",
+  "InvalidInputRpcError",
+  "EstimateGasExecutionError",
+  "InvalidAddressError",
 ]);
 
 /** Fixed labels and numeric transport codes only. Never serialize an upstream error. */
@@ -35,6 +69,9 @@ export class RobinhoodPlanFailure extends InfrastructureError {
     reason: string;
     httpStatus?: number;
     rpcCode?: number;
+    accountAbstractionCode?: string;
+    errorType?: string;
+    codeLocation?: string;
   }>;
 
   constructor(stage: PlanStage, cause: unknown) {
@@ -47,8 +84,27 @@ export class RobinhoodPlanFailure extends InfrastructureError {
     let reason = "unclassified";
     let httpStatus: number | undefined;
     let rpcCode: number | undefined;
-    for (let depth = 0; depth < 4 && current instanceof Error; depth++) {
+    let accountAbstractionCode: string | undefined;
+    let errorType: string | undefined;
+    let codeLocation: string | undefined;
+    for (let depth = 0; depth < 16 && current instanceof Error; depth++) {
       reason = reasons.get(current.message) ?? reason;
+      accountAbstractionCode ??= current.message
+        .slice(0, 8192)
+        .match(/\bAA[0-9]{2}\b/)?.[0];
+      if (errorTypes.has(current.name)) errorType ??= current.name;
+      if (codeLocation === undefined) {
+        for (const line of (current.stack ?? "").slice(-16384).split("\n")) {
+          if (!/^\s+at\s/.test(line)) continue;
+          const frame = line.match(
+            /\/backend\/(?:src|dist)\/adapters\/(?:earn\/(robinhood-paymaster|robinhood-simulation|fork-simulation)|evm\/(gas-policy|token-paymaster))\.(ts|js):([1-9][0-9]{0,4}):[1-9][0-9]*\)?$/,
+          );
+          if (frame) {
+            codeLocation = `${frame[1] ?? frame[2]}.${frame[3]}:${frame[4]}`;
+            break;
+          }
+        }
+      }
       if (
         "status" in current &&
         Number.isInteger(current.status) &&
@@ -70,6 +126,11 @@ export class RobinhoodPlanFailure extends InfrastructureError {
       reason,
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       ...(rpcCode !== undefined ? { rpcCode } : {}),
+      ...(accountAbstractionCode !== undefined
+        ? { accountAbstractionCode }
+        : {}),
+      ...(errorType !== undefined ? { errorType } : {}),
+      ...(codeLocation !== undefined ? { codeLocation } : {}),
     });
   }
 }
