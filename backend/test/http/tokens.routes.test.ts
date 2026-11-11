@@ -65,7 +65,7 @@ test("GET /v1/tokens/4663/:address/details serves buy targets, 404s others and v
   app.setSerializerCompiler(serializerCompiler);
   const asked: Array<[string, string]> = [];
   const known = "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC";
-  registerTokenRoutes(app, { list: async () => [] }, { details: async (address, period) => {
+  registerTokenRoutes(app, { list: async () => [] }, { prices: async () => new Map(), details: async (address, period) => {
     asked.push([address, period]);
     return address === known ? { chainId: 4663, address, symbol: "NVDA", name: "NVIDIA", logoURI: "https://x/y.png", kind: "stock", description: "d", isin: null, sharesPerToken: null, sessions: { regular: true, extended: false, overnight: false }, priceUsd: 1, chart: null } : undefined;
   } });
@@ -77,5 +77,27 @@ test("GET /v1/tokens/4663/:address/details serves buy targets, 404s others and v
   assert.equal((await app.inject("/v1/tokens/4663/0x1111111111111111111111111111111111111111/details")).statusCode, 404);
   assert.equal((await app.inject(`/v1/tokens/4663/${known}/details?period=5Y`)).statusCode, 400);
   assert.equal((await app.inject("/v1/tokens/4663/not-an-address/details")).statusCode, 400);
+  await app.close();
+});
+
+test("GET /v1/tokens adds prices to buyable tokens on the page only", async () => {
+  const app = Fastify();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  const token = (symbol: string, buyable: boolean) => ({ chainId: 4663, address: `0x${symbol.padStart(40, "0")}`, symbol, name: symbol, decimals: 18, logoURI: null, category: "rwa" as const, issuer: "Robinhood" as const, swapListed: true, buyable, fusionStatus: "quote-required" as const });
+  let priceCalls = 0;
+  registerTokenRoutes(app, { list: async () => [token("AAA", true), token("BBB", true), token("CCC", false)] }, {
+    details: async () => undefined,
+    prices: async () => {
+      priceCalls += 1;
+      return new Map([[token("AAA", true).address.toLowerCase(), 12.5]]);
+    },
+  });
+  const list = (await app.inject("/v1/tokens?chainId=4663&category=rwa&search=&page=0&items=10")).json().list;
+  assert.deepEqual(list.map((t: { symbol: string; priceUsd?: number | null }) => [t.symbol, t.priceUsd]), [["AAA", 12.5], ["BBB", null], ["CCC", undefined]]);
+  assert.equal(priceCalls, 1);
+  const unbuyablePage = (await app.inject("/v1/tokens?chainId=4663&category=rwa&search=CCC&page=0&items=10")).json().list;
+  assert.equal(unbuyablePage[0].priceUsd, undefined);
+  assert.equal(priceCalls, 1);
   await app.close();
 });

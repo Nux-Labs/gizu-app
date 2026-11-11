@@ -21,15 +21,10 @@ import {
   type TokenDetails,
 } from "@/domain/tokenDetails";
 import { RobinhoodChainMark } from "./components/RobinhoodChainMark";
+import { formatUsd } from "./formatUsd";
 import { useTokenDetails } from "./useTokenDetails";
 
 const tabular = { fontVariant: ["tabular-nums" as const] };
-const usd = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
 const signed = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 2,
@@ -168,7 +163,7 @@ function Loaded({
             accessibilityLabel={
               details.priceUsd === null
                 ? "Price unavailable"
-                : `Price ${usd.format(details.priceUsd)}${change === null ? "" : `, ${signed.format(change)} percent over ${period}`}`
+                : `Price ${formatUsd(details.priceUsd)}${change === null ? "" : `, ${signed.format(change)} percent over ${period}`}`
             }
             className="gap-1"
           >
@@ -178,7 +173,7 @@ function Loaded({
               className="font-sans text-[36px] leading-[40px] ios:tracking-tight text-text"
               style={tabular}
             >
-              {details.priceUsd === null ? "Unavailable" : usd.format(details.priceUsd)}
+              {details.priceUsd === null ? "Unavailable" : formatUsd(details.priceUsd)}
             </Text>
             {change !== null && (
               <Text
@@ -202,7 +197,7 @@ function Loaded({
                   height={180}
                   up={up}
                   revealKey={chart.period}
-                  format={(value) => usd.format(value)}
+                  format={formatUsd}
                 />
               </View>
             ) : status === "ready" ? (

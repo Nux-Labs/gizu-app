@@ -98,3 +98,29 @@ test("every buy target has a kind and a description", () => {
   }
   assert.deepEqual(Object.keys(TOKEN_PROFILES).sort(), ROBINHOOD_BUY_TARGETS.map((t) => t.symbol).sort());
 });
+
+test("one batched request prices every buy target, refreshes after a minute and feeds the detail page", async () => {
+  const calls: string[] = [];
+  let now = 0;
+  const all = Object.fromEntries(ROBINHOOD_BUY_TARGETS.map((t, i) => [t.address.toLowerCase(), String(100 + i)]));
+  const service = new RobinhoodTokenDetails("key", fakeFetch(calls, { price: () => Response.json(all) }), () => now);
+  const count = () => calls.filter((url) => url.includes("/price/")).length;
+  const [first, second] = await Promise.all([service.prices(), service.prices()]);
+  assert.equal(count(), 1);
+  assert.ok(calls.find((url) => url.includes("/price/"))!.includes(ROBINHOOD_BUY_TARGETS.map((t) => t.address).join(",")));
+  assert.equal(first.size, ROBINHOOD_BUY_TARGETS.length);
+  assert.equal(first.get(qqq.address.toLowerCase()), 100);
+  assert.deepEqual(second, first);
+  assert.equal((await service.details(nvda.address, "1M"))?.priceUsd, Number(all[nvda.address.toLowerCase()]));
+  assert.equal(count(), 1);
+  now = 60_000;
+  await service.prices();
+  assert.equal(count(), 2);
+});
+
+test("a failed batch leaves every price null without throwing", async () => {
+  const service = new RobinhoodTokenDetails("key", fakeFetch([], { price: () => new Response("", { status: 429 }) }));
+  const prices = await service.prices();
+  assert.equal(prices.size, ROBINHOOD_BUY_TARGETS.length);
+  assert.ok([...prices.values()].every((price) => price === null));
+});

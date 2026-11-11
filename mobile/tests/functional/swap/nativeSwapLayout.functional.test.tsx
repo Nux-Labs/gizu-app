@@ -190,6 +190,7 @@ test("picker hides stocks outside the liquid set and never defaults to one", asy
         symbol: "GOOGL",
         name: "Alphabet • Robinhood Token",
         buyable: true,
+        priceUsd: 1234.5,
       },
       { ...catalogToken, address: token, symbol: "COIN", name: "Coinbase", buyable: false },
     ].filter((item) => !query.liquidOnly || item.buyable);
@@ -233,6 +234,7 @@ test("picker hides stocks outside the liquid set and never defaults to one", asy
   expect(screen.getAllByText("Alphabet").length).toBeGreaterThanOrEqual(2);
   expect(screen.queryByText(/Robinhood Token/)).toBeNull();
   expect(screen.queryByText(/most liquid Robinhood stocks/)).toBeNull();
+  expect(screen.getByText("$1,234.50")).toBeVisible();
   expect(tokenCatalogService.list).toHaveBeenCalledWith(
     expect.objectContaining({ chainId: 4663, category: "rwa", liquidOnly: true }),
     expect.anything(),

@@ -31,6 +31,11 @@ function isToken(value: unknown, query: TokenQuery): value is CatalogToken {
     (value.issuer === null || value.issuer === "Robinhood") &&
     typeof value.swapListed === "boolean" &&
     (value.buyable === undefined || typeof value.buyable === "boolean") &&
+    (value.priceUsd === undefined ||
+      value.priceUsd === null ||
+      (typeof value.priceUsd === "number" &&
+        Number.isFinite(value.priceUsd) &&
+        value.priceUsd > 0)) &&
     value.fusionStatus === "quote-required"
   );
 }
