@@ -30,6 +30,11 @@ import {
 } from "../aurora/confidential-balance.ts";
 import { ROBINHOOD_PROFILE } from "./robinhood-vault.ts";
 import { EarnRecoveryEnvelope } from "./recovery-envelope.ts";
+import { isDeepStrictEqual } from "node:util";
+import {
+  qualifyAuroraFees,
+  type AuroraFeeQualification,
+} from "./fee-policy.ts";
 const USDC = "0x754704Bc059F8C67012fEd69BC8A327a5aafb603" as Address;
 const obj = (v: any): any => {
   if (!v || typeof v !== "object" || Array.isArray(v))
@@ -90,6 +95,7 @@ interface ConfidentialPayoutConfiguration {
   recoveryKey?: string;
   coordination?: Pick<OperationCoordinator, "bind">;
   robinhoodRpcUrl?: string;
+  auroraFeeQualification?: AuroraFeeQualification;
 }
 interface PayoutDestination {
   purpose: "confidential-cashout" | "confidential-private-funding";
@@ -104,7 +110,7 @@ class ConfidentialPayoutGateway {
   private providers: CashoutProviders;
   private coordination: Pick<OperationCoordinator, "bind"> | undefined;
   constructor(
-    config: ConfidentialPayoutConfiguration,
+    private config: ConfidentialPayoutConfiguration,
     private destination: PayoutDestination,
     providers?: CashoutProviders,
     private now = Date.now,
@@ -334,6 +340,15 @@ class ConfidentialPayoutGateway {
     const response = obj(await this.providers.quote(request)),
       q = obj(response.quote),
       echo = obj(response.quoteRequest);
+    const feePolicy =
+      this.destination.purpose === "confidential-private-funding" &&
+      this.config.auroraFeeQualification
+        ? qualifyAuroraFees(
+            this.config.auroraFeeQualification,
+            "payoutRobinhood",
+            echo,
+          )
+        : undefined;
     for (const k of Object.keys(request))
       if (
         this.destination.purpose === "confidential-private-funding"
@@ -348,8 +363,25 @@ class ConfidentialPayoutGateway {
       for (const row of [response, echo, q])
         if (
           (row.appFees != null &&
-            (!Array.isArray(row.appFees) || row.appFees.length)) ||
-          (row.feeBps != null && row.feeBps !== 0) ||
+            (!Array.isArray(row.appFees) ||
+              !isDeepStrictEqual(
+                row.appFees
+                  .slice()
+                  .sort((a: any, b: any) =>
+                    String(a.recipient).localeCompare(String(b.recipient)),
+                  ),
+                feePolicy?.appFees ?? [],
+              ))) ||
+          (row.feeBps != null && row.feeBps !== (feePolicy?.totalBps ?? 0)) ||
+          [
+            "integratorFeeBps",
+            "integratorFee",
+            "integratorFeeShare",
+            "applicationFeeAtoms",
+          ].some(
+            (field) =>
+              row[field] != null && row[field] !== 0 && row[field] !== "0",
+          ) ||
           (row.connectedWallets != null &&
             (!Array.isArray(row.connectedWallets) ||
               row.connectedWallets.length))
@@ -429,7 +461,10 @@ class ConfidentialPayoutGateway {
       assetId: monadUsdcAssetId,
       destinationAssetId: this.destination.assetId,
       ...(this.destination.purpose === "confidential-private-funding"
-        ? { providerFeeBps: 0 }
+        ? {
+            providerFeeBps: feePolicy?.totalBps ?? 0,
+            ...(feePolicy ? { feePolicy } : {}),
+          }
         : {}),
       amountAtoms: input.amountAtoms,
       minimumDestinationAtoms: q.minAmountOut,

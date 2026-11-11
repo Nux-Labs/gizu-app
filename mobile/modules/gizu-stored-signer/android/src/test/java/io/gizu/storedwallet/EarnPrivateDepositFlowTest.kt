@@ -220,6 +220,35 @@ class EarnPrivateDepositFlowTest {
   }
 
   @Test
+  fun failedPrivatePayoutPreparationSurvivesCancellationAndCanResume() = runBlocking {
+    DistributionDepositFixtures.record().use { record ->
+      val journal = testDepositJournal()
+      val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+      val review = review(record).put("journeyId", id)
+      journal.saveReview(id, 1, review)
+      val engines = Engines(record, review).apply { prepareUnavailable = true }
+      val coordinator = EarnDepositCoordinator(journal, engines)
+      val grant = EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+      coordinator.confirmed(id, 2, grant)
+      assertEquals("providerUnavailable", journal.get(id).getString("pauseReason"))
+      coordinator.reconcile(id)
+      assertEquals("providerUnavailable", journal.get(id).getString("pauseReason"))
+      assertEquals(0, journal.get(id).getJSONObject("children").length())
+      coordinator.cancel(id, journal.get(id).getInt("revision"))
+      journal.cancelUnsignedReview(id) { error("No public reservation to release") }
+      assertTrue(journal.get(id).has("review"))
+      engines.prepareUnavailable = false
+      val resumed = EarnDepositCoordinator(journal, engines)
+      val remaining =
+        EarnDepositApproval.fromRemainingReview(record, review, 1000).apply {
+          approveAfterPasskey(1000)
+        }
+      resumed.resume(id, journal.get(id).getInt("revision"), remaining)
+      assertEquals("invested", journal.get(id).getString("phase"))
+    }
+  }
+
+  @Test
   fun privateOnlyAndMixedSourcesReachEveryVaultSlotWithoutInventingFundingOrDoubleCounting() =
     runBlocking {
       for (mixed in listOf(false, true)) DistributionDepositFixtures.record().use { record ->
@@ -320,6 +349,7 @@ class EarnPrivateDepositFlowTest {
 
   private inner class Engines(val record: WalletRecord, val review: JSONObject) :
     EarnDepositEngines {
+    var prepareUnavailable = false
     val rows = linkedMapOf<String, JSONObject>()
     val registeredFunding = mutableListOf<String>()
     val creditReads = mutableListOf<String>()
@@ -333,8 +363,10 @@ class EarnPrivateDepositFlowTest {
       return row
     }
 
-    override suspend fun preparePayout(sourceId: String, leg: String) =
-      payout(record, review, sourceId, leg).also { rows[it.getString("operationId")] = it }
+    override suspend fun preparePayout(sourceId: String, leg: String): JSONObject {
+      if (prepareUnavailable) throw RpcFailure(RpcFailureCode.HTTP)
+      return payout(record, review, sourceId, leg).also { rows[it.getString("operationId")] = it }
+    }
 
     override suspend fun prepareDeposit(
       id: String,

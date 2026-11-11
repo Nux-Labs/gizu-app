@@ -110,6 +110,68 @@ fn no_application_fees(v: &Value) -> Result<(), SignerError> {
     }
     Ok(())
 }
+fn private_route_fees(prepared: &Value) -> Result<String, SignerError> {
+    let rows = [
+        prepared,
+        &prepared["quoteResponse"],
+        &prepared["quoteResponse"]["quote"],
+        &prepared["quoteResponse"]["quoteRequest"],
+    ];
+    let Some(policy) = prepared.get("feePolicy") else {
+        for row in rows {
+            no_application_fees(row)?;
+        }
+        if prepared
+            .get("providerFeeBps")
+            .is_some_and(|v| v != &json!(0))
+        {
+            return invalid();
+        }
+        return Ok("Provider fee 0 bps. Gizu/integrator fee 0.".into());
+    };
+    let total = prepared["providerFeeBps"]
+        .as_u64()
+        .filter(|v| *v <= 100)
+        .ok_or(SignerError::InvalidInput)? as u32;
+    let review =
+        crate::earn_fees::review(Some(&policy.to_string()), "payoutRobinhood", Some(total))?;
+    let sorted = |value: &Value| -> Result<Vec<Value>, SignerError> {
+        let mut fees = value.as_array().ok_or(SignerError::InvalidInput)?.clone();
+        fees.sort_by_key(|fee| fee["recipient"].as_str().unwrap_or_default().to_string());
+        Ok(fees)
+    };
+    let expected = sorted(&policy["appFees"])?;
+    let echo = &prepared["quoteResponse"]["quoteRequest"];
+    if sorted(echo.get("appFees").unwrap_or(&json!([])))? != expected
+        || echo.get("referral").unwrap_or(&Value::Null) != &policy["referral"]
+    {
+        return invalid();
+    }
+    for row in rows {
+        if let Some(fees) = row.get("appFees") {
+            if sorted(fees)? != expected {
+                return invalid();
+            }
+        }
+        if row.get("feeBps").is_some_and(|v| v != &json!(total)) {
+            return invalid();
+        }
+        for field in [
+            "integratorFeeBps",
+            "applicationFeeAtoms",
+            "integratorFee",
+            "integratorFeeShare",
+        ] {
+            if row
+                .get(field)
+                .is_some_and(|v| v != &json!(0) && v != &json!("0"))
+            {
+                return invalid();
+            }
+        }
+    }
+    Ok(review)
+}
 struct State {
     proposal: Proposal,
     proposal_hash: B256,
@@ -253,10 +315,7 @@ impl PrivateEarnPayoutOperation {
         {
             return invalid();
         }
-        no_application_fees(&p)?;
-        no_application_fees(&p["quoteResponse"])?;
-        no_application_fees(&p["quoteResponse"]["quote"])?;
-        no_application_fees(&p["quoteResponse"]["quoteRequest"])?;
+        let fee_review = private_route_fees(&p)?;
         let request: crate::swap::aurora::QuoteRequest =
             serde_json::from_value(p["quoteRequest"].clone())
                 .map_err(|_| SignerError::InvalidInput)?;
@@ -313,7 +372,7 @@ impl PrivateEarnPayoutOperation {
             return invalid();
         }
         let review = format!(
-            "INVEST EXISTING PRIVATE FUNDS IN EARN\nFunding operation {} · revision {}\nExisting private Monad USDC source {} · {} chain {} cycle {} · selected budget {} atoms\nTarget Robinhood chain 4663 · vault investment wallets in cycle {}\n{}\nExact {} allocation {} atoms · prior source offset {} atoms\nDestination investment wallet {} · USDG {}\nGuaranteed minimum {} atoms; maximum route deduction {} atoms, inside the private input budget. No application fee.\nAdvanced confidentiality · exact ERC191 payload {} · local nonce reservation {}\nSigning authorizes this private investment payout; it does not confirm destination receipt or vault deposit. Uncertain submissions stay reserved.",
+            "INVEST EXISTING PRIVATE FUNDS IN EARN\nFunding operation {} · revision {}\nExisting private Monad USDC source {} · {} chain {} cycle {} · selected budget {} atoms\nTarget Robinhood chain 4663 · vault investment wallets in cycle {}\n{}\nExact {} allocation {} atoms · prior source offset {} atoms\nDestination investment wallet {} · USDG {}\nGuaranteed minimum {} atoms; maximum route deduction {} atoms, inside the private input budget.\n{}\nAdvanced confidentiality · exact ERC191 payload {} · local nonce reservation {}\nSigning authorizes this private investment payout; it does not confirm destination receipt or vault deposit. Uncertain submissions stay reserved.",
             s.proposal.operation_id,
             s.proposal.revision,
             s.proposal.source.address,
@@ -330,6 +389,7 @@ impl PrivateEarnPayoutOperation {
             DESTINATION_TOKEN,
             quote.min_amount_out,
             debit - quote.min_amount_out,
+            fee_review,
             hash,
             reservation
         );
@@ -436,6 +496,55 @@ mod tests {
     }
     fn operation(p: &Value) -> Arc<PrivateEarnPayoutOperation> {
         PrivateEarnPayoutOperation::new(p.to_string(), vec![0; 32]).unwrap()
+    }
+    #[test]
+    fn qualified_provider_fees_are_bound_to_the_exact_quote_and_review() {
+        let (p, mut prepared, balance, journal) = fixture("swap", 0, 0);
+        let fees = json!([
+            {"recipient":"widget_collect.sputnik-dao.near","fee":25},
+            {"recipient":"service.near","fee":20}
+        ]);
+        prepared["providerFeeBps"] = json!(45);
+        prepared["feePolicy"] = json!({"version":"qualified","route":"payoutRobinhood","totalBps":45,"appFees":fees,"referral":"aurora-qualified","integratorFeeBps":0,"applicationFeeAtoms":"0"});
+        prepared["quoteResponse"]["quoteRequest"]["appFees"] = fees;
+        prepared["quoteResponse"]["quoteRequest"]["referral"] = json!("aurora-qualified");
+        let review = operation(&p)
+            .prepare(
+                prepared.to_string(),
+                balance.to_string(),
+                journal.to_string(),
+            )
+            .unwrap();
+        assert!(review.contains("total 45 bps"));
+        assert!(review.contains("Gizu/integrator fee 0"));
+        for mutation in 0..8 {
+            let mut changed = prepared.clone();
+            match mutation {
+                0 => {
+                    changed.as_object_mut().unwrap().remove("feePolicy");
+                }
+                1 => changed["providerFeeBps"] = json!(44),
+                2 => changed["feePolicy"]["route"] = json!("withdrawal"),
+                3 => changed["feePolicy"]["integratorFeeBps"] = json!(1),
+                4 => changed["quoteResponse"]["quoteRequest"]["appFees"][0]["fee"] = json!(24),
+                5 => changed["quoteResponse"]["quoteRequest"]["referral"] = json!("other"),
+                6 => {
+                    changed["quoteResponse"]["quote"]["appFees"] =
+                        json!([{"recipient":"extra","fee":1}])
+                }
+                _ => changed["quoteResponse"]["quote"]["applicationFeeAtoms"] = json!("1"),
+            }
+            assert!(
+                operation(&p)
+                    .prepare(
+                        changed.to_string(),
+                        balance.to_string(),
+                        journal.to_string()
+                    )
+                    .is_err(),
+                "mutation {mutation}"
+            );
+        }
     }
     #[test]
     fn existing_swap_and_earn_funds_sign_the_exact_investment_payload_once() {

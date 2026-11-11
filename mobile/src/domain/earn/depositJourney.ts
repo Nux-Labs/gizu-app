@@ -16,6 +16,7 @@ export type DepositStage = "funding" | "credit" | "payouts" | "deposit";
 export type DepositPauseCode =
   | "quoteUnavailable"
   | "previewUnavailable"
+  | "providerUnavailable"
   | "sponsorshipUnavailable"
   | "insufficientFunds"
   | "uneconomicAmount"
@@ -151,6 +152,7 @@ const stages: DepositStage[] = ["funding", "credit", "payouts", "deposit"];
 const pauses: DepositPauseCode[] = [
   "quoteUnavailable",
   "previewUnavailable",
+  "providerUnavailable",
   "sponsorshipUnavailable",
   "insufficientFunds",
   "uneconomicAmount",

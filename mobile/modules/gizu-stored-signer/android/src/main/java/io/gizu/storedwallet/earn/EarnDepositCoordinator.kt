@@ -341,6 +341,12 @@ internal class EarnDepositCoordinator(
           missing -> "recoveryRequired"
           failure is EarnRpcRejection && failure.method == "pm_getPaymasterData" ->
             "sponsorshipUnavailable"
+          failure is RpcFailure &&
+            failure.code in
+              setOf(RpcFailureCode.NETWORK, RpcFailureCode.TIMEOUT, RpcFailureCode.HTTP) ->
+            "providerUnavailable"
+          failure is EarnGatewayFailure &&
+            failure.code == "CONFIDENTIAL_PRIVATE_FUNDING_UNAVAILABLE" -> "providerUnavailable"
           else -> "termsChanged"
         }
       journal.pause(id, reason)

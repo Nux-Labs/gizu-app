@@ -14,6 +14,8 @@ import { useDepositFundingBalance } from "./useDepositFundingBalance";
 export const depositPauseCopy: Record<DepositPauseCode, string> = {
   quoteUnavailable: "The route is unavailable. Review again when the provider recovers.",
   previewUnavailable: "A fresh fee estimate is unavailable. No new spending can be approved.",
+  providerUnavailable:
+    "The funding provider is unavailable. Saved progress is preserved; review the remaining steps to retry.",
   sponsorshipUnavailable:
     "Gas sponsorship is unavailable. Saved transactions remain tracked; review the remaining steps to retry.",
   insufficientFunds: "Your available USDC does not cover this budget and gas.",
@@ -83,14 +85,12 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
   const revoke = useCallback(() => {
     const row = saved.current,
       lifecycleEpoch = epoch.current;
-    // Failed preparation has no spending authority left to revoke. Cancelling it
-    // on blur/unmount would overwrite the useful failure with "cancelled".
+    // A stopped failure has no live spending authority. Preserve its cause on
+    // blur/unmount; waiting jobs still need revocation when the screen is left.
     if (
       !occupied.current &&
       row?.phase === "paused" &&
-      !row.review &&
-      row.completedSteps.length === 0 &&
-      row.creditedAtoms === "0"
+      !["settlementPending", "submissionUnknown"].includes(row.pauseReason ?? "")
     )
       return;
     if (row && row.phase !== "invested")

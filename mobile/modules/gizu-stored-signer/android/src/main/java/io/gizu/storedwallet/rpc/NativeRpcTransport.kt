@@ -181,6 +181,8 @@ internal fun safeEarnGatewayFailure(body: String): EarnGatewayFailure? {
         "Saved Earn recovery could not be verified. Reconcile before retrying."
       "EARN_SETTLEMENT_UNAVAILABLE" ->
         "Operation-specific confidential credit is unavailable. Reconcile before proceeding."
+      "CONFIDENTIAL_PRIVATE_FUNDING_UNAVAILABLE" ->
+        "The private funding provider is unavailable. Saved progress is preserved; retry the remaining deposit."
       "EARN_MINIMUM_RETURN_CONFLICT" ->
         "An earlier private observation overlaps this saved return. Retry reconciliation; do not withdraw from the vault again."
       "EARN_MINIMUM_RETURN_UNAVAILABLE" ->

@@ -647,7 +647,9 @@ class GizuStoredSignerModule : Module() {
         val row =
           store.load().use { record ->
             check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
-            earnDepositJournal(activity, record).get(id)
+            earnDepositJournal(activity, record).recoverMissingReview(id).also {
+              check(it.has("review")) { "Prepare a fresh deposit review before continuing." }
+            }
           }
         store.selectEarnCycle(row.getInt("cycleIndex"))
         val fresh =
@@ -703,7 +705,7 @@ class GizuStoredSignerModule : Module() {
             else id
           if (depositHost?.busy == true) promise.resolve(depositHost!!.status(lookupId))
           else {
-            val row = journal.get(lookupId)
+            val row = journal.recoverMissingReview(lookupId)
             if (
               row.has("review") &&
                 row.getString("phase") !in setOf("preparing", "review", "invested") &&

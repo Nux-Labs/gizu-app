@@ -217,7 +217,14 @@ internal class EarnPrivatePayoutEngine(
             text,
             hash,
           )
-          val witness = JSONObject().put("hash", hash).put("text", text).put("providerFeeBps", 0)
+          val witness =
+            JSONObject()
+              .put("hash", hash)
+              .put("text", text)
+              .put(
+                "providerFeeBps",
+                privateFundingFeeBps(JSONObject(row.getString("preparedText"))),
+              )
           authority()
           preparedAuthority(row, witness)
           row =
@@ -249,7 +256,7 @@ internal class EarnPrivatePayoutEngine(
         JSONObject()
           .put("hash", row.getString("reviewHash"))
           .put("text", row.getString("review"))
-          .put("providerFeeBps", 0)
+          .put("providerFeeBps", privateFundingFeeBps(JSONObject(row.getString("preparedText"))))
       preparedAuthority(row, witness)
     }
     currentCoroutineContext().ensureActive()
@@ -305,4 +312,12 @@ internal class EarnPrivatePayoutEngine(
     }
     return row
   }
+}
+
+/** Legacy saved zero-fee quotes remain readable; new service fees require a qualified proof. */
+internal fun privateFundingFeeBps(prepared: JSONObject): Int {
+  val total = prepared.optInt("providerFeeBps", 0)
+  if (prepared.has("feePolicy")) nativeEarnFeePolicy(prepared, "providerFeeBps", "payoutRobinhood")
+  else check(total == 0)
+  return total
 }
