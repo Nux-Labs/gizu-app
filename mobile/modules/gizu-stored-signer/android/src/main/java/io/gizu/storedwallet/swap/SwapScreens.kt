@@ -24,12 +24,13 @@ import io.gizu.storedwallet.NativeStyle
  */
 internal object SwapScreens {
   private val addressPattern = Regex("0x[0-9a-fA-F]{40}")
-  private val addressColor = Color.parseColor("#9be3c1")
-  private val warm = Color.parseColor("#f2c879")
-  private val warmFill = Color.argb(22, 242, 200, 121)
-  private val warmBorder = Color.argb(80, 242, 200, 121)
-  private val dangerFill = Color.argb(22, 255, 155, 155)
-  private val neonFill = Color.argb(30, 49, 196, 126)
+  private val addressColor = NativeStyle.cyanSoft
+  // Privacy and authorization notices use the palette's violet; destinations use danger.
+  private val warm = NativeStyle.violet
+  private val warmFill = Color.argb(20, 185, 166, 255)
+  private val warmBorder = Color.argb(64, 185, 166, 255)
+  private val dangerFill = NativeStyle.dangerFill
+  private val neonFill = NativeStyle.neonFill
 
   private fun dp(context: Context, value: Int) = NativeStyle.dp(context, value)
 
@@ -79,26 +80,29 @@ internal object SwapScreens {
       setTextIsSelectable(false)
     }
 
+  /** Raised card like the app's `Surface`; notices pass `radius = 16` like its `Notice`. */
   private fun card(
     context: Context,
-    fill: Int = NativeStyle.glass,
-    border: Int = NativeStyle.glassBorder,
+    fill: Int = NativeStyle.cardFill,
+    border: Int = NativeStyle.cardEdge,
+    radius: Int = 24,
   ) =
     LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
-      background = NativeStyle.rounded(context, fill, 20, border)
-      setPadding(dp(context, 16), dp(context, 14), dp(context, 16), dp(context, 14))
+      background = NativeStyle.rounded(context, fill, radius, border)
+      setPadding(dp(context, 18), dp(context, 16), dp(context, 18), dp(context, 16))
     }
 
+  /** Pill badge like the app's `Badge`: tinted fill, 11sp label, fully rounded. */
   private fun chip(context: Context, label: String, color: Int, fill: Int, border: Int? = null) =
     TextView(context).apply {
       text = label
       textSize = 11f
-      letterSpacing = 0.08f
+      letterSpacing = 0.04f
       setTextColor(color)
       typeface = NativeStyle.font(context, true)
-      background = NativeStyle.rounded(context, fill, 12, border)
-      setPadding(dp(context, 10), dp(context, 5), dp(context, 10), dp(context, 5))
+      background = NativeStyle.rounded(context, fill, 999, border)
+      setPadding(dp(context, 10), dp(context, 4), dp(context, 10), dp(context, 4))
     }
 
   private fun number(view: Map<String, Any?>, key: String, fallback: Int = 0) =
@@ -258,7 +262,7 @@ internal object SwapScreens {
     )
     if (symbol != "token")
       badges.addView(
-        chip(context, symbol, NativeStyle.primaryText, NativeStyle.glassSoft, NativeStyle.glassBorder),
+        chip(context, symbol, NativeStyle.primaryText, NativeStyle.well, NativeStyle.cardEdge),
         LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(context, 8) },
       )
     column.addView(badges)
@@ -300,7 +304,7 @@ internal object SwapScreens {
     )
     column.addView(counters, params(context, 12))
 
-    val note = card(context, NativeStyle.glassSoft, NativeStyle.glassBorder)
+    val note = card(context, NativeStyle.well, NativeStyle.cardEdge, 16)
     note.addView(
       text(
         context,
@@ -314,12 +318,7 @@ internal object SwapScreens {
 
     // The raw engine position stays available for support, but out of the way.
     column.addView(
-      text(
-        context,
-        "${view["phase"]} · ${view["step"]}",
-        11f,
-        NativeStyle.disabledText,
-      ),
+      NativeStyle.label(context, "${view["phase"]} · ${view["step"]}", NativeStyle.disabledText),
       params(context, 12),
     )
     return ScrollView(context).apply {
@@ -359,7 +358,7 @@ internal object SwapScreens {
             background = GradientDrawable().apply {
               shape = GradientDrawable.OVAL
               setColor(Color.TRANSPARENT)
-              setStroke(dp(context, 1), NativeStyle.glassBorder)
+              setStroke(dp(context, 1), NativeStyle.cardEdge)
             }
           }
         }
@@ -393,7 +392,7 @@ internal object SwapScreens {
         max = total
         progress = done.coerceIn(0, total)
         progressTintList = ColorStateList.valueOf(NativeStyle.neon)
-        progressBackgroundTintList = ColorStateList.valueOf(NativeStyle.glassPressed)
+        progressBackgroundTintList = ColorStateList.valueOf(NativeStyle.well)
       }
     column.addView(bar, LinearLayout.LayoutParams(-1, dp(context, 8)).apply { topMargin = dp(context, 8) })
     return column
@@ -427,9 +426,9 @@ internal object SwapScreens {
               context,
               "TERMS",
               paragraph.trim(),
-              NativeStyle.secondary,
-              NativeStyle.glassSoft,
-              NativeStyle.glassBorder,
+              NativeStyle.faint,
+              NativeStyle.well,
+              NativeStyle.cardEdge,
             )
           else -> block(context, lines)
         }
@@ -440,7 +439,7 @@ internal object SwapScreens {
 
   private fun header(context: Context, lines: List<String>): View {
     val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-    box.addView(chip(context, lines.first().trim(), NativeStyle.neon, neonFill))
+    box.addView(NativeStyle.label(context, lines.first().trim(), NativeStyle.neon))
     lines.getOrNull(1)?.let {
       box.addView(
         text(context, it.trim(), 19f, NativeStyle.primaryText, true),
@@ -460,9 +459,9 @@ internal object SwapScreens {
     fill: Int,
     border: Int,
   ): View {
-    val card = card(context, fill, border)
-    card.addView(chip(context, label, color, Color.TRANSPARENT))
-    card.addView(text(context, body, 13.5f, color), params(context, 6))
+    val card = card(context, fill, border, 16)
+    card.addView(NativeStyle.label(context, label, color))
+    card.addView(text(context, body, 13.5f, NativeStyle.primaryText), params(context, 8))
     return card
   }
 

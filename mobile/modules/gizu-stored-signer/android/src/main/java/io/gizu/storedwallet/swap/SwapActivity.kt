@@ -175,6 +175,7 @@ class SwapActivity : Activity() {
         )
       }
     setContentView(root)
+    NativeStyle.edgeToEdge(this, root, 24)
     show(
       "Preparing the swap",
       "Checking the funding wallet, quotes and limits. Nothing is signed yet.",
@@ -268,7 +269,12 @@ class SwapActivity : Activity() {
       root.addView(
         NativeStyle.body(this, error, NativeStyle.danger).apply {
           background =
-            NativeStyle.rounded(this@SwapActivity, 0x16FF9B9B, 16, NativeStyle.dangerBorder)
+            NativeStyle.rounded(
+              this@SwapActivity,
+              NativeStyle.dangerFill,
+              16,
+              NativeStyle.dangerBorder,
+            )
           setPadding(
             NativeStyle.dp(this@SwapActivity, 14),
             NativeStyle.dp(this@SwapActivity, 12),
