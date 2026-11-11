@@ -148,7 +148,7 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   registerEarnFusionRoutes(app,new FusionNativeGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,apiKey:secret.ONEINCH_API_KEY,rpcUrl:ethereumPlannerConfig.rpcUrl}));
   registerEarnExitRoutes(app, new EarnExitSnapshot({ethereumRpcUrl:ethereumPlannerConfig.rpcUrl,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL,auroraApiKey:secret.AURORA_API_KEY}));
   registerConfidentialCashoutRoutes(app, new ConfidentialCashoutGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY}));
-  registerConfidentialPrivateFundingRoutes(app, new ConfidentialPrivateFundingGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL}));
+  registerConfidentialPrivateFundingRoutes(app, new ConfidentialPrivateFundingGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL,auroraFeeQualification}));
   registerEarnPayoutRoutes(app,new PrivatePayoutGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification,ethereumRpcUrl:ethereumPlannerConfig.rpcUrl,robinhoodRpcUrl:secret.ROBINHOOD_RPC_URL??"https://rpc.mainnet.chain.robinhood.com"}));
   const chains = resolveCatalogChains(secret);
   const vaults = resolveCatalogVaults(secret, chains);

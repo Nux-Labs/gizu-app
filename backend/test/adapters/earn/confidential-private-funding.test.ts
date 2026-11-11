@@ -7,6 +7,7 @@ import { hexToBytes, toHex, encodeEventTopics, erc20Abi } from "viem";
 import * as gateways from "../../../src/adapters/earn/confidential-cashout.ts";
 import * as routes from "../../../src/http/routes/confidential-cashout.routes.ts";
 import { EarnRecoveryEnvelope } from "../../../src/adapters/earn/recovery-envelope.ts";
+import { observedAuroraFeeQualification } from "../../../src/adapters/earn/fee-policy.ts";
 const C = "0x1000000000000000000000000000000000000001";
 const R = "0x2000000000000000000000000000000000000002";
 const at = Date.parse("2026-11-05T12:00:00Z");
@@ -153,6 +154,47 @@ test("private funding directly prepares advanced exact-input Monad USDC to Robin
   assert.equal(p.quoteRequest.slippageTolerance, 100);
   assert.equal(p.quoteRequest.appFees, undefined);
   assert.equal(Date.parse(JSON.parse(p.intent.payload).deadline), at + 60000);
+});
+test("private funding binds the same qualified service fees as its preview", async () => {
+  const f = fixture();
+  const quote = f.providers.quote;
+  f.providers.quote = async (request: any) => {
+    const response: any = await quote(request);
+    response.quoteRequest.appFees = [
+      { fee: 25, recipient: "widget_collect.sputnik-dao.near" },
+      {
+        recipient:
+          "2238fd089f1c92b206c218cd16b8676cb98964e0d50f8ab729c6396a81e07805",
+        fee: 20,
+      },
+    ];
+    response.quoteRequest.referral = "aurora-jh500bnyo9";
+    return response;
+  };
+  const gateway = new gateways.ConfidentialPrivateFundingGateway(
+    { ...f.config, auroraFeeQualification: observedAuroraFeeQualification },
+    f.providers,
+    () => at,
+  );
+  const prepared = await gateway.prepare(f.prepare);
+  assert.equal(prepared.providerFeeBps, 45);
+  assert.equal(prepared.feePolicy.route, "payoutRobinhood");
+  assert.equal(prepared.feePolicy.totalBps, 45);
+  assert.equal(prepared.feePolicy.integratorFeeBps, 0);
+  assert.equal(prepared.feePolicy.applicationFeeAtoms, "0");
+  assert.equal(prepared.minimumDestinationAtoms, "980000");
+  const recovered: any = new EarnRecoveryEnvelope(f.config.recoveryKey).open(
+    "confidential-private-funding",
+    prepared.recoveryEnvelope,
+  );
+  assert.deepEqual(recovered.feePolicy, prepared.feePolicy);
+  f.providers.quote = async (request: any) => {
+    const response: any = await quote(request);
+    response.quoteRequest.appFees = [{ recipient: "unqualified.near", fee: 1 }];
+    response.quoteRequest.referral = "aurora-jh500bnyo9";
+    return response;
+  };
+  await assert.rejects(gateway.prepare(f.prepare));
 });
 test("private funding authenticates history then exact receipt and remains recoverable after restart", async () => {
   const f = fixture(),

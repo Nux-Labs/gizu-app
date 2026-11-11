@@ -46,10 +46,18 @@ an explicit exact-byte retry; authenticated history and a finalized canonical
 destination transfer are required before vault funding is attributed. A
 marker-only interrupted local signing attempt can be resumed under a fresh
 grant because submission is unreachable until signed bytes are durably saved.
+Private funding uses the same qualified `payoutRobinhood` service fee policy as
+the preview. The backend seals the actual fee proof into recovery; native review
+binds it to the quote and enforces the reviewed fee cap and minimum output.
+Gizu/integrator fees remain zero. Provider outages pause with their own reason
+instead of claiming that live terms changed. A private source observation before
+the first payout child does not permit lifecycle cleanup to erase the review.
+Older rows with a missing review and no attached children recover to an unsigned
+draft; rows with child history require reconciliation and retain that history.
 Other private spending is blocked while the deposit owns its sources. The
 backend retains only opaque coordination commitments, without an address
 catalogue. Deploy these backend routes before using the new Android build with
-private funds; this implementation does not deploy Render automatically.
+private funds; backend deployment remains an explicit release.
 
 New Android deposits use the existing Swap wallet-count and weight algorithm, saved natively before destination quotes. Every selected wallet invests in the chosen vault. The source budget selects one wallet below 5 USDC, two for 5–20, two or three above 20–100, three or four above 100–1,000, and four or five above 1,000. Weights total 10,000 basis points and stay within 70–130% of an equal share. These shares allocate verified confidential credit; independent payout fees, vault gas and each wallet's retained withdrawal reserve reduce the invested amounts. Multiple funding sources use cumulative rounding so the allocated input is conserved.
 
@@ -452,7 +460,6 @@ The following can be sent by the operator to Aurora; no message was sent by this
 > and `aurora-1u3j2qzclc` from Render; please explain and confirm the intended fee
 > configuration for all four lifecycle routes.
 
-
 ## 2026-10-13 — Native Earn without history invitation
 
 New native funding/return signatures save an authenticated balance baseline before submission. Each funding source waits for successful route status and a credit delta bounded by its saved quote; only then can the next source sign. Portable sealed credit attestations allow both 10/90 payouts and recovery after private funds are spent. Payout reconciliation verifies the exact saved signed intent, successful route, and canonical token-transfer receipts (finalized outside Robinhood); the same receipt cannot fund two allocations to the same recipient. Investment still stops at the vault deposit; withdrawal remains a separate user action with fresh recipient addresses.
@@ -665,7 +672,6 @@ Operational notes:
   amounts, addresses, tokens or signatures.
 - On a 3 USDC budget the 10% hold leg lost about half to a fixed route fee
   (0.2987 USDC in, 0.147037 USDG out).
-
 
 ### November 9: minimum return confirmation without history
 

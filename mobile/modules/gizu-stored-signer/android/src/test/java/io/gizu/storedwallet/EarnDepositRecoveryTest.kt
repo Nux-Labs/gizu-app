@@ -8,6 +8,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EarnDepositRecoveryTest {
+  @Test
+  fun missingUnsignedPrivateReviewRecoversToDraftWithoutClaimingSavedTransactions() {
+    DepositFixtures.record().use { r ->
+      for (childAttached in listOf(false, true)) {
+        val j = testDepositJournal()
+        val id = j.loadOrCreate(r, 4663, null).getString("journeyId")
+        j.saveReview(id, 1, DepositFixtures.review(r).put("journeyId", id))
+        if (childAttached) j.attachChild(id, j.get(id).getInt("revision"), "funding", "source0")
+        j.update(id, j.get(id).getInt("revision")) {
+          it.remove("review")
+          it
+            .put("phase", "paused")
+            .put("pauseReason", "cancelled")
+            .put("creditedAtoms", "990000")
+            .put("completedSteps", JSONArray(listOf("funding", "credit")))
+        }
+        val repaired = j.recoverMissingReview(id)
+        assertEquals(if (childAttached) "paused" else "draft", repaired.getString("phase"))
+        assertEquals(if (childAttached) "990000" else "0", repaired.getString("creditedAtoms"))
+        assertEquals(if (childAttached) 2 else 0, repaired.getJSONArray("completedSteps").length())
+        if (childAttached) {
+          assertEquals("recoveryRequired", repaired.getString("pauseReason"))
+          assertEquals(
+            "source0",
+            repaired.getJSONObject("children").getJSONArray("funding").getString(0),
+          )
+        }
+      }
+    }
+  }
+
   private fun ledger() =
     FundingReservations(
       DepositMemoryFile(),

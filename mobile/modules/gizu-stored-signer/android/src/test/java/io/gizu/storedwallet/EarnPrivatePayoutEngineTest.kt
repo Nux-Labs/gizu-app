@@ -100,6 +100,7 @@ class EarnPrivatePayoutEngineTest {
     var lostSubmit = true
     var status = JSONObject().put("status", "pending").put("receivedAtoms", "0")
     var preparedMinimum: String? = null
+    var providerFeeBps: Int? = null
     val excluded = mutableListOf<Set<String>>()
     val gateway =
       object : CashoutGateway {
@@ -111,6 +112,27 @@ class EarnPrivatePayoutEngineTest {
         ): JSONObject {
           prepares++
           return JSONObject()
+            .also { prepared ->
+              providerFeeBps?.let { total ->
+                prepared
+                  .put("providerFeeBps", total)
+                  .put(
+                    "feePolicy",
+                    JSONObject()
+                      .put("version", "qualified")
+                      .put("route", "payoutRobinhood")
+                      .put("totalBps", total)
+                      .put(
+                        "appFees",
+                        JSONArray()
+                          .put(JSONObject().put("recipient", "provider.near").put("fee", total)),
+                      )
+                      .put("referral", JSONObject.NULL)
+                      .put("integratorFeeBps", 0)
+                      .put("applicationFeeAtoms", "0"),
+                  )
+              }
+            }
             .put("operationId", operationId)
             .put("minimumDestinationAtoms", preparedMinimum ?: amount)
             .put("destinationRecipient", recipient)
@@ -207,6 +229,21 @@ class EarnPrivatePayoutEngineTest {
     override fun close() {
       grant.invalidate()
       record.close()
+    }
+  }
+
+  @Test
+  fun actualProviderFeeCannotExceedTheReviewedPayoutCap() = runBlocking {
+    Fixture().use { f ->
+      f.providerFeeBps = 45 // Saved allocation permits at most 4 bps.
+      val engine = f.engine()
+      val id = engine.create(f.review, "source0", "invest:0").getString("operationId")
+      assertThrows(IllegalStateException::class.java) {
+        runBlocking { engine.execute(id, f.grant, f::authorize) }
+      }
+      assertEquals(0, f.approved)
+      assertEquals(0, f.signed)
+      assertTrue(f.submissions.isEmpty())
     }
   }
 

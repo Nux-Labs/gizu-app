@@ -326,6 +326,27 @@ test("leaving a failed unsigned review preserves its preview failure instead of 
   expect(service.confirm).not.toHaveBeenCalled();
 });
 
+test("leaving a provider-paused private deposit preserves the failure and remaining review", async () => {
+  const paused = {
+    ...ready(),
+    phase: "paused",
+    pauseReason: "providerUnavailable",
+    creditedAtoms: "990000",
+    completedSteps: ["funding", "credit"],
+  } as DepositSnapshot;
+  const { service, navigation } = setup(
+    { status: jest.fn().mockResolvedValue(paused) },
+    paused.journeyId,
+  );
+  expect(await screen.findByText(/funding provider is unavailable/)).toBeVisible();
+  act(() => navigation.navigate("Other" as never));
+  await act(async () => {});
+  act(() => navigation.goBack());
+  expect(await screen.findByText(/funding provider is unavailable/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Review remaining steps" })).toBeEnabled();
+  expect(service.cancel).not.toHaveBeenCalled();
+});
+
 test("a native read-only passkey transition during review preparation does not cancel the draft", async () => {
   const pending = deferred<DepositSnapshot>();
   const partial = { ...ready(), phase: "preparing", review: undefined } as DepositSnapshot;

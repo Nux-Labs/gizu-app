@@ -78,6 +78,41 @@ internal class EarnDepositJournal(
 
   fun get(id: String): JSONObject = all().single { it.getString("journeyId") == id }
 
+  /** Older cleanup could drop a private-only review after recording local source credit. */
+  fun recoverMissingReview(id: String): JSONObject =
+    synchronized(lock) {
+      val row = get(id)
+      if (row.has("review") || row.getString("phase") == "invested") return@synchronized row
+      if (row.getJSONObject("children").length() > 0) {
+        if (row.optString("pauseReason") == "recoveryRequired") return@synchronized row
+        return@synchronized pause(id, "recoveryRequired")
+      }
+      if (row.getJSONArray("completedSteps").length() == 0 && row.getString("creditedAtoms") == "0")
+        return@synchronized row
+      // Every signer requires a durably attached child first. With none, this is local bookkeeping.
+      update(id, row.getInt("revision")) {
+        it.put("phase", "draft").put("completedSteps", JSONArray())
+        for (field in
+          listOf(
+            "creditedAtoms",
+            "holdReceivedAtoms",
+            "investReceivedAtoms",
+            "depositedAtoms",
+            "sharesAtoms",
+          )) it.put(field, "0")
+        it.optJSONArray("investments")?.objects()?.forEach { investment ->
+          investment
+            .put("status", "pending")
+            .put("receivedAtoms", "0")
+            .put("depositedAtoms", "0")
+            .put("sharesAtoms", "0")
+          investment.remove("transactionHash")
+        }
+        it.remove("pauseReason")
+        it.remove("message")
+      }
+    }
+
   fun loadOrCreate(record: WalletRecord, profile: Int, draftId: String?): JSONObject =
     synchronized(lock) {
       check(
@@ -203,7 +238,13 @@ internal class EarnDepositJournal(
     synchronized(lock) {
       val rows = all()
       val row = rows.single { it.getString("journeyId") == id }
-      if (row.getJSONObject("children").length() > 0 || row.getString("phase") == "invested")
+      if (
+        row.getJSONObject("children").length() > 0 ||
+          row.getString("phase") == "invested" ||
+          (row.has("review") &&
+            (row.getJSONArray("completedSteps").length() > 0 ||
+              row.getString("creditedAtoms") != "0"))
+      )
         return@synchronized row
       val batch =
         row.optString("preparationBatchId").takeIf { it.isNotBlank() }
@@ -392,6 +433,7 @@ private val depositPauseReasons =
   setOf(
     "quoteUnavailable",
     "previewUnavailable",
+    "providerUnavailable",
     "sponsorshipUnavailable",
     "insufficientFunds",
     "uneconomicAmount",
