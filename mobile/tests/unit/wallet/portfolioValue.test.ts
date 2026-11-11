@@ -1,5 +1,7 @@
 import {
   portfolioValue,
+  portfolioUsdcBalance,
+  portfolioPublicUsdcAtoms,
   portfolioVaultPosition,
   vaultPositionProfile,
 } from "@/domain/wallet/portfolioValue";
@@ -216,4 +218,33 @@ test("vault routing binds the exact chain and pinned vault rather than token sym
     portfolioVaultPosition({ ...snapshot(), positions: [position()] }, "robinhood-usdg")
       ?.underlyingAtoms,
   ).toBe("3000000");
+});
+
+test("deposit USDC observations reuse public and private cash without including USDG or vault value", () => {
+  const cash = asset({
+    assetId: "private",
+    chainId: 143,
+    token: "confidential:monad-usdc",
+    balanceAtoms: null,
+    observedAtoms: "2430000",
+    complete: false,
+    stale: true,
+    valueUsdcAtoms: null,
+  });
+  const observed = {
+    ...snapshot(),
+    fundingAtoms: "90000",
+    totalAtoms: "90000",
+    ownedAssets: [cash, { ...cash, assetId: "alias" }, asset()],
+    positions: [position()],
+  };
+  expect(portfolioUsdcBalance(observed)).toEqual({
+    publicAtoms: "90000",
+    privateAtoms: "2430000",
+    totalAtoms: "2520000",
+  });
+  expect(portfolioPublicUsdcAtoms(observed)).toBe("90000");
+  expect(
+    portfolioUsdcBalance({ ...snapshot(), balanceComplete: false, totalAtoms: "0" }),
+  ).toBeNull();
 });

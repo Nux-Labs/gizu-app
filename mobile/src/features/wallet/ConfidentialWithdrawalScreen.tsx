@@ -24,7 +24,7 @@ export function ConfidentialWithdrawalScreen() {
     () => injected ?? createConfidentialWithdrawalService(portfolio.session.walletId ?? ""),
     [injected, portfolio.session.walletId],
   );
-  const w = useConfidentialWithdrawal(service, portfolio.refresh);
+  const w = useConfidentialWithdrawal(service, portfolio.refreshAfterAction);
   const [amount, setAmount] = useState("");
   let amountAtoms = "";
   let amountError = "";

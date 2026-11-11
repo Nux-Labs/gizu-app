@@ -1,3 +1,5 @@
+import { MainnetWalletProvider } from "@/features/wallet/MainnetWalletProvider";
+import { mainnetPortfolio } from "../../support/mainnetWallet";
 import { tokenCatalogService } from "@/services/tokenCatalog";
 import { catalogToken } from "../../support/tokenCatalog";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
@@ -499,4 +501,43 @@ test("sell mode offers only the selected holding sale after an earlier completed
   fireEvent.press(screen.getByRole("button", { name: "Reverse direction" }));
   expect(screen.queryByRole("button", { name: "Swap to USDC" })).toBeNull();
   expect(await screen.findByRole("button", { name: "Choose token to sell" })).toBeVisible();
+});
+
+test("a swap balance shortfall is shown explicitly and refreshes the shared observation", async () => {
+  const address = status.fundingAddress;
+  const portfolio = {
+    getMainnetPortfolio: jest
+      .fn()
+      .mockResolvedValueOnce(mainnetPortfolio("wallet", address, "3000000"))
+      .mockResolvedValue(mainnetPortfolio("wallet", address, "1000000")),
+  };
+  start.mockRejectedValue(
+    Object.assign(new Error("INSUFFICIENT_FUNDS"), { code: "INSUFFICIENT_FUNDS" }),
+  );
+  render(
+    <MainnetWalletProvider
+      session={{
+        kind: "mainnet",
+        walletId: "wallet",
+        address,
+        accountId: address,
+        accountIndex: 1,
+        chainId: 143,
+        method: "Passkey",
+      }}
+      service={portfolio}
+    >
+      <SafeAreaProvider>
+        <NativeSwapScreen />
+      </SafeAreaProvider>
+    </MainnetWalletProvider>,
+  );
+  await screen.findByText("Available: 3 USDC");
+  await screen.findByText("COIN");
+  fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "2");
+  fireEvent.press(screen.getByRole("button", { name: /^Swap$/ }));
+  expect(
+    await screen.findByText("Your available USDC does not cover this amount and its fees."),
+  ).toBeVisible();
+  expect(await screen.findByText("Available: 1 USDC")).toBeVisible();
 });

@@ -163,7 +163,7 @@ internal class EarnDepositEngineAdapter(
         readAuthorization()
         store.load().use { r ->
           record {}
-          readPrivateDepositBalance(r, source, ::authority)
+          readPrivateDepositBalance(context, r, source, ::authority)
         }
       },
       ::authority,

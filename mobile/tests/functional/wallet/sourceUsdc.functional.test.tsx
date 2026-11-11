@@ -216,7 +216,7 @@ test("a settled incomplete native cache is retryable and never exposes zero as s
   expect(screen.queryByLabelText("0 USD")).toBeNull();
   await openEarnLink();
   expect(
-    await screen.findByText("Source balance unavailable. Refresh before investing."),
+    await screen.findByText("Your balance will be checked during deposit review."),
   ).toBeVisible();
   expect(screen.queryByText("Checking source balance…")).toBeNull();
 });

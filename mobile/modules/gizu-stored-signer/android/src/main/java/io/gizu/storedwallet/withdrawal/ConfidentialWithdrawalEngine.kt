@@ -89,9 +89,7 @@ internal class ConfidentialWithdrawalEngine(
           remaining -= debit
         }
       }
-      check(remaining == BigInteger.ZERO) {
-        "Insufficient fresh authenticated private USDC; public balances are not sources"
-      }
+      requireAvailableFunds(BigInteger.ZERO, remaining)
       val random = ByteArray(32).also { SecureRandom().nextBytes(it) }
       val choice =
         try {
@@ -158,12 +156,10 @@ internal class ConfidentialWithdrawalEngine(
       }
       authority()
       val b = read(s)
-      check(
-        b.getValue("available").toString().toBigInteger() >=
-          unsigned.sumAtoms("amountAtoms").toBigInteger()
-      ) {
-        "Private source balance changed; the saved amount/distribution was not changed"
-      }
+      requireAvailableFunds(
+        b.getValue("available").toString().toBigInteger(),
+        unsigned.sumAtoms("amountAtoms").toBigInteger(),
+      )
       balances[index] = b
     }
     for (i in 0 until row.getJSONArray("children").length()) {
@@ -408,9 +404,7 @@ internal class ConfidentialWithdrawalEngine(
               .sumAtoms("amountAtoms")
               .toBigInteger()
           val fresh = read(sources(row)[c.getInt("source")])
-          check(fresh.getValue("available").toString().toBigInteger() >= remaining) {
-            "Private funds changed during approval; no additional child was signed"
-          }
+          requireAvailableFunds(fresh.getValue("available").toString().toBigInteger(), remaining)
           val j = evidence(c)
           invalidate(row)
           row = update(row) { child(it, i).put("signingPending", true) }
@@ -563,6 +557,7 @@ internal class ConfidentialWithdrawalEngine(
         }
       }
     invalidate(updated)
+    observePaidSources(row, updated)
     return updated
   }
 
@@ -615,6 +610,24 @@ internal class ConfidentialWithdrawalEngine(
         }
       }
     invalidate(updated)
+    observePaidSources(row, updated)
     return updated
+  }
+
+  private suspend fun observePaidSources(before: JSONObject, after: JSONObject) {
+    if (
+      before.getJSONArray("children").objects().all { it.getString("status") == "paid" } ||
+        after.getJSONArray("children").objects().any { it.getString("status") != "paid" }
+    )
+      return
+    for (source in sources(after)) {
+      try {
+        read(source)
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        /* Verified delivery does not depend on a display refresh. */
+      }
+    }
   }
 }

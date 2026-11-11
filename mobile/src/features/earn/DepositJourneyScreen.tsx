@@ -63,7 +63,7 @@ export function DepositJourneyScreen({
       .toString() ?? "0";
   const distribution = row?.distribution;
   return (
-    <Screen>
+    <Screen refreshing={v.balanceRefreshing} onRefresh={() => void v.refreshBalance()}>
       <BackAction fallback="Vaults" />
       <View className="flex-row items-center gap-3">
         <Image
@@ -100,24 +100,15 @@ export function DepositJourneyScreen({
               maxLength={38}
             />
             <Typography variant="caption">
-              {v.balanceLoading
-                ? "Checking available USDC…"
-                : v.balanceUnavailable || v.balance === null
-                  ? "Available USDC could not be verified. Retry before investing."
-                  : `Available: ${v.balance} USDC`}
+              {v.balance !== null
+                ? `Available: ${v.balance} USDC`
+                : "Your balance will be checked when you review this deposit."}
             </Typography>
             {v.balanceBreakdown && (
               <Typography variant="caption">
                 Private {v.balanceBreakdown.privateBalance} USDC · Public{" "}
                 {v.balanceBreakdown.publicBalance} USDC
               </Typography>
-            )}
-            {!v.balanceLoading && (v.balanceUnavailable || v.balance === null) && (
-              <Button
-                label="Retry available balance"
-                variant="secondary"
-                onPress={v.retryBalance}
-              />
             )}
             <Typography variant="caption">
               {row && !distribution

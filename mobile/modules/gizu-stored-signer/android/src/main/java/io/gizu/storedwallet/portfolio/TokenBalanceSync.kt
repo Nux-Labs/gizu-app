@@ -202,10 +202,16 @@ internal class TokenBalanceSync(
     else snapshot
   }
 
-  suspend fun read(rawAddresses: List<String>, now: Long): TokenSnapshot =
-    withTimeoutOrNull(10_000L) { readAvailable(rawAddresses, now) }
-      ?: cachedSnapshot(rawAddresses, now)?.copy(stale = true)
-      ?: throw PortfolioReadTimeout()
+  suspend fun read(
+    rawAddresses: List<String>,
+    now: Long,
+    forceRefresh: Boolean = false,
+  ): TokenSnapshot =
+    withTimeoutOrNull(10_000L) {
+      // Continue an unfinished bounded scan; restarting it would starve large catalogues.
+      if (forceRefresh && cachedSnapshot(rawAddresses, now)?.complete == true) invalidate()
+      readAvailable(rawAddresses, now)
+    } ?: cachedSnapshot(rawAddresses, now)?.copy(stale = true) ?: throw PortfolioReadTimeout()
 
   private suspend fun readAvailable(rawAddresses: List<String>, now: Long): TokenSnapshot {
     val addresses = rawAddresses.map(String::lowercase).distinct()

@@ -59,7 +59,6 @@ export function useConfidentialWithdrawal(
       const result = await action();
       if (attempt === generation.current) {
         setOperation(result);
-        void refreshPortfolio();
       }
     } catch (error) {
       if (attempt === generation.current) {
@@ -83,6 +82,7 @@ export function useConfidentialWithdrawal(
         occupied.current = false;
         setBusy(false);
       }
+      void refreshPortfolio();
     }
   };
   return { operation, available, loading, busy, message, load, perform };

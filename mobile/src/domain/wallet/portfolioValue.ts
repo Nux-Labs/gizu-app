@@ -82,6 +82,27 @@ function canonicalRows<T extends OwnedPortfolioAsset>(rows: readonly T[]): T[] {
   return [...unique.values()];
 }
 
+/** Shared USDC input observation; native action-time checks own spendability and reservations. */
+export function portfolioPublicUsdcAtoms(snapshot: MainnetPortfolioSnapshot): string | null {
+  return snapshot.balanceComplete === false && snapshot.totalAtoms === "0"
+    ? null
+    : snapshot.totalAtoms;
+}
+
+export function portfolioUsdcBalance(snapshot: MainnetPortfolioSnapshot) {
+  const privateCash = canonicalRows(snapshot.ownedAssets ?? []).find(
+    (row) => row.chainId === 143 && row.token.toLowerCase() === "confidential:monad-usdc",
+  );
+  const publicAtoms = snapshot.totalAtoms;
+  const privateAtoms = privateCash ? (portfolioAssetAmount(privateCash) ?? "0") : "0";
+  if (portfolioPublicUsdcAtoms(snapshot) === null && privateAtoms === "0") return null;
+  return {
+    publicAtoms,
+    privateAtoms,
+    totalAtoms: (BigInt(publicAtoms) + BigInt(privateAtoms)).toString(),
+  };
+}
+
 /** Display valuation only. Native totalAtoms remains the spendable Monad balance. */
 export function portfolioValue(snapshot: MainnetPortfolioSnapshot) {
   let complete = snapshot.balanceComplete !== false && !snapshot.stale && !snapshot.syncPending;

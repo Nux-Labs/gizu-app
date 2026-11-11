@@ -1,9 +1,9 @@
-import { AppState } from "react-native";
-import { act, render, screen, userEvent, waitFor } from "@testing-library/react-native";
+import { AppState, RefreshControl, Text } from "react-native";
+import { act, fireEvent, render, screen, userEvent, waitFor } from "@testing-library/react-native";
 import { NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
-import { MainnetWalletProvider } from "@/features/wallet/MainnetWalletProvider";
+import { MainnetWalletProvider, useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { EarnProvider } from "@/features/earn/EarnProvider";
 import { DepositJourneyScreen } from "@/features/earn/DepositJourneyScreen";
 import type { EarnDepositService, DepositSnapshot } from "@/domain/earn/depositJourney";
@@ -14,13 +14,23 @@ import { hoodIntent } from "../../support/robinhoodEarn";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
 import { deferred } from "../../support/renderApp";
 const Stack = createNativeStackNavigator();
+function SharedBalance() {
+  const { snapshot } = useMainnetWallet();
+  return <Text>Shared USDC: {snapshot?.totalAtoms ?? "unknown"}</Text>;
+}
 function ready(): DepositSnapshot {
   const raw = depositSnapshot();
   raw.review.quotedAtMs = Date.now();
   raw.review.expiresAtMs = Date.now() + 45000;
   return raw as DepositSnapshot;
 }
-function setup(overrides: Partial<EarnDepositService> = {}, id?: string, publicAtoms = "19990574") {
+function setup(
+  overrides: Partial<EarnDepositService> = {},
+  id?: string,
+  publicAtoms = "19990574",
+  privateAtoms = "0",
+  portfolioOverride?: import("@/features/wallet/MainnetWalletProvider").MainnetPortfolioService,
+) {
   const snapshot = ready();
   const service = {
     available: jest.fn().mockResolvedValue(true),
@@ -30,6 +40,27 @@ function setup(overrides: Partial<EarnDepositService> = {}, id?: string, publicA
     resume: jest.fn().mockResolvedValue({ ...snapshot, phase: "funding" }),
     cancel: jest.fn().mockResolvedValue({ ...snapshot, phase: "paused", pauseReason: "cancelled" }),
     ...overrides,
+  };
+  const portfolio = portfolioOverride ?? {
+    getMainnetPortfolio: jest.fn().mockImplementation(async () => ({
+      ...mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, publicAtoms),
+      ownedAssets: [
+        {
+          assetId: "private-usdc",
+          chainId: 143,
+          token: "confidential:monad-usdc",
+          symbol: "USDC (private)",
+          decimals: 6,
+          balanceAtoms: null,
+          observedAtoms: privateAtoms,
+          complete: false,
+          stale: true,
+          checkedAt: Date.now(),
+          valueUsdcAtoms: null,
+          valuationUnavailable: true,
+        },
+      ],
+    })),
   };
   const navigation = createNavigationContainerRef();
   const app = (walletId: string) => (
@@ -43,11 +74,7 @@ function setup(overrides: Partial<EarnDepositService> = {}, id?: string, publicA
         method: "Passkey",
         chainId: 143,
       }}
-      service={{
-        getMainnetPortfolio: jest
-          .fn()
-          .mockResolvedValue(mainnetPortfolio(walletId, hoodIntent.sourceAddress, publicAtoms)),
-      }}
+      service={portfolio}
     >
       <EarnProvider
         depositJourney={service}
@@ -62,7 +89,7 @@ function setup(overrides: Partial<EarnDepositService> = {}, id?: string, publicA
             <Stack.Screen name="Deposit">
               {() => <DepositJourneyScreen profileId="robinhood-usdg" savedJourneyId={id} />}
             </Stack.Screen>
-            <Stack.Screen name="Other">{() => null}</Stack.Screen>
+            <Stack.Screen name="Other" component={SharedBalance} />
           </Stack.Navigator>
         </NavigationContainer>
       </EarnProvider>
@@ -73,6 +100,7 @@ function setup(overrides: Partial<EarnDepositService> = {}, id?: string, publicA
     service,
     snapshot,
     navigation,
+    portfolio,
     switchWallet: (walletId: string) => result.rerender(app(walletId)),
     ...result,
   };
@@ -537,40 +565,37 @@ test("a saved sponsorship failure identifies gas sponsorship and resumes the sam
   expect(service.prepare).not.toHaveBeenCalled();
 });
 
-const combinedFunding = (publicAtoms = "2000000", privateAtoms = "5000000") => ({
-  publicAtoms,
-  privateAtoms,
-  totalAtoms: (BigInt(publicAtoms) + BigInt(privateAtoms)).toString(),
-  complete: true,
-  checkedAtMs: Date.now(),
-});
-test("uses the full verified private and public total for the deposit input", async () => {
-  const { service } = setup(
-    { fundingBalance: jest.fn().mockResolvedValue(combinedFunding()) },
+test("deposit reuses observed public and private USDC without a second funding read", async () => {
+  const fundingBalance = jest.fn().mockRejectedValue(new Error("expired read permission"));
+  const { service, portfolio, navigation } = setup(
+    { fundingBalance },
     undefined,
-    "2000000",
+    "90000",
+    "2430000",
   );
-  expect(await screen.findByText("Available: 7 USDC")).toBeVisible();
-  expect(screen.getByText("Private 5 USDC · Public 2 USDC")).toBeVisible();
+  expect(await screen.findByText("Available: 2.52 USDC")).toBeVisible();
+  expect(screen.getByText("Private 2.43 USDC · Public 0.09 USDC")).toBeVisible();
+  expect(fundingBalance).not.toHaveBeenCalled();
+  act(() => navigation.navigate("Other" as never));
+  await act(async () => {});
+  act(() => navigation.goBack());
+  expect(await screen.findByText("Available: 2.52 USDC")).toBeVisible();
+  expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(1);
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText("USDC deposit amount"), "7");
+  await user.type(screen.getByLabelText("USDC deposit amount"), "2");
   await user.press(screen.getByRole("button", { name: "Review deposit" }));
   expect(service.prepare).toHaveBeenCalledWith(
-    expect.objectContaining({ walletId: hoodIntent.walletId }),
+    expect.anything(),
     "robinhood-usdg",
-    "7000000",
+    "2000000",
     undefined,
   );
-  expect(service.confirm).not.toHaveBeenCalled();
+  expect(fundingBalance).not.toHaveBeenCalled();
 });
-test("private-only funds can be reviewed even when the public wallet is empty", async () => {
-  const { service } = setup(
-    { fundingBalance: jest.fn().mockResolvedValue(combinedFunding("0")) },
-    undefined,
-    "0",
-  );
+
+test("private-only observed funds can be reviewed while public USDC is empty", async () => {
+  const { service } = setup({}, undefined, "0", "5000000");
   expect(await screen.findByText("Available: 5 USDC")).toBeVisible();
-  expect(screen.getByText("Private 5 USDC · Public 0 USDC")).toBeVisible();
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("USDC deposit amount"), "5");
   await user.press(screen.getByRole("button", { name: "Review deposit" }));
@@ -581,102 +606,92 @@ test("private-only funds can be reviewed even when the public wallet is empty", 
     undefined,
   );
 });
-test("a native build without private funding shows and accepts only public funds", async () => {
-  const { service } = setup(
-    { fundingBalance: jest.fn().mockResolvedValue(null) },
-    undefined,
-    "2000000",
-  );
-  expect(await screen.findByText("Available: 2 USDC")).toBeVisible();
-  expect(screen.queryByText(/Private .*USDC · Public/)).toBeNull();
+
+test("returning from another app preserves available USDC without fetching again", async () => {
+  const { portfolio } = setup({}, undefined, "90000", "2430000");
+  expect(await screen.findByText("Available: 2.52 USDC")).toBeVisible();
+  const callbacks = jest
+    .mocked(AppState.addEventListener)
+    .mock.calls.filter(([event]) => event === "change")
+    .map(([, callback]) => callback);
+  act(() => callbacks.forEach((callback) => callback("background")));
+  act(() => callbacks.forEach((callback) => callback("active")));
+  await act(async () => {});
+  expect(screen.getByText("Available: 2.52 USDC")).toBeVisible();
+  expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button", { name: "Retry available balance" })).toBeNull();
+});
+
+test("explicit pull-to-refresh updates the shared balance and a failed refresh keeps observations usable", async () => {
+  const portfolio = {
+    getMainnetPortfolio: jest
+      .fn()
+      .mockResolvedValueOnce(
+        mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "3000000"),
+      )
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(
+        mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "2000000"),
+      ),
+  };
+  setup({}, undefined, "0", "0", portfolio);
+  expect(await screen.findByText("Available: 3 USDC")).toBeVisible();
+  fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
+  await waitFor(() => expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(2));
+  expect(screen.getByText("Available: 3 USDC")).toBeVisible();
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText("USDC deposit amount"), "3");
-  expect(screen.getByRole("button", { name: "Review deposit" })).toBeDisabled();
-  expect(service.prepare).not.toHaveBeenCalled();
-  await user.clear(screen.getByLabelText("USDC deposit amount"));
   await user.type(screen.getByLabelText("USDC deposit amount"), "2");
   expect(screen.getByRole("button", { name: "Review deposit" })).toBeEnabled();
+  fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
+  expect(await screen.findByText("Available: 2 USDC")).toBeVisible();
 });
-test.each(["failure", "incomplete"])(
-  "%s of funding verification blocks review and offers retry",
-  async (condition) => {
-    const fundingBalance =
-      condition === "failure"
-        ? jest.fn().mockRejectedValueOnce(new Error("offline"))
-        : jest.fn().mockResolvedValueOnce({ ...combinedFunding(), complete: false });
-    fundingBalance.mockResolvedValue(combinedFunding());
-    const { service } = setup({ fundingBalance });
-    const retry = await screen.findByRole("button", { name: "Retry available balance" });
-    expect(screen.getByText(/Available USDC could not be verified/)).toBeVisible();
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText("USDC deposit amount"), "7");
-    expect(screen.getByRole("button", { name: "Review deposit" })).toBeDisabled();
-    expect(service.prepare).not.toHaveBeenCalled();
-    await user.press(retry);
-    expect(await screen.findByText("Available: 7 USDC")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Review deposit" })).toBeEnabled();
-  },
-);
-test("pending funding verification blocks review and cannot update an unmounted screen", async () => {
-  const pending = deferred<ReturnType<typeof combinedFunding>>();
-  const { service, unmount } = setup({
-    fundingBalance: jest.fn().mockReturnValue(pending.promise),
-  });
-  expect(await screen.findByText("Checking available USDC…")).toBeVisible();
+
+test("an unknown display balance does not prevent the user from requesting native review", async () => {
+  const portfolio = { getMainnetPortfolio: jest.fn().mockRejectedValue(new Error("offline")) };
+  const { service } = setup({}, undefined, "0", "0", portfolio);
+  await waitFor(() => expect(service.available).toHaveBeenCalled());
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("USDC deposit amount"), "1");
-  expect(screen.getByRole("button", { name: "Review deposit" })).toBeDisabled();
-  unmount();
-  await act(async () => pending.resolve(combinedFunding()));
-  expect(service.prepare).not.toHaveBeenCalled();
-});
-
-test("a late funding read from the previous wallet cannot expose its balance", async () => {
-  const pending = deferred<ReturnType<typeof combinedFunding>>();
-  const fundingBalance = jest
-    .fn()
-    .mockReturnValueOnce(pending.promise)
-    .mockResolvedValue(combinedFunding("1000000", "0"));
-  const { switchWallet, service } = setup({ fundingBalance });
-  await waitFor(() =>
-    expect(fundingBalance).toHaveBeenCalledWith(
-      expect.objectContaining({ walletId: hoodIntent.walletId }),
-    ),
+  await user.press(screen.getByRole("button", { name: "Review deposit" }));
+  expect(service.prepare).toHaveBeenCalledWith(
+    expect.anything(),
+    "robinhood-usdg",
+    "1000000",
+    undefined,
   );
-  act(() => switchWallet("other-wallet"));
-  expect(await screen.findByText("Available: 1 USDC")).toBeVisible();
-  await act(async () => pending.resolve(combinedFunding()));
-  expect(screen.queryByText("Available: 7 USDC")).toBeNull();
-  expect(screen.getByText("Private 0 USDC · Public 1 USDC")).toBeVisible();
-  const user = userEvent.setup();
-  await user.type(screen.getByLabelText("USDC deposit amount"), "2");
-  expect(screen.getByRole("button", { name: "Review deposit" })).toBeDisabled();
-  expect(service.prepare).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Retry available balance" })).toBeNull();
 });
 
-test("returning from background refreshes funding and ignores the earlier read", async () => {
-  const pending = deferred<ReturnType<typeof combinedFunding>>();
-  const fundingBalance = jest
-    .fn()
-    .mockReturnValueOnce(pending.promise)
-    .mockResolvedValue(combinedFunding("1000000", "0"));
-  const listener = jest.mocked(AppState.addEventListener);
-  const { unmount } = setup({ fundingBalance });
-  try {
-    await waitFor(() => expect(fundingBalance).toHaveBeenCalledTimes(1));
-    const callbacks = listener.mock.calls
-      .filter(([event]) => event === "change")
-      .map(([, callback]) => callback);
-    act(() => callbacks.forEach((callback) => callback("background")));
-    act(() => callbacks.forEach((callback) => callback("active")));
-    expect(await screen.findByText("Available: 1 USDC")).toBeVisible();
-    await act(async () => pending.resolve(combinedFunding()));
-    expect(screen.queryByText("Available: 7 USDC")).toBeNull();
-    expect(fundingBalance).toHaveBeenCalledTimes(2);
-  } finally {
-    unmount();
-  }
+test("funds moved after review are reported as insufficient and update the shared observation", async () => {
+  const paused = {
+    ...ready(),
+    phase: "paused",
+    pauseReason: "insufficientFunds",
+  } as DepositSnapshot;
+  const portfolio = {
+    getMainnetPortfolio: jest
+      .fn()
+      .mockResolvedValueOnce(
+        mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "3000000"),
+      )
+      .mockResolvedValue(
+        mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "1000000"),
+      ),
+  };
+  const { service } = setup(
+    { confirm: jest.fn().mockResolvedValue(paused) },
+    undefined,
+    "0",
+    "0",
+    portfolio,
+  );
+  const user = await review();
+  await user.press(screen.getByRole("button", { name: "Confirm deposit" }));
+  expect(await screen.findByText(/available USDC does not cover/)).toBeVisible();
+  await waitFor(() => expect(portfolio.getMainnetPortfolio.mock.calls.length).toBeGreaterThan(1));
+  expect(service.confirm).toHaveBeenCalledTimes(1);
 });
+
 test("private funding review identifies its source without public address or gas reserves", async () => {
   const raw = distributionDepositSnapshot();
   raw.review.quotedAtMs = Date.now();
@@ -699,10 +714,7 @@ test("private funding review identifies its source without public address or gas
     },
     { walletId: hoodIntent.walletId },
   );
-  setup({
-    prepare: jest.fn().mockResolvedValue(snapshot),
-    fundingBalance: jest.fn().mockResolvedValue(combinedFunding("0", "2970000")),
-  });
+  setup({ prepare: jest.fn().mockResolvedValue(snapshot) }, undefined, "0", "2970000");
   await screen.findByText("Available: 2.97 USDC");
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("USDC deposit amount"), "2.97");
@@ -711,4 +723,31 @@ test("private funding review identifies its source without public address or gas
   expect(screen.getByText("Private USDC source · 2.97 USDC")).toBeVisible();
   expect(screen.queryByText(hoodIntent.sourceAddress)).toBeNull();
   expect(screen.queryByText(/Budget 2.97 USDC · gas cap/)).toBeNull();
+});
+
+test("a deposit action settling after navigation still refreshes its wallet's shared balance", async () => {
+  const pending = deferred<DepositSnapshot>();
+  const portfolio = {
+    getMainnetPortfolio: jest
+      .fn()
+      .mockResolvedValue(
+        mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "3000000"),
+      ),
+  };
+  const { navigation } = setup(
+    { confirm: jest.fn().mockReturnValue(pending.promise) },
+    undefined,
+    "0",
+    "0",
+    portfolio,
+  );
+  const user = await review();
+  await user.press(screen.getByRole("button", { name: "Confirm deposit" }));
+  act(() => navigation.reset({ index: 0, routes: [{ name: "Other" as never }] }));
+  expect(await screen.findByText("Shared USDC: 3000000")).toBeVisible();
+  portfolio.getMainnetPortfolio.mockResolvedValue(
+    mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "1000000"),
+  );
+  await act(async () => pending.resolve({ ...ready(), phase: "paused", pauseReason: "cancelled" }));
+  expect(await screen.findByText("Shared USDC: 1000000")).toBeVisible();
 });

@@ -19,10 +19,12 @@ internal class MainnetPortfolio(private val context: Context) {
     history: List<Map<String, Any?>>,
     includeOwned: Boolean = true,
     cachedOnly: Boolean = false,
+    forceRefresh: Boolean = false,
   ): Map<String, Any?> = coroutineScope {
     val owned = async {
       try {
-        if (includeOwned) NativeOwnedPortfolio(context).read(record, cachedOnly) else emptyMap()
+        if (includeOwned) NativeOwnedPortfolio(context).read(record, cachedOnly, forceRefresh)
+        else emptyMap()
       } catch (cancelled: CancellationException) {
         throw cancelled
       } catch (failure: Exception) {
@@ -59,7 +61,7 @@ internal class MainnetPortfolio(private val context: Context) {
         if (cachedOnly)
           sync.cachedSnapshot(addresses, System.currentTimeMillis())
             ?: TokenSnapshot(emptyMap(), "0x0", 0, false, true, true)
-        else sync.read(addresses, System.currentTimeMillis())
+        else sync.read(addresses, System.currentTimeMillis(), forceRefresh)
       } catch (cancelled: CancellationException) {
         throw cancelled
       } catch (_: Exception) {

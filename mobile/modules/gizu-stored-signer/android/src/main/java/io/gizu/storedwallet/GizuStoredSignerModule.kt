@@ -318,7 +318,12 @@ class GizuStoredSignerModule : Module() {
         val (code, location) = depositFailureDiagnostic(error)
         android.util.Log.w("GizuWallet", "$code at $location")
         promise.reject(
-          if (error is EarnRpcRejection) "EARN_RPC_UNAVAILABLE" else "WALLET_FAILED",
+          when {
+            error is RpcFailure && error.code == RpcFailureCode.INSUFFICIENT_FUNDS ->
+              "INSUFFICIENT_FUNDS"
+            error is EarnRpcRejection -> "EARN_RPC_UNAVAILABLE"
+            else -> "WALLET_FAILED"
+          },
           nativeWalletFailureMessage(error),
           null,
         )
@@ -479,7 +484,7 @@ class GizuStoredSignerModule : Module() {
                     try {
                       currentCoroutineContext().ensureActive()
                       source to
-                        readPrivateDepositBalance(record, source) {
+                        readPrivateDepositBalance(activity, record, source) {
                           requirePrivateDepositReadPermission(activity, record)
                         }
                     } finally {
@@ -489,22 +494,10 @@ class GizuStoredSignerModule : Module() {
                 }
                 .awaitAll()
             }
-            val cache = io.gizu.storedwallet.portfolio.NativeOwnedConfidentialPortfolio(activity)
             var private = java.math.BigInteger.ZERO
-            for ((source, b) in observations) {
+            for ((_, b) in observations) {
               val available = depositAtoms(b.getValue("available").toString())
               if (available >= PRIVATE_DEPOSIT_MINIMUM) private += available
-              cache.recordValidated(
-                io.gizu.storedwallet.portfolio.NativeConfidentialTarget(
-                  record.id,
-                  record.journalId,
-                  source.getString("address"),
-                  source.getString("kind"),
-                  source.getInt("profileChainId"),
-                  source.getInt("cycleIndex"),
-                ),
-                b,
-              )
             }
             check(
               observations.all {
@@ -2085,7 +2078,7 @@ class GizuStoredSignerModule : Module() {
               val public = async {
                 io.gizu.storedwallet.swap
                   .MainnetPortfolio(activity.applicationContext)
-                  .read(record, saved.portfolio.history())
+                  .read(record, saved.portfolio.history(), forceRefresh = true)
               }
               val private = async {
                 try {
@@ -2765,7 +2758,15 @@ class GizuStoredSignerModule : Module() {
       store,
       journal,
       gateway,
-      { source -> ConfidentialBalance().read(auth(source), source.getString("address")) },
+      { source ->
+        ConfidentialBalance().read(auth(source), source.getString("address")).also { balance ->
+          store.load().use { record ->
+            io.gizu.storedwallet.portfolio
+              .NativeOwnedConfidentialPortfolio(activity)
+              .recordSourceObservation(record, source, balance)
+          }
+        }
+      },
       ::authority,
       { record ->
         io.gizu.storedwallet.portfolio

@@ -127,12 +127,14 @@ internal suspend fun privateDepositReadAuth(
 }
 
 internal suspend fun readPrivateDepositBalance(
+  context: Context,
   record: WalletRecord,
   source: JSONObject,
   authority: () -> Unit,
 ): Map<String, Any> =
   ConfidentialBalance()
     .read(privateDepositReadAuth(record, source, authority), privateDepositAddress(record, source))
+    .also { NativeOwnedConfidentialPortfolio(context).recordSourceObservation(record, source, it) }
 
 internal fun isPrivateDepositSource(row: JSONObject) =
   row.getJSONObject("proposal").optString("kind") == "privateEarnFunding"

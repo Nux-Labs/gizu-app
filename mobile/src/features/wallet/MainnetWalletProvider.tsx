@@ -133,68 +133,154 @@ function useMainnetState(
   const unlocking = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const cacheRead = useRef(false);
+  const actionRevision = useRef(0);
+  const actionRefresh = useRef<Promise<void> | null>(null);
+  const readCompletion = useRef<Promise<void> | null>(null);
+  const unlockCompletion = useRef<Promise<void> | null>(null);
+  const lifetime = useRef(0);
+  const foregroundRead = useRef<Promise<void> | null>(null);
+  const backgroundRevision = useRef(0);
+  const resumeRead = useRef<(() => void) | null>(null);
   const valuator = useMemo(
     () => valuation ?? (service ? undefined : portfolioValuationService),
     [valuation, service],
   );
   useEffect(() => {
     alive.current = true;
+    const resume = () => {
+      foregroundRead.current = null;
+      resumeRead.current?.();
+      resumeRead.current = null;
+    };
+    const pause = () => {
+      if (!foregroundRead.current) {
+        backgroundRevision.current += 1;
+        foregroundRead.current = new Promise<void>((resolve) => {
+          resumeRead.current = resolve;
+        });
+      }
+    };
+    if (AppState.currentState === "background") pause();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "background") pause();
+      else if (state === "active") resume();
+    });
     return () => {
       alive.current = false;
       busy.current = false;
       generation.current += 1;
+      lifetime.current += 1;
       controller.current?.abort();
+      subscription.remove();
+      resume();
     };
   }, []);
-  const refresh = useCallback(async () => {
-    if (busy.current || unlocking.current) return;
-    busy.current = true;
-    const requestGeneration = generation.current;
-    const current = () => alive.current && generation.current === requestGeneration;
-    const abort = new AbortController();
-    controller.current = abort;
-    setLoading(true);
-    setError("");
-    try {
-      const signer = service ?? getStoredSwapSigner();
-      if (!signer) throw new Error("Native mainnet portfolio is unavailable in this build.");
-      if (!cacheRead.current && signer.getCachedMainnetPortfolio) {
-        cacheRead.current = true;
-        try {
-          const cached = validateMainnetPortfolio(
-            await signer.getCachedMainnetPortfolio(),
-            session.walletId,
-          );
-          if (cached.fundingAddress.toLowerCase() !== session.address.toLowerCase())
-            throw new Error("Funding account mismatch");
-          if (current() && cached.checkedAt > 0) setSnapshot(cached);
-        } catch {
-          // A missing or invalid cache never prevents a fresh native read.
+  const refresh = useCallback(
+    async (quiet = false) => {
+      if (busy.current || unlocking.current) return;
+      let finishRead!: () => void;
+      const completion = new Promise<void>((resolve) => {
+        finishRead = resolve;
+      });
+      readCompletion.current = completion;
+      busy.current = true;
+      const requestGeneration = generation.current;
+      const current = () => alive.current && generation.current === requestGeneration;
+      const abort = new AbortController();
+      controller.current = abort;
+      setLoading(true);
+      if (!quiet) setError("");
+      try {
+        const signer = service ?? getStoredSwapSigner();
+        if (!signer) throw new Error("Native mainnet portfolio is unavailable in this build.");
+        if (!cacheRead.current && signer.getCachedMainnetPortfolio) {
+          cacheRead.current = true;
+          try {
+            const cached = validateMainnetPortfolio(
+              await signer.getCachedMainnetPortfolio(),
+              session.walletId,
+            );
+            if (cached.fundingAddress.toLowerCase() !== session.address.toLowerCase())
+              throw new Error("Funding account mismatch");
+            if (current() && cached.checkedAt > 0) setSnapshot(cached);
+          } catch {
+            // A missing or invalid cache never prevents a fresh native read.
+          }
+          if (!current()) return;
         }
-        if (!current()) return;
+        const result = validateMainnetPortfolio(
+          await signer.getMainnetPortfolio(),
+          session.walletId,
+        );
+        if (result.fundingAddress.toLowerCase() !== session.address.toLowerCase())
+          throw new Error("Funding account mismatch");
+        if (current()) setSnapshot(result);
+        if (valuator && current()) {
+          const valued = await valuator.value(result, abort.signal);
+          if (current()) setSnapshot(valued);
+        }
+      } catch (cause) {
+        if (current() && !quiet)
+          setError(cause instanceof Error ? cause.message : "Mainnet balance unavailable. Retry.");
+      } finally {
+        if (readCompletion.current === completion) {
+          busy.current = false;
+          readCompletion.current = null;
+        }
+        if (current()) setLoading(false);
+        finishRead();
       }
-      const result = validateMainnetPortfolio(await signer.getMainnetPortfolio(), session.walletId);
-      if (result.fundingAddress.toLowerCase() !== session.address.toLowerCase())
-        throw new Error("Funding account mismatch");
-      if (current()) setSnapshot(result);
-      if (valuator && current()) {
-        const valued = await valuator.value(result, abort.signal);
-        if (current()) setSnapshot(valued);
+    },
+    [session.walletId, session.address, service, valuator],
+  );
+  const refreshAfterAction = useCallback((): Promise<void> => {
+    if (!alive.current) return Promise.resolve();
+    actionRevision.current += 1;
+    // An earlier read cannot overwrite observations collected after a wallet action.
+    generation.current += 1;
+    controller.current?.abort();
+    if (actionRefresh.current) return actionRefresh.current;
+    actionRefresh.current = Promise.resolve().then(async () => {
+      try {
+        let revision;
+        let background;
+        do {
+          // Native reads are coalesced. Wait for the old read/unlock to finish so this
+          // request cannot accidentally reuse a balance from before the action.
+          while (
+            alive.current &&
+            (readCompletion.current || unlockCompletion.current || foregroundRead.current)
+          )
+            await Promise.all([
+              readCompletion.current,
+              unlockCompletion.current,
+              foregroundRead.current,
+            ]);
+          if (!alive.current) return;
+          revision = actionRevision.current;
+          background = backgroundRevision.current;
+          await refresh(true);
+          // Backgrounding may interrupt native work even if foreground resumed before
+          // its rejection reached JavaScript. Keep that action update pending.
+        } while (
+          alive.current &&
+          (revision !== actionRevision.current || background !== backgroundRevision.current)
+        );
+      } finally {
+        actionRefresh.current = null;
       }
-    } catch (cause) {
-      if (current())
-        setError(cause instanceof Error ? cause.message : "Mainnet balance unavailable. Retry.");
-    } finally {
-      if (current()) {
-        busy.current = false;
-        setLoading(false);
-      }
-    }
-  }, [session.walletId, session.address, service, valuator]);
+    });
+    return actionRefresh.current;
+  }, [refresh]);
   const unlockPrivateBalance = useCallback(async () => {
     if (busy.current || unlocking.current) return;
-    const requestGeneration = generation.current;
-    const current = () => alive.current && generation.current === requestGeneration;
+    const ownerLifetime = lifetime.current;
+    const current = () => alive.current && lifetime.current === ownerLifetime;
+    let finishUnlock!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      finishUnlock = resolve;
+    });
+    unlockCompletion.current = completion;
     unlocking.current = true;
     setUnlockingPrivateBalance(true);
     setPrivateBalanceError("");
@@ -216,6 +302,8 @@ function useMainnetState(
     } finally {
       unlocking.current = false;
       if (current()) setUnlockingPrivateBalance(false);
+      if (unlockCompletion.current === completion) unlockCompletion.current = null;
+      finishUnlock();
     }
   }, [session.walletId, refresh]);
   useEffect(() => {
@@ -228,20 +316,15 @@ function useMainnetState(
             ? expirePortfolioValuation(previous)
             : previous,
         );
-        if (AppState.currentState === "active") void refresh();
       },
       Math.max(0, expiresAt - Date.now()),
     );
     return () => clearTimeout(timer);
-  }, [snapshot?.valuationExpiresAt, refresh]);
+  }, [snapshot?.valuationExpiresAt]);
   useEffect(() => {
     void Promise.resolve().then(() => {
       if (alive.current) return refresh();
     });
-    const subscription = AppState.addEventListener("change", (next) => {
-      if (next === "active") void refresh();
-    });
-    return () => subscription.remove();
   }, [refresh]);
   return {
     session,
@@ -249,6 +332,7 @@ function useMainnetState(
     loading,
     error,
     refresh,
+    refreshAfterAction,
     unlockingPrivateBalance,
     privateBalanceError,
     unlockPrivateBalance,

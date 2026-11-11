@@ -339,6 +339,8 @@ internal class EarnDepositCoordinator(
       val reason =
         when {
           missing -> "recoveryRequired"
+          failure is RpcFailure && failure.code == RpcFailureCode.INSUFFICIENT_FUNDS ->
+            "insufficientFunds"
           failure is EarnRpcRejection && failure.method == "pm_getPaymasterData" ->
             "sponsorshipUnavailable"
           failure is RpcFailure &&

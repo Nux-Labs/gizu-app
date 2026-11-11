@@ -32,7 +32,7 @@ internal fun nativeDepositPreparer(
           assertCashoutCanStart(context, current, own.getString("journeyId"))
           selectPrivateDepositSources(budget, privateDepositCandidates(context, current)) { source
             ->
-            readPrivateDepositBalance(current, source, privateReadAuthority)
+            readPrivateDepositBalance(context, current, source, privateReadAuthority)
               .getValue("available")
               .toString()
           }
@@ -403,6 +403,8 @@ internal class EarnDepositPreparer(
         id,
         if (saved.optString("pauseReason") in setOf("cancelled", "approvalExpired"))
           saved.getString("pauseReason")
+        else if (failure is RpcFailure && failure.code == RpcFailureCode.INSUFFICIENT_FUNDS)
+          "insufficientFunds"
         else "previewUnavailable",
       )
       if (failure is CancellationException) throw failure

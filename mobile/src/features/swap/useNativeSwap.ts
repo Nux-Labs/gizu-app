@@ -12,6 +12,7 @@ import {
   type ListedToken,
 } from "./confidentialSwap";
 import type { StoredSwapView } from "@/domain/wallet/storedSigner";
+import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 
 type SwapAction =
   "start" | "payout" | "sell" | "resume" | "cancel" | "refresh" | "tokens" | "status";
@@ -20,6 +21,7 @@ function diagnostic(action: SwapAction, outcome: "started" | "completed" | "fail
 }
 
 export function useNativeSwap() {
+  const portfolio = useOptionalMainnetWallet();
   const [tokens, setTokens] = useState<ListedToken[]>([]);
   const [target, setTarget] = useState("");
   const [amount, setAmount] = useState("");
@@ -84,6 +86,7 @@ export function useNativeSwap() {
       );
     } finally {
       setBusy(false);
+      void portfolio?.refreshAfterAction();
     }
   }
 

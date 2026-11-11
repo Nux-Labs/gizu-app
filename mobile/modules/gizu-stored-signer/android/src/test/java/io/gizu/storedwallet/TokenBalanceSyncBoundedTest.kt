@@ -93,6 +93,20 @@ class TokenBalanceSyncBoundedTest {
   }
 
   @Test
+  fun forcedRefreshesFinishLargeCataloguesWithoutRestartingPendingOwners() = runBlocking {
+    val f = Fixture()
+    f.initial()
+    f.rpc.balance = "0x2"
+    var snapshot = f.sync().read(f.owners, 10, forceRefresh = true)
+    assertFalse(snapshot.complete)
+    repeat(7) { snapshot = f.sync().read(f.owners, 11L + it, forceRefresh = true) }
+    assertTrue(snapshot.complete)
+    assertFalse(snapshot.syncPending)
+    assertEquals(1200, f.rpc.reads)
+    assertTrue(snapshot.balances.values.all { it == "2" })
+  }
+
+  @Test
   fun sixHundredOwnersUseEightLogCallsPerOpeningAndCheckpointOnlyAfterWholeRange() = runBlocking {
     val f = Fixture()
     f.initial()

@@ -167,9 +167,14 @@ export function swapSigner() {
   return native;
 }
 
-/** Map stable native/gateway gas codes to fixed recovery text. */
+/** Map stable native/gateway balance and gas codes to fixed recovery text. */
 export function swapGasMessage(code: string | null | undefined): string | null {
   switch (code) {
+    case "INSUFFICIENT_FUNDS":
+    case "INSUFFICIENT_SOURCE_BALANCE":
+    case "SOURCE_BALANCE_CHANGED":
+    case "NO_PRIVATE_BALANCE":
+      return "Your available USDC does not cover this amount and its fees.";
     case "TOKEN_PAYMASTER_ALLOWANCE_LOW":
     case "GAS_ALLOWANCE_INSUFFICIENT":
       return "The USDC gas approval is below the required maximum. Resume to prepare it again before signing.";

@@ -98,7 +98,10 @@ function useSourceFunding(intent: EarnIntent) {
         );
     } finally {
       occupied.current = false;
-      if (attempt === generation.current) setBusy(false);
+      if (attempt === generation.current) {
+        setBusy(false);
+      }
+      void wallet.refreshAfterAction();
     }
   };
   const update = (next: SponsoredOperation) =>
@@ -108,7 +111,7 @@ function useSourceFunding(intent: EarnIntent) {
       setPlan(null);
       setPlans([]);
       if (wallet.loading || wallet.error || wallet.balance === null)
-        throw new Error("Refresh the source USDC balance before funding.");
+        throw new Error("The source USDC balance is unavailable. Your saved balance is preserved.");
       const amount = fixedDecimal(budget.trim(), 6),
         balance = fixedDecimal(wallet.balance, 6);
       if (amount <= 10000n || amount > balance)

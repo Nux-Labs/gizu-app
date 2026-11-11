@@ -149,7 +149,10 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
         );
     } finally {
       occupied.current = false;
-      if (attempt === generation.current) setBusy(false);
+      if (attempt === generation.current) {
+        setBusy(false);
+      }
+      void wallet.refreshAfterAction();
     }
   }
   let label = "Review USDC funding";

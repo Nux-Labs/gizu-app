@@ -241,6 +241,12 @@ internal class NativeOwnedConfidentialPortfolio(
     // authenticated non-operation-scoped observation are required before any cache write.
     val validated =
       ConfidentialBalance.publicBalance(JSONObject(observation).toString(), target.address, now)
+    val previous = root.getJSONObject("observations").optJSONObject(target.address)
+    if (
+      previous != null &&
+        previous.getLong("timestampMs") > (validated.getValue("timestampMs") as Number).toLong()
+    )
+      return
     root
       .getJSONObject("observations")
       .put(
@@ -251,6 +257,25 @@ internal class NativeOwnedConfidentialPortfolio(
       )
     save(target.walletId, target.generation, root)
   }
+
+  /** Authenticated action reads update the same encrypted observations used by every screen. */
+  fun recordSourceObservation(
+    record: WalletRecord,
+    source: JSONObject,
+    observation: Map<String, Any>,
+  ) =
+    synchronized(actionWrites) {
+      val root = load(record.id, record.journalId)
+      val target =
+        targets(record, root).single {
+          it.address.equals(source.getString("address"), true) &&
+            it.kind == source.getString("kind") &&
+            it.profileChainId == source.getInt("profileChainId") &&
+            it.cycleIndex == source.getInt("cycleIndex")
+        }
+      save(record.id, record.journalId, root)
+      recordValidated(target, observation)
+    }
 
   /** Salt and signed read proposals stay native; each success is persisted independently. */
   suspend fun refresh(
@@ -399,6 +424,7 @@ internal class NativeOwnedConfidentialPortfolio(
   }
 
   companion object {
+    private val actionWrites = Any()
     private const val ASSET = "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx"
   }
 }

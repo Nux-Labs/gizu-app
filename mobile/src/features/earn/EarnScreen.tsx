@@ -184,8 +184,8 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
           <Typography>
             {wallet.loading
               ? "Checking source balance…"
-              : wallet.error
-                ? "Source balance unavailable. Refresh before investing."
+              : wallet.balance === null
+                ? "Your balance will be checked during deposit review."
                 : `Source balance: ${wallet.balance} USDC`}
           </Typography>
         </View>

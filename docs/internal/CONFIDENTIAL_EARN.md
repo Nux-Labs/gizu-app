@@ -13,15 +13,26 @@ preserve earlier implementation stages.
 
 **Earn ends at an invested vault position.** The initial fee calculation simulates a future full redemption in a disposable server-side fork only to estimate the withdrawal reserve. It never withdraws the live position. The user must click Withdraw later, review fresh fees, and authorize redemption separately. Aurora return quotes and operations follow that requested exit; their future executable costs are excluded from the initial deposit estimate.
 
-New guided Android deposits show **available private USDC + public USDC**, with a
-breakdown of both. Private USDC means the Monad-origin USDC asset in the wallet's
-native confidential account catalogue; vault shares, USDG, other tokens and other
-chains' USDC are not counted as available deposit cash. A read-only native
-authentication checks these accounts, with four concurrent reads and at most 128
-catalogue accounts per review. Failed, incomplete or expired reads block review
-instead of treating private funds as zero. Native capabilities keep older builds
-on their supported public-only path. The funding snapshot returns aggregate atom
-strings to JavaScript; private identities remain native.
+New guided Android deposits display the same **observed private USDC + public
+USDC** owned by the shared wallet portfolio, with a breakdown of both. Private
+USDC means the Monad-origin USDC asset in the native confidential catalogue;
+vault shares, USDG, other tokens and other chains' USDC are not deposit cash.
+Opening a deposit or returning to the app does not start a separate balance
+verification or require a refresh. A missing display observation still permits
+native review of a valid amount. Explicit refresh and wallet actions update the
+shared observations; failed reads retain the prior display. Prices may expire
+without triggering balance RPCs. Reads triggered by an action wait for earlier
+reads/authentication and reject late results from before that action or a
+previous wallet. An action finishing after navigation still refreshes its wallet;
+an action finishing in the background defers that update until foreground.
+
+Native preparation and signing continue to authenticate fresh balances and
+reservations inside the requested action. Insufficient funds use a distinct
+outcome across public funding, private payouts, sponsored operations and
+confidential withdrawals; failed reads and unavailable previews remain distinct.
+Authenticated action reads update the shared encrypted private observations,
+and verified payout delivery attempts to record the remaining source balance.
+No frontend observation can authorize spending or establish settlement.
 
 Native preparation rechecks eligible private accounts and selects them first.
 Their USDC goes directly through an advanced-confidentiality, exact-input route

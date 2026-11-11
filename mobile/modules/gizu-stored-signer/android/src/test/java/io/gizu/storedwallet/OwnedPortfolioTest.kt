@@ -148,6 +148,30 @@ class OwnedPortfolioTest {
   }
 
   @Test
+  fun actionRefreshRechecksBalancesInsideTheDisplayCacheLifetime() = runBlocking {
+    val f = Fixture()
+    val record = f.record(count = 1, chain = 4663)
+    f.rpcs.getValue(4663).latestOnly = true
+    val first =
+      rows(f.observer().read(record), "ownedAssets").single {
+        it["token"] == HOOD_EARN_USDG.lowercase()
+      }
+    val before = first["observedAtoms"].toString().toBigInteger()
+    f.rpcs.getValue(4663).held /= BigInteger.TWO
+    f.rpcs.getValue(4663).head += 1
+    val cached =
+      rows(f.observer().read(record), "ownedAssets").single {
+        it["token"] == HOOD_EARN_USDG.lowercase()
+      }
+    assertEquals(before.toString(), cached["observedAtoms"])
+    val updated =
+      rows(f.observer().read(record, forceRefresh = true), "ownedAssets").single {
+        it["token"] == HOOD_EARN_USDG.lowercase()
+      }
+    assertEquals((before / BigInteger.TWO).toString(), updated["observedAtoms"])
+  }
+
+  @Test
   fun cachedDisplayReadsRetainAmountsWithoutAnyRpcCalls() = runBlocking {
     val f = Fixture()
     val record = f.record(count = 1, chain = 4663)
