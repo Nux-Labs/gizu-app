@@ -217,7 +217,11 @@ test("deposit status coalesces and journey cancellation interrupts a pending con
   finish({ phase: "funding" });
   await rejected;
 });
-test.each(["android", "ios"])("%s coordinates calls across separate adapters", async (os) => {
+test.each([
+  ["android", "getMainnetPortfolio"],
+  ["ios", "getMainnetPortfolio"],
+  ["android", "getCachedMainnetPortfolio"],
+] as const)("%s coordinates %s calls across separate adapters", async (os, method) => {
   Object.defineProperty(Platform, "OS", { configurable: true, value: os });
   Object.defineProperty(Platform, "Version", { configurable: true, value: 30 });
   let finish!: (value: unknown) => void;
@@ -229,6 +233,7 @@ test.each(["android", "ios"])("%s coordinates calls across separate adapters", a
       .fn()
       .mockResolvedValue({ contractVersion: 1, available: true, walletStorage: true, swaps: true }),
     getMainnetPortfolio: jest.fn(() => observation),
+    getCachedMainnetPortfolio: jest.fn(() => observation),
     getSwapStatus: jest.fn().mockResolvedValue({ phase: "NONE" }),
     startSwap: jest.fn().mockResolvedValue({ phase: "PAUSED" }),
     lock: jest.fn(),
@@ -236,10 +241,10 @@ test.each(["android", "ios"])("%s coordinates calls across separate adapters", a
   jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
   const a = getStoredSwapSigner()!;
   const b = getStoredSwapSigner()!;
-  const first = a.getMainnetPortfolio();
-  const duplicate = b.getMainnetPortfolio();
+  const first = a[method]!();
+  const duplicate = b[method]!();
   await tick();
-  expect(native.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+  expect(native[method]).toHaveBeenCalledTimes(1);
   const status = b.getSwapStatus("gateway");
   const start = a.startSwap("target", "4000000", "gateway");
   await tick();

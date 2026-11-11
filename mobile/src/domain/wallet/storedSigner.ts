@@ -119,6 +119,8 @@ export type OwnedPortfolioAsset = {
   stale: boolean;
   checkedAt: number;
   valueUsdcAtoms: string | null;
+  /** Display value in millionths of USD, separate from native USDC-denominated values. */
+  valueUsdAtoms?: string | null;
   valuationUnavailable: boolean;
 };
 export type OwnedPortfolioPosition = OwnedPortfolioAsset & {
@@ -210,6 +212,8 @@ export interface StoredSignerContract {
   resumeOperation(operationId: string, expectedRevision: number): Promise<StoredOperation>;
   cancelOperation(operationId: string): Promise<StoredOperation>;
   getMainnetPortfolio(): Promise<MainnetPortfolioSnapshot>;
+  /** Local encrypted observations only; performs no network reads or authorization. */
+  getCachedMainnetPortfolio?(): Promise<MainnetPortfolioSnapshot>;
   getConfidentialWithdrawal?(walletId: string): Promise<unknown>;
   prepareConfidentialWithdrawal?(request: {
     walletId: string;

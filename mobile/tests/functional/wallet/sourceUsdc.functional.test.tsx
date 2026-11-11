@@ -126,7 +126,7 @@ test("Home combines vault value with liquid USDC and shows one named vault posit
     ownedBalanceComplete: true,
   });
   await open();
-  expect(await screen.findByLabelText("22.990574 USDC")).toBeVisible();
+  expect(await screen.findByLabelText("22.990574 USD")).toBeVisible();
   expect(screen.getAllByText("Steakhouse USDG")).toHaveLength(1);
   expect(screen.getByText("3 USDG deposited")).toBeVisible();
   expect(screen.getByRole("button", { name: "View Steakhouse USDG position" })).toBeVisible();
@@ -138,7 +138,7 @@ test("Home combines vault value with liquid USDC and shows one named vault posit
 test("mainnet Home and Earn share the native portfolio without another source RPC", async () => {
   const { portfolio, balance, transfers } = setup();
   await open();
-  expect(await screen.findByLabelText("19.990574 USDC")).toBeVisible();
+  expect(await screen.findByLabelText("19.990574 USD")).toBeVisible();
   await openEarnLink();
   expect(await screen.findByText("Source balance: 19.990574 USDC")).toBeVisible();
   expect(portfolio.getMainnetPortfolio).toHaveBeenCalled();
@@ -149,7 +149,7 @@ test("mainnet Home and Earn share the native portfolio without another source RP
 test("mainnet deposit keeps the explicit USDC receiving address", async () => {
   const { clipboard } = setup();
   await open();
-  await screen.findByLabelText("19.990574 USDC");
+  await screen.findByLabelText("19.990574 USD");
   await userEvent.press(screen.getByRole("button", { name: "Receive" }));
   expect(await screen.findByRole("header", { name: "Receive" })).toBeVisible();
   expect(
@@ -171,7 +171,7 @@ test("USDC withdrawal never calls the testnet transfer signer", async () => {
 test("failed native portfolio refresh preserves the prior balance until a fresh snapshot", async () => {
   const { portfolio } = setup();
   await open();
-  await screen.findByLabelText("19.990574 USDC");
+  await screen.findByLabelText("19.990574 USD");
   portfolio.getMainnetPortfolio.mockRejectedValueOnce(new Error("secret-sentinel provider error"));
   fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
   expect(await screen.findByText(/Previously loaded balances may be stale/)).toBeVisible();
@@ -179,10 +179,10 @@ test("failed native portfolio refresh preserves the prior balance until a fresh 
   fireEvent.press(screen.getByRole("button", { name: "Error details", expanded: false }));
   expect(screen.getByText("Code: PORTFOLIO_READ_FAILED")).toBeVisible();
   expect(screen.queryByText(/secret-sentinel/)).toBeNull();
-  expect(screen.getByLabelText("19.990574 USDC")).toBeVisible();
+  expect(screen.getByLabelText("19.990574 USD")).toBeVisible();
   portfolio.getMainnetPortfolio.mockResolvedValue(mainnetPortfolio(walletId, address, "0"));
   fireEvent.press(screen.getByRole("button", { name: "Retry balance" }));
-  expect(await screen.findByLabelText("0 USDC")).toBeVisible();
+  expect(await screen.findByLabelText("0 USD")).toBeVisible();
 });
 
 test("disconnect ignores late native snapshots from the previous session", async () => {
@@ -196,9 +196,9 @@ test("disconnect ignores late native snapshots from the previous session", async
   await screen.findByRole("button", { name: "Unlock wallet" });
   portfolio.getMainnetPortfolio.mockResolvedValue(mainnetPortfolio(walletId, address, "0"));
   await open();
-  expect(await screen.findByLabelText("0 USDC")).toBeVisible();
+  expect(await screen.findByLabelText("0 USD")).toBeVisible();
   await act(async () => pending.resolve(mainnetPortfolio(walletId, address, "1000000")));
-  expect(screen.queryByText("1 USDC")).toBeNull();
+  expect(screen.queryByLabelText("1 USD")).toBeNull();
   expect(native.lock).toHaveBeenCalled();
 });
 
@@ -213,7 +213,7 @@ test("a settled incomplete native cache is retryable and never exposes zero as s
   await open();
   expect(await screen.findByRole("button", { name: "Retry balance" })).toBeVisible();
   expect(screen.queryByLabelText("Loading your balance")).toBeNull();
-  expect(screen.queryByLabelText("0 USDC")).toBeNull();
+  expect(screen.queryByLabelText("0 USD")).toBeNull();
   await openEarnLink();
   expect(
     await screen.findByText("Source balance unavailable. Refresh before investing."),
@@ -276,16 +276,18 @@ test("owned token amounts and vault underlying values remain distinct when marke
   expect(await screen.findByText("Your vaults")).toBeVisible();
   expect(screen.queryByText("Checking owned token balances and positions…")).toBeNull();
   expect(await screen.findByText("0.5 WETH")).toBeVisible();
+  expect(screen.getByText("2 USD")).toBeVisible();
+  fireEvent.press(screen.getByRole("button", { name: "USDC position details" }));
   expect(screen.getByText("Vault position")).toBeVisible();
   expect(screen.getByText("Estimated underlying: 2 USDC")).toBeVisible();
-  expect(screen.getByText("Value: 2 USDC")).toBeVisible();
-  expect(screen.queryByText("USDC value unavailable.")).toBeNull();
+  expect(screen.queryByText("USD value unavailable.")).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "WETH holding details", expanded: false }));
-  expect(screen.getByText("USDC value unavailable.")).toBeVisible();
+  expect(screen.getByText("USD value unavailable.")).toBeVisible();
+  fireEvent.press(screen.getByRole("button", { name: "NEW holding details" }));
   expect(screen.getByText("NEW balance unavailable. Refresh to retry.")).toBeVisible();
   expect(screen.queryByText("Checking NEW balance…")).toBeNull();
-  expect(screen.getByText("Known value · some balances or prices need refreshing.")).toBeVisible();
-  expect(screen.getByLabelText("21.990574 USDC")).toBeVisible();
+  expect(screen.queryByText("Some balances or asset values are unavailable.")).toBeNull();
+  expect(screen.getByLabelText("21.990574 USD")).toBeVisible();
 });
 
 test("partial vault observations use underlying units and never relabel shares as USDC", async () => {
@@ -327,12 +329,13 @@ test("partial vault observations use underlying units and never relabel shares a
   fireEvent.press(
     await screen.findByRole("button", { name: "USDC position details", expanded: false }),
   );
-  expect(screen.getByText("Previously observed: 2 USDC")).toBeVisible();
-  expect(screen.getByText("USDC balance unavailable. Refresh to retry.")).toBeVisible();
+  expect(screen.getByText("Estimated underlying: 2 USDC")).toBeVisible();
+  expect(screen.queryByText("USDC balance unavailable. Refresh to retry.")).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "USDG position details" }));
   expect(screen.getByText("USDG balance unavailable. Refresh to retry.")).toBeVisible();
   expect(screen.queryByText(/Previously observed: .*USDG/)).toBeNull();
   expect(screen.queryByText(/1,?000,?000,?000,?000 (USDC|USDG)/)).toBeNull();
-  expect(screen.getByLabelText("19.990574 USDC")).toBeVisible();
+  expect(screen.getByLabelText("19.990574 USD")).toBeVisible();
 });
 
 test.each(["ios", "android"])(
@@ -407,7 +410,7 @@ test("Activity has a simple empty state and pull-to-refresh with retry on failur
 test("Swap Max fills the available USDC amount with exact decimal precision", async () => {
   setup();
   await open();
-  await screen.findByLabelText("19.990574 USDC");
+  await screen.findByLabelText("19.990574 USD");
   await userEvent.press(screen.getByLabelText("Swap tab"));
   await userEvent.press(await screen.findByRole("button", { name: "Use maximum USDC amount" }));
   expect(screen.getByLabelText("Amount in USDC")).toHaveProp("value", "19.990574");
@@ -416,13 +419,13 @@ test("Swap Max fills the available USDC amount with exact decimal precision", as
 test("returning to Home reuses balances without refreshing portfolio or token holdings", async () => {
   const { portfolio } = setup();
   await open();
-  await screen.findByLabelText("19.990574 USDC");
+  await screen.findByLabelText("19.990574 USD");
   await screen.findByRole("header", { name: "Earn" });
   const balanceReads = portfolio.getMainnetPortfolio.mock.calls.length;
   const holdingReads = readHoldings.mock.calls.length;
   await userEvent.press(screen.getByLabelText("Settings tab"));
   await userEvent.press(screen.getByLabelText("Home tab"));
-  expect(await screen.findByLabelText("19.990574 USDC")).toBeVisible();
+  expect(await screen.findByLabelText("19.990574 USD")).toBeVisible();
   expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(balanceReads);
   expect(readHoldings).toHaveBeenCalledTimes(holdingReads);
   fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
@@ -500,7 +503,7 @@ test("Home shows aggregate USDG once while retaining native sale batches and oth
   expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(balanceReads + 1);
 });
 
-test("private USDC retries a settled partial observation and checks only while its request runs", async () => {
+test("private USDC retains its observed amount while refreshing a partial observation", async () => {
   const { portfolio } = setup();
   const asset = {
     assetId: "nep245:private-usdc",
@@ -523,14 +526,16 @@ test("private USDC retries a settled partial observation and checks only while i
   };
   portfolio.getMainnetPortfolio.mockResolvedValue(partial);
   await open();
-  expect(await screen.findByText("USDC balance unavailable. Refresh to retry.")).toBeVisible();
+  expect(await screen.findByText("2.5 USDC")).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "USDC holding details" }));
-  expect(screen.getByText("Previously observed: 2.5 USDC")).toBeVisible();
+  expect(screen.queryByText(/Previously observed|Previously checked/)).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "USDC holding details" }));
   expect(screen.queryByText("Checking USDC balance…")).toBeNull();
   const pending = deferred<import("@/domain/wallet/storedSigner").MainnetPortfolioSnapshot>();
   portfolio.getMainnetPortfolio.mockReturnValueOnce(pending.promise);
   fireEvent.press(screen.getByRole("button", { name: "Retry token balances and positions" }));
-  expect(await screen.findByText("Checking USDC balance…")).toBeVisible();
+  expect(screen.getByText("2.5 USDC")).toBeVisible();
+  expect(screen.queryByText("Checking USDC balance…")).toBeNull();
   expect(screen.queryByText("USDC balance unavailable. Refresh to retry.")).toBeNull();
   await act(async () =>
     pending.resolve({
@@ -577,6 +582,7 @@ test("a successful swap balance remains visible when its owned aggregate is unav
   await open();
   expect(await screen.findByText("1.2345 USDG")).toBeVisible();
   expect(screen.getByText("Swap receiving wallets")).toBeVisible();
+  fireEvent.press(screen.getAllByRole("button", { name: "USDG holding details" })[0]!);
   expect(screen.getByText("USDG balance unavailable. Refresh to retry.")).toBeVisible();
   expect(screen.queryByText("0 USDG")).toBeNull();
 });
@@ -605,10 +611,11 @@ test("a locked private balance explains wallet unlock without claiming a provide
     ],
   });
   await open();
-  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
-  expect(screen.getByText("Unlock to check your private USDC.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeVisible();
+  fireEvent.press(screen.getByRole("button", { name: "USDC (private) holding details" }));
+  expect(screen.getByText("Refresh to check your private USDC.")).toBeVisible();
   expect(screen.queryByText("USDC (private) balance unavailable. Refresh to retry.")).toBeNull();
   expect(screen.queryByText("Checking USDC (private) balance…")).toBeNull();
   expect(screen.queryByText("0 USDC (private)")).toBeNull();
-  expect(screen.getByLabelText("19.990574 USDC")).toBeVisible();
+  expect(screen.getByLabelText("19.990574 USD")).toBeVisible();
 });

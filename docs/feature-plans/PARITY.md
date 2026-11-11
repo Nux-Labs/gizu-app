@@ -12,7 +12,7 @@ simulated passkey startup has been removed.
 | ------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------- |
 | Welcome/access                  | Native passkey create/open; Account 0 viewing session                          | Simulated passkey access                     |
 | Request access                  | Development mock; no real waitlist submission                                  | Same mock                                    |
-| Home                            | Actual Monad mainnet USDC balance, error/retry, address actions                | Fixture portfolio and charts                 |
+| Home                            | Observed portfolio value in USD, error/retry, address actions                  | Fixture portfolio and charts                 |
 | Vaults                          | Read-only mainnet catalog, TVL charts and details; no signing                  | Search/filter, details, charts and sharing   |
 | Swap                            | Read-only live token catalog in development and TestFlight                     | Read-only token catalog                      |
 | Receive                         | Receiving address/network/copy; no signing                                     | Simulated transfer journey                   |
@@ -62,8 +62,8 @@ move funds, change derivation, or expand the native testnet transfer policy.
 Home shows **Token holdings** when tracked Robinhood token balances exist; a successful
 empty read shows **Confidential vaults** instead. Loading and failures do not imply an
 empty portfolio. Home no longer shows the Wallet details toggle; account details remain
-available on Receive/Send. Token holdings are separate from the
-Monad mainnet USDC total. Both iOS and Android render the same holdings section;
+available on Receive/Send. Home totals public and private USDC, owned stablecoins,
+and valued vault positions in USD. Both iOS and Android render the same holdings section;
 the native adapter checks swap capability before reading balances. Unsupported
 builds show a retryable holdings error rather than an iOS-only restriction. This branch's Swap tab uses the native confidential-swap
 journey; the read-only Swap row above describes the earlier catalog baseline.
@@ -74,7 +74,15 @@ journey; the read-only Swap row above describes the earlier catalog baseline.
 - Holding cards show the token symbol, amount and verified value when available.
   Expand Holding details for network/contract information and existing sale actions.
   Holdings tools contains refresh and earlier-purchase discovery, even with no holdings.
-  Missing valuations are never treated as zero; stale and incomplete states remain visible.
+  Missing valuations are never treated as zero. Supported USDC and USDG retain their
+  dollar face value when market pricing is unavailable; verified USD prices take precedence.
+  The USD total retains the latest observed private/token balances when reads expire or
+  require authentication. Asset rows show a logo and one value; tapping the row opens
+  amount, network, contract and check-time details. Private USDC carries a lock badge.
+  The read-only action is labeled **Refresh private balance**, with native authentication
+  when its permission has expired. Missing-value notices stay in the affected asset's details.
+  Missing amounts remain unavailable, and refresh/unlock updates the observation.
+  Performance history uses a separate USD series from older USDC-denominated totals.
 - Native storage keeps tracked token contracts and completed/cancelled public
   operation summaries in a separate encrypted, wallet-scoped portfolio file.
   Replacing the active swap does not replace these records.
@@ -305,12 +313,17 @@ the inbox. See [TOASTS.md](../internal/TOASTS.md) for customization and native-m
 
 ### Bounded balance refresh
 
+Android Home first reads the existing encrypted native portfolio caches, without RPC
+or private-provider requests, and then refreshes balances in the background. Older native
+builds fall back to the network read. The initial holdings scan waits for the portfolio
+snapshot so it cannot occupy the native lane ahead of the saved balance display.
+
 Android public funding, owned tokens/positions and authenticated private balances are
 read independently. Public observation RPCs have a three-second request deadline and
 ten-second aggregate budget. Private refresh caps the salt lookup at five seconds, then
 allows ten seconds for at most two concurrent authenticated reads; salt latency does
-not consume the read phase. Cached observations remain visibly stale, and missing observations
-show unavailable/retry after requests finish rather than permanent loading. Execution
+not consume the read phase. Cached observations remain displayed and included in the
+USD total; missing observations show unavailable/retry after requests finish rather than permanent loading. Execution
 and settlement validation do not use these display deadlines or cached balances.
 
 Successful passkey login preserves its native read-only balance permission when Welcome
