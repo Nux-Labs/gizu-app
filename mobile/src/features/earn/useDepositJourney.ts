@@ -49,6 +49,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     [available, setAvailable] = useState(false),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
+    [preparingReview, setPreparingReview] = useState(false),
     [message, setMessage] = useState(""),
     [details, setDetails] = useState(false),
     [clock, setClock] = useState(() => Date.now()),
@@ -82,6 +83,16 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
   const revoke = useCallback(() => {
     const row = saved.current,
       lifecycleEpoch = epoch.current;
+    // Failed preparation has no spending authority left to revoke. Cancelling it
+    // on blur/unmount would overwrite the useful failure with "cancelled".
+    if (
+      !occupied.current &&
+      row?.phase === "paused" &&
+      !row.review &&
+      row.completedSteps.length === 0 &&
+      row.creditedAtoms === "0"
+    )
+      return;
     if (row && row.phase !== "invested")
       void service
         .cancel(owner, row.journeyId, row.revision)
@@ -121,6 +132,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
         setAmountText("");
         setLoading(true);
         setAuthorizing(false);
+        setPreparingReview(false);
         return service.available();
       })
       .then(async (enabled) => {
@@ -212,6 +224,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     if (occupied.current || !foreground.current || !isFocused) return;
     occupied.current = true;
     setBusy(true);
+    setPreparingReview(!!preparingBudget);
     setMessage("");
     const attempt = ++request.current,
       sessionEpoch = epoch.current;
@@ -277,7 +290,10 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
       preparingBudgetRef.current = null;
       if (timer) clearTimeout(timer);
       occupied.current = false;
-      if (mounted.current) setBusy(false);
+      if (mounted.current) {
+        setPreparingReview(false);
+        setBusy(false);
+      }
     }
   };
   const atoms = depositBudgetAtoms(amount),
@@ -313,6 +329,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     available,
     loading,
     busy,
+    preparing: preparingReview,
     message,
     details,
     setDetails,
@@ -371,10 +388,20 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
       !!snapshot &&
       canConfirmDeposit(snapshot, clock) &&
       (savedJourneyId !== undefined || snapshot.budgetAtoms === atoms),
-    review: () =>
-      atoms && canReview
-        ? perform(() => service.prepare(owner, profileId, atoms, saved.current?.journeyId), atoms)
-        : Promise.resolve(),
+    review: async () => {
+      if (!atoms || !canReview) return;
+      // Preparation can renew read-only authentication in system credential UI.
+      // Native lifecycle guards still cancel real departures and device locks.
+      ceremony.current = true;
+      try {
+        await perform(
+          () => service.prepare(owner, profileId, atoms, saved.current?.journeyId),
+          atoms,
+        );
+      } finally {
+        ceremony.current = false;
+      }
+    },
     confirm: async () => {
       if (
         !snapshot ||

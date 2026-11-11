@@ -306,6 +306,68 @@ test("unavailable preview explains why and never requests signing", async () => 
   expect(screen.queryByRole("button", { name: "Confirm deposit" })).toBeNull();
   expect(service.confirm).not.toHaveBeenCalled();
 });
+
+test("leaving a failed unsigned review preserves its preview failure instead of claiming approval stopped", async () => {
+  const failed = {
+    ...ready(),
+    phase: "paused",
+    pauseReason: "previewUnavailable",
+    review: undefined,
+  } as DepositSnapshot;
+  const { service, navigation } = setup({ prepare: jest.fn().mockResolvedValue(failed) });
+  await review();
+  expect(await screen.findByText(/fresh fee estimate is unavailable/)).toBeVisible();
+  act(() => navigation.navigate("Other" as never));
+  await act(async () => {});
+  act(() => navigation.goBack());
+  expect(await screen.findByText(/fresh fee estimate is unavailable/)).toBeVisible();
+  expect(screen.queryByText("Approval stopped. Submitted transactions remain tracked.")).toBeNull();
+  expect(service.cancel).not.toHaveBeenCalled();
+  expect(service.confirm).not.toHaveBeenCalled();
+});
+
+test("a native read-only passkey transition during review preparation does not cancel the draft", async () => {
+  const pending = deferred<DepositSnapshot>();
+  const partial = { ...ready(), phase: "preparing", review: undefined } as DepositSnapshot;
+  const { service } = setup({
+    prepare: jest.fn().mockReturnValue(pending.promise),
+    status: jest.fn().mockResolvedValue(partial),
+  });
+  await review();
+  const callbacks = jest
+    .mocked(AppState.addEventListener)
+    .mock.calls.filter(([event]) => event === "change")
+    .map(([, callback]) => callback);
+  act(() => callbacks.forEach((callback) => callback("background")));
+  await act(async () => {});
+  expect(service.cancel).not.toHaveBeenCalled();
+  act(() => callbacks.forEach((callback) => callback("active")));
+  await act(async () => pending.resolve(ready()));
+  expect(await screen.findByRole("button", { name: "Confirm deposit" })).toBeEnabled();
+  expect(service.cancel).not.toHaveBeenCalled();
+  expect(service.confirm).not.toHaveBeenCalled();
+});
+
+test("retrying a cancelled unsigned review shows preparation rather than the old cancellation", async () => {
+  const cancelled = {
+    ...ready(),
+    phase: "paused",
+    pauseReason: "cancelled",
+    review: undefined,
+  } as DepositSnapshot;
+  const pending = deferred<DepositSnapshot>();
+  const prepare = jest.fn().mockResolvedValueOnce(cancelled).mockReturnValueOnce(pending.promise);
+  setup({ prepare });
+  const user = await review();
+  expect(
+    await screen.findByText("Approval stopped. Submitted transactions remain tracked."),
+  ).toBeVisible();
+  await user.press(screen.getByRole("button", { name: "Review deposit" }));
+  expect(screen.queryByText("Approval stopped. Submitted transactions remain tracked.")).toBeNull();
+  expect(screen.getByText("Preparing deposit review")).toBeVisible();
+  await act(async () => pending.resolve(ready()));
+  expect(await screen.findByRole("button", { name: "Confirm deposit" })).toBeEnabled();
+});
 test("returning after cancelled preparation can review again using the same draft", async () => {
   const pending = deferred<DepositSnapshot>();
   const partial = { ...ready(), phase: "preparing", review: undefined } as DepositSnapshot;

@@ -301,6 +301,13 @@ asset-transfer authority. An expired permission requires unlocking the wallet
 again; the feature does not renew it silently or ask for a spending approval to
 obtain unknown remaining economics. Historical signed children remain immutable.
 
+Review preparation may open that native read-only credential prompt. JavaScript
+leaves its lifecycle handling to the native operation, as it does during confirmation;
+native Home/Recents, screen-lock and foreground checks still revoke real departures.
+An unsigned, failed preparation has no spending authority to cancel on screen cleanup,
+so its preview failure is retained rather than replaced with an approval-stopped state.
+Retry displays preparation progress instead of the previous cancellation message.
+
 Android lifecycle wiring uses screen-off and system Home/Recents events, plus
 interactive/keyguard checks on activity pause and the user-leave callback. Legitimate
 credential focus loss remains bounded; an intervening departure cancels the pending

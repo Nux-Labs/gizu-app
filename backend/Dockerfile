@@ -20,6 +20,11 @@ RUN mkdir -p /app/certs && curl --fail --silent --show-error --location \
     --output /app/certs/rds-global-bundle.pem
 
 FROM node:24.19.0-bookworm-slim AS runtime
+# Anvil uses the OS trust store for HTTPS fork RPCs; Node's bundled roots and
+# NODE_EXTRA_CA_CERTS do not provide system trust for that separate process.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/backend
 ENV NODE_ENV=production \
     PORT=3000 \

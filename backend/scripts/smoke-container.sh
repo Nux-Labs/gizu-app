@@ -40,7 +40,7 @@ for attempt in {1..30}; do
   sleep 1
 done
 [[ $ready == 1 ]] || { echo 'Container database health check failed' >&2; exit 1; }
-docker exec "$name-api" node -e "const fs = require('node:fs'); fs.accessSync(process.env.NODE_EXTRA_CA_CERTS); if (process.getuid() === 0) process.exit(1);"
+docker exec "$name-api" node -e "const fs = require('node:fs'); fs.accessSync(process.env.NODE_EXTRA_CA_CERTS); if (!fs.statSync('/etc/ssl/certs/ca-certificates.crt').size) throw Error('System TLS roots are missing'); if (process.getuid() === 0) process.exit(1);"
 docker exec "$name-api" /app/backend/.runtime/anvil-v1.8.3/anvil-fork --version
 # Match the ECS default: SIGTERM to Node as PID 1, then up to 30 seconds to stop.
 docker stop --time 30 "$name-api" >/dev/null

@@ -351,7 +351,10 @@ export function DepositJourneyScreen({
           </View>
         </Surface>
       )}
-      {paused && (
+      {v.preparing && (
+        <Typography accessibilityLiveRegion="polite">Preparing deposit review</Typography>
+      )}
+      {paused && !v.preparing && (
         <Typography accessibilityRole="alert">
           {depositPauseCopy[row.pauseReason ?? "recoveryRequired"]}
         </Typography>
