@@ -50,15 +50,19 @@ image or generate a successful deploy artifact.
 The Docker build runs the existing typecheck and test suite, installs the pinned
 Linux AMD64 Anvil release, compiles TypeScript, and runs `npm prune --omit=dev`.
 The runtime runs as the `node` user and contains the official RDS
-CA bundle. Tests requiring explicitly supplied live providers or disposable
+CA bundle plus Debian's system CA certificates. Anvil uses the system trust store
+for HTTPS fork RPCs; Node's bundled roots and the RDS-specific `NODE_EXTRA_CA_CERTS`
+do not supply trust to the separate simulator process. Without system roots,
+deposit previews return HTTP 503 before a review can be approved.
+Tests requiring explicitly supplied live providers or disposable
 databases remain skipped in the credential-free build.
 
 Before ECR push, CodeBuild runs `backend/scripts/smoke-container.sh` against the
 exact local image it will publish. The same check runs in the backend GitHub
 workflow. It uses a disposable PostgreSQL 18 instance on an internal Docker
 network, dummy credentials and unpublished ports. It verifies database-backed
-health, non-root execution, the packaged Anvil wrapper, presence of the RDS CA
-bundle and a zero exit code after SIGTERM. A failure stops publication. This is
+health, non-root execution, the packaged Anvil wrapper, presence of the system and
+RDS CA bundles and a zero exit code after SIGTERM. A failure stops publication. This is
 not a live RDS TLS or funded-operation acceptance test.
 
 To run the image check locally from the repository root:
