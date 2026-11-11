@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import {
   decodeFunctionData,
   erc20Abi,
@@ -9,6 +10,7 @@ import {
 } from "viem";
 import { entryPoint08Address } from "viem/account-abstraction";
 import { createRobinhoodPaymaster } from "../../../src/adapters/earn/robinhood-paymaster.ts";
+import { createRobinhoodPlannerProviders } from "../../../src/adapters/earn/robinhood-deposit-planner.ts";
 import {
   ROBINHOOD_PROFILE,
   robinhoodChain,
@@ -79,9 +81,19 @@ function rpcMock(changedNonce = false) {
           nonceReads++;
           result = changedNonce && nonceReads >= 4 ? "0x1" : "0x0";
           break;
+        case "eth_getBalance":
+          result = "0x0";
+          break;
         case "eth_call": {
           const selector = String(params[0].data).slice(0, 10);
-          if (selector === "0x70a08231") result = word(1000n);
+          if (selector === "0x70a08231")
+            result = word(
+              String(params[0].to).toLowerCase() === usdg.toLowerCase()
+                ? 1000n
+                : 0n,
+            );
+          else if (selector === "0x38d52e0f")
+            result = "0x" + "0".repeat(24) + usdg.slice(2);
           else if (selector === "0x313ce567") result = word(6n);
           else if (selector === "0xef8b30f7") result = word(100n);
           else if (selector === "0xdd62ed3e" || selector === "0x35567e1a")
@@ -158,6 +170,111 @@ function rpcMock(changedNonce = false) {
     },
   };
 }
+async function runtimeNonceFixture(
+  t: TestContext,
+  reply: (attempt: number) => { code: number; message: string } | bigint,
+) {
+  const mock = rpcMock();
+  let nonceRequests = 0;
+  t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
+    const request = JSON.parse(String(init?.body));
+    if (
+      request.method === "eth_call" &&
+      request.params[0].data.startsWith("0x35567e1a")
+    ) {
+      const result = reply(++nonceRequests);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          ...(typeof result === "bigint"
+            ? { result: word(result) }
+            : { error: result }),
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return mock.fetcher(url, init);
+  });
+  const providers = createRobinhoodPlannerProviders(
+    { rpcUrl: "https://offline-hood.invalid", pimlicoApiKey: "offline-secret" },
+    () => 1000000,
+  );
+  await providers.readState(owner);
+  return { providers, mock, nonceRequests: () => nonceRequests };
+}
+
+test("runtime vault preparation recovers a throttled nonce in the same request and retains the real nonzero nonce", async (t) => {
+  const f = await runtimeNonceFixture(t, (attempt) =>
+    attempt <= 2
+      ? {
+          code: 429,
+          message:
+            "Your app has exceeded its compute units per second capacity",
+        }
+      : 9n,
+  );
+  const prepared = await f.providers.prepare(
+    [{ to: recipient, data: "0x12", value: 0n }],
+    { maxFeePerGas: 2n, maxPriorityFeePerGas: 0n },
+  );
+  assert.equal(prepared.operation.nonce, "0x9");
+  assert.equal(f.nonceRequests(), 4);
+  assert.ok(
+    f.mock.methods.every(
+      (method) => !method.includes("send") && !method.includes("sign"),
+    ),
+  );
+});
+
+test("persistent nonce throttling is bounded and cannot fabricate a zero nonce or start sponsorship", async (t) => {
+  const f = await runtimeNonceFixture(t, () => ({
+    code: 429,
+    message: "provider capacity",
+  }));
+  await assert.rejects(
+    f.providers.prepare([{ to: recipient, data: "0x12", value: 0n }], {
+      maxFeePerGas: 2n,
+      maxPriorityFeePerGas: 0n,
+    }),
+  );
+  assert.equal(f.nonceRequests(), 4);
+  assert.equal(f.mock.sponsorOperations.length, 0);
+  assert.equal(f.mock.estimateRequests.length, 0);
+});
+
+test("nonce drift after throttling recovers still invalidates the prepared operation", async (t) => {
+  const f = await runtimeNonceFixture(t, (attempt) =>
+    attempt <= 2
+      ? { code: 429, message: "provider capacity" }
+      : attempt === 3
+        ? 9n
+        : 10n,
+  );
+  await assert.rejects(
+    f.providers.prepare([{ to: recipient, data: "0x12", value: 0n }], {
+      maxFeePerGas: 2n,
+      maxPriorityFeePerGas: 0n,
+    }),
+    /Pending Robinhood nonce/,
+  );
+  assert.equal(f.nonceRequests(), 4);
+});
+
+test("a deterministic nonce contract revert is rejected immediately without sponsorship or nonce fallback", async (t) => {
+  const f = await runtimeNonceFixture(t, () => ({
+    code: 3,
+    message: "execution reverted",
+  }));
+  await assert.rejects(
+    f.providers.prepare([{ to: recipient, data: "0x12", value: 0n }], {
+      maxFeePerGas: 2n,
+      maxPriorityFeePerGas: 0n,
+    }),
+  );
+  assert.equal(f.nonceRequests(), 1);
+  assert.equal(f.mock.sponsorOperations.length, 0);
+});
 test("installed Robinhood SDK threads verified storage overrides and corrects token approval ceiling", async (t) => {
   const mock = rpcMock();
   t.mock.method(globalThis, "fetch", mock.fetcher);

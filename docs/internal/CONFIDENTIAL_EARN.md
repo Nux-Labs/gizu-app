@@ -34,12 +34,32 @@ Authenticated action reads update the shared encrypted private observations,
 and verified payout delivery attempts to record the remaining source balance.
 No frontend observation can authorize spending or establish settlement.
 
+Robinhood deposit and exit planners and payout receipt reads use the shared
+read-only EVM transport. It retries transient RPC/HTTP failures up to three times
+with viem's backoff, within a 12-second deadline for the whole read including
+`Retry-After`. Caller cancellation remains effective. Its method allowlist excludes
+signing, submission and fork mutations. Fresh nonce reads and all nonce-change,
+identity, canonical-block and quote-expiry checks remain required; no failed read
+becomes a zero nonce or a cached balance. Financial submission transports do not
+use this retry policy.
+
+The two globally admitted disposable forks are each configured for 150 CU/s
+instead of 1,000. Their combined configured budget is 300 CU/s, leaving room for
+live chain reads under the observed 500 CU/s Alchemy account limit. This is a
+per-process limit, so replicas and other applications must share an operator
+capacity allowance. At Nov12 01:36:44, Alchemy's Gizu request log identified the
+failed EntryPoint08 `getNonce(address,uint192)` read as HTTP/JSON-RPC429, preceded
+by throttled fork storage reads. This was RPC throughput exhaustion, not a
+missing private funding/history record.
+
 Funded Robinhood plan failures also attach a `planning` object to the existing
 backend `private.error` log. It identifies the failed state read, market quote,
 vault simulation, deposit/withdrawal sponsorship, final sponsorship, freshness or
 plan validation stage. Only fixed internal reason/SDK error labels, numeric upstream
 HTTP/JSON-RPC codes, `AA` plus two-digit validation codes and allowlisted backend
-module/line locations are retained. Upstream messages, raw stacks/paths, owners,
+module/line locations are retained. Positive Alchemy429 is preserved as
+`rpc-throttled`; it is not discarded as a nonstandard positive RPC code.
+Upstream messages, raw stacks/paths, owners,
 amounts and requests are excluded. Responses keep the existing generic error contract. This diagnostic
 does not retry, relax funding checks or grant signing/execution authority. A live
 `EARN_ROBINHOOD_PLAN_UNAVAILABLE` requires this backend build to be deployed before

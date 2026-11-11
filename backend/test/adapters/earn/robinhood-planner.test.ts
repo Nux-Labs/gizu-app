@@ -5,6 +5,24 @@ import { ROBINHOOD_PROFILE } from "../../../src/adapters/earn/robinhood-vault.ts
 import { mergeRobinhoodTraces } from "../../../src/adapters/earn/robinhood-simulation.ts";
 import { RobinhoodPlanFailure } from "../../../src/adapters/earn/robinhood-plan-error.ts";
 const owner = "0x1000000000000000000000000000000000000001" as const;
+test("wrapped positive Alchemy429 is identified without exposing provider data", () => {
+  const rpc = Object.assign(new Error("sensitive-provider-data"), {
+    code: 429,
+  });
+  const failure = new RobinhoodPlanFailure(
+    "deposit-sponsorship",
+    new Error("sensitive-sdk-context", { cause: rpc }),
+  );
+  assert.deepEqual(failure.diagnostic, {
+    stage: "deposit-sponsorship",
+    reason: "rpc-throttled",
+    rpcCode: 429,
+  });
+  assert.equal(
+    JSON.stringify(failure.diagnostic).includes("sensitive-"),
+    false,
+  );
+});
 test("sponsorship diagnostics distinguish local validation guards and deeply wrapped upstream rejection without disclosing error text", () => {
   for (const [message, reason] of [
     ["Malformed token paymaster data", "paymaster-format"],

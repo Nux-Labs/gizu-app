@@ -4,7 +4,6 @@ import {
   encodeFunctionData,
   erc20Abi,
   getAddress,
-  http,
   keccak256,
   parseAbi,
   stringToHex,
@@ -23,6 +22,7 @@ import type { ExactCall } from "./vault.ts";
 import { withPinnedFork, simulateForkSequence } from "./fork-simulation.ts";
 import type { SimulationRow } from "./fork-simulation.ts";
 import { readRobinhoodState } from "./robinhood-deposit-planner.ts";
+import { evmReadTransport } from "../evm/read-transport.ts";
 import type {
   RobinhoodState,
   RobinhoodPlannerConfig,
@@ -244,7 +244,7 @@ function runtime(
 ): RobinhoodExitProviders {
   const client = createPublicClient({
     chain: robinhoodChain,
-    transport: http(config.rpcUrl, { timeout: 12000, retryCount: 0 }),
+    transport: evmReadTransport(config.rpcUrl),
     cacheTime: 0,
   });
   let owner: Address | undefined,
