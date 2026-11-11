@@ -188,7 +188,7 @@ function useMainnetState(
       const current = () => alive.current && generation.current === requestGeneration;
       const abort = new AbortController();
       controller.current = abort;
-      setLoading(true);
+      setLoading(!quiet);
       if (!quiet) setError("");
       try {
         const signer = service ?? getStoredSwapSigner();

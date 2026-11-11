@@ -144,10 +144,51 @@ internal class RecoveredHistoryImporter(
     b: JSONObject,
     sponsored: Boolean,
     cashout: Boolean,
+    payout: Boolean,
   ): JSONObject {
     val ar = a.optInt("revision", 0)
     val br = b.optInt("revision", 0)
     require(ar >= 0 && br >= 0)
+    if (
+      payout &&
+        listOf(a, b).any { it.optString("status") == "paid" && it.has("groupId") } &&
+        !(listOf(a, b)
+          .firstOrNull { it.optString("status") != "paid" || !it.has("groupId") }
+          ?.let { other ->
+            val paid = if (other === a) b else a
+            !other.has("signedData") && other.optInt("revision", 0) < paid.optInt("revision", 0)
+          } ?: false)
+    ) {
+      val paid = listOf(a, b).first { it.optString("status") == "paid" && it.has("groupId") }
+      val other = if (paid === a) b else a
+      for (field in
+        listOf(
+          "operationId",
+          "walletId",
+          "leg",
+          "proposal",
+          "preparedText",
+          "signedData",
+          "nonce",
+          "payloadHash",
+          "reservationId",
+          "nonceHistory",
+          "review",
+          "reviewHash",
+        )) check(canonical(paid.opt(field)) == canonical(other.opt(field))) {
+        "RECOVERY_PAYOUT_SIGNED_IDENTITY_CONFLICT"
+      }
+      if (other.optString("status") == "paid")
+        for (field in listOf("groupId", "receivedAtoms", "receipt", "settlement")) check(
+          canonical(paid.opt(field)) == canonical(other.opt(field))
+        ) {
+          "RECOVERY_PAYOUT_PAID_CONFLICT"
+        }
+      return JSONObject(paid.toString()).also {
+        if (maxOf(ar, br) > paid.getInt("revision"))
+          it.put("revision", Math.addExact(maxOf(ar, br), 1))
+      }
+    }
     if (ar == br) {
       check(canonical(a) == canonical(b)) { "RECOVERY_HISTORY_CONFLICT" }
       return a
@@ -175,6 +216,7 @@ internal class RecoveredHistoryImporter(
     b: JSONArray,
     sponsored: Boolean = false,
     cashout: Boolean = false,
+    payout: Boolean = false,
     identity: (JSONObject) -> String,
   ): JSONArray {
     val rows = linkedMapOf<String, JSONObject>()
@@ -184,7 +226,8 @@ internal class RecoveredHistoryImporter(
       val id = identity(row)
       require(id.length in 1..256)
       rows[id] =
-        rows[id]?.let { mergeEntry(it, row, sponsored, cashout) } ?: JSONObject(row.toString())
+        rows[id]?.let { mergeEntry(it, row, sponsored, cashout, payout) }
+          ?: JSONObject(row.toString())
     }
     require(rows.size <= 100_000)
     return JSONArray(rows.values.toList())
@@ -401,6 +444,12 @@ internal class RecoveredHistoryImporter(
         check(
           row.getString("walletId") == walletId && row.getString("generation") == sourceGeneration
         )
+        row.optJSONObject("review")?.let { review ->
+          check(review.getString("generation") == sourceGeneration) {
+            "RECOVERY_DEPOSIT_REVIEW_GENERATION"
+          }
+          review.put("generation", generation)
+        }
         row.put("generation", generation)
       }
     }
@@ -416,7 +465,77 @@ internal class RecoveredHistoryImporter(
         checkNotNull(savedMinimumReturnReceipt(operation, walletId, generation))
       }
     }
+    if (domain == "gizu-earn-payout") validatePayoutGroups(root)
     return root
+  }
+
+  private fun validatePayoutGroups(root: JSONObject) {
+    val groups = root.optJSONObject("groups") ?: return
+    val rows = root.getJSONArray("operations").objects()
+    for (id in groups.keys()) {
+      val saved = groups.getJSONObject(id)
+      val proof = saved.getJSONObject("proof")
+      if (proof.getString("status") != "paid") continue
+      check(proof.getString("groupId") == id)
+      val group = saved.getJSONObject("group")
+      val members = group.getJSONArray("members").objects()
+      val children =
+        members.map { member ->
+          val child =
+            rows.single { row ->
+              val p = row.getJSONObject("proposal")
+              p.getString("operationId") == member.getString("operationId") &&
+                p.getString("leg") == member.getString("leg") &&
+                p.optInt("cycleIndex", 0) == group.getInt("cycleIndex")
+            }
+          check(child.optString("status") == "paid" && child.has("signedData")) {
+            "RECOVERY_PAYOUT_GROUP_ALLOCATION_CONFLICT"
+          }
+          if (child.has("groupId"))
+            check(
+              child.getString("groupId") == id &&
+                child.getJSONObject("receipt").getString("groupId") == id &&
+                child.getJSONObject("receipt").getInt("slot") ==
+                  member.getString("leg").substringAfter(':').toInt()
+            )
+          child
+        }
+      val slots = proof.getJSONArray("slots").objects()
+      check(slots.size == group.getJSONArray("recipients").length())
+      for ((slot, evidence) in slots.withIndex()) {
+        val selected = children.filter { it.getString("leg") == "invest:$slot" }
+        check(
+          evidence.getInt("slot") == slot &&
+            evidence
+              .getString("destinationRecipient")
+              .equals(group.getJSONArray("recipients").getString(slot), true)
+        )
+        val total =
+          selected.fold(java.math.BigInteger.ZERO) { n, row ->
+            n + depositAtoms(row.getString("receivedAtoms"), true)
+          }
+        val minimum =
+          selected.fold(java.math.BigInteger.ZERO) { n, row ->
+            n +
+              depositAtoms(row.getJSONObject("proposal").getString("minimumDestinationAtoms"), true)
+          }
+        check(
+          total.toString() == evidence.getString("receivedAtoms") &&
+            minimum.toString() == evidence.getString("minimumDestinationAtoms")
+        ) {
+          "RECOVERY_PAYOUT_GROUP_ALLOCATION_CONFLICT"
+        }
+        for (row in selected.filter { !it.has("groupId") }) {
+          val old = row.getJSONObject("receipt")
+          val exact =
+            evidence.getJSONArray("receipts").objects().single { event ->
+              event.getString("transactionHash").equals(old.getString("transactionHash"), true) &&
+                (!old.has("logIndex") || old.getInt("logIndex") == event.getInt("logIndex"))
+            }
+          check(exact.getString("receivedAtoms") == row.getString("receivedAtoms"))
+        }
+      }
+    }
   }
 
   private fun merge(domain: String, a: Any, b: Any): Any {
@@ -457,18 +576,95 @@ internal class RecoveredHistoryImporter(
         "batches" -> "id"
         else -> "operationId"
       }
-    return JSONObject(a.toString())
-      .put(
-        collection,
-        mergeRows(
-          a.getJSONArray(collection),
-          b.getJSONArray(collection),
-          domain == "gizu-earn-sponsored",
-          domain == "gizu-confidential-withdrawal",
+    val merged =
+      JSONObject(a.toString())
+        .put(
+          collection,
+          mergeRows(
+            a.getJSONArray(collection),
+            b.getJSONArray(collection),
+            domain == "gizu-earn-sponsored",
+            domain == "gizu-confidential-withdrawal",
+            domain == "gizu-earn-payout",
+          ) {
+            it.getString(id)
+          },
+        )
+    if (domain == "gizu-earn-payout") {
+      val groups = JSONObject((a.optJSONObject("groups") ?: JSONObject()).toString())
+      val incoming = b.optJSONObject("groups") ?: JSONObject()
+      for (id in incoming.keys()) {
+        val next = incoming.getJSONObject(id)
+        val previous = groups.optJSONObject(id)
+        if (previous == null) {
+          groups.put(id, next)
+          continue
+        }
+        check(
+          canonical(previous.getJSONObject("group")) == canonical(next.getJSONObject("group"))
         ) {
-          it.getString(id)
-        },
-      )
+          "RECOVERY_PAYOUT_GROUP_CONFLICT"
+        }
+        val before = previous.getJSONObject("proof")
+        val after = next.getJSONObject("proof")
+        fun frozenHashes(proof: JSONObject): List<List<String>>? =
+          if (!proof.optBoolean("candidateFrozen")) null
+          else
+            proof.getJSONArray("groupScan").objects().map { scan ->
+              val hashes = scan.getJSONArray("transactionHashes")
+              (0 until hashes.length()).map { earnHash(hashes.getString(it)) }.sorted()
+            }
+        fun paidHashes(proof: JSONObject): List<List<String>> =
+          proof.getJSONArray("slots").objects().map { slot ->
+            slot
+              .getJSONArray("receipts")
+              .objects()
+              .map { earnHash(it.getString("transactionHash")) }
+              .distinct()
+              .sorted()
+          }
+        val frozenBefore = frozenHashes(before)
+        val frozenAfter = frozenHashes(after)
+        fun descends(ancestor: JSONObject, descendant: JSONObject): Boolean =
+          (descendant.optJSONArray("forkEvidence")?.length() ?: 0) > 0 &&
+            (descendant.optJSONArray("candidateHistory")?.objects() ?: emptyList()).any {
+              canonical(it) == canonical(earnGroupCandidateSnapshot(ancestor))
+            }
+        val afterDescends = frozenBefore != null && descends(before, after)
+        val beforeDescends = frozenAfter != null && descends(after, before)
+        if (frozenBefore != null && frozenAfter != null)
+          check(frozenBefore == frozenAfter || afterDescends || beforeDescends) {
+            "RECOVERY_PAYOUT_CANDIDATE_CONFLICT"
+          }
+        if (before.getString("status") == "paid" && after.getString("status") == "paid") {
+          check(canonical(before.getJSONArray("slots")) == canonical(after.getJSONArray("slots"))) {
+            "RECOVERY_PAYOUT_GROUP_RECEIPT_CONFLICT"
+          }
+        } else if (after.getString("status") == "paid") {
+          if (frozenBefore != null && !afterDescends)
+            check(paidHashes(after) == frozenBefore) { "RECOVERY_PAYOUT_CANDIDATE_CONFLICT" }
+          groups.put(id, next)
+        } else if (before.getString("status") == "paid") {
+          if (frozenAfter != null && !beforeDescends)
+            check(paidHashes(before) == frozenAfter) { "RECOVERY_PAYOUT_CANDIDATE_CONFLICT" }
+        } else if (before.optBoolean("recoveryRequired")) {
+          // Preserve a known immutable backend conflict instead of reopening automatic retries.
+        } else if (after.optBoolean("recoveryRequired")) groups.put(id, next)
+        else if (afterDescends) groups.put(id, next)
+        else if (frozenBefore != null) {
+          // A prior POST may have succeeded even when its response was lost. Keep the exact set.
+        } else if (frozenAfter != null) groups.put(id, next)
+        else {
+          // Only unfrozen scans may restart when independent branches covered different ranges.
+          val restarted = JSONObject(next.toString())
+          restarted.getJSONObject("proof").remove("groupScan")
+          groups.put(id, restarted)
+        }
+      }
+      merged.put("groups", groups)
+      validatePayoutGroups(merged)
+    }
+    return merged
   }
 
   private fun compactTransferHistory(pending: MutableMap<String, Pair<String, Any>>) {
@@ -682,6 +878,7 @@ internal suspend fun reconcileRecoveredHistory(context: Context, store: WalletSt
                   destination,
                   sourceReader = { _, _ -> error("Recovery cannot prepare a payout") },
                   readAuth = ::readAuth,
+                  groupedDelivery = { isGuidedEarnPayout(it, rows("gizu-earn-deposit")) },
                 )
                 .use { it.reconcile(op.getString("operationId"), op.getInt("revision")) }
             } else {

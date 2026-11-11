@@ -280,6 +280,7 @@ internal class EarnPrivatePayoutEngine(
   suspend fun reconcile(id: String): JSONObject {
     var row = journal.get(id)
     if (!row.has("signedData") || row.getString("status") == "paid") return row
+    if (row.getJSONObject("proposal").has("distribution")) return row
     authority()
     val used =
       journal

@@ -138,6 +138,7 @@ class EarnPayoutEngineTest {
     prepared: () -> JSONObject = { f.prepared() },
     source: () -> JSONObject = { f.source() },
     batch: (suspend (String) -> List<JSONObject>)? = null,
+    groupedDelivery: (JSONObject) -> Boolean = { it.has("groupId") },
   ) =
     EarnPayoutEngine(
       store(recovery),
@@ -159,6 +160,7 @@ class EarnPayoutEngineTest {
       sourceBatchReader = batch,
       now = clock,
       eventTopic = { f.nativeHash },
+      groupedDelivery = groupedDelivery,
     )
 
   private fun request() =
@@ -168,6 +170,44 @@ class EarnPayoutEngineTest {
       "sourceRevision" to 11,
       "leg" to "hold",
     )
+
+  @Test
+  fun distributionReconciliationDefersToJourneyGroupWithoutIndividualReadOrScan() = runBlocking {
+    val j = EarnPayoutJournal(File(), { key }, f.wallet, f.wallet)
+    val p =
+      JSONObject()
+        .put("kind", "earnPayout")
+        .put("operationId", "funding1")
+        .put("revision", 7)
+        .put("profileChainId", 4663)
+        .put("cycleIndex", 0)
+        .put("leg", "invest:0")
+        .put(
+          "distribution",
+          JSONObject().put("version", 1).put("weightsBps", org.json.JSONArray(listOf(10000))),
+        )
+        .put("expectedSigner", f.C)
+        .put("expectedRecipient", f.recipient)
+        .put("amountAtoms", "100")
+        .put("minimumDestinationAtoms", "90")
+    val row = j.create(p, "exact saved prepared bytes", "nonce", f.hash, f.hash)
+    val id = row.getString("operationId")
+    j.saveSigned(id, "invest:0", 1, "exact saved signed bytes", "review", f.hash)
+    val review =
+      JSONObject()
+        .put(
+          "review",
+          JSONObject()
+            .put("cycleIndex", 0)
+            .put("distribution", p.getJSONObject("distribution"))
+            .put("sources", org.json.JSONArray().put(JSONObject().put("operationId", "funding1"))),
+        )
+    engine(j, groupedDelivery = { isGuidedEarnPayout(it, listOf(review)) }).use { e ->
+      val before = depositCanonical(j.get(id))
+      assertEquals(before, depositCanonical(e.reconcile(id, 2)))
+      assertEquals(0, readAuthentications)
+    }
+  }
 
   @Test
   fun reservationBeforeReviewAndFailedSignatureCommitNeverSubmits() = runBlocking {

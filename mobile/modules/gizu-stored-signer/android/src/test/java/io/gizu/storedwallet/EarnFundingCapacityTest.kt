@@ -297,6 +297,30 @@ class EarnFundingCapacityTest {
   }
 
   @Test
+  fun retainedNormalizedGroupProofsConsumeBothGuidedAndFundingAuthorizationCapacity() {
+    DistributionDepositFixtures.record(listOf(10000)).use { r ->
+      val review = DistributionDepositFixtures.review(r)
+      assertThrows(IllegalStateException::class.java) {
+        requireDepositCapacity(review, emptyList(), emptyList(), 14L * 1024 * 1024)
+      }
+    }
+    record(4663).use { r ->
+      val source = sources(1, 4663)
+      assertThrows(IllegalStateException::class.java) {
+        requireDistributionFundingCapacity(
+          r,
+          source[0],
+          source,
+          emptyList(),
+          emptyList(),
+          emptyList(),
+          14L * 1024 * 1024,
+        )
+      }
+    }
+  }
+
+  @Test
   fun guidedFiftyTwoSourcesRejectBeforeFundingAtTheSamePayoutLimit() {
     DistributionDepositFixtures.record(listOf(1000, 1500, 2000, 2500, 3000)).use { r ->
       val review = DistributionDepositFixtures.review(r)

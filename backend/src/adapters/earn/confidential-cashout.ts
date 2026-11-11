@@ -4,6 +4,7 @@ import {
 } from "./operation-coordinator.ts";
 import {
   boundUnsignedPayoutDeadline,
+  confirmPayoutDestinationReceipt,
   validatePrivatePayoutIntent,
 } from "./private-payout.ts";
 import {
@@ -134,6 +135,23 @@ class ConfidentialPayoutGateway {
       received?: string,
       group = false,
     ) => {
+      if (destination.purpose === "confidential-private-funding") {
+        const verified = await confirmPayoutDestinationReceipt(
+          client,
+          { ...q, quoteCreatedAtMs: q.observedAtMs },
+          hash,
+          received === undefined ? undefined : atoms(received),
+        );
+        if (Number(verified.block.timestamp) * 1000 > this.now() + 5000)
+          throw Error("Future destination receipt");
+        return {
+          transactionHash: verified.receipt.transactionHash,
+          receivedAtoms: verified.received.toString(),
+          blockNumber: verified.receipt.blockNumber.toString(),
+          blockHash: verified.receipt.blockHash,
+          logIndex: verified.transfer.logIndex,
+        };
+      }
       if ((await client.getChainId()) !== destination.chainId)
         throw Error("Wrong destination chain");
       if (!/^0x[0-9a-f]{64}$/i.test(hash)) throw Error("Invalid receipt");
@@ -149,8 +167,7 @@ class ConfidentialPayoutGateway {
         r.blockHash !== b.hash ||
         f.number === null ||
         f.number < r.blockNumber ||
-        ((destination.purpose === "confidential-private-funding" ||
-          received === undefined) &&
+        (received === undefined &&
           (!Number.isSafeInteger(Number(b.timestamp) * 1000) ||
             Number(b.timestamp) * 1000 <
               (q.receiptObservedAtMs ?? q.observedAtMs) - 1000 ||
@@ -888,18 +905,15 @@ class ConfidentialPayoutGateway {
   }
   /** Separate public-delivery evidence; never attests an exact private-ledger transaction. */
   private async receiptStatus(input: any, q: any, C: string) {
-    if (
-      this.destination.purpose !== "confidential-cashout" ||
-      !this.providers.routeStatus ||
-      !this.providers.confirmReceipt
-    )
+    if (!this.providers.routeStatus || !this.providers.confirmReceipt)
       throw Error("Receipt policy unavailable");
     validatePrivatePayoutIntent(q.intent.payload, {
       signer: C,
       depositId: q.depositId,
       amountAtoms: q.amountAtoms,
     });
-    await this.bindCashoutRecipient(q);
+    if (this.destination.purpose === "confidential-cashout")
+      await this.bindCashoutRecipient(q);
     const route = obj(await this.providers.routeStatus(q.depositId));
     const base = {
       operationId: q.operationId,
@@ -914,7 +928,10 @@ class ConfidentialPayoutGateway {
       authenticated: true,
       operationScoped: true,
       observedAtMs: this.now(),
-      verification: "destination-receipt-v1",
+      verification:
+        this.destination.purpose === "confidential-private-funding"
+          ? "signed-route-receipt-v1"
+          : "destination-receipt-v1",
     };
     if (route.status !== "SUCCESS") {
       if (
@@ -947,6 +964,9 @@ class ConfidentialPayoutGateway {
       logIndex: receipt.logIndex,
     };
     const owner = {
+      ...(this.destination.purpose === "confidential-private-funding"
+        ? { purpose: this.destination.purpose }
+        : {}),
       operationId: q.operationId,
       source: C,
       recipient: q.destinationRecipient,
@@ -962,7 +982,7 @@ class ConfidentialPayoutGateway {
     // New ownership is independent of provider-hash availability, so an earlier
     // hashless backup can replay after a response was lost. Only keyed commitments persist.
     try {
-      await bindReceipt({ verification: "destination-receipt-v1", ...owner });
+      await bindReceipt({ verification: base.verification, ...owner });
     } catch (error) {
       if (
         !(error instanceof CoordinationError) ||
@@ -981,6 +1001,45 @@ class ConfidentialPayoutGateway {
       receivedAtoms: receipt.receivedAtoms,
       receipt,
     };
+  }
+  /** Open the existing private-funding seal and validate the saved signed bytes only. */
+  async restoreEarnGroupMember(
+    member: { operationId: string; leg: string; recipient: string },
+    saved: { recoveryEnvelope: string; revision: number; submittedIntent: any },
+  ) {
+    if (
+      this.destination.purpose !== "confidential-private-funding" ||
+      saved.revision !== 1
+    )
+      throw Error("Invalid private funding group member");
+    const q = obj(
+      this.envelope.open(this.destination.purpose, saved.recoveryEnvelope),
+    );
+    if (
+      q.operationId !== `${member.operationId}_${member.leg.slice(7)}` ||
+      q.destinationChainId !== this.destination.chainId ||
+      !same(q.destinationToken, this.destination.token) ||
+      !same(q.destinationRecipient, member.recipient) ||
+      q.assetId !== monadUsdcAssetId ||
+      (q.destinationAssetId ?? q.assetId) !== this.destination.assetId ||
+      q.quoteRequest?.destinationAsset !== this.destination.assetId ||
+      saved.submittedIntent?.payload !== q.intent.payload ||
+      !same(
+        await this.providers.verify(saved.submittedIntent),
+        q.confidentialAccount,
+      )
+    )
+      throw Error("Changed signed private funding group member");
+    const { nonce } = validatePrivatePayoutIntent(q.intent.payload, {
+      signer: q.confidentialAccount,
+      depositId: q.depositId,
+      amountAtoms: q.amountAtoms,
+    });
+    return { ...q, nonce, quoteCreatedAtMs: q.observedAtMs };
+  }
+  async earnGroupRouteStatus(depositId: string) {
+    if (!this.providers.routeStatus) throw Error("Group route unavailable");
+    return this.providers.routeStatus(depositId);
   }
   async status(input: any, receiptOnly = false): Promise<any> {
     const q = obj(
@@ -1007,7 +1066,11 @@ class ConfidentialPayoutGateway {
       !same(await this.providers.verify(input.submittedIntent), C)
     )
       throw Error("Changed signed cashout");
-    if (receiptOnly) return this.receiptStatus(input, q, C);
+    if (
+      receiptOnly ||
+      this.destination.purpose === "confidential-private-funding"
+    )
+      return this.receiptStatus(input, q, C);
     const history = await this.providers.history(input.signedData, q.depositId);
     const rows = history
       .map(obj)
@@ -1083,9 +1146,6 @@ class ConfidentialPayoutGateway {
         logIndex: receipt.logIndex,
       },
       {
-        ...(this.destination.purpose === "confidential-private-funding"
-          ? { purpose: this.destination.purpose }
-          : {}),
         operationId: q.operationId,
         source: C,
         recipient: q.destinationRecipient,

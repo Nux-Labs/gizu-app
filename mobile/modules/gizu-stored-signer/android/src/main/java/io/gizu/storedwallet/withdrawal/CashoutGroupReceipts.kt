@@ -4,14 +4,21 @@ import java.math.BigInteger
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal enum class GroupReceiptChainPolicy(val chainId: Int, val token: String, val head: String) {
+  MONAD_FINALIZED(143, io.gizu.storedwallet.swap.MainnetPortfolio.USDC, "finalized"),
+  ROBINHOOD_CANONICAL(4663, HOOD_EARN_USDG, "latest"),
+}
+
 /** Group confirmation observes public delivery only; it does not assign a transfer to a source. */
-private suspend fun cashoutReference(rpc: TransferRpc, quote: JSONObject): BigInteger {
-  check(quantity(rpc.text("eth_chainId")) == BigInteger.valueOf(143))
+internal suspend fun groupReceiptReference(
+  rpc: TransferRpc,
+  quote: JSONObject,
+  policy: GroupReceiptChainPolicy,
+): BigInteger {
+  check(quantity(rpc.text("eth_chainId")) == BigInteger.valueOf(policy.chainId.toLong()))
   check(
-    quote.getInt("destinationChainId") == 143 &&
-      quote
-        .getString("destinationToken")
-        .equals(io.gizu.storedwallet.swap.MainnetPortfolio.USDC, true)
+    quote.getInt("destinationChainId") == policy.chainId &&
+      quote.getString("destinationToken").equals(policy.token, true)
   )
   val number = quote.getString("referenceBlock").toBigInteger()
   check(number.signum() >= 0)
@@ -51,18 +58,49 @@ internal suspend fun scanCashoutGroupReceipts(
   quote: JSONObject,
   saved: JSONObject,
   topic: (String) -> String = ::earnEventTopic,
+  policy: GroupReceiptChainPolicy = GroupReceiptChainPolicy.MONAD_FINALIZED,
 ): JSONObject {
-  val reference = cashoutReference(rpc, quote)
+  val reference = groupReceiptReference(rpc, quote, policy)
+  var state = saved
+  if (policy == GroupReceiptChainPolicy.ROBINHOOD_CANONICAL) {
+    val tip = saved.optString("scanTipBlock")
+    val current =
+      if (tip.isBlank()) null
+      else
+        rpc.call(
+          "eth_getBlockByNumber",
+          JSONArray().put("0x" + tip.toBigInteger().toString(16)).put(false),
+        ) as? JSONObject
+    if (
+      current == null ||
+        quantity(current.getString("number")).toString() != tip ||
+        !current.getString("hash").equals(saved.optString("scanTipHash"), true)
+    )
+      state = JSONObject()
+  }
   val from =
-    saved.optString("nextScanBlock", (reference + BigInteger.ONE).toString()).toBigInteger()
+    state.optString("nextScanBlock", (reference + BigInteger.ONE).toString()).toBigInteger()
   check(from > reference)
-  val head = rpc.call("eth_getBlockByNumber", JSONArray().put("finalized").put(false)) as JSONObject
+  val head = rpc.call("eth_getBlockByNumber", JSONArray().put(policy.head).put(false)) as JSONObject
   val last = quantity(head.getString("number"))
   val hashes = linkedSetOf<String>()
-  saved.optJSONArray("transactionHashes")?.let { a ->
+  state.optJSONArray("transactionHashes")?.let { a ->
     for (i in 0 until a.length()) hashes.add(earnHash(a.getString(i)))
   }
+  if (policy == GroupReceiptChainPolicy.ROBINHOOD_CANONICAL) check(last >= reference)
   val end = minOf(last, from + BigInteger.valueOf(4095))
+  val checkpoint =
+    if (policy == GroupReceiptChainPolicy.ROBINHOOD_CANONICAL && from <= last)
+      rpc.call("eth_getBlockByNumber", JSONArray().put("0x" + end.toString(16)).put(false))
+        as JSONObject
+    else head
+  val checkpointNumber = if (from <= last) end else last
+  val checkpointHash =
+    if (policy == GroupReceiptChainPolicy.ROBINHOOD_CANONICAL)
+      earnHash(checkpoint.getString("hash"))
+    else ""
+  if (policy == GroupReceiptChainPolicy.ROBINHOOD_CANONICAL)
+    check(quantity(checkpoint.getString("number")) == checkpointNumber)
   if (from <= last) {
     val event = topic("Transfer(address,address,uint256)")
     val filter =
@@ -85,11 +123,40 @@ internal suspend fun scanCashoutGroupReceipts(
         hashes.add(earnHash(log.getString("transactionHash")))
     }
   }
+  if (policy == GroupReceiptChainPolicy.ROBINHOOD_CANONICAL) {
+    val checked =
+      rpc.call(
+        "eth_getBlockByNumber",
+        JSONArray().put("0x" + checkpointNumber.toString(16)).put(false),
+      ) as JSONObject
+    check(
+      quantity(checked.getString("number")) == checkpointNumber &&
+        earnHash(checked.getString("hash")) == checkpointHash
+    )
+  }
+  if (
+    policy == GroupReceiptChainPolicy.ROBINHOOD_CANONICAL &&
+      state === saved &&
+      saved.has("scanTipBlock")
+  ) {
+    val oldNumber = saved.getString("scanTipBlock").toBigInteger()
+    val old =
+      rpc.call("eth_getBlockByNumber", JSONArray().put("0x" + oldNumber.toString(16)).put(false))
+        as JSONObject
+    check(
+      quantity(old.getString("number")) == oldNumber &&
+        earnHash(old.getString("hash")) == earnHash(saved.getString("scanTipHash"))
+    )
+  }
   check(hashes.size <= 128) { "Too many public delivery receipts" }
   return JSONObject()
     .put("transactionHashes", JSONArray(hashes.toList()))
     .put("nextScanBlock", (if (from > last) from else end + BigInteger.ONE).toString())
     .put("complete", end == last || from > last)
+    .also {
+      if (policy == GroupReceiptChainPolicy.ROBINHOOD_CANONICAL)
+        it.put("scanTipBlock", checkpointNumber.toString()).put("scanTipHash", checkpointHash)
+    }
 }
 
 internal suspend fun confirmCashoutGroupReceipts(
@@ -97,8 +164,9 @@ internal suspend fun confirmCashoutGroupReceipts(
   quote: JSONObject,
   transactionHash: String,
   topic: (String) -> String = ::earnEventTopic,
+  policy: GroupReceiptChainPolicy = GroupReceiptChainPolicy.MONAD_FINALIZED,
 ): List<JSONObject> {
-  val reference = cashoutReference(rpc, quote)
+  val reference = groupReceiptReference(rpc, quote, policy)
   val hash = earnHash(transactionHash)
   val receipt = rpc.call("eth_getTransactionReceipt", JSONArray().put(hash)) as JSONObject
   check(
@@ -120,7 +188,7 @@ internal suspend fun confirmCashoutGroupReceipts(
       ) && timestamp <= BigInteger.valueOf(System.currentTimeMillis() + 5000)
   )
   val final =
-    rpc.call("eth_getBlockByNumber", JSONArray().put("finalized").put(false)) as JSONObject
+    rpc.call("eth_getBlockByNumber", JSONArray().put(policy.head).put(false)) as JSONObject
   check(quantity(final.getString("number")) >= number)
   val logs = receipt.getJSONArray("logs")
   check(logs.length() <= 4096)

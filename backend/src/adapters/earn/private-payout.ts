@@ -488,6 +488,96 @@ export interface PayoutSubmission {
   intentHash?: string;
   signedBodyHash: Hex;
 }
+/** Shared signed-route destination proof; Robinhood uses canonical receipts as in Swap. */
+export async function confirmPayoutDestinationReceipt(
+  client: ReturnType<typeof createPublicClient>,
+  q: Pick<
+    PayoutQuoteBinding,
+    | "destinationChainId"
+    | "destinationToken"
+    | "destinationRecipient"
+    | "referenceBlock"
+    | "referenceHash"
+    | "quoteCreatedAtMs"
+    | "minimumDestinationAtoms"
+    | "maximumDestinationAtoms"
+  >,
+  transactionHash: string,
+  received?: bigint,
+  grouped = false,
+  referenceObservation?: { blockNumber: bigint; hash: string | null },
+) {
+  if ((await client.getChainId()) !== q.destinationChainId)
+    throw new Error("Wrong public chain");
+  const receipt = await client.getTransactionReceipt({
+    hash: transactionHash as Hex,
+  });
+  if (
+    receipt.status !== "success" ||
+    receipt.transactionHash.toLowerCase() !== transactionHash.toLowerCase() ||
+    receipt.blockNumber <= BigInt(q.referenceBlock)
+  )
+    throw new Error("Unconfirmed destination");
+  const [block, finalized, reference] = await Promise.all([
+    client.getBlock({ blockNumber: receipt.blockNumber }),
+    q.destinationChainId === 4663
+      ? Promise.resolve(null)
+      : client.getBlock({ blockTag: "finalized" }),
+    referenceObservation?.blockNumber === BigInt(q.referenceBlock)
+      ? Promise.resolve(referenceObservation)
+      : client.getBlock({ blockNumber: BigInt(q.referenceBlock) }),
+  ]);
+  // Like Swap, Robinhood payouts count once the exact receipt is canonical; Robinhood's L1
+  // finality trails by ~17 minutes. Other destinations keep finalized delivery.
+  const awaitFinality = q.destinationChainId !== 4663;
+  if (
+    block.hash !== receipt.blockHash ||
+    reference.hash !== q.referenceHash ||
+    (awaitFinality &&
+      (finalized === null ||
+        finalized.number === null ||
+        finalized.number < receipt.blockNumber)) ||
+    Number(block.timestamp) * 1000 < q.quoteCreatedAtMs - 1000
+  )
+    throw new Error("Noncanonical payout");
+  const transfers = parseEventLogs({
+    abi: erc20Abi,
+    eventName: "Transfer",
+    logs: receipt.logs,
+    strict: true,
+  }).filter(
+    (v) =>
+      same(v.address, q.destinationToken) &&
+      same(v.args.to, q.destinationRecipient),
+  );
+  if (
+    (!grouped && transfers.length !== 1) ||
+    !transfers.length ||
+    transfers.some((v) => v.removed === true || v.args.value <= 0n)
+  )
+    throw new Error("Exact public payout transfer missing");
+  const actual = transfers[0]!.args.value;
+  if (
+    (!grouped && actual < BigInt(q.minimumDestinationAtoms)) ||
+    (received !== undefined && actual !== received) ||
+    (!grouped &&
+      q.maximumDestinationAtoms &&
+      actual > BigInt(q.maximumDestinationAtoms))
+  )
+    throw new Error("Payout value outside quote bounds");
+  const confirmed = await client.getBlock({
+    blockNumber: receipt.blockNumber,
+  });
+  if (confirmed.hash !== block.hash) throw new Error("Payout changed");
+  return {
+    receipt,
+    block,
+    received: transfers[0]!.args.value,
+    transfer: transfers[0]!,
+    transfers,
+  };
+}
+
 /** Provider nonce replay protection and durable native first-seen/role guards are
  * required. The backend never claims to know private on-chain nonce state. */
 export class PrivatePayoutGateway {
@@ -1411,64 +1501,154 @@ export class PrivatePayoutGateway {
     }
     return this.reconcileRequest(input, client);
   }
+  /** Narrow read-only restore boundary for recipient-group proofs. No submission or history. */
+  async restoreEarnGroupMember(
+    member: { operationId: string; leg: string; recipient: string },
+    saved: {
+      recoveryEnvelope: string;
+      revision: number;
+      submittedIntent: unknown;
+    },
+    distribution: Distribution,
+    cycleIndex: number,
+  ) {
+    const entry = this.restore(saved.recoveryEnvelope, {
+      ...member,
+      revision: saved.revision,
+      distribution,
+    });
+    const q = entry.prepared.quote;
+    const signed = auth.parse(saved.submittedIntent);
+    await this.verifySignedIntent(entry, signed);
+    const { nonce } = validatePrivatePayoutIntent(signed.payload, {
+      signer: q.confidentialAccount,
+      depositId: q.depositId,
+      amountAtoms: q.amountAtoms,
+    });
+    if (
+      entry.request.cycleIndex !== cycleIndex ||
+      q.destinationChainId !== 4663 ||
+      !same(q.destinationToken, ROBINHOOD_PROFILE.token) ||
+      !same(q.destinationRecipient, member.recipient)
+    )
+      throw new NativeGatewayError(409, "EARN_PAYOUT_RECOVERY_INVALID");
+    return {
+      ...q,
+      intent: entry.prepared.intent,
+      nonce,
+      quoteCreatedAtMs: q.quoteCreatedAtMs,
+      sourceAccountIndex: entry.request.sourceAccountIndex,
+    };
+  }
+  async earnGroupRouteStatus(depositId: string) {
+    return auroraApi(
+      this.config.auroraApiKey!,
+      this.fetcher,
+      `status/{key}?depositAddress=${encodeURIComponent(depositId)}`,
+    );
+  }
+  /** One request-scoped client; distinct anchors bracket the grouped receipt reads. */
+  async createEarnGroupReceiptVerifier(
+    references: Array<
+      Pick<
+        PayoutQuoteBinding,
+        "destinationChainId" | "referenceBlock" | "referenceHash"
+      >
+    >,
+  ) {
+    if (
+      !references.length ||
+      references.some((q) => q.destinationChainId !== 4663)
+    )
+      throw Error("Invalid Earn group destination");
+    const client = this.client(4663);
+    const expected = new Map<string, string>();
+    for (const reference of references) {
+      const number = BigInt(reference.referenceBlock).toString();
+      if (
+        expected.has(number) &&
+        expected.get(number) !== reference.referenceHash
+      )
+        throw Error("Conflicting group references");
+      expected.set(number, reference.referenceHash);
+    }
+    const observations = new Map<
+      string,
+      { blockNumber: bigint; hash: string | null }
+    >();
+    const entries = [...expected];
+    const recheckReferences = async () => {
+      let next = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(4, entries.length) }, async () => {
+          while (next < entries.length) {
+            const [number, expectedHash] = entries[next++]!;
+            const block = await client.getBlock({
+              blockNumber: BigInt(number),
+            });
+            if (block.hash !== expectedHash)
+              throw Error("Changed group reference");
+            observations.set(number, {
+              blockNumber: BigInt(number),
+              hash: block.hash,
+            });
+          }
+        }),
+      );
+    };
+    await recheckReferences();
+    const verify = async (q: PayoutQuoteBinding, hash: string) => {
+      const reference = observations.get(BigInt(q.referenceBlock).toString());
+      if (
+        q.destinationChainId !== 4663 ||
+        !reference ||
+        reference.hash !== q.referenceHash
+      )
+        throw Error("Unverified group reference");
+      const verified = await confirmPayoutDestinationReceipt(
+        client,
+        q,
+        hash,
+        undefined,
+        true,
+        reference,
+      );
+      if (Number(verified.block.timestamp) * 1000 > this.now() + 5000)
+        throw Error("Future destination receipt");
+      return verified.transfers.map((transfer) => ({
+        transactionHash: verified.receipt.transactionHash,
+        logIndex: transfer.logIndex,
+        receivedAtoms: transfer.args.value.toString(),
+        blockNumber: verified.receipt.blockNumber.toString(),
+        blockHash: verified.receipt.blockHash,
+      }));
+    };
+    return Object.assign(verify, { recheckReferences });
+  }
+  async confirmEarnGroupReceipts(
+    q: PayoutQuoteBinding,
+    hash: string,
+    references: Array<
+      Pick<
+        PayoutQuoteBinding,
+        "destinationChainId" | "referenceBlock" | "referenceHash"
+      >
+    > = [],
+  ) {
+    const verify = await this.createEarnGroupReceiptVerifier([
+      q,
+      ...references,
+    ]);
+    const receipts = await verify(q, hash);
+    await verify.recheckReferences();
+    return receipts;
+  }
   private async confirmDestination(
     q: PayoutQuoteBinding,
     transactionHash: string,
     received?: bigint,
   ) {
-    const client = this.client(q.destinationChainId);
-    if ((await client.getChainId()) !== q.destinationChainId)
-      throw new Error("Wrong public chain");
-    const receipt = await client.getTransactionReceipt({
-      hash: transactionHash as Hex,
-    });
-    if (
-      receipt.status !== "success" ||
-      receipt.transactionHash.toLowerCase() !== transactionHash.toLowerCase() ||
-      receipt.blockNumber <= BigInt(q.referenceBlock)
-    )
-      throw new Error("Unconfirmed destination");
-    const [block, finalized, reference] = await Promise.all([
-      client.getBlock({ blockNumber: receipt.blockNumber }),
-      client.getBlock({ blockTag: "finalized" }),
-      client.getBlock({ blockNumber: BigInt(q.referenceBlock) }),
-    ]);
-    // Like Swap, Robinhood payouts count once the exact receipt is canonical; Robinhood's L1
-    // finality trails by ~17 minutes. Other destinations keep finalized delivery.
-    const awaitFinality = q.destinationChainId !== 4663;
-    if (
-      block.hash !== receipt.blockHash ||
-      reference.hash !== q.referenceHash ||
-      (awaitFinality &&
-        (finalized.number === null ||
-          finalized.number < receipt.blockNumber)) ||
-      Number(block.timestamp) * 1000 < q.quoteCreatedAtMs - 1000
-    )
-      throw new Error("Noncanonical payout");
-    const transfers = parseEventLogs({
-      abi: erc20Abi,
-      eventName: "Transfer",
-      logs: receipt.logs,
-      strict: true,
-    }).filter(
-      (v) =>
-        same(v.address, q.destinationToken) &&
-        same(v.args.to, q.destinationRecipient),
-    );
-    if (transfers.length !== 1)
-      throw new Error("Exact public payout transfer missing");
-    const actual = transfers[0]!.args.value;
-    if (
-      actual < BigInt(q.minimumDestinationAtoms) ||
-      (received !== undefined && actual !== received) ||
-      (q.maximumDestinationAtoms && actual > BigInt(q.maximumDestinationAtoms))
-    )
-      throw new Error("Payout value outside quote bounds");
-    const confirmed = await client.getBlock({
-      blockNumber: receipt.blockNumber,
-    });
-    if (confirmed.hash !== block.hash) throw new Error("Payout changed");
-    return { receipt, block, received: transfers[0]!.args.value };
+    return confirmPayoutDestinationReceipt(this.client(q.destinationChainId), q, transactionHash, received);
   }
 
   private async reconcileWithoutHistory(

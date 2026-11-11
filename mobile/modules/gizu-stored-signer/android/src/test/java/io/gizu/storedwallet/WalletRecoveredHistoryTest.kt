@@ -76,6 +76,266 @@ class WalletRecoveredHistoryTest {
     )
 
   @Test
+  fun restoredGuidedReviewRebindsOnlyAuthenticatedSourceGeneration() {
+    val journey =
+      JSONObject()
+        .put("journeyId", "journey")
+        .put("walletId", wallet)
+        .put("generation", old)
+        .put("review", JSONObject().put("generation", old))
+    val snapshot =
+      JSONObject()
+        .put("version", 1)
+        .put("walletId", wallet)
+        .put("generation", old)
+        .put("journeys", JSONArray().put(journey))
+    importer().import(JSONArray().put(row("gizu-earn-deposit", snapshot)))
+    assertEquals(
+      current,
+      JSONObject(read("gizu-earn-deposit"))
+        .getJSONArray("journeys")
+        .getJSONObject(0)
+        .getJSONObject("review")
+        .getString("generation"),
+    )
+    journey.getJSONObject("review").put("generation", "unrelated")
+    assertThrows(IllegalStateException::class.java) {
+      importer().import(JSONArray().put(row("gizu-earn-deposit", snapshot)))
+    }
+  }
+
+  @Test
+  fun frozenPendingPayoutCandidateSurvivesArchiveOrderAndRejectsDifferentFrozenSet() {
+    val id = "0x" + "a".repeat(64)
+    val group = JSONObject().put("version", 1).put("journeyId", "journey")
+    fun snapshot(frozen: Boolean, hash: String = "0x" + "b".repeat(64)): JSONObject {
+      val proof =
+        JSONObject()
+          .put("groupId", id)
+          .put("status", "awaitingReceipt")
+          .put(
+            "groupScan",
+            JSONArray()
+              .put(
+                JSONObject()
+                  .put("complete", true)
+                  .put("nextScanBlock", "12")
+                  .put("transactionHashes", JSONArray().put(hash))
+              ),
+          )
+      if (frozen) proof.put("candidateFrozen", true)
+      return JSONObject()
+        .put("version", 1)
+        .put("walletId", wallet)
+        .put("operations", JSONArray())
+        .put("groups", JSONObject().put(id, JSONObject().put("group", group).put("proof", proof)))
+    }
+    for (order in listOf(listOf(false, true, false), listOf(true, false, false))) {
+      files.clear()
+      for (frozen in order) importer()
+        .import(JSONArray().put(row("gizu-earn-payout", snapshot(frozen))))
+      val proof =
+        JSONObject(read("gizu-earn-payout"))
+          .getJSONObject("groups")
+          .getJSONObject(id)
+          .getJSONObject("proof")
+      assertTrue(proof.getBoolean("candidateFrozen"))
+      assertEquals(
+        "0x" + "b".repeat(64),
+        proof
+          .getJSONArray("groupScan")
+          .getJSONObject(0)
+          .getJSONArray("transactionHashes")
+          .getString(0),
+      )
+      val before = files.getValue("gizu-earn-payout-$current.enc").read()
+      assertThrows(IllegalStateException::class.java) {
+        importer()
+          .import(JSONArray().put(row("gizu-earn-payout", snapshot(true, "0x" + "c".repeat(64)))))
+      }
+      assertArrayEquals(before, files.getValue("gizu-earn-payout-$current.enc").read())
+    }
+  }
+
+  @Test
+  fun authenticatedForkCandidateLineageMergesInEitherArchiveOrder() {
+    val id = "0x" + "a".repeat(64)
+    val group = JSONObject().put("version", 1).put("journeyId", "journey")
+    fun proof(hash: String) =
+      JSONObject()
+        .put("groupId", id)
+        .put("status", "awaitingReceipt")
+        .put("candidateFrozen", true)
+        .put(
+          "candidateBlocks",
+          JSONArray()
+            .put(JSONObject().put("blockNumber", "11").put("blockHash", "0x" + "d".repeat(64))),
+        )
+        .put(
+          "groupScan",
+          JSONArray()
+            .put(
+              JSONObject()
+                .put("complete", true)
+                .put("nextScanBlock", "12")
+                .put("transactionHashes", JSONArray().put(hash))
+            ),
+        )
+    val original = proof("0x" + "b".repeat(64))
+    val next =
+      proof("0x" + "c".repeat(64))
+        .put("candidateHistory", JSONArray().put(earnGroupCandidateSnapshot(original)))
+        .put(
+          "forkEvidence",
+          JSONArray()
+            .put(
+              JSONObject()
+                .put("blockNumber", "11")
+                .put("previousBlockHash", "0x" + "d".repeat(64))
+                .put("canonicalBlockHash", "0x" + "e".repeat(64))
+            ),
+        )
+    fun snapshot(p: JSONObject) =
+      JSONObject()
+        .put("version", 1)
+        .put("walletId", wallet)
+        .put("operations", JSONArray())
+        .put("groups", JSONObject().put(id, JSONObject().put("group", group).put("proof", p)))
+    for (order in listOf(listOf(original, next, original), listOf(next, original, next))) {
+      files.clear()
+      for (p in order) importer().import(JSONArray().put(row("gizu-earn-payout", snapshot(p))))
+      val saved =
+        JSONObject(read("gizu-earn-payout"))
+          .getJSONObject("groups")
+          .getJSONObject(id)
+          .getJSONObject("proof")
+      assertEquals(
+        "0x" + "c".repeat(64),
+        saved
+          .getJSONArray("groupScan")
+          .getJSONObject(0)
+          .getJSONArray("transactionHashes")
+          .getString(0),
+      )
+    }
+  }
+
+  @Test
+  fun payoutGroupProofFromNewerSnapshotSurvivesImportMergeAndOrdinaryJournalWrites() {
+    val id = "0x" + "a".repeat(64)
+    val before =
+      JSONObject()
+        .put("version", 1)
+        .put("walletId", wallet)
+        .put(
+          "operations",
+          JSONArray()
+            .put(
+              operation(1, null)
+                .put("signedData", "exact signed payout")
+                .put("status", "submitted")
+                .put("leg", "invest:0")
+            ),
+        )
+    before
+      .getJSONArray("operations")
+      .getJSONObject(0)
+      .getJSONObject("proposal")
+      .put("operationId", "source1")
+      .put("cycleIndex", 0)
+      .put("leg", "invest:0")
+      .put("minimumDestinationAtoms", "100")
+      .put("expectedRecipient", "recipient")
+    val group =
+      JSONObject()
+        .put("version", 1)
+        .put("journeyId", "journey")
+        .put("cycleIndex", 0)
+        .put("recipients", JSONArray().put("recipient"))
+        .put(
+          "members",
+          JSONArray()
+            .put(
+              JSONObject()
+                .put("operationId", "source1")
+                .put("leg", "invest:0")
+                .put("recipient", "recipient")
+            ),
+        )
+    val proof =
+      JSONObject()
+        .put("groupId", id)
+        .put("status", "paid")
+        .put(
+          "slots",
+          JSONArray()
+            .put(
+              JSONObject()
+                .put("slot", 0)
+                .put("receivedAtoms", "100")
+                .put("minimumDestinationAtoms", "100")
+                .put("destinationRecipient", "recipient")
+            ),
+        )
+    val after =
+      JSONObject(before.toString())
+        .put("groups", JSONObject().put(id, JSONObject().put("group", group).put("proof", proof)))
+    after
+      .getJSONArray("operations")
+      .getJSONObject(0)
+      .put("revision", 2)
+      .put("groupId", id)
+      .put("status", "paid")
+      .put("receivedAtoms", "100")
+      .put("receipt", JSONObject().put("groupId", id).put("slot", 0))
+    importer()
+      .import(JSONArray().put(row("gizu-earn-payout", before)).put(row("gizu-earn-payout", after)))
+    val restored = JSONObject(read("gizu-earn-payout"))
+    assertEquals(
+      "exact signed payout",
+      restored.getJSONArray("operations").getJSONObject(0).getString("signedData"),
+    )
+    assertEquals(
+      depositCanonical(proof),
+      depositCanonical(restored.getJSONObject("groups").getJSONObject(id).getJSONObject("proof")),
+    )
+    importer().import(JSONArray().put(row("gizu-earn-payout", before)))
+    assertEquals(
+      "paid",
+      JSONObject(read("gizu-earn-payout"))
+        .getJSONObject("groups")
+        .getJSONObject(id)
+        .getJSONObject("proof")
+        .getString("status"),
+    )
+    val unsigned = JSONObject(before.toString())
+    unsigned.getJSONArray("operations").getJSONObject(0).remove("signedData")
+    unsigned
+      .getJSONArray("operations")
+      .getJSONObject(0)
+      .getJSONObject("proposal")
+      .put("deadlineMs", 1)
+    importer().import(JSONArray().put(row("gizu-earn-payout", unsigned)))
+    assertEquals(
+      "paid",
+      JSONObject(read("gizu-earn-payout"))
+        .getJSONArray("operations")
+        .getJSONObject(0)
+        .getString("status"),
+    )
+    before.getJSONArray("operations").getJSONObject(0).put("revision", 99)
+    importer().import(JSONArray().put(row("gizu-earn-payout", before)))
+    val merged = JSONObject(read("gizu-earn-payout")).getJSONArray("operations").getJSONObject(0)
+    assertEquals("paid", merged.getString("status"))
+    assertEquals("100", merged.getString("receivedAtoms"))
+    assertTrue(merged.getInt("revision") >= 99)
+    before.getJSONArray("operations").getJSONObject(0).put("signedData", "substituted signature")
+    assertThrows(IllegalStateException::class.java) {
+      importer().import(JSONArray().put(row("gizu-earn-payout", before)))
+    }
+  }
+
+  @Test
   fun importsIntoCurrentGenerationAndExistingJournalCanReadExactSignedBytes() {
     importer().import(JSONArray().put(row()))
     val journal =

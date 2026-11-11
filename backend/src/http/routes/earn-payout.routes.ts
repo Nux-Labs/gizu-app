@@ -4,11 +4,13 @@ import type {
   FastifyError,
   FastifyRequest,
 } from "fastify";
+import type { EarnPayoutGroupGateway } from "../../adapters/earn/earn-payout-group.ts";
 import { PrivatePayoutGateway } from "../../adapters/earn/private-payout.ts";
 import { NativeGatewayError } from "../../adapters/earn/native-gateway.ts";
 import { CoordinationError } from "../../adapters/earn/operation-coordinator.ts";
 function failure(reply: FastifyReply, error: unknown) {
-  const known = error instanceof NativeGatewayError || error instanceof CoordinationError;
+  const known =
+    error instanceof NativeGatewayError || error instanceof CoordinationError;
   return reply.code(known ? error.statusCode : 502).send({
     code: known ? error.code : "EARN_PRIVATE_PAYOUT_UNAVAILABLE",
     message:
@@ -19,6 +21,7 @@ function failure(reply: FastifyReply, error: unknown) {
 export function registerEarnPayoutRoutes(
   app: FastifyInstance,
   gateway: PrivatePayoutGateway,
+  groupGateway?: EarnPayoutGroupGateway,
 ) {
   const options = {
     bodyLimit: 262144, // Native-private encrypted recovery envelope plus exact auth/payload.
@@ -37,6 +40,19 @@ export function registerEarnPayoutRoutes(
       );
     },
   };
+  if (groupGateway)
+    app.post(
+      "/v1/earn/native/payout/group-status",
+      { ...options, bodyLimit: 8 * 1024 * 1024 },
+      async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        try {
+          return reply.send(await groupGateway.status(request.body));
+        } catch (error) {
+          return failure(reply, error);
+        }
+      },
+    );
   for (const [route, method] of [
     ["prepare", "prepare"],
     ["submit", "submit"],

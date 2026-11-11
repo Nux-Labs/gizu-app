@@ -147,6 +147,9 @@ internal fun requireDepositCapacity(
   review: org.json.JSONObject,
   sponsored: List<org.json.JSONObject>,
   payouts: List<org.json.JSONObject>,
+  payoutJournalBytes: Long = org.json.JSONArray(payouts).toString().toByteArray().size.toLong(),
+  payoutGroupGrowthBytes: Long =
+    if (review.has("distribution")) EARN_PAYOUT_GROUP_STORAGE_BYTES.toLong() else 0L,
 ) {
   val sources = review.getJSONArray("sources").objects().map { it.getString("operationId") }.toSet()
   val sponsoredIds = sponsored.map { it.getString("operationId") }.toSet()
@@ -183,8 +186,8 @@ internal fun requireDepositCapacity(
   check(
     org.json.JSONArray(sponsored).toString().toByteArray().size + newSponsored * reservePerChild <=
       15L * 1024 * 1024 &&
-      org.json.JSONArray(payouts).toString().toByteArray().size + newPayouts * reservePerPayout <=
-        15L * 1024 * 1024
+      payoutJournalBytes + newPayouts * reservePerPayout + payoutGroupGrowthBytes <=
+        EARN_PAYOUT_JOURNAL_STORAGE_BYTES
   ) {
     "Encrypted recovery storage has no space for the complete deposit. No funding was authorized."
   }

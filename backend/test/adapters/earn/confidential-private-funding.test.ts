@@ -31,7 +31,6 @@ function fixture() {
       bindings.set(key, value);
     },
   };
-  const history: any[] = [];
   const message = {
     signer_id: C,
     verifying_contract: "intents.far",
@@ -71,7 +70,17 @@ function fixture() {
       payload: JSON.stringify(message),
     }),
     verify: async () => C,
-    history: async () => history,
+    history: async () => {
+      throw Error("History is unavailable");
+    },
+    routeStatus: async () => ({ status: "SUCCESS" }),
+    confirmReceipt: async (_q: any, hash: string) => ({
+      transactionHash: hash,
+      receivedAtoms: "990000",
+      blockNumber: "101",
+      blockHash: "0x" + "c".repeat(64),
+      logIndex: 7,
+    }),
     reference: async () => ({
       referenceBlock: "100",
       referenceHash: "0x" + "a".repeat(64),
@@ -99,21 +108,6 @@ function fixture() {
     recipient: R,
     signedData: auth,
   };
-  const successfulHistory = () => ({
-    depositAddress: "deposit",
-    status: "SUCCESS",
-    depositType: "CONFIDENTIAL_INTENTS",
-    recipientType: "DESTINATION_CHAIN",
-    refundType: "CONFIDENTIAL_INTENTS",
-    originAsset: source,
-    destinationAsset: destination,
-    recipient: R,
-    refundTo: C,
-    amountInFormatted: "1",
-    amountOutFormatted: "0.99",
-    createdAt: new Date(at).toISOString(),
-    quoteTransactions: [{ sender: C, txHash: "intent1" }],
-  });
   const status = (p: any) => ({
     recoveryEnvelope: p.recoveryEnvelope,
     signedData: auth,
@@ -129,9 +123,7 @@ function fixture() {
     coordination,
     bindings,
     message,
-    history,
     prepare,
-    successfulHistory,
     status,
   };
 }
@@ -196,34 +188,74 @@ test("private funding binds the same qualified service fees as its preview", asy
   };
   await assert.rejects(gateway.prepare(f.prepare));
 });
-test("private funding authenticates history then exact receipt and remains recoverable after restart", async () => {
-  const f = fixture(),
-    p = await f.gateway.prepare(f.prepare),
-    input = f.status(p);
-  assert.equal((await f.gateway.status(input)).status, "pending");
-  f.history.push(f.successfulHistory());
-  assert.equal(
-    (
-      await f.gateway.status({
-        ...input,
-        destinationTransactionHash: undefined,
-      })
-    ).status,
-    "awaitingReceipt",
-  );
-  const paid = await f.create().status(input);
+test("saved signed private funding reconciles through route and receipt when history access is unavailable", async () => {
+  const f = fixture();
+  let route = "PROCESSING";
+  Object.assign(f.providers, {
+    history: async () => {
+      throw new Error("History is invite-only for now");
+    },
+    routeStatus: async () => ({ status: route }),
+    confirmReceipt: async (quote: any, hash: string) =>
+      f.providers.confirm(quote, hash, "990000"),
+  });
+  // Existing sealed preparation and exact signed bytes survive a server restart.
+  const prepared = await f.gateway.prepare(f.prepare);
+  const signed = f.status(prepared);
+  const pending = await f.create().status(signed);
+  assert.equal(pending.status, "pending");
+  assert.equal(pending.verification, "signed-route-receipt-v1");
+  assert.equal(pending.receivedAtoms, "0");
+  route = "SUCCESS";
+  const waiting = await f
+    .create()
+    .status({ ...signed, destinationTransactionHash: undefined });
+  assert.equal(waiting.status, "awaitingReceipt");
+  assert.equal(waiting.receivedAtoms, "0");
+  const paid = await f.create().status(signed);
   assert.equal(paid.status, "paid");
   assert.equal(paid.receivedAtoms, "990000");
-  assert.equal(paid.destinationChainId, 4663);
-  assert.equal(paid.destinationAssetId, destination);
-  assert.equal((await f.create().status(input)).status, "paid");
-  f.message.nonce = Buffer.alloc(32, 2).toString("base64");
-  const other = await f.gateway.prepare({
-    ...f.prepare,
-    operationId: "deposit_1_1",
-  });
-  await assert.rejects(f.create().status(f.status(other)), /consumed/);
+  assert.equal(
+    (await f.create().status({ ...signed, intentHash: undefined })).status,
+    "paid",
+  );
+  await assert.rejects(
+    f
+      .create()
+      .status({
+        ...signed,
+        submittedIntent: { ...signed.submittedIntent, payload: "changed" },
+      }),
+  );
 });
+
+test("private funding shares an investment recipient across sources but claims each receipt only once", async () => {
+  const f = fixture();
+  Object.assign(f.providers, {
+    history: async () => {
+      throw new Error("History unavailable");
+    },
+    routeStatus: async () => ({ status: "SUCCESS" }),
+    confirmReceipt: async (quote: any, hash: string) =>
+      f.providers.confirm(quote, hash, "990000"),
+  });
+  const first = await f.gateway.prepare(f.prepare);
+  assert.equal((await f.gateway.status(f.status(first))).status, "paid");
+  f.message.nonce = Buffer.alloc(32, 2).toString("base64");
+  const second = await f.gateway.prepare({
+    ...f.prepare,
+    operationId: "deposit_second_source",
+  });
+  await assert.rejects(f.gateway.status(f.status(second)), /consumed/);
+  const secondTx = "0x" + "c".repeat(64);
+  const paid = await f.gateway.status({
+    ...f.status(second),
+    destinationTransactionHash: secondTx,
+  });
+  assert.equal(paid.status, "paid");
+  assert.equal(paid.receipt.transactionHash, secondTx);
+});
+
 test("private funding and cashout recovery domains reject one another and cashout stays Monad-only", async () => {
   const f = fixture(),
     cashout = new gateways.ConfidentialCashoutGateway(
@@ -332,36 +364,31 @@ for (const change of [
     await assert.rejects(f.gateway.prepare(f.prepare));
   });
 for (const change of [
-  "source",
-  "destination",
-  "recipient",
-  "amount",
-  "sender",
-  "duplicate",
-  "intentHash",
   "readAuth",
   "signedBytes",
+  "signedSigner",
   "receipt",
+  "belowMinimum",
+  "transaction",
+  "logIndex",
 ] as const)
-  test(`private funding denies changed ${change} settlement evidence`, async () => {
+  test(`private funding denies changed ${change} settlement evidence without history`, async () => {
     const f = fixture(),
       p = await f.gateway.prepare(f.prepare),
-      row: any = f.successfulHistory(),
       input: any = f.status(p);
-    f.history.push(row);
-    if (change === "source") row.originAsset = destination;
-    if (change === "destination") row.destinationAsset = source;
-    if (change === "recipient") row.recipient = C;
-    if (change === "amount") row.amountInFormatted = "1.01";
-    if (change === "sender") row.quoteTransactions[0].sender = R;
-    if (change === "duplicate") f.history.push(row);
-    if (change === "intentHash") input.intentHash = "intent2";
     if (change === "readAuth") f.providers.authenticate = async () => R;
     if (change === "signedBytes") input.submittedIntent.payload += " ";
-    if (change === "receipt")
-      f.providers.confirm = async () => {
-        throw Error("Noncanonical receipt");
-      };
+    if (change === "signedSigner") f.providers.verify = async () => R;
+    const confirm = f.providers.confirmReceipt;
+    f.providers.confirmReceipt = async (q: any, hash: string) => {
+      if (change === "receipt") throw Error("Noncanonical receipt");
+      const receipt = await confirm(q, hash);
+      if (change === "belowMinimum") receipt.receivedAtoms = "1";
+      if (change === "transaction")
+        receipt.transactionHash = "0x" + "f".repeat(64);
+      if (change === "logIndex") receipt.logIndex = -1;
+      return receipt;
+    };
     await assert.rejects(f.gateway.status(input));
   });
 test("private funding route never accepts destination overrides and returns private generic failures", async () => {
@@ -435,7 +462,6 @@ test("private funding preparation never outlives its exact signer deadline", asy
 test("private funding receipt commitments share the existing global event scope", async () => {
   const f = fixture(),
     p = await f.gateway.prepare(f.prepare);
-  f.history.push(f.successfulHistory());
   await f.coordination.bind(
     "confidential-cashout-receipt",
     {
@@ -494,7 +520,7 @@ for (const receiptOnly of [false, true])
     "transactionMismatch",
     "reorgAfter",
   ] as const)
-    test(`${receiptOnly ? "cashout receipt" : "private funding"} production RPC verifies canonical finalized transfer: ${change}`, async (t) => {
+    test(`${receiptOnly ? "cashout receipt" : "private funding"} production RPC verifies the chain-specific canonical transfer: ${change}`, async (t) => {
       const f = fixture(),
         { signer, read, sign } = await signedReadAndIntent();
       const token = receiptOnly
@@ -565,9 +591,7 @@ for (const receiptOnly of [false, true])
                   : token,
               data: toHex(
                 change === "wrongAmount"
-                  ? receiptOnly
-                    ? 979999n
-                    : 989999n
+                  ? 979999n
                   : receiptOnly
                     ? 995012n
                     : 990000n,
@@ -643,18 +667,8 @@ for (const receiptOnly of [false, true])
               payload: JSON.stringify({ ...f.message, signer_id: signer }),
             },
           };
-        else if (path.includes("/account/history/") && receiptOnly)
-          throw Error("History not allowed");
         else if (path.includes("/account/history/"))
-          result = {
-            items: [
-              {
-                ...f.successfulHistory(),
-                refundTo: signer,
-                quoteTransactions: [{ sender: signer, txHash: "intent1" }],
-              },
-            ],
-          };
+          throw Error("History not allowed");
         else throw Error("Unexpected provider route");
         return Response.json(result);
       });
@@ -676,7 +690,7 @@ for (const receiptOnly of [false, true])
         signedData: read,
         submittedIntent: await sign(p.intent.payload),
       };
-      if (change === "none") {
+      if (change === "none" || (!receiptOnly && change === "notFinal")) {
         const paid = await gateway.status(input, receiptOnly);
         assert.equal(paid.status, "paid");
         if (receiptOnly) assert.equal(paid.receivedAtoms, "995012");

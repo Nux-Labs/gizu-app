@@ -292,8 +292,8 @@ internal class NativeCashoutGateway(
     var result = post("status", request)
     if (result.optString("status") == "awaitingReceipt") {
       val reference = JSONObject(prepared.toString())
-      if (result.optString("verification") == "destination-receipt-v1") {
-        check(route == "cashout")
+      if (result.optString("verification") in setOf("destination-receipt-v1", "signed-route-receipt-v1")) {
+        check(result.getString("verification") == if (route == "cashout") "destination-receipt-v1" else "signed-route-receipt-v1")
         check(result.getString("receivedAtoms") == "0")
         check(
           result.getString("minimumDestinationAtoms") ==

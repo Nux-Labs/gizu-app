@@ -70,6 +70,76 @@ class CashoutGroupReceiptTest {
   }
 
   @Test
+  fun canonicalCheckpointReplaysEmptyReplacementAndDropsOrphanedHashesBeforeFreeze() = runBlocking {
+    for (oldReceipt in listOf(false, true)) {
+      var replacement = false
+      val rpc =
+        object : TransferRpc {
+          override suspend fun call(method: String, params: JSONArray): Any =
+            when (method) {
+              "eth_chainId" -> "0x1237"
+              "eth_getBlockByNumber" -> {
+                val tag = params.getString(0)
+                val n =
+                  if (tag == "latest") if (replacement) 12 else 11
+                  else tag.removePrefix("0x").toInt(16)
+                JSONObject()
+                  .put("number", "0x" + n.toString(16))
+                  .put("hash", hash(if (n == 10) "a" else if (replacement) "f" else "e"))
+              }
+              "eth_getLogs" -> {
+                val filter = params.getJSONObject(0)
+                val from = quantity(filter.getString("fromBlock")).toInt()
+                if (from > 11) JSONArray()
+                else if (replacement)
+                  JSONArray()
+                    .put(
+                      log("2", "3000123", 11)
+                        .put("address", HOOD_EARN_USDG)
+                        .put("blockHash", hash("f"))
+                    )
+                else if (oldReceipt)
+                  JSONArray().put(log("1", "3000123", 11).put("address", HOOD_EARN_USDG))
+                else JSONArray()
+              }
+              else -> error(method)
+            }
+        }
+      val quote = quote().put("destinationChainId", 4663).put("destinationToken", HOOD_EARN_USDG)
+      val first =
+        scanCashoutGroupReceipts(
+          rpc,
+          quote,
+          JSONObject(),
+          { topic },
+          GroupReceiptChainPolicy.ROBINHOOD_CANONICAL,
+        )
+      assertEquals("12", first.getString("nextScanBlock"))
+      replacement = true
+      val second =
+        scanCashoutGroupReceipts(
+          rpc,
+          quote,
+          first,
+          { topic },
+          GroupReceiptChainPolicy.ROBINHOOD_CANONICAL,
+        )
+      assertEquals(
+        listOf(hash("2")),
+        second.getJSONArray("transactionHashes").let { a -> (0 until a.length()).map(a::getString) },
+      )
+      assertEquals("13", second.getString("nextScanBlock"))
+    }
+  }
+
+  @Test
+  fun finalizedCashoutWaitsWhileFreshQuoteAnchorIsAheadOfFinality() = runBlocking {
+    val result = scanCashoutGroupReceipts(Rpc(emptyList(), 9), quote(), JSONObject(), { topic })
+    assertEquals("11", result.getString("nextScanBlock"))
+    assertEquals(0, result.getJSONArray("transactionHashes").length())
+  }
+
+  @Test
   fun groupIdentityMatchesBackendCanonicalCommitment() {
     val source1 =
       JSONObject()

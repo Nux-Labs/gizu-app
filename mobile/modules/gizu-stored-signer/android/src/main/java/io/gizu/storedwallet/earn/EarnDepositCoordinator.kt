@@ -29,6 +29,8 @@ internal interface EarnDepositEngines {
 
   suspend fun reconcile(stage: String, id: String, grant: EarnDepositApproval?): JSONObject
 
+  suspend fun reconcilePayoutGroup(review: JSONObject, grant: EarnDepositApproval?) {}
+
   fun credit(row: JSONObject): String?
 
   fun payoutReceipt(row: JSONObject): String?
@@ -338,7 +340,7 @@ internal class EarnDepositCoordinator(
       val missing = failure.message?.contains("Missing child journal") == true
       val reason =
         when {
-          missing -> "recoveryRequired"
+          missing || failure is EarnGroupRecoveryRequired -> "recoveryRequired"
           failure is RpcFailure && failure.code == RpcFailureCode.INSUFFICIENT_FUNDS ->
             "insufficientFunds"
           failure is EarnRpcRejection && failure.method == "pm_getPaymasterData" ->
@@ -420,10 +422,12 @@ internal class EarnDepositCoordinator(
       sent["$sourceId:$leg"] =
         reconcileAndExecute("payouts", child.getString("operationId"), grant, retrySavedPayouts)
     }
+    engines.reconcilePayoutGroup(review, grant)
     // An unresolved sibling must not hide an independently verified receipt.
     for (source in sources) for (leg in legs) {
       val sourceId = source.getString("operationId")
-      val child = sent["$sourceId:$leg"] ?: continue
+      val sentChild = sent["$sourceId:$leg"] ?: continue
+      val child = engines.child("payouts", sentChild.getString("operationId"))
       val amount = engines.payoutReceipt(child) ?: continue
       check(
         depositAtoms(amount, true) >=

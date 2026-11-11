@@ -5,6 +5,15 @@ import org.junit.Test
 
 class EarnGatewayFailureTest {
   @Test
+  fun groupedProofConflictAndUnavailableRemainDistinctNativeErrors() {
+    for (code in
+      listOf("EARN_COORDINATION_CONFLICT", "EARN_COORDINATION_UNAVAILABLE")) assertEquals(
+      code,
+      safeEarnGatewayFailure("{\"code\":\"$code\"}")?.code,
+    )
+  }
+
+  @Test
   fun knownGatewayFailureIsSpecificAndDoesNotExposeProviderText() {
     val failure =
       safeEarnGatewayFailure(

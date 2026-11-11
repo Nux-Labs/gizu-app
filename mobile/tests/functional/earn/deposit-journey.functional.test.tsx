@@ -239,6 +239,51 @@ test("shows the indicative 10/90 split while fees are prepared and cannot confir
     jest.useRealTimers();
   }
 });
+test("a vault preview failure keeps its preliminary estimate visible without enabling confirmation", async () => {
+  jest.useFakeTimers();
+  const pending = deferred<DepositSnapshot>();
+  const raw = distributionDepositSnapshot(1);
+  const partial = {
+    ...parseDepositSnapshot(raw, { walletId: hoodIntent.walletId }),
+    phase: "preparing",
+    review: undefined,
+    indicativeReview: {
+      quotedAtMs: Date.now(),
+      sourceBudgetAtoms: "3000000",
+      holdEstimatedAtoms: "0",
+      investEstimatedAtoms: "2650000",
+      sourceMaximumFeeAtoms: "10000",
+    },
+  } as DepositSnapshot;
+  const view = setup({
+    prepare: jest.fn().mockReturnValue(pending.promise),
+    status: jest.fn().mockResolvedValue(partial),
+  });
+  try {
+    await review();
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(screen.getByText("Estimated investment before vault fees: 2.65 USDG")).toBeVisible();
+    await act(async () =>
+      pending.resolve({
+        ...partial,
+        revision: partial.revision + 1,
+        phase: "paused",
+        pauseReason: "previewUnavailable",
+      }),
+    );
+    expect(await screen.findByText(/A fresh fee estimate is unavailable/)).toBeVisible();
+    expect(screen.getByText("Estimated investment before vault fees: 2.65 USDG")).toBeVisible();
+    expect(screen.queryByText(/Calculating vault fees and the withdrawal reserve/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Confirm deposit" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Review deposit" })).toBeEnabled();
+  } finally {
+    view.unmount();
+    pending.resolve(partial);
+    jest.useRealTimers();
+  }
+});
 test("live credit waiting continues through progress without asking for another approval", async () => {
   jest.useFakeTimers();
   const waiting = { ...ready(), phase: "settlingCredit", revision: 3 } as DepositSnapshot;
@@ -644,6 +689,49 @@ test("explicit pull-to-refresh updates the shared balance and a failed refresh k
   expect(screen.getByRole("button", { name: "Review deposit" })).toBeEnabled();
   fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
   expect(await screen.findByText("Available: 2 USDC")).toBeVisible();
+});
+
+test("a failed review updates observations quietly while an explicit pull shows its refresh indicator", async () => {
+  const automatic = deferred<ReturnType<typeof mainnetPortfolio>>();
+  const manual = deferred<ReturnType<typeof mainnetPortfolio>>();
+  const portfolio = {
+    getMainnetPortfolio: jest
+      .fn()
+      .mockResolvedValueOnce(
+        mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "3000000"),
+      )
+      .mockReturnValueOnce(automatic.promise)
+      .mockReturnValueOnce(manual.promise),
+  };
+  setup(
+    {
+      prepare: jest.fn().mockResolvedValue({
+        ...ready(),
+        phase: "paused",
+        pauseReason: "previewUnavailable",
+        review: undefined,
+      }),
+    },
+    undefined,
+    "0",
+    "0",
+    portfolio,
+  );
+  await screen.findByText("Available: 3 USDC");
+  await review();
+  await waitFor(() => expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(2));
+  expect(screen.getByText(/A fresh fee estimate is unavailable/)).toBeVisible();
+  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+  await act(async () =>
+    automatic.resolve(mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "3000000")),
+  );
+  fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
+  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+  await act(async () =>
+    manual.resolve(mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress, "2000000")),
+  );
+  expect(await screen.findByText("Available: 2 USDC")).toBeVisible();
+  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
 });
 
 test("an unknown display balance does not prevent the user from requesting native review", async () => {

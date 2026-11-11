@@ -2311,6 +2311,10 @@ class GizuStoredSignerModule : Module() {
           grant.review,
           earnSponsoredJournal(activity, record).all(),
           earnPayoutJournal(activity, record).all(),
+          earnPayoutJournal(activity, record).storageBytes(),
+          if (grant.review.has("distribution"))
+            earnPayoutJournal(activity, record).groupGrowthBytes(record.earnCycleIndex)
+          else 0L,
         )
         confirm(
           activity,
@@ -2445,6 +2449,10 @@ class GizuStoredSignerModule : Module() {
       earnPayoutJournal(activity, record).all(),
       if (record.earnChain == 1) earnVaultJournal(activity, record).all() else emptyList(),
       if (record.earnChain == 1) earnLiquidityJournal(activity, record).all() else emptyList(),
+      earnPayoutJournal(activity, record).storageBytes(),
+      if (record.earnChain == 4663)
+        earnPayoutJournal(activity, record).groupGrowthBytes(record.earnCycleIndex)
+      else 0L,
     )
   }
 
@@ -2875,6 +2883,11 @@ class GizuStoredSignerModule : Module() {
       store,
       journal,
       if (profile == 1) EthereumEarnRpc() else EarnSponsoredChainRpc(4663),
+      groupedDelivery = { row ->
+        store.load().use { record ->
+          isGuidedEarnPayout(row, earnDepositJournal(activity, record).all())
+        }
+      },
       sourceReader = { id, requestedRevision ->
         val source =
           store.load().use { record ->
