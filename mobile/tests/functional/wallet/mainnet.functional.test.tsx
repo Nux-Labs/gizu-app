@@ -1,11 +1,13 @@
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { RefreshControl } from "react-native";
 import { AppRoot } from "@/application/AppRoot";
 import * as nativeBridge from "@/services/wallet/nativeBridge";
 import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
 import { validateMainnetPortfolio } from "@/features/wallet/MainnetWalletProvider";
 import portfolioFixtures from "../../../modules/gizu-stored-signer/ios/Tests/Fixtures/public-portfolio.json";
 import { deferred } from "../../support/renderApp";
+import { earnProfiles } from "@/domain/earn/types";
 
 const funding = "0x" + "1".repeat(40);
 const returned = "0x" + "2".repeat(40);
@@ -46,6 +48,7 @@ async function open(value: MainnetPortfolioSnapshot = snapshot) {
     >);
   render(
     <AppRoot
+      mainnetPortfolioService={{ getMainnetPortfolio: read }}
       accessService={{
         method: "Passkey",
         request: async () => ({
@@ -62,10 +65,59 @@ async function open(value: MainnetPortfolioSnapshot = snapshot) {
   );
   await screen.findByRole("button", { name: "Continue with passkey" });
   fireEvent.press(await screen.findByRole("button", { name: "Continue with passkey" }));
-  await screen.findByText("3 USDC");
+  await screen.findByRole("button", { name: "Balance details" });
   return { read, transfers };
 }
 afterEach(() => jest.restoreAllMocks());
+
+test("an asset is one logo/value row and tapping it reveals the holding details", async () => {
+  await open({
+    ...snapshot,
+    ownedAssets: [
+      {
+        assetId: "private",
+        chainId: 143,
+        token: "confidential:monad-usdc",
+        symbol: "USDC (private)",
+        decimals: 6,
+        balanceAtoms: null,
+        observedAtoms: "2430000",
+        complete: false,
+        stale: true,
+        checkedAt: snapshot.checkedAt,
+        valueUsdcAtoms: null,
+        valuationUnavailable: true,
+      },
+      {
+        assetId: "143:native",
+        chainId: 143,
+        token: "native",
+        symbol: "MON",
+        decimals: 18,
+        balanceAtoms: "1",
+        observedAtoms: "1",
+        complete: true,
+        stale: false,
+        checkedAt: snapshot.checkedAt,
+        valueUsdcAtoms: null,
+        valuationUnavailable: true,
+      },
+    ],
+  });
+  expect(screen.getByLabelText("USDC (private) logo")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "USDC (private) holding details", expanded: false }),
+  ).toBeVisible();
+  expect(screen.queryByText("2.43 USDC (private)")).toBeNull();
+  expect(
+    screen.queryByText(/Value:|Holding details|Some balances or asset values are unavailable/),
+  ).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "USDC (private) holding details" }));
+  expect(screen.getByText("2.43 USDC (private)")).toBeVisible();
+  expect(screen.getByText("Chain 143")).toBeVisible();
+  fireEvent.press(screen.getByRole("button", { name: "USDC (private) holding details" }));
+  expect(screen.queryByText("Chain 143")).toBeNull();
+});
 
 test("Home can unlock an expired private read and refresh the authenticated private amount", async () => {
   const privateAsset = {
@@ -91,7 +143,9 @@ test("Home can unlock an expired private read and refresh the authenticated priv
     confidentialReadState: "locked",
     ownedAssets: [privateAsset],
   });
-  expect(screen.getByText("Previously checked: 2 USDC (private)")).toBeVisible();
+  expect(screen.getByText("2 USD")).toBeVisible();
+  expect(screen.getByLabelText("5 USD")).toBeVisible();
+  expect(screen.queryByText(/Previously checked|Previously observed/)).toBeNull();
   read.mockResolvedValue({
     ...snapshot,
     confidentialReadState: "ready",
@@ -107,12 +161,63 @@ test("Home can unlock an expired private read and refresh the authenticated priv
       },
     ],
   });
-  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
-  expect(await screen.findByText("2.5 USDC (private)")).toBeVisible();
-  expect(screen.getByLabelText("5.5 USDC")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
+  expect(await screen.findByText("2.5 USD")).toBeVisible();
+  expect(screen.getByLabelText("5.5 USD")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Refresh private balance" })).toBeNull();
   expect(unlock).toHaveBeenCalledTimes(1);
   expect(transfers).not.toHaveBeenCalled();
+});
+
+test("Home includes public USDC, observed private USDC and unpriced USDG in one USD total", async () => {
+  const row = {
+    assetId: "usdg",
+    chainId: 4663,
+    token: earnProfiles["robinhood-usdg"].token,
+    symbol: "USDG",
+    decimals: 6,
+    balanceAtoms: "150000",
+    observedAtoms: "150000",
+    valueUsdcAtoms: null,
+    valuationUnavailable: true,
+    complete: true,
+    stale: false,
+    checkedAt: snapshot.checkedAt,
+  };
+  const { read } = await open({
+    ...snapshot,
+    fundingAtoms: "90000",
+    returnAtoms: "0",
+    totalAtoms: "90000",
+    accounts: [{ ...snapshot.accounts[0]!, balanceAtoms: "90000" }],
+    confidentialReadState: "locked",
+    ownedAssets: [
+      row,
+      {
+        ...row,
+        assetId: "private-usdc",
+        chainId: 143,
+        token: "confidential:monad-usdc",
+        symbol: "USDC (private)",
+        balanceAtoms: null,
+        observedAtoms: "2430000",
+        complete: false,
+        stale: true,
+      },
+    ],
+  });
+  expect(await screen.findByLabelText("2.67 USD")).toBeVisible();
+  expect(screen.getByText("0.15 USD")).toBeVisible();
+  expect(screen.getByText("2.43 USD")).toBeVisible();
+  expect(
+    screen.queryByText(/Previously checked|Previously observed|cached observation/i),
+  ).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Balance details" }));
+  expect(screen.getByText("Other assets: 2.58 USD")).toBeVisible();
+  fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
+  await act(async () => {});
+  expect(screen.getByLabelText("2.67 USD")).toBeVisible();
+  expect(read.mock.calls.length).toBeGreaterThan(1);
 });
 
 test("private unlock stays disabled during authentication and rejects another wallet", async () => {
@@ -123,9 +228,9 @@ test("private unlock stays disabled during authentication and rejects another wa
   } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
   const { read } = await open({ ...snapshot, confidentialReadState: "locked", ownedAssets: [] });
   const readsBefore = read.mock.calls.length;
-  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
-  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeDisabled();
-  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
+  fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
+  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeDisabled();
+  fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
   await act(async () =>
     pending.resolve({ status: "ready", walletId: "another-wallet", accounts: [] }),
   );
@@ -134,7 +239,7 @@ test("private unlock stays disabled during authentication and rejects another wa
   ).toBeVisible();
   expect(unlock).toHaveBeenCalledTimes(1);
   expect(read).toHaveBeenCalledTimes(readsBefore);
-  expect(screen.getByLabelText("3 USDC")).toBeVisible();
+  expect(screen.getByLabelText("3 USD")).toBeVisible();
 });
 
 test("a declined private balance unlock preserves cached amounts and allows a retry", async () => {
@@ -142,10 +247,10 @@ test("a declined private balance unlock preserves cached amounts and allows a re
     openWallet: jest.fn().mockRejectedValue(new Error("Wallet unlock cancelled.")),
   } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
   await open({ ...snapshot, confidentialReadState: "locked", ownedAssets: [] });
-  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
+  fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
   expect(await screen.findByText("Wallet unlock cancelled.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeEnabled();
-  expect(screen.getByLabelText("3 USDC")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeEnabled();
+  expect(screen.getByLabelText("3 USD")).toBeVisible();
 });
 
 test("shared Rust, Swift and Kotlin fixtures satisfy the Home contract", () => {
@@ -157,7 +262,7 @@ test("shared Rust, Swift and Kotlin fixtures satisfy the Home contract", () => {
 
 test("mainnet Home includes receiving USDC, Deposit uses funding address, Withdraw never signs", async () => {
   const { transfers } = await open();
-  expect(screen.getByLabelText("3 USDC")).toBeVisible();
+  expect(screen.getByLabelText("3 USD")).toBeVisible();
   expect(screen.queryByText("Swap funding: 0.5 USDC")).toBeNull();
   expect(screen.queryByText("USDC accounts")).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Balance details", expanded: false }));
@@ -166,7 +271,7 @@ test("mainnet Home includes receiving USDC, Deposit uses funding address, Withdr
   expect(screen.queryByText("USDC accounts")).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Balance details", expanded: true }));
   expect(screen.queryByText("Swap funding: 0.5 USDC")).toBeNull();
-  expect(screen.getByLabelText("3 USDC")).toBeVisible();
+  expect(screen.getByLabelText("3 USD")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Wallet details" })).toBeNull();
   expect(screen.queryByText(/testnet MON/)).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Receive" }));
@@ -270,7 +375,7 @@ test("rejects cross-wallet/network snapshots, inconsistent sums and duplicate ac
 
 test("Swap shows the same total public USDC funding balance including receiving accounts", async () => {
   await open();
-  await screen.findByLabelText("3 USDC");
+  await screen.findByLabelText("3 USD");
   fireEvent.press(screen.getByLabelText("Swap tab"));
   expect(await screen.findByText("Available: 3 USDC")).toBeVisible();
   expect(screen.getByLabelText("Amount in USDC")).toBeVisible();
@@ -280,7 +385,7 @@ test("Swap shows the same total public USDC funding balance including receiving 
 test("Home balance shows observed performance and expands to a period chart", async () => {
   const day = 24 * 3_600_000;
   await AsyncStorage.setItem(
-    `gizu:balance-history:v1:${encodeURIComponent(`${walletId}:portfolio-value-v1`)}`,
+    `gizu:balance-history:v1:${encodeURIComponent(`${walletId}:portfolio-usd-v1`)}`,
     JSON.stringify([{ at: snapshot.checkedAt - 20 * day, atoms: "2000000" }]),
   );
   await open();
@@ -295,9 +400,13 @@ test("Home balance shows observed performance and expands to a period chart", as
   expect(screen.getByLabelText("Balance past year: +$1.00 (+50%)")).toBeVisible();
 });
 
-test("Home does not compare portfolio value against older liquid-only history", async () => {
+test("Home does not compare USD portfolio value against older USDC or liquid-only history", async () => {
   await AsyncStorage.setItem(
     `gizu:balance-history:v1:${walletId}`,
+    JSON.stringify([{ at: snapshot.checkedAt - 20 * 24 * 3_600_000, atoms: "2000000" }]),
+  );
+  await AsyncStorage.setItem(
+    `gizu:balance-history:v1:${encodeURIComponent(`${walletId}:portfolio-value-v1`)}`,
     JSON.stringify([{ at: snapshot.checkedAt - 20 * 24 * 3_600_000, atoms: "2000000" }]),
   );
   await open();

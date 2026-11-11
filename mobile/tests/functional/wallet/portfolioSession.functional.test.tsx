@@ -11,7 +11,58 @@ function Balance() {
   return <Text>{error || (snapshot ? `${snapshot.totalAtoms} atoms` : "Loading wallet")}</Text>;
 }
 
-test("replacing a mounted wallet discards its snapshot and rejects its late completion", async () => {
+test("saved native balances render before a pending network refresh", async () => {
+  const address = "0x" + "1".repeat(40);
+  const session: MainnetWalletSession = {
+    kind: "mainnet",
+    walletId: "cached",
+    address,
+    accountId: address,
+    accountIndex: 1,
+    chainId: 143,
+    method: "Passkey",
+  };
+  const network = deferred<MainnetPortfolioSnapshot>();
+  const service = {
+    getCachedMainnetPortfolio: async () => mainnetPortfolio("cached", address, "2670000"),
+    getMainnetPortfolio: () => network.promise,
+  };
+  render(
+    <MainnetWalletProvider session={session} service={service}>
+      <Balance />
+    </MainnetWalletProvider>,
+  );
+  expect(await screen.findByText("2670000 atoms")).toBeVisible();
+  await act(async () => network.resolve(mainnetPortfolio("cached", address, "2700000")));
+  expect(await screen.findByText("2700000 atoms")).toBeVisible();
+});
+
+test("a failed cache read still loads fresh balances", async () => {
+  const address = "0x" + "1".repeat(40);
+  const session: MainnetWalletSession = {
+    kind: "mainnet",
+    walletId: "cached",
+    address,
+    accountId: address,
+    accountIndex: 1,
+    chainId: 143,
+    method: "Passkey",
+  };
+  const service = {
+    getCachedMainnetPortfolio: async () => {
+      throw new Error("Cache unavailable");
+    },
+    getMainnetPortfolio: async () => mainnetPortfolio("cached", address, "2700000"),
+  };
+  render(
+    <MainnetWalletProvider session={session} service={service}>
+      <Balance />
+    </MainnetWalletProvider>,
+  );
+  expect(await screen.findByText("2700000 atoms")).toBeVisible();
+});
+
+test.each(["cache", "network"])("replacing a wallet rejects its late %s result", async (source) => {
   const address = "0x" + "1".repeat(40);
   const session: MainnetWalletSession = {
     kind: "mainnet",
@@ -23,7 +74,11 @@ test("replacing a mounted wallet discards its snapshot and rejects its late comp
     method: "Passkey",
   };
   const pending = deferred<MainnetPortfolioSnapshot>();
-  const first = { getMainnetPortfolio: jest.fn().mockReturnValue(pending.promise) };
+  const first = {
+    getCachedMainnetPortfolio:
+      source === "cache" ? jest.fn().mockReturnValue(pending.promise) : undefined,
+    getMainnetPortfolio: jest.fn().mockReturnValue(pending.promise),
+  };
   const second = {
     getMainnetPortfolio: jest.fn().mockResolvedValue(mainnetPortfolio("second", address, "42")),
   };

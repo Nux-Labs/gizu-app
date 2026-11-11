@@ -99,6 +99,18 @@ test("expiry removes prices without erasing the owned token or vault underlying 
   expect(expired.positions?.[0]?.underlyingAtoms).toBe("3000001");
   expect(expired.valuationComplete).toBe(false);
   expect(expired.totalAtoms).toBe("1000000");
+  expect(portfolioValue(expired).totalAtoms).toBe("4600000");
+});
+
+test("failed portfolio pricing keeps USDG and vault underlying in the USD total", async () => {
+  const fetcher = mockFetch();
+  fetcher.mockRejectedValue(new Error("Price service unavailable"));
+  const result = await createPortfolioValuationService(
+    "https://backend.test",
+    fetcher,
+    () => now,
+  ).value(native(), signal());
+  expect(portfolioValue(result).totalAtoms).toBe("5000002");
 });
 
 test("cache shares only verified profile prices across owners until response expiry", async () => {
@@ -271,7 +283,8 @@ test("large integer pricing floors exactly and uses the actual USDC denominator"
     signal(),
   );
   expect(result.ownedAssets?.[0]?.valueUsdcAtoms).toBe("6004799503160662000000");
-  expect(portfolioValue(result).totalAtoms).toBe("6004799503160663000000");
+  // USDG is worth $2 here; the $3 USDC quote must not divide a USD display value.
+  expect(portfolioValue(result).totalAtoms).toBe("18014398509481987000002");
 });
 
 test("abort cancels a pending lookup even if the fetch implementation ignores its signal", async () => {

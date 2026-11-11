@@ -19,6 +19,7 @@ const coalescedReads = new Set([
   "getWalletState",
   "getSwapDeposit",
   "getMainnetPortfolio",
+  "getCachedMainnetPortfolio",
   "getSwapHoldings",
   "getSwapStatus",
   "getEarnDepositStatus",
@@ -263,6 +264,7 @@ export function getStoredTransferSigner(): StoredTransferBridge | null {
 export type StoredSwapBridge = Pick<
   StoredSignerContract,
   | "getMainnetPortfolio"
+  | "getCachedMainnetPortfolio"
   | "getSwapDeposit"
   | "getSwapHoldings"
   | "sellSwapHolding"
@@ -279,6 +281,14 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
   const native = nativeModule();
   if (!native) return null;
   return {
+    ...(typeof native.getCachedMainnetPortfolio === "function"
+      ? {
+          async getCachedMainnetPortfolio() {
+            await checked(native, "walletStorage");
+            return native.getCachedMainnetPortfolio!();
+          },
+        }
+      : {}),
     getSwapDeposit() {
       return readNative(async () => {
         await checked(native, "swaps");

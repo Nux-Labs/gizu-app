@@ -68,8 +68,8 @@ test("deduplicates canonical contracts across aliases and keeps confidential USD
   expect(portfolioValue(native).totalAtoms).toBe("9500000");
 });
 
-test("unpriced nonzero and unknown balances preserve a partial sum", () => {
-  const missing = asset({ valueUsdcAtoms: null, valuationUnavailable: true });
+test("unpriced non-stablecoins and unknown balances preserve a partial sum", () => {
+  const missing = asset({ token: "unknown", valueUsdcAtoms: null, valuationUnavailable: true });
   expect(portfolioValue({ ...snapshot(), ownedAssets: [missing] })).toMatchObject({
     totalAtoms: "1000000",
     complete: false,
@@ -80,6 +80,66 @@ test("unpriced nonzero and unknown balances preserve a partial sum", () => {
       ownedAssets: [asset({ balanceAtoms: null, observedAtoms: "0", complete: false })],
     }).complete,
   ).toBe(false);
+});
+
+test("the USD total retains observed private USDC and USDG when reads or prices expire", () => {
+  const native = {
+    ...snapshot(),
+    totalAtoms: "90000",
+    ownedAssets: [
+      asset({ balanceAtoms: "150000", observedAtoms: "150000", valueUsdcAtoms: null }),
+      asset({
+        chainId: 143,
+        token: "confidential:monad-usdc",
+        balanceAtoms: null,
+        observedAtoms: "2430000",
+        complete: false,
+        stale: true,
+        valueUsdcAtoms: null,
+      }),
+      asset({
+        chainId: 1,
+        token: earnProfiles["ethereum-usdc"].token,
+        balanceAtoms: "10000",
+        observedAtoms: "10000",
+        valueUsdcAtoms: null,
+      }),
+    ],
+  };
+  expect(portfolioValue(native)).toMatchObject({ totalAtoms: "2680000", complete: false });
+  expect(native.totalAtoms).toBe("90000");
+});
+
+test.each([
+  ["unknown contract", { token: "0x" + "f".repeat(40), symbol: "USDC" }],
+  ["wrong precision", { decimals: 18 }],
+  ["missing observation", { balanceAtoms: null, complete: false, checkedAt: 0 }],
+] as const)("stablecoin fallback excludes a %s", (_, overrides) => {
+  expect(
+    portfolioValue({
+      ...snapshot(),
+      ownedAssets: [asset({ ...overrides, valueUsdcAtoms: null })],
+    }).totalAtoms,
+  ).toBe("1000000");
+});
+
+test("cached stablecoin vault values use underlying units rather than share units", () => {
+  expect(
+    portfolioValue({
+      ...snapshot(),
+      positions: [
+        position({
+          complete: false,
+          stale: true,
+          balanceAtoms: null,
+          underlyingAtoms: null,
+          observedAtoms: "9999999999999999999",
+          observedUnderlyingAtoms: "150000",
+          valueUsdcAtoms: null,
+        }),
+      ],
+    }).totalAtoms,
+  ).toBe("1150000");
 });
 
 test("known zero unpriced assets do not make the valuation partial", () => {

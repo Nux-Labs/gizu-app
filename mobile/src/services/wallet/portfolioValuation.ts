@@ -193,6 +193,7 @@ export function createPortfolioValuationService(
           return {
             ...row,
             valueUsdcAtoms: ((BigInt(earnAtoms(atoms)) * price.token) / price.usdc).toString(),
+            valueUsdAtoms: ((BigInt(earnAtoms(atoms)) * price.token) / 10n ** 18n).toString(),
             valuationUnavailable: false,
             checkedAt: Math.min(row.checkedAt, price.observedAt),
           };
@@ -218,7 +219,7 @@ export function createPortfolioValuationService(
   };
 }
 
-/** Remove expired prices while retaining the independently read token/share balances. */
+/** Expire verified prices, retaining the last USD display value and native balances. */
 export function expirePortfolioValuation(
   snapshot: MainnetPortfolioSnapshot,
 ): MainnetPortfolioSnapshot {

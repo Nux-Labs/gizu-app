@@ -207,7 +207,7 @@ internal class NativeOwnedPortfolio(
     save(record, root)
   }
 
-  suspend fun read(record: WalletRecord): Map<String, Any?> {
+  suspend fun read(record: WalletRecord, cachedOnly: Boolean = false): Map<String, Any?> {
     val now = clock()
     val root = load(record)
     val owners = owners(record, root)
@@ -238,10 +238,10 @@ internal class NativeOwnedPortfolio(
       if (JSONArray(record.earnCycles).length() > 0 && activeVault >= 0) activeVault else 0
     val start = root.optInt("readOffset", initial).mod(groups.size)
     val order = (groups.indices.drop(start) + groups.indices.take(start))
-    val selected = order.take(TOKEN_GROUP_BUDGET).toSet()
+    val selected = if (cachedOnly) emptySet() else order.take(TOKEN_GROUP_BUDGET).toSet()
     // Rotate work itself, including when every group fits the selection budget. A slow
     // provider must not always consume the deadline before a later vault is observed.
-    root.put("readOffset", (start + 1) % groups.size)
+    if (!cachedOnly) root.put("readOffset", (start + 1) % groups.size)
     var calls = 0
     val rpcs = mutableMapOf<Long, PortfolioRpc>()
     val budget = rpcBudget()
@@ -366,7 +366,9 @@ internal class NativeOwnedPortfolio(
       groups.mapIndexed { index, group -> groupKey(group.chain, group.token) to index }.toMap()
     assets.sortBy { displayOrder[it["assetId"]] }
     positions.sortBy { displayOrder[it["assetId"]] }
-    assets.addAll(nativeAssets(root, public, eth, hood, record.earnChain.toLong(), now, ::chainRpc))
+    assets.addAll(
+      nativeAssets(root, public, eth, hood, record.earnChain.toLong(), now, !cachedOnly, ::chainRpc)
+    )
     val all = assets + positions
     save(record, root)
     return mapOf(
@@ -609,13 +611,14 @@ internal class NativeOwnedPortfolio(
     hood: List<String>,
     activeChain: Long,
     now: Long,
+    refresh: Boolean,
     rpc: (Long) -> PortfolioRpc,
   ): List<Map<String, Any?>> {
     val groups =
       listOf(Triple(1L, "ETH", eth), Triple(143L, "MON", public), Triple(4663L, "ETH", hood))
     val accounts = groups.flatMap { (chain, _, owners) -> owners.map { chain to it } }.distinct()
     val cache = root.getJSONObject("native")
-    if (accounts.isNotEmpty()) {
+    if (refresh && accounts.isNotEmpty()) {
       val offset = root.optInt("nativeOffset", 0).mod(accounts.size)
       val rotated = (accounts.drop(offset) + accounts.take(offset))
       // Current I has priority, followed by the ordinary rotating reconciliation.

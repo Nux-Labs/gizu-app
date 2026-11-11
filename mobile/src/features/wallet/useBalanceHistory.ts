@@ -12,11 +12,7 @@ export function useBalanceHistory(
   const [state, setState] = useState<{ walletId?: string; history: BalancePoint[] }>({
     history: [],
   });
-  const historyKey = walletId
-    ? valuation
-      ? `${walletId}:portfolio-value-v1`
-      : walletId
-    : undefined;
+  const historyKey = walletId ? (valuation ? `${walletId}:portfolio-usd-v1` : walletId) : undefined;
   const fresh =
     snapshot &&
     snapshot.balanceComplete !== false &&

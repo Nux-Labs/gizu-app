@@ -2029,6 +2029,38 @@ class GizuStoredSignerModule : Module() {
         }
       }
     }
+    AsyncFunction("getCachedMainnetPortfolio") { promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        withContext(Dispatchers.IO) {
+          store.load().use { record ->
+            check(record.verified)
+            val saved = SwapStore(activity.applicationContext, record)
+            val snapshot =
+              io.gizu.storedwallet.swap
+                .MainnetPortfolio(activity.applicationContext)
+                .read(record, saved.portfolio.history(), cachedOnly = true)
+            val confidential =
+              io.gizu.storedwallet.portfolio
+                .NativeOwnedConfidentialPortfolio(activity)
+                .snapshot(record)
+            val authorized =
+              balanceReadWallet == record.id &&
+                balanceReadGeneration == record.journalId &&
+                balanceReadUntil > System.currentTimeMillis()
+            snapshot +
+              confidential +
+              mapOf(
+                "confidentialReadState" to
+                  if (!authorized) "locked"
+                  else if (confidential["confidentialComplete"] == true) "ready" else "partial",
+                "ownedAssets" to
+                  ((snapshot["ownedAssets"] as? List<*> ?: emptyList<Any>()) +
+                    (confidential["ownedAssets"] as List<*>)),
+              )
+          }
+        }
+      }
+    }
     AsyncFunction("getMainnetPortfolio") { promise: Promise ->
       runCeremony(promise, timeoutMs = 180_000L) { activity, store ->
         withContext(Dispatchers.IO) {

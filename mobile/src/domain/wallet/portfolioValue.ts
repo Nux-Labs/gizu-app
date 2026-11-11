@@ -37,6 +37,34 @@ export function portfolioVaultPosition(
 }
 
 const monadUsdc = "0x754704bc059f8c67012fed69bc8a327a5aafb603";
+
+/** Latest available display amount. Never use observations to authorize spending. */
+export function portfolioAssetAmount(row: OwnedPortfolioAsset, vault = false): string | null {
+  if (vault) {
+    const position = row as OwnedPortfolioPosition;
+    return (
+      position.underlyingAtoms ??
+      (row.checkedAt > 0 ? (position.observedUnderlyingAtoms ?? null) : null)
+    );
+  }
+  return row.balanceAtoms ?? (row.checkedAt > 0 ? row.observedAtoms : null);
+}
+
+/** Stablecoins retain their dollar face value when market pricing is unavailable. */
+export function portfolioAssetValue(row: OwnedPortfolioAsset, vault = false): string | null {
+  if (row.valueUsdAtoms != null) return row.valueUsdAtoms;
+  if (row.valueUsdcAtoms !== null) return row.valueUsdcAtoms;
+  if (row.decimals !== 6) return null;
+  const token = row.token.toLowerCase();
+  const stablecoin = vault
+    ? vaultPositionProfile(row as OwnedPortfolioPosition) !== null
+    : (row.chainId === 143 && (token === monadUsdc || token === "confidential:monad-usdc")) ||
+      Object.values(earnProfiles).some(
+        (profile) => row.chainId === profile.chainId && token === profile.token.toLowerCase(),
+      );
+  return stablecoin ? portfolioAssetAmount(row, vault) : null;
+}
+
 function canonicalRows<T extends OwnedPortfolioAsset>(rows: readonly T[]): T[] {
   const unique = new Map<string, T>();
   for (const row of rows) {
@@ -67,6 +95,7 @@ export function portfolioValue(snapshot: MainnetPortfolioSnapshot) {
       if (row.complete && !row.stale && row.balanceAtoms === "0" && row.observedAtoms === "0")
         continue;
       checkedAt = Math.min(checkedAt, row.checkedAt);
+      const value = portfolioAssetValue(row, vault);
       if (
         !row.complete ||
         row.stale ||
@@ -78,7 +107,7 @@ export function portfolioValue(snapshot: MainnetPortfolioSnapshot) {
         estimated = true;
       }
       if (vault && (row as OwnedPortfolioPosition).conversionEstimated) estimated = true;
-      if (row.valueUsdcAtoms !== null) total += BigInt(row.valueUsdcAtoms);
+      if (value !== null) total += BigInt(value);
     }
     return total;
   };

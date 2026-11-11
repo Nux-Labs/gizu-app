@@ -38,7 +38,7 @@ function changeText(change: NonNullable<ReturnType<typeof balanceChange>>) {
   return `${sign}$${usd.format(Math.abs(change.delta))}${percent}`;
 }
 
-/** Total USDC with its observed performance; expands to a chart and the balance breakdown. */
+/** Portfolio value in USD; expands to a chart and the balance breakdown. */
 export function BalanceCard({
   snapshot,
   actions,
@@ -86,20 +86,15 @@ export function BalanceCard({
           </View>
           <Text
             key={`total-${fontScale}`}
-            accessibilityLabel={`${total} USDC`}
+            accessibilityLabel={`${total} USD`}
             numberOfLines={1}
             adjustsFontSizeToFit
             className="font-sans text-[34px] leading-[40px] ios:tracking-tight text-text"
             style={tabular}
           >
             {total}
-            <Text className="font-sans text-[18px] text-fg-45"> USDC</Text>
+            <Text className="font-sans text-[18px] text-fg-45"> USD</Text>
           </Text>
-          {!value.complete && (
-            <Typography variant="micro">
-              Known value · some balances or prices need refreshing.
-            </Typography>
-          )}
           {change && (
             <Text
               key={`change-${fontScale}`}
@@ -157,8 +152,8 @@ export function BalanceCard({
               <Typography>
                 Receiving wallets: {holdingAmount(snapshot.returnAtoms, 6)} USDC
               </Typography>
-              <Typography>Other assets: {holdingAmount(value.assetsAtoms, 6)} USDC</Typography>
-              <Typography>Vault positions: {holdingAmount(value.vaultAtoms, 6)} USDC</Typography>
+              <Typography>Other assets: {holdingAmount(value.assetsAtoms, 6)} USD</Typography>
+              <Typography>Vault positions: {holdingAmount(value.vaultAtoms, 6)} USD</Typography>
               <Typography variant="micro">
                 Last checked {new Date(snapshot.checkedAt).toLocaleTimeString()}
               </Typography>

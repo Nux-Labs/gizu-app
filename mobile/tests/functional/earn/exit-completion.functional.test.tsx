@@ -222,7 +222,7 @@ test("pending return confirms a minimum and exit rechecks native evidence withou
   await userEvent.press(screen.getByRole("button", { name: "Back" }));
   // The independent native portfolio includes all private cash, including surplus,
   // once. A minimum receipt neither replaces it nor adds another portfolio credit.
-  expect(await screen.findByLabelText("24.990574 USDC")).toBeVisible();
+  expect(await screen.findByLabelText("24.990574 USD")).toBeVisible();
 });
 
 test.each(["wrong-kind", "malformed"])(

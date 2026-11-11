@@ -148,6 +148,25 @@ class OwnedPortfolioTest {
   }
 
   @Test
+  fun cachedDisplayReadsRetainAmountsWithoutAnyRpcCalls() = runBlocking {
+    val f = Fixture()
+    val record = f.record(count = 1, chain = 4663)
+    val observed = f.observer().read(record)
+    f.now += 31_000L
+    for (rpc in f.rpcs.values) rpc.failure = true
+    val cached = f.observer().read(record, cachedOnly = true)
+    assertEquals(0, cached["ownedRpcCallCount"])
+    assertEquals(
+      rows(observed, "ownedAssets").map { it["observedAtoms"] },
+      rows(cached, "ownedAssets").map { it["observedAtoms"] },
+    )
+    assertEquals(
+      rows(observed, "positions").map { it["observedUnderlyingAtoms"] },
+      rows(cached, "positions").map { it["observedUnderlyingAtoms"] },
+    )
+  }
+
+  @Test
   fun tokenRefreshRotatesActualReadOrderWhileDisplayOrderStaysStable() = runBlocking {
     val f = Fixture()
     val record = f.record(count = 1, chain = 4663)

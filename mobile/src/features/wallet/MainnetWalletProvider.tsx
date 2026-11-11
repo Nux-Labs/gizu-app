@@ -82,6 +82,7 @@ export function validateMainnetPortfolio(
     atoms(asset.observedAtoms);
     if (asset.balanceAtoms !== null) atoms(asset.balanceAtoms);
     if (asset.valueUsdcAtoms !== null) atoms(asset.valueUsdcAtoms);
+    if (asset.valueUsdAtoms != null) atoms(asset.valueUsdAtoms);
     if (asset.complete && asset.balanceAtoms === null)
       throw new Error("Missing owned asset balance");
     if (
@@ -112,7 +113,10 @@ export function validateMainnetPortfolio(
   return value;
 }
 
-export type MainnetPortfolioService = { getMainnetPortfolio(): Promise<MainnetPortfolioSnapshot> };
+export type MainnetPortfolioService = {
+  getMainnetPortfolio(): Promise<MainnetPortfolioSnapshot>;
+  getCachedMainnetPortfolio?(): Promise<MainnetPortfolioSnapshot>;
+};
 function useMainnetState(
   session: MainnetWalletSession,
   service?: MainnetPortfolioService,
@@ -128,6 +132,7 @@ function useMainnetState(
   const busy = useRef(false);
   const unlocking = useRef(false);
   const controller = useRef<AbortController | null>(null);
+  const cacheRead = useRef(false);
   const valuator = useMemo(
     () => valuation ?? (service ? undefined : portfolioValuationService),
     [valuation, service],
@@ -153,6 +158,21 @@ function useMainnetState(
     try {
       const signer = service ?? getStoredSwapSigner();
       if (!signer) throw new Error("Native mainnet portfolio is unavailable in this build.");
+      if (!cacheRead.current && signer.getCachedMainnetPortfolio) {
+        cacheRead.current = true;
+        try {
+          const cached = validateMainnetPortfolio(
+            await signer.getCachedMainnetPortfolio(),
+            session.walletId,
+          );
+          if (cached.fundingAddress.toLowerCase() !== session.address.toLowerCase())
+            throw new Error("Funding account mismatch");
+          if (current() && cached.checkedAt > 0) setSnapshot(cached);
+        } catch {
+          // A missing or invalid cache never prevents a fresh native read.
+        }
+        if (!current()) return;
+      }
       const result = validateMainnetPortfolio(await signer.getMainnetPortfolio(), session.walletId);
       if (result.fundingAddress.toLowerCase() !== session.address.toLowerCase())
         throw new Error("Funding account mismatch");
@@ -180,7 +200,7 @@ function useMainnetState(
     setPrivateBalanceError("");
     try {
       const signer = getStoredSigner();
-      if (!signer) throw new Error("Native wallet unlock is unavailable in this build.");
+      if (!signer) throw new Error("Private balance refresh is unavailable in this build.");
       // Reuse the existing read-only login permission. No spending approval is requested.
       const state = await signer.openWallet();
       if (!current()) return;
@@ -191,7 +211,7 @@ function useMainnetState(
     } catch (cause) {
       if (current())
         setPrivateBalanceError(
-          cause instanceof Error ? cause.message : "Could not unlock your private balance. Retry.",
+          cause instanceof Error ? cause.message : "Could not refresh your private balance. Retry.",
         );
     } finally {
       unlocking.current = false;
