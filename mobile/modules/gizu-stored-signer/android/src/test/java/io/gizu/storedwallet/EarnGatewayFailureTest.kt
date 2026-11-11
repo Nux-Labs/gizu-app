@@ -5,6 +5,18 @@ import org.junit.Test
 
 class EarnGatewayFailureTest {
   @Test
+  fun feePreviewFailurePreservesSavedProgressWithoutClaimingNoFundsMoved() {
+    val failure =
+      safeEarnGatewayFailure(
+        "{\"code\":\"EARN_DEPOSIT_PREVIEW_UNAVAILABLE\",\"message\":\"secret provider text\"}"
+      )
+    assertNotNull(failure)
+    assertEquals("EARN_DEPOSIT_PREVIEW_UNAVAILABLE", failure!!.code)
+    assertFalse(failure.message!!.contains("secret"))
+    assertTrue(failure.message!!.contains("Saved progress"))
+  }
+
+  @Test
   fun groupedProofConflictAndUnavailableRemainDistinctNativeErrors() {
     for (code in
       listOf("EARN_COORDINATION_CONFLICT", "EARN_COORDINATION_UNAVAILABLE")) assertEquals(

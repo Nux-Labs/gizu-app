@@ -353,6 +353,7 @@ export function DepositJourneyScreen({
         </Typography>
       )}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
+      {v.discoveryFailed && <Button label="Retry saved progress" onPress={v.retryDiscovery} />}
       {v.canChangeAmount && (
         <Button
           label="Change amount"
@@ -381,12 +382,7 @@ export function DepositJourneyScreen({
           onPress={() => navigation.navigate("EarnInvestment", { intentId: row.intentId })}
         />
       ) : paused &&
-        ![
-          "recoveryRequired",
-          "unsupportedCapability",
-          "previewUnavailable",
-          "quoteUnavailable",
-        ].includes(row.pauseReason ?? "") ? (
+        !["recoveryRequired", "unsupportedCapability"].includes(row.pauseReason ?? "") ? (
         <Button
           label="Review remaining steps"
           disabled={v.busy}

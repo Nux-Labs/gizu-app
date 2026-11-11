@@ -33,6 +33,7 @@ function setup(foreign = false, distribution = false) {
   });
   const deposit = {
     available: jest.fn().mockResolvedValue(true),
+    pending: jest.fn().mockResolvedValue(null),
     prepare: jest.fn(),
     confirm: jest.fn(),
     resume: jest.fn(),

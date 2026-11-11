@@ -196,6 +196,15 @@ class EarnPayoutGroupTest {
     )
 
   @Test
+  fun oldSavedDeliveryCanCompleteFromVerifiedReceiptsBeforeScanningToTodaysHead() = runBlocking {
+    val rpc = Rpc(listOf(log("1", "221", 0), log("2", "100", 0))).also { it.head = 50000 }
+    val result = gateway(rpc).status(group(), children(), JSONObject())
+    assertEquals("paid", result.getString("status"))
+    assertEquals("321", result.getJSONArray("slots").getJSONObject(0).getString("receivedAtoms"))
+    assertFalse(result.getJSONArray("groupScan").getJSONObject(0).getBoolean("complete"))
+  }
+
+  @Test
   fun mixedSourcesAndMultipleSameTransactionEventsVerifyWholeRecipientWithoutAttribution() =
     runBlocking {
       val logs = listOf(log("1", "180", 0), log("1", "41", 1), log("2", "100", 0))
@@ -273,7 +282,7 @@ class EarnPayoutGroupTest {
   @Test
   fun receiptCandidatesAreDurableBeforeBackendFreezeAndLostResponseReusesExactSet() = runBlocking {
     val logs = mutableListOf(log("1", "221", 0), log("2", "100", 0))
-    val rpc = Rpc(logs)
+    val rpc = Rpc(logs).also { it.head = 50000 }
     var durable: JSONObject? = null
     var posts = 0
     var loseResponse = true
@@ -307,7 +316,7 @@ class EarnPayoutGroupTest {
     } catch (_: IllegalStateException) {}
     assertNotNull(durable)
     logs.add(log("3", "999", 0).put("blockNumber", "0xc"))
-    rpc.head = 12
+    rpc.head = 50001
     val result = gateway.status(group(), children(), durable!!)
     assertEquals("paid", result.getString("status"))
     assertEquals("321", result.getJSONArray("slots").getJSONObject(0).getString("receivedAtoms"))

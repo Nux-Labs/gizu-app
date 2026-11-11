@@ -341,6 +341,8 @@ internal class EarnDepositCoordinator(
       val reason =
         when {
           missing || failure is EarnGroupRecoveryRequired -> "recoveryRequired"
+          failure is EarnGatewayFailure && failure.code == "EARN_DEPOSIT_PREVIEW_UNAVAILABLE" ->
+            "previewUnavailable"
           failure is RpcFailure && failure.code == RpcFailureCode.INSUFFICIENT_FUNDS ->
             "insufficientFunds"
           failure is EarnRpcRejection && failure.method == "pm_getPaymasterData" ->

@@ -309,6 +309,8 @@ class GizuStoredSignerModule : Module() {
         android.util.Log.w("GizuWallet", "$code at $location")
         promise.reject("CANCELLED", nativeWalletFailureMessage(error), null)
       } catch (error: EarnGatewayFailure) {
+        val (code, location) = depositFailureDiagnostic(error)
+        android.util.Log.w("GizuWallet", "$code at $location")
         promise.reject(error.code, error.message ?: "Earn provider request is unavailable.", null)
       } catch (error: WalletExists) {
         promise.reject("WALLET_EXISTS", error.message, null)
@@ -670,6 +672,26 @@ class GizuStoredSignerModule : Module() {
         val host = makeDepositHost(activity, store, walletId, id)
         depositHost = host
         host.confirm(id, fresh.getInt("revision"), true)
+      }
+    }
+    AsyncFunction("findEarnDeposit") { walletId: String, profile: String, promise: Promise ->
+      scope.launch {
+        try {
+          val activity = checkNotNull(appContext.currentActivity)
+          requireForeground(activity)
+          val snapshot =
+            walletStore(activity).load().use { record ->
+              check(record.id == walletId)
+              earnDepositJournal(activity, record).pendingSnapshot(record, profile)
+            }
+          promise.resolve(snapshot)
+        } catch (_: Exception) {
+          promise.reject(
+            "DEPOSIT_STATUS_UNAVAILABLE",
+            "Saved deposit progress could not be checked. Retry before starting another deposit.",
+            null,
+          )
+        }
       }
     }
     AsyncFunction("getEarnDepositStatus") { walletId: String, id: String, promise: Promise ->

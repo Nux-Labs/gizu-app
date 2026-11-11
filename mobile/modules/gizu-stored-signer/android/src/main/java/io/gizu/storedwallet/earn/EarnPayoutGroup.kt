@@ -305,10 +305,7 @@ internal class EarnPayoutGroupGateway(
       val selected = rows.filter { it.getString("leg") == "invest:$slot" }
       scans.put(
         if (saved.optBoolean("candidateFrozen")) {
-          check(
-            previous.getBoolean("complete") &&
-              previous.getJSONArray("transactionHashes").length() <= 128
-          )
+          check(previous.getJSONArray("transactionHashes").length() in 1..128)
           JSONObject(previous.toString())
         } else if (selected.all { it.getString("status") == "paid" }) {
           JSONObject()
@@ -336,8 +333,9 @@ internal class EarnPayoutGroupGateway(
           )
       )
     }
-    if (scans.objects().any { !it.getBoolean("complete") })
-      return carry(result.put("status", "awaitingReceipt").put("groupScan", scans))
+    // A saved route may be old: sufficient canonical delivery can occur in the first page.
+    // Unscanned later blocks cannot invalidate its exact events, fixed allocations or minima.
+    // Independent confirmation below still must cover every source before any proof is frozen.
     val hints = JSONArray(scans.objects().map { it.getJSONArray("transactionHashes") })
     // The backend durably freezes its first sufficient receipt set. Establish the stronger
     // native fixed-paid-plus-pending minimum before sending any candidate that it can accept.

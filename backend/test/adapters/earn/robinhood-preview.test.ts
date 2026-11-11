@@ -61,9 +61,8 @@ test("an unfunded prospective preview retains reserve math but exposes no execut
     ).plan({ owner, operationId: "real", revision: 1 }),
   );
 });
-test("prospective planning rejects stale data, unrelated existing funds, invalid budget and exhausted gas economics", async () => {
+test("prospective planning rejects stale data, existing shares, invalid budget and exhausted gas economics", async () => {
   for (const change of [
-    { token: 1n },
     { shares: 1n },
     { block: { ...state.block, timestamp: 900n } },
   ]) {
@@ -84,7 +83,7 @@ test("prospective planning rejects stale data, unrelated existing funds, invalid
       planner.preview({ ...request, expectedUsdgAtoms: amount }),
     );
 });
-test("remaining previews accept only the exact attributed existing USDG and never weaken the funded planner", async () => {
+test("remaining previews exclude extra existing USDG from their hypothetical budget", async () => {
   const planner = new RobinhoodDepositPreviewPlanner(
     { rpcUrl: "http://rpc.invalid" },
     { ...deps, readState: async () => ({ ...state, token: 400000n }) },
@@ -96,8 +95,15 @@ test("remaining previews accept only the exact attributed existing USDG and neve
   });
   assert.equal(result.startingUsdgAtoms, "400000");
   assert.equal(result.executionAvailable, false);
+  const partial = await planner.preview({
+    ...request,
+    startingUsdgAtoms: "399999",
+  });
+  assert.equal(partial.depositAmount, result.depositAmount);
+  assert.equal(partial.expectedUsdgAtoms, "1000000");
+  assert.equal(partial.executionAvailable, false);
   await assert.rejects(
-    planner.preview({ ...request, startingUsdgAtoms: "399999" }),
+    planner.preview({ ...request, startingUsdgAtoms: "400001" }),
   );
   await assert.rejects(
     planner.preview({
@@ -106,4 +112,36 @@ test("remaining previews accept only the exact attributed existing USDG and neve
       startingUsdgAtoms: "400000",
     }),
   );
+});
+test("an arrived payout larger than the reviewed budget cannot increase hypothetical spending or become an executable plan", async () => {
+  let observed = 0n;
+  const planner = new RobinhoodDepositPreviewPlanner(
+    { rpcUrl: "http://rpc.invalid" },
+    {
+      ...deps,
+      readState: async () => ({ ...state, token: 2237133n }),
+      simulate: async (s) => {
+        assert.equal(s.token, 1000000n);
+        return deps.simulate();
+      },
+      assertFresh: async (s) => {
+        observed = s.token;
+      },
+    },
+    () => 1000000,
+  );
+  const result = await planner.preview({ ...request, startingUsdgAtoms: "0" });
+  assert.equal(observed, 2237133n);
+  assert.equal(result.depositAmount, "999635");
+  assert.equal(result.expectedUsdgAtoms, "1000000");
+  assert.equal(result.startingUsdgAtoms, "0");
+  assert.equal(result.executionAvailable, false);
+  for (const field of [
+    "operation",
+    "proposal",
+    "calldata",
+    "recoveryEnvelope",
+    "intent",
+  ])
+    assert.equal(field in result, false);
 });

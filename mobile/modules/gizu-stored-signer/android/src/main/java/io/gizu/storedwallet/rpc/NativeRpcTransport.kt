@@ -72,7 +72,10 @@ internal class NativeRpcTransport(
           else -> "native-service"
         }
       android.util.Log.w("GizuRpc", "request failed: service=$service status=$status")
-      if (endpoint.startsWith("$EARN_NATIVE_BACKEND/"))
+      if (
+        endpoint.startsWith("$EARN_NATIVE_BACKEND/") ||
+          endpoint == EARN_NATIVE_BACKEND.removeSuffix("/native") + "/robinhood/deposit-preview"
+      )
         safeEarnGatewayFailure(body)?.let { throw it }
       throw RpcFailure(RpcFailureCode.HTTP)
     }
@@ -168,6 +171,8 @@ internal fun safeEarnGatewayFailure(body: String): EarnGatewayFailure? {
     }
   val message =
     when (code) {
+      "EARN_DEPOSIT_PREVIEW_UNAVAILABLE" ->
+        "Fresh deposit fee estimates are unavailable. Saved progress is preserved; retry the remaining review."
       "EARN_AURORA_FEE_UNQUALIFIED" ->
         "Provider fee collectors and referral require qualification. No funds moved."
       "EARN_NATIVE_UPGRADE_REQUIRED" ->

@@ -78,6 +78,37 @@ internal class EarnDepositJournal(
 
   fun get(id: String): JSONObject = all().single { it.getString("journeyId") == id }
 
+  fun pendingSnapshot(record: WalletRecord, profile: String): Map<String, Any>? =
+    synchronized(lock) {
+      check(
+        record.id == walletId &&
+          record.journalId == generation &&
+          record.verified &&
+          !record.earnRecoveryRequired &&
+          profile == "robinhood-usdg"
+      )
+      val row =
+        activeDepositDrafts(record, all())
+          .filter { it.getString("profileId") == profile }
+          .maxByOrNull { it.getInt("cycleIndex") } ?: return@synchronized null
+      val snapshot = publicSnapshot(row.getString("journeyId")).toMutableMap()
+      if (row.getString("budgetAtoms") == "0") {
+        check(
+          row.getString("phase") == "draft" &&
+            !row.has("review") &&
+            row.getJSONObject("children").length() == 0 &&
+            row.getJSONArray("completedSteps").length() == 0 &&
+            row.getString("creditedAtoms") == "0"
+        )
+        // Allocation is durable before quoting. Recover its immutable budget after a crash
+        // in that gap; no signature can exist before a child is durably attached.
+        val budget = row.optString("distributionBudgetAtoms")
+        if (budget.isBlank()) return@synchronized null
+        snapshot["budgetAtoms"] = depositAtoms(budget, true).toString()
+      }
+      snapshot
+    }
+
   /** Older cleanup could drop a private-only review after recording local source credit. */
   fun recoverMissingReview(id: String): JSONObject =
     synchronized(lock) {

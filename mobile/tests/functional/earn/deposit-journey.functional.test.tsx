@@ -34,6 +34,7 @@ function setup(
   const snapshot = ready();
   const service = {
     available: jest.fn().mockResolvedValue(true),
+    pending: jest.fn().mockResolvedValue(null),
     prepare: jest.fn().mockResolvedValue(snapshot),
     confirm: jest.fn().mockResolvedValue({ ...snapshot, phase: "funding" }),
     status: jest.fn().mockResolvedValue({ ...snapshot, phase: "funding" }),
@@ -105,6 +106,109 @@ function setup(
     ...result,
   };
 }
+test("opening deposit after conversion resumes saved progress instead of requiring fresh USDC", async () => {
+  const pending = parseDepositSnapshot(
+    {
+      ...distributionDepositSnapshot(1),
+      phase: "paused",
+      pauseReason: "providerUnavailable",
+      completedSteps: ["funding", "credit"],
+      creditedAtoms: "2970000",
+    },
+    { walletId: hoodIntent.walletId },
+  );
+  const { service } = setup(
+    {
+      pending: jest.fn().mockResolvedValue(pending),
+      status: jest.fn().mockResolvedValue(pending),
+      resume: jest.fn().mockResolvedValue(pending),
+    },
+    undefined,
+    "90294",
+    "35834",
+  );
+  expect(await screen.findByText("Deposit paused")).toBeVisible();
+  expect(screen.queryByLabelText("USDC deposit amount")).toBeNull();
+  const resume = screen.getByRole("button", { name: "Review remaining steps" });
+  expect(resume).toBeEnabled();
+  await userEvent.press(resume);
+  expect(service.resume).toHaveBeenCalledWith(
+    expect.objectContaining({ walletId: hoodIntent.walletId }),
+    pending.journeyId,
+    pending.revision,
+  );
+  expect(service.prepare).not.toHaveBeenCalled();
+});
+test("a failed saved-progress lookup blocks a new deposit and can be retried", async () => {
+  const pending = jest
+    .fn()
+    .mockRejectedValueOnce(new Error("Saved progress could not be read"))
+    .mockResolvedValueOnce(null);
+  const { service } = setup({ pending });
+  expect(await screen.findByText("Saved progress could not be read")).toBeVisible();
+  expect(screen.queryByLabelText("USDC deposit amount")).toBeNull();
+  await userEvent.press(screen.getByRole("button", { name: "Retry saved progress" }));
+  expect(await screen.findByLabelText("USDC deposit amount")).toBeVisible();
+  expect(pending).toHaveBeenCalledTimes(2);
+  expect(service.prepare).not.toHaveBeenCalled();
+});
+test("an existing legacy review restores its saved budget without reentering the amount", async () => {
+  const pending = ready();
+  const { service } = setup({ pending: jest.fn().mockResolvedValue(pending) });
+  const confirm = await screen.findByRole("button", { name: "Confirm deposit" });
+  expect(confirm).toBeEnabled();
+  await userEvent.press(confirm);
+  expect(service.confirm).toHaveBeenCalledWith(
+    expect.objectContaining({ walletId: hoodIntent.walletId }),
+    pending.journeyId,
+    pending.revision,
+  );
+  expect(service.prepare).not.toHaveBeenCalled();
+});
+test("a fee preview failure after conversion keeps the existing remaining review available", async () => {
+  const pending = parseDepositSnapshot(
+    {
+      ...distributionDepositSnapshot(1),
+      phase: "paused",
+      pauseReason: "previewUnavailable",
+      completedSteps: ["funding", "credit"],
+      creditedAtoms: "2970000",
+    },
+    { walletId: hoodIntent.walletId },
+  );
+  const { service } = setup(
+    {
+      pending: jest.fn().mockResolvedValue(pending),
+      status: jest.fn().mockResolvedValue(pending),
+      resume: jest.fn().mockResolvedValue(pending),
+    },
+    undefined,
+    "90294",
+    "35834",
+  );
+  expect(await screen.findByText(/A fresh fee estimate is unavailable/)).toBeVisible();
+  await userEvent.press(screen.getByRole("button", { name: "Review remaining steps" }));
+  expect(service.resume).toHaveBeenCalledWith(
+    expect.objectContaining({ walletId: hoodIntent.walletId }),
+    pending.journeyId,
+    pending.revision,
+  );
+  expect(service.prepare).not.toHaveBeenCalled();
+});
+test("saved-progress discovery hides new funding until checked and rejects late results from another wallet", async () => {
+  const old = deferred<DepositSnapshot | null>();
+  const pending = jest.fn().mockReturnValueOnce(old.promise).mockResolvedValue(null);
+  const view = setup({ pending });
+  expect(screen.queryByLabelText("USDC deposit amount")).toBeNull();
+  await waitFor(() => expect(pending).toHaveBeenCalledTimes(1));
+  view.switchWallet("other_wallet");
+  expect(await screen.findByLabelText("USDC deposit amount")).toBeVisible();
+  await act(async () =>
+    old.resolve({ ...ready(), phase: "paused", pauseReason: "providerUnavailable" }),
+  );
+  expect(screen.queryByRole("button", { name: "Review remaining steps" })).toBeNull();
+  expect(screen.getByLabelText("USDC deposit amount")).toBeVisible();
+});
 async function review() {
   const user = userEvent.setup();
   await waitFor(() =>
@@ -577,11 +681,11 @@ test("duplicate confirmation taps cannot open another native approval", async ()
   await act(async () => pending.resolve({ ...ready(), phase: "funding" }));
 });
 test("unsupported native build keeps review disabled", async () => {
-  setup({ available: jest.fn().mockResolvedValue(false) });
-  const user = userEvent.setup();
+  const { service } = setup({ available: jest.fn().mockResolvedValue(false) });
   expect(await screen.findByText(/updated.*native|Update the native app/)).toBeVisible();
-  await user.type(screen.getByLabelText("USDC deposit amount"), "3");
-  expect(screen.getByRole("button", { name: "Review deposit" })).toBeDisabled();
+  expect(screen.queryByLabelText("USDC deposit amount")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Review deposit" })).toBeNull();
+  expect(service.prepare).not.toHaveBeenCalled();
 });
 
 test("navigating away while the deposit remains mounted revokes its approval", async () => {

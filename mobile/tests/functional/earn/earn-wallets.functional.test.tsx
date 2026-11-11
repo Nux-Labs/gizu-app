@@ -361,6 +361,15 @@ test("catalog Deposit starts a fresh cycle rather than reusing an existing inves
 });
 
 test("USDG vault Deposit opens the Robinhood native flow", async () => {
+  jest.spyOn(nativeBridge, "getStoredEarnDepositSigner").mockReturnValue({
+    findEarnDeposit: jest.fn().mockResolvedValue(null),
+    readEarnDepositFundingBalance: jest.fn().mockResolvedValue(null),
+    prepareEarnDeposit: jest.fn(),
+    confirmEarnDeposit: jest.fn(),
+    getEarnDepositStatus: jest.fn(),
+    resumeEarnDeposit: jest.fn(),
+    cancelEarnDeposit: jest.fn(),
+  });
   const vault = {
     ...opportunityDetail(1),
     name: "Steakhouse USDG",
