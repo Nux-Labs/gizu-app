@@ -3,7 +3,56 @@ import test from "node:test";
 import { RobinhoodDepositPlanner } from "../../../src/adapters/earn/robinhood-deposit-planner.ts";
 import { ROBINHOOD_PROFILE } from "../../../src/adapters/earn/robinhood-vault.ts";
 import { mergeRobinhoodTraces } from "../../../src/adapters/earn/robinhood-simulation.ts";
+import { RobinhoodPlanFailure } from "../../../src/adapters/earn/robinhood-plan-error.ts";
 const owner = "0x1000000000000000000000000000000000000001" as const;
+test("sponsorship diagnostics distinguish local validation guards and deeply wrapped upstream rejection without disclosing error text", () => {
+  for (const [message, reason] of [
+    ["Malformed token paymaster data", "paymaster-format"],
+    ["Expired token paymaster terms", "paymaster-expiry"],
+    ["USDG approval exceeds cap", "approval-cap"],
+    ["USDG vault calls changed", "vault-calls"],
+    ["Unexpected USDG factory", "account-factory"],
+    ["Pending Robinhood nonce", "pending-nonce"],
+  ]) {
+    const failure = new RobinhoodPlanFailure(
+      "deposit-sponsorship",
+      new Error(message),
+    );
+    assert.equal(failure.diagnostic.reason, reason);
+  }
+  let wrapped: Error = Object.assign(
+    new Error("AA21 sensitive-owner-and-provider-key"),
+    { code: -32500 },
+  );
+  for (let depth = 0; depth < 8; depth++)
+    wrapped = new Error("sensitive-SDK-context", { cause: wrapped });
+  const failure = new RobinhoodPlanFailure("deposit-sponsorship", wrapped);
+  assert.deepEqual(failure.diagnostic, {
+    stage: "deposit-sponsorship",
+    reason: "unclassified",
+    rpcCode: -32500,
+    accountAbstractionCode: "AA21",
+  });
+  assert.equal(
+    JSON.stringify(failure.diagnostic).includes("sensitive-"),
+    false,
+  );
+});
+test("unclassified sponsorship errors retain only an owned code location, never the raw stack", () => {
+  const error = new Error("sensitive-provider-response");
+  error.stack =
+    "Error: sensitive-provider-response\n    at prepare (/app/backend/dist/adapters/earn/robinhood-paymaster.js:149:20)\n    at sensitive-caller (/sensitive-path/file.js:1:2)";
+  const failure = new RobinhoodPlanFailure("deposit-sponsorship", error);
+  assert.deepEqual(failure.diagnostic, {
+    stage: "deposit-sponsorship",
+    reason: "unclassified",
+    codeLocation: "robinhood-paymaster.js:149",
+  });
+  assert.equal(
+    JSON.stringify(failure.diagnostic).includes("sensitive-"),
+    false,
+  );
+});
 const state = {
   owner,
   block: {

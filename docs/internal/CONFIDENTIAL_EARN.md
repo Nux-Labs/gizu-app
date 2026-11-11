@@ -37,9 +37,10 @@ No frontend observation can authorize spending or establish settlement.
 Funded Robinhood plan failures also attach a `planning` object to the existing
 backend `private.error` log. It identifies the failed state read, market quote,
 vault simulation, deposit/withdrawal sponsorship, final sponsorship, freshness or
-plan validation stage. Only fixed internal reason labels and numeric upstream
-HTTP/JSON-RPC codes are retained; upstream messages, owners, amounts and requests
-are excluded. Responses keep the existing generic error contract. This diagnostic
+plan validation stage. Only fixed internal reason/SDK error labels, numeric upstream
+HTTP/JSON-RPC codes, `AA` plus two-digit validation codes and allowlisted backend
+module/line locations are retained. Upstream messages, raw stacks/paths, owners,
+amounts and requests are excluded. Responses keep the existing generic error contract. This diagnostic
 does not retry, relax funding checks or grant signing/execution authority. A live
 `EARN_ROBINHOOD_PLAN_UNAVAILABLE` requires this backend build to be deployed before
 the failing stage can be established from CloudWatch.
