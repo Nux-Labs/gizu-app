@@ -91,6 +91,29 @@ does not retry, relax funding checks or grant signing/execution authority. A liv
 `EARN_ROBINHOOD_PLAN_UNAVAILABLE` requires this backend build to be deployed before
 the failing stage can be established from CloudWatch.
 
+Exit snapshot failures attach an `exitSnapshot` object to that same request-scoped
+`private.error` event. Filter CloudWatch for route `/v1/earn/exit-snapshot` and
+correlate using `reqId`. `stage` distinguishes chain reads, reference validation,
+price fetching, price validation, canonical checks, valuation and final freshness.
+`reason` retains a fixed internal validation label; HTTP/JSON-RPC status, allowlisted
+TLS/network codes and SDK error types survive without retaining the raw exception.
+Price validation includes `asset` (`token`, `usdc`, or `native`) and, when its
+timestamp is parseable, `priceAgeMs` and `priceMaxAgeMs`. Negative age identifies a
+future timestamp. Price-fetch failures retain HTTP status even if response JSON
+parsing fails; transport failures have no HTTP response status.
+
+For example, a stale-price failure would log the following diagnostic object
+(illustrative, not a captured production event):
+
+```json
+{"stage":"prices-validate","reason":"price-expired","asset":"token","priceAgeMs":300001,"priceMaxAgeMs":300000}
+```
+
+The logger excludes owners, balances, prices, URLs, headers, provider bodies,
+messages and raw stacks. Public error responses and all freshness/security checks
+are unchanged. This instrumentation requires a backend deployment; no app rebuild
+or AWS configuration change is needed.
+
 Native preparation rechecks eligible private accounts and selects them first.
 Their USDC goes directly through an advanced-confidentiality, exact-input route
 to the saved Robinhood investment wallets as USDG, without a public Monad
