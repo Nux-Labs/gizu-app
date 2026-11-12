@@ -29,3 +29,19 @@ export function groupDigits(value: string): string {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return fraction === undefined ? grouped : `${grouped}.${fraction}`;
 }
+
+/**
+ * A token amount for display: at most `maxFraction` decimals, rounded down so a holding is never
+ * overstated. A non-zero balance too small to show reads "<0.000001". Not for exact amounts
+ * a user acts on, such as a sell's available balance.
+ */
+export function displayAmount(atoms: string, decimals: number, maxFraction = 6): string {
+  const digits = atoms.padStart(decimals + 1, "0");
+  const whole = decimals ? digits.slice(0, -decimals) : digits;
+  const fraction = (decimals ? digits.slice(-decimals) : "")
+    .slice(0, maxFraction)
+    .replace(/0+$/, "");
+  if (/^0+$/.test(whole) && !fraction && /[1-9]/.test(atoms))
+    return `<0.${"0".repeat(Math.max(0, maxFraction - 1))}1`;
+  return groupDigits(fraction ? `${whole}.${fraction}` : whole);
+}
