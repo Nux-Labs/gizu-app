@@ -6,6 +6,7 @@ import { hoodWrappedNative } from "./robinhoodExecution";
 import type { LiquidityOperation } from "./ethereumLiquidity";
 import type { SponsoredOperation } from "./sourceFunding";
 import { parseMinimumReturn } from "./minimumReturn";
+import type { EarnWithdrawalOperation } from "./withdrawal";
 export type ExitSnapshot = {
   owner: string;
   profileId: EarnIntent["profileId"];
@@ -28,6 +29,25 @@ export type ExitCompletion = {
 };
 export interface EarnExitCompletionService {
   check(intent: EarnIntent, signal: AbortSignal): Promise<ExitCompletion>;
+}
+
+/** Presentation completion only; current private holdings are irrelevant to a saved return. */
+export function isCompleteInvestmentExit(
+  result: ExitCompletion | null,
+  intent: EarnIntent,
+  withdrawals: readonly EarnWithdrawalOperation[],
+  now = Date.now(),
+): boolean {
+  return (
+    result?.complete === true &&
+    result.snapshot.expiresAtMs > now &&
+    result.snapshot.profileId === intent.profileId &&
+    result.snapshot.owner.toLowerCase() === investmentDestination(intent).address.toLowerCase() &&
+    result.creditedReturnOperationIds.length > 0 &&
+    withdrawals.every(
+      (row) => !row.blocked && (row.status === "paid" || row.status === "cancelled"),
+    )
+  );
 }
 const hash = (v: unknown) =>
   typeof v === "string" && /^0x[0-9a-f]{64}$/i.test(v) && !/^0x0{64}$/i.test(v);

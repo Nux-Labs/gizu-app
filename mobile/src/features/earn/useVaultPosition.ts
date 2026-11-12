@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EarnIntent, EarnProfileId } from "@/domain/earn/types";
 import type {
   EarnInvestmentPosition,
@@ -6,12 +6,29 @@ import type {
 } from "@/domain/earn/investmentPositions";
 import { useFundingWallet } from "@/features/wallet/WalletProvider";
 import { useEarn } from "./EarnProvider";
+import { createEarnExitCompletionService } from "@/services/earn/exitCompletion";
+import { earnWithdrawalService } from "@/services/earn/withdrawal";
+import { isCompleteInvestmentExit } from "@/domain/earn/exitCompletion";
 
 function positionKey(row: Pick<EarnInvestmentPosition, "intentId" | "investmentSlot">) {
   return `${row.intentId}:${row.investmentSlot ?? "legacy"}`;
 }
 export function useVaultPosition(profileId: EarnProfileId) {
-  const { investmentPositions, selectPosition, loading: earnLoading } = useEarn();
+  const {
+    investmentPositions,
+    selectPosition,
+    liquidity,
+    robinhood,
+    loading: earnLoading,
+  } = useEarn();
+  const exitChecker = useMemo(
+    () =>
+      createEarnExitCompletionService(
+        process.env.EXPO_PUBLIC_API_URL ?? (__DEV__ ? "http://127.0.0.1:3000" : ""),
+        { liquidity, robinhood },
+      ),
+    [liquidity, robinhood],
+  );
   const { session } = useFundingWallet();
   const [rows, setRows] = useState<EarnInvestmentPosition[]>([]);
   const [intent, setIntent] = useState<EarnIntent | null>(null);
@@ -23,6 +40,7 @@ export function useVaultPosition(profileId: EarnProfileId) {
   const selected = useRef<string | null>(null);
   const occupied = useRef(false);
   const generation = useRef(0);
+  const active = useRef<AbortController | null>(null);
   const recordCompletion = useCallback(
     (proof: EarnInvestmentExitProof) => {
       const current = currentIntent.current;
@@ -55,7 +73,12 @@ export function useVaultPosition(profileId: EarnProfileId) {
     if (occupied.current) return;
     occupied.current = true;
     const attempt = generation.current;
+    const controller = new AbortController();
+    active.current = controller;
     setLoading(true);
+    // Unmount journal readers before the same services check historical exits.
+    setIntent(null);
+    selected.current = null;
     setMessage("");
     try {
       if (profileId !== "ethereum-usdc" && profileId !== "robinhood-usdg")
@@ -73,9 +96,10 @@ export function useVaultPosition(profileId: EarnProfileId) {
         );
       if (attempt !== generation.current) return;
       setRows(positions);
-      // A fresh check is consumed only on explicit progress review. Accepted
-      // portions stay complete for this screen while their native activity is
-      // still redeemed; later investment, uncertainty or recovery revokes them.
+      // Accepted exits stay complete during this visit while native activity is
+      // still redeemed. New investment, uncertainty or recovery revokes them.
+      // A later visit rederives completion from saved return evidence and live
+      // public residuals, never from the current (possibly spent) private balance.
       const checked: Record<string, number | "accepted"> = {};
       for (const row of positions) {
         const proof = proofsRef.current[positionKey(row)];
@@ -88,27 +112,36 @@ export function useVaultPosition(profileId: EarnProfileId) {
       }
       proofsRef.current = checked;
       setProofs(checked);
-      const next = positions.find(
-        (row) => row.activity !== "returned" && checked[positionKey(row)] !== "accepted",
-      );
-      if (!next) {
-        selected.current = null;
-        currentIntent.current = null;
-        setIntent(null);
-        return;
-      }
-      if (next.recoveryRequired) {
-        setIntent(null);
-        selected.current = null;
-        throw new Error("Restore and reconcile saved activity before withdrawing.");
-      }
-      if (selected.current === positionKey(next)) return;
-      const value = await selectPosition(next);
-      if (attempt === generation.current) {
+      for (const next of positions) {
+        if (next.activity === "returned" || checked[positionKey(next)] === "accepted") continue;
+        if (next.recoveryRequired)
+          throw new Error("Restore and reconcile saved activity before withdrawing.");
+        const value = await selectPosition(next);
+        if (attempt !== generation.current || controller.signal.aborted) return;
+        if (next.activity === "redeemed") {
+          try {
+            if (await earnWithdrawalService.available()) {
+              const result = await exitChecker.check(value, controller.signal);
+              const payouts = await earnWithdrawalService.list(value);
+              if (attempt !== generation.current || controller.signal.aborted) return;
+              if (isCompleteInvestmentExit(result, value, payouts)) {
+                checked[positionKey(next)] = "accepted";
+                proofsRef.current = { ...checked };
+                setProofs(proofsRef.current);
+                continue;
+              }
+            }
+          } catch {
+            // Unverified exits remain reachable through the existing recovery UI.
+          }
+        }
+        if (attempt !== generation.current || controller.signal.aborted) return;
         selected.current = positionKey(next);
         currentIntent.current = value;
         setIntent(value);
+        return;
       }
+      currentIntent.current = null;
     } catch (error) {
       if (attempt === generation.current) {
         setIntent(null);
@@ -121,9 +154,17 @@ export function useVaultPosition(profileId: EarnProfileId) {
       }
     } finally {
       occupied.current = false;
+      if (active.current === controller) active.current = null;
       if (attempt === generation.current) setLoading(false);
     }
-  }, [investmentPositions, selectPosition, session.walletId, session.address, profileId]);
+  }, [
+    investmentPositions,
+    selectPosition,
+    exitChecker,
+    session.walletId,
+    session.address,
+    profileId,
+  ]);
   useEffect(() => {
     const attempt = ++generation.current;
     selected.current = null;
@@ -135,6 +176,7 @@ export function useVaultPosition(profileId: EarnProfileId) {
       });
     return () => {
       generation.current = attempt + 1;
+      active.current?.abort();
     };
   }, [refresh, earnLoading]);
   const completed = rows.filter(

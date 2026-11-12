@@ -13,6 +13,15 @@ preserve earlier implementation stages.
 
 **Earn ends at an invested vault position.** The initial fee calculation simulates a future full redemption in a disposable server-side fork only to estimate the withdrawal reserve. It never withdraws the live position. The user must click Withdraw later, review fresh fees, and authorize redemption separately. Aurora return quotes and operations follow that requested exit; their future executable costs are excluded from the initial deposit estimate.
 
+When selecting withdrawal activity, a native `redeemed` inventory row is not proof
+of an unfinished private return. Selection reuses the existing exit verifier:
+authenticated saved operation credit (including minimum-return evidence), fresh
+zero shares and residual valuation, and no unresolved legacy public payout. A
+completed old exit is skipped before the next investment is shown. Reopening the
+screen derives this again from saved receipts and public state; the user's current
+private balance may already have been spent or redeposited. Failed checks preserve
+the existing recovery controls, and the position overview never invokes this flow.
+
 The position screen is an overview. Opening it or selecting **View investment**
 after a guided deposit does not select an old Earn cycle or mount withdrawal
 recovery. **Withdraw** opens the separate protected withdrawal route; an explicit
