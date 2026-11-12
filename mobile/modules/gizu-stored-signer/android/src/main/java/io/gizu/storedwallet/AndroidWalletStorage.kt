@@ -76,15 +76,18 @@ internal class AndroidAtomicWalletFile(
   override fun read(): ByteArray {
     recoverLegacyBackup()
     return base.inputStream().use { input ->
-      // Bounded before allocation even if local data is corrupt.
-      val buffer = ByteArray(limit + 1)
+      // Bounded before allocation even if local data is corrupt. Allocate for the file's size,
+      // not the limit: a large limit must not reserve that much memory on every read.
+      val length = base.length()
+      require(length <= limit)
+      val buffer = ByteArray(length.toInt() + 1)
       var used = 0
       while (used < buffer.size) {
         val n = input.read(buffer, used, buffer.size - used)
         if (n < 0) break
         used += n
       }
-      require(used <= limit)
+      require(used <= length)
       buffer.copyOf(used)
     }
   }
