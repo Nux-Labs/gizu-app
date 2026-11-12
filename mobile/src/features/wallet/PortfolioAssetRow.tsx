@@ -1,4 +1,4 @@
-import { displayAmount } from "@/domain/wallet/amounts";
+import { displayAmount, holdingAmount } from "@/domain/wallet/amounts";
 import { useState } from "react";
 import { Image, Pressable, View } from "react-native";
 import { LockKeyhole } from "lucide-react-native";
@@ -6,7 +6,6 @@ import { Typography } from "@/components/atoms/Typography";
 import type { NamedPortfolioAsset } from "./usePortfolioTokenNames";
 import { earnProfiles } from "@/domain/earn/types";
 import { portfolioAssetAmount, portfolioAssetValue } from "@/domain/wallet/portfolioValue";
-import { holdingAmount } from "@/features/swap/SwapHoldingsSection";
 import usdcLogo from "../../../assets/logos/tokens/usdc.png";
 import usdgLogo from "../../../assets/logos/tokens/usdg.png";
 import monadLogo from "../../../assets/logos/monad-white.png";

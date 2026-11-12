@@ -1,4 +1,4 @@
-import { displayAmount } from "@/domain/wallet/amounts";
+import { displayAmount, holdingAmount } from "@/domain/wallet/amounts";
 import { VaultCard } from "@/components/organisms/VaultList";
 import { tvlChange, type Opportunity } from "@/domain/opportunities";
 import { useTvlSeries } from "../useTvlSeries";
@@ -7,7 +7,6 @@ import { protocolLogo } from "../protocolLogos";
 import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { portfolioVaultPosition } from "@/domain/wallet/portfolioValue";
 import { catalogEarnProfile } from "@/domain/earn/catalog";
-import { holdingAmount } from "@/features/swap/SwapHoldingsSection";
 
 /** No history yet: a flat line at zero rather than an empty-state message. */
 const flat = [0, 0];

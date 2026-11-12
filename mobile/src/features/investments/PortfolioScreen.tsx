@@ -1,5 +1,4 @@
 import { MainnetPortfolioScreen } from "@/features/wallet/MainnetScreens";
-import { SwapHoldingsSection } from "@/features/swap/SwapHoldingsSection";
 import type { ReactNode } from "react";
 import { useSession } from "@/application/SessionProvider";
 import { useWallet } from "@/features/wallet/WalletProvider";
@@ -242,14 +241,9 @@ function NativePortfolio({ navigation }: Props) {
           onActivity={() => root.navigate("Activity")}
         />
       </FadeIn>
-      <SwapHoldingsSection
-        onReviewSale={() => navigation.navigate("Exchange")}
-        emptyContent={
-          <VaultPreview
-            onSeeAll={() => navigation.navigate("Vaults")}
-            onOpen={(id) => root.navigate("OpportunityDetail", { id })}
-          />
-        }
+      <VaultPreview
+        onSeeAll={() => navigation.navigate("Vaults")}
+        onOpen={(id) => root.navigate("OpportunityDetail", { id })}
       />
     </Screen>
   );

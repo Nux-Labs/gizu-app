@@ -11,7 +11,7 @@ import { Screen } from "@/components/templates/Screen";
 import colors from "@/theme/colors.json";
 import { parseTokenAmount } from "@/domain/swap";
 import type { CatalogToken } from "@/domain/tokenCatalog";
-import { holdingAmount } from "./SwapHoldingsSection";
+import { holdingAmount } from "@/domain/wallet/amounts";
 import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
 import { TokenChoices } from "./SwapTokenPicker";
 import { useSellEstimate } from "./useSellEstimate";

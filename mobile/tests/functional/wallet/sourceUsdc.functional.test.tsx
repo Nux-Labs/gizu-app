@@ -340,7 +340,7 @@ test("partial vault observations use underlying units and never relabel shares a
 });
 
 test.each(["ios", "android"])(
-  "%s Home loads token holdings through the native capability check",
+  "%s Home shows Earn vaults alongside swapped stocks without swap holdings tools",
   async (os) => {
     Object.defineProperty(Platform, "OS", { configurable: true, value: os });
     Object.defineProperty(Platform, "Version", {
@@ -363,25 +363,16 @@ test.each(["ios", "android"])(
     });
     setup();
     await open();
-    expect(await screen.findByText("1.2345 GOOGL")).toBeVisible();
-    expect(screen.queryByRole("header", { name: "Earn" })).toBeNull();
+    expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
+    expect(screen.queryByText("1.2345 GOOGL")).toBeNull();
+    expect(screen.queryByText("Holdings tools")).toBeNull();
     expect(screen.queryByRole("button", { name: "Wallet details" })).toBeNull();
-    expect(readHoldings).toHaveBeenCalledWith("");
-    expect(capabilities).toHaveBeenCalled();
-    expect(screen.queryByText("Token holdings are not yet available on iOS.")).toBeNull();
+    // Selling swapped stocks lives in Swap; Home no longer reads swap holdings.
+    expect(readHoldings).not.toHaveBeenCalled();
   },
 );
 
-test("Home shows a retryable holdings error when the native build lacks swap capability", async () => {
-  capabilities.mockResolvedValue({ contractVersion: 1, available: true, swaps: false });
-  setup();
-  await open();
-  expect(await screen.findByRole("button", { name: "Retry holdings" })).toBeVisible();
-  expect(readHoldings).not.toHaveBeenCalled();
-  expect(screen.queryByRole("header", { name: "Earn" })).toBeNull();
-});
-
-test("Home offers Earn vaults instead of an empty holdings section", async () => {
+test("Home always offers Earn vaults", async () => {
   setup();
   await open();
   expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
@@ -434,7 +425,7 @@ test("returning to Home reuses balances without refreshing portfolio or token ho
   expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(balanceReads + 1);
 });
 
-test("Home shows aggregate USDG once while retaining native sale batches and other account spaces", async () => {
+test("Home shows aggregate USDG once and leaves selling swapped tokens to Swap", async () => {
   const { portfolio } = setup();
   const token = "0x" + "ab".repeat(20);
   const asset = {
@@ -495,13 +486,10 @@ test("Home shows aggregate USDG once while retaining native sale batches and oth
   expect(await screen.findByText("10 USDG")).toBeVisible();
   expect(screen.getByText("20 USDG")).toBeVisible();
   expect(screen.queryByText("1.2345 USDG")).toBeNull();
-  expect(screen.getByText("5 GOOGL")).toBeVisible();
-  fireEvent.press(await screen.findByRole("button", { name: "USDG swap tools" }));
-  const balanceReads = portfolio.getMainnetPortfolio.mock.calls.length;
-  fireEvent.press(screen.getByRole("button", { name: "Swap USDG to USDC" }));
-  await act(async () => {});
-  expect(sellHolding).toHaveBeenCalledWith(`${token}:all`, expect.any(String));
-  expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(balanceReads + 1);
+  expect(screen.queryByRole("button", { name: "USDG swap tools" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Swap USDG to USDC" })).toBeNull();
+  expect(readHoldings).not.toHaveBeenCalled();
+  expect(sellHolding).not.toHaveBeenCalled();
 });
 
 test("private USDC retains its observed amount while refreshing a partial observation", async () => {
@@ -550,7 +538,7 @@ test("private USDC retains its observed amount while refreshing a partial observ
   expect(screen.queryByRole("button", { name: "Retry token balances and positions" })).toBeNull();
 });
 
-test("a successful swap balance remains visible when its owned aggregate is unavailable", async () => {
+test("an unavailable swapped token balance says so on Home without a swap wallet card", async () => {
   const { portfolio } = setup();
   const token = "0x" + "ab".repeat(20);
   portfolio.getMainnetPortfolio.mockResolvedValue({
@@ -581,9 +569,9 @@ test("a successful swap balance remains visible when its owned aggregate is unav
     ],
   });
   await open();
-  expect(await screen.findByText("1.2345 USDG")).toBeVisible();
-  expect(screen.getByText("Swap receiving wallets")).toBeVisible();
-  fireEvent.press(screen.getAllByRole("button", { name: "USDG holding details" })[0]!);
+  fireEvent.press(await screen.findByRole("button", { name: "USDG holding details" }));
+  expect(screen.queryByText("1.2345 USDG")).toBeNull();
+  expect(screen.queryByText("Swap receiving wallets")).toBeNull();
   expect(screen.getByText("USDG balance unavailable. Refresh to retry.")).toBeVisible();
   expect(screen.queryByText("0 USDG")).toBeNull();
 });

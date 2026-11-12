@@ -12,7 +12,7 @@ import {
   type BalancePeriod,
 } from "@/domain/wallet/balanceHistory";
 import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
-import { holdingAmount } from "@/features/swap/SwapHoldingsSection";
+import { holdingAmount } from "@/domain/wallet/amounts";
 import colors from "@/theme/colors.json";
 import { useBalanceHistory } from "./useBalanceHistory";
 import { portfolioValue } from "@/domain/wallet/portfolioValue";

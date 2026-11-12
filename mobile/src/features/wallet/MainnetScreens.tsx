@@ -1,5 +1,6 @@
 import { swapDirection } from "@/domain/swap";
 import type { OwnedPortfolioAsset } from "@/domain/wallet/storedSigner";
+import { holdingAmount } from "@/domain/wallet/amounts";
 import { useCallback, useState } from "react";
 import { Pressable, View } from "react-native";
 import { Bell, ChevronDown, ChevronUp } from "lucide-react-native";
@@ -26,7 +27,6 @@ import { AccountAddress } from "@/features/account/AccountAddress";
 import { clipboardService } from "@/services/clipboard";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
-import { SwapHoldingsSection, holdingAmount } from "@/features/swap/SwapHoldingsSection";
 import { useMainnetWallet } from "./MainnetWalletProvider";
 import { BalanceCard } from "./BalanceCard";
 import { PortfolioAssetRow } from "./PortfolioAssetRow";
@@ -309,17 +309,10 @@ export function MainnetPortfolioScreen({
         onPress={() => root.navigate("ConfidentialWithdrawal")}
       />
       <OwnedBalances onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })} />
-      {(wallet.snapshot || wallet.error) && (
-        <SwapHoldingsSection
-          onReviewSale={() => navigation.navigate("Exchange")}
-          emptyContent={
-            <VaultPreview
-              onSeeAll={() => navigation.navigate("Vaults")}
-              onOpen={(id) => root.navigate("OpportunityDetail", { id })}
-            />
-          }
-        />
-      )}
+      <VaultPreview
+        onSeeAll={() => navigation.navigate("Vaults")}
+        onOpen={(id) => root.navigate("OpportunityDetail", { id })}
+      />
     </Screen>
   );
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SwapHoldingsSnapshot } from "@/domain/wallet/storedSigner";
 import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
-import { loadSwapTokens, swapGateway, swapSigner, type ListedToken } from "./confidentialSwap";
+import { swapGateway, swapSigner } from "./confidentialSwap";
 
 /** Public balances only. Native storage owns discovery and native review owns every sale. */
 export function useSwapHoldings(onSaleSettled?: () => void) {
@@ -10,11 +10,7 @@ export function useSwapHoldings(onSaleSettled?: () => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<"" | "holdings">("");
   const [saleFailed, setSaleFailed] = useState(false);
-  const [catalogError, setCatalogError] = useState(false);
-  const readTarget = useRef("");
   const [notice, setNotice] = useState("");
-  const [tokens, setTokens] = useState<ListedToken[]>([]);
-  const [search, setSearch] = useState("");
   const alive = useRef(true);
   const running = useRef(false);
   useEffect(() => {
@@ -24,23 +20,14 @@ export function useSwapHoldings(onSaleSettled?: () => void) {
     };
   }, []);
 
-  const refresh = useCallback(async (target = "") => {
+  const refresh = useCallback(async () => {
     if (running.current) return;
-    readTarget.current = target;
     running.current = true;
     setBusy(true);
     setError("");
     try {
-      const next = await swapSigner().getSwapHoldings(target);
-      if (alive.current) {
-        setSnapshot(next);
-        if (target)
-          setNotice(
-            next.holdings.some((holding) => holding.token === target.toLowerCase())
-              ? "Recovered token balances from your allocated wallets."
-              : "No balance for this token in your locally allocated wallets.",
-          );
-      }
+      const next = await swapSigner().getSwapHoldings("");
+      if (alive.current) setSnapshot(next);
     } catch {
       if (alive.current) setError("holdings");
     } finally {
@@ -58,22 +45,6 @@ export function useSwapHoldings(onSaleSettled?: () => void) {
       mounted = false;
     };
   }, [refresh]);
-
-  const findTokens = async () => {
-    if (running.current) return;
-    running.current = true;
-    setBusy(true);
-    setCatalogError(false);
-    try {
-      const result = await loadSwapTokens();
-      if (alive.current) setTokens(result);
-    } catch {
-      if (alive.current) setCatalogError(true);
-    } finally {
-      running.current = false;
-      if (alive.current) setBusy(false);
-    }
-  };
 
   const sell = async (id: string) => {
     if (running.current) return;
@@ -110,14 +81,8 @@ export function useSwapHoldings(onSaleSettled?: () => void) {
     busy,
     error,
     saleFailed,
-    catalogError,
-    retryRead: () => refresh(readTarget.current),
+    retryRead: refresh,
     notice,
-    refresh,
     sell,
-    findTokens,
-    tokens,
-    search,
-    setSearch,
   };
 }
