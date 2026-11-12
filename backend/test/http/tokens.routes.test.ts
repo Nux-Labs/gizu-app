@@ -58,3 +58,24 @@ test("GET /v1/tokens with liquidOnly lists only tokens a buy can target", async 
   assert.equal((await app.inject("/v1/tokens?chainId=4663&category=rwa&search=&page=0&items=10&liquidOnly=yes")).statusCode, 400);
   await app.close();
 });
+
+test("GET /v1/tokens/4663/:address/details serves buy targets, 404s others and validates the period", async () => {
+  const app = Fastify();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  const asked: Array<[string, string]> = [];
+  const known = "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC";
+  registerTokenRoutes(app, { list: async () => [] }, { details: async (address, period) => {
+    asked.push([address, period]);
+    return address === known ? { chainId: 4663, address, symbol: "NVDA", name: "NVIDIA", logoURI: "https://x/y.png", kind: "stock", description: "d", isin: null, sharesPerToken: null, sessions: { regular: true, extended: false, overnight: false }, priceUsd: 1, chart: null } : undefined;
+  } });
+  const ok = await app.inject(`/v1/tokens/4663/${known}/details?period=1W`);
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.json().symbol, "NVDA");
+  assert.equal((await app.inject(`/v1/tokens/4663/${known}/details`)).statusCode, 200);
+  assert.deepEqual(asked, [[known, "1W"], [known, "1M"]]);
+  assert.equal((await app.inject("/v1/tokens/4663/0x1111111111111111111111111111111111111111/details")).statusCode, 404);
+  assert.equal((await app.inject(`/v1/tokens/4663/${known}/details?period=5Y`)).statusCode, 400);
+  assert.equal((await app.inject("/v1/tokens/4663/not-an-address/details")).statusCode, 400);
+  await app.close();
+});

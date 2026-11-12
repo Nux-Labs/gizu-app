@@ -28,6 +28,7 @@ import { AuroraIntents } from "./adapters/aurora/aurora-intents.ts";
 import { diagnosticAuroraFetch } from "./adapters/aurora/diagnostics.ts";
 import { OneInchFusion } from "./adapters/oneinch/fusion.ts";
 import { OneInchTokenCatalog } from "./adapters/oneinch/token-catalog.ts";
+import { RobinhoodTokenDetails } from "./adapters/oneinch/token-details.ts";
 import { PimlicoMonadFunding } from "./adapters/pimlico/monad-funding.ts";
 import { registerSwapRoutes } from "./http/routes/swap.routes.ts";
 import { registerTokenRoutes } from "./http/routes/tokens.routes.ts";
@@ -118,7 +119,7 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
 
   registerHealthRoutes(app, healthController);
   registerEarlyAccessRoutes(app, new PgEarlyAccess(pgPool), secret.NODE_ENV === "local");
-  registerTokenRoutes(app, new OneInchTokenCatalog(secret.ONEINCH_API_KEY));
+  registerTokenRoutes(app, new OneInchTokenCatalog(secret.ONEINCH_API_KEY), new RobinhoodTokenDetails(secret.ONEINCH_API_KEY));
   registerSwapRoutes(app, {
     aurora: new AuroraIntents(secret.AURORA_API_KEY, diagnosticAuroraFetch((event) => app.log.info(event, "swap provider request"))),
     funding: new PimlicoMonadFunding(secret.PIMLICO_API_KEY),
