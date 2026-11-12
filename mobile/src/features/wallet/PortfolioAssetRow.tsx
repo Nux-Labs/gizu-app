@@ -1,8 +1,9 @@
+import { displayAmount } from "@/domain/wallet/amounts";
 import { useState } from "react";
 import { Image, Pressable, View } from "react-native";
 import { LockKeyhole } from "lucide-react-native";
 import { Typography } from "@/components/atoms/Typography";
-import type { OwnedPortfolioAsset } from "@/domain/wallet/storedSigner";
+import type { NamedPortfolioAsset } from "./usePortfolioTokenNames";
 import { earnProfiles } from "@/domain/earn/types";
 import { portfolioAssetAmount, portfolioAssetValue } from "@/domain/wallet/portfolioValue";
 import { holdingAmount } from "@/features/swap/SwapHoldingsSection";
@@ -17,7 +18,7 @@ export function PortfolioAssetRow({
   loading,
   privateLocked = false,
 }: {
-  asset: OwnedPortfolioAsset;
+  asset: NamedPortfolioAsset;
   position?: boolean;
   loading: boolean;
   privateLocked?: boolean;
@@ -39,10 +40,12 @@ export function PortfolioAssetRow({
       ? usdgLogo
       : asset.chainId === 143 && token === "native"
         ? monadLogo
-        : undefined;
+        : asset.logoURI
+          ? { uri: asset.logoURI }
+          : undefined;
   const formattedAmount =
     amount !== null && asset.decimals !== null
-      ? `${holdingAmount(amount, asset.decimals)} ${asset.symbol}`
+      ? `${displayAmount(amount, asset.decimals)} ${asset.symbol}`
       : null;
   return (
     <View className="border-b border-cardEdge last:border-b-0">
@@ -81,6 +84,7 @@ export function PortfolioAssetRow({
       {expanded && (
         <View className="gap-3 pb-4">
           <Typography variant="rowTitle">{asset.symbol}</Typography>
+          {asset.name && <Typography variant="caption">{asset.name}</Typography>}
           {position && <Typography variant="micro">Vault position</Typography>}
           <Typography>
             {formattedAmount !== null
