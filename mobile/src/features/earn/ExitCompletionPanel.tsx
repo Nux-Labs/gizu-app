@@ -8,6 +8,7 @@ import { Typography } from "@/components/atoms/Typography";
 import type { EarnIntent } from "@/domain/earn/types";
 import {
   isCompleteInvestmentExit,
+  exitHistoryRevision,
   type EarnExitCompletionService,
   type ExitCompletion,
 } from "@/domain/earn/exitCompletion";
@@ -16,6 +17,7 @@ import { formatUsdc } from "@/domain/wallet/amounts";
 import type { EarnInvestmentExitProof } from "@/domain/earn/investmentPositions";
 import { useEarn } from "./EarnProvider";
 import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
+import { completedExitsStore } from "@/storage/completedExits";
 export function ExitCompletionPanel({
   intent,
   service,
@@ -72,7 +74,6 @@ export function ExitCompletionPanel({
     return () => clearTimeout(timer);
   }, [result]);
   useEffect(() => {
-    if (!onWithdrawalComplete) return;
     const complete =
       isCompleteInvestmentExit(result, intent, withdrawals.rows) &&
       !busy &&
@@ -80,7 +81,11 @@ export function ExitCompletionPanel({
       !withdrawals.loading &&
       withdrawals.available &&
       !withdrawals.message;
-    onWithdrawalComplete({
+    const revision = complete
+      ? exitHistoryRevision(result?.journalRevision, withdrawals.rows)
+      : null;
+    if (revision) void completedExitsStore.save(intent, revision);
+    onWithdrawalComplete?.({
       walletId: intent.walletId,
       intentId: intent.intentId,
       profileId: intent.profileId,

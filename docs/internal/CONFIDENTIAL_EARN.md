@@ -18,9 +18,18 @@ of an unfinished private return. Selection reuses the existing exit verifier:
 authenticated saved operation credit (including minimum-return evidence), fresh
 zero shares and residual valuation, and no unresolved legacy public payout. A
 completed old exit is skipped before the next investment is shown. Reopening the
-screen derives this again from saved receipts and public state; the user's current
-private balance may already have been spent or redeposited. Failed checks preserve
-the existing recovery controls, and the position overview never invokes this flow.
+screen re-reads the native journals. A previously verified full exit is retained
+as wallet/profile/intent/slot-scoped presentation history, matched against every
+native operation and legacy payout revision/status. It does not need new prices
+or the current private balance, which may already have been spent or redeposited.
+Unrecorded or changed activity still requires fresh public state and the existing
+completion checks. Pending and recovery activity cannot use recorded history.
+
+These non-secret observations never authorize spending or remove assets from
+portfolio reads. **Check past withdrawals** explicitly discards the observation
+before checking current balances/prices, keeping later external funds or residuals
+in an old investment wallet reachable. Failed checks show status unavailability;
+the position overview never invokes this flow. No provider history API is used.
 
 The position screen is an overview. Opening it or selecting **View investment**
 after a guided deposit does not select an old Earn cycle or mount withdrawal

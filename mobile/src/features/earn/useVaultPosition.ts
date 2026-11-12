@@ -8,7 +8,14 @@ import { useFundingWallet } from "@/features/wallet/WalletProvider";
 import { useEarn } from "./EarnProvider";
 import { createEarnExitCompletionService } from "@/services/earn/exitCompletion";
 import { earnWithdrawalService } from "@/services/earn/withdrawal";
-import { InvestmentExitPendingError, isCompleteInvestmentExit } from "@/domain/earn/exitCompletion";
+import {
+  InvestmentExitPendingError,
+  assertReturnCredits,
+  exitActivityRevision,
+  exitHistoryRevision,
+  isCompleteInvestmentExit,
+} from "@/domain/earn/exitCompletion";
+import { completedExitsStore } from "@/storage/completedExits";
 
 function positionKey(row: Pick<EarnInvestmentPosition, "intentId" | "investmentSlot">) {
   return `${row.intentId}:${row.investmentSlot ?? "legacy"}`;
@@ -69,107 +76,136 @@ export function useVaultPosition(profileId: EarnProfileId) {
     },
     [session.walletId, profileId],
   );
-  const refresh = useCallback(async () => {
-    if (occupied.current) return;
-    occupied.current = true;
-    const attempt = generation.current;
-    const controller = new AbortController();
-    active.current = controller;
-    setLoading(true);
-    // Unmount journal readers before the same services check historical exits.
-    setIntent(null);
-    selected.current = null;
-    setMessage("");
-    try {
-      if (profileId !== "ethereum-usdc" && profileId !== "robinhood-usdg")
-        throw new Error("Unsupported vault.");
-      const positions = (
-        await investmentPositions.list({
-          walletId: session.walletId ?? "",
-          address: session.address,
-        })
-      )
-        .filter((row) => row.profileId === profileId)
-        .sort(
-          (a, b) =>
-            a.cycleIndex - b.cycleIndex || (a.investmentSlot ?? -1) - (b.investmentSlot ?? -1),
-        );
-      if (attempt !== generation.current) return;
-      setRows(positions);
-      // Accepted exits stay complete during this visit while native activity is
-      // still redeemed. New investment, uncertainty or recovery revokes them.
-      // A later visit rederives completion from saved return evidence and live
-      // public residuals, never from the current (possibly spent) private balance.
-      const checked: Record<string, number | "accepted"> = {};
-      for (const row of positions) {
-        const proof = proofsRef.current[positionKey(row)];
-        if (
-          row.activity === "redeemed" &&
-          !row.recoveryRequired &&
-          (proof === "accepted" || (typeof proof === "number" && proof > Date.now()))
+  const refresh = useCallback(
+    async (recheckHistory = false) => {
+      if (occupied.current) return;
+      occupied.current = true;
+      const attempt = generation.current;
+      const controller = new AbortController();
+      active.current = controller;
+      setLoading(true);
+      // Unmount journal readers before the same services check historical exits.
+      setIntent(null);
+      selected.current = null;
+      setMessage("");
+      try {
+        if (profileId !== "ethereum-usdc" && profileId !== "robinhood-usdg")
+          throw new Error("Unsupported vault.");
+        const positions = (
+          await investmentPositions.list({
+            walletId: session.walletId ?? "",
+            address: session.address,
+          })
         )
-          checked[positionKey(row)] = "accepted";
-      }
-      proofsRef.current = checked;
-      setProofs(checked);
-      for (const next of positions) {
-        if (next.activity === "returned" || checked[positionKey(next)] === "accepted") continue;
-        if (next.recoveryRequired)
-          throw new Error("Restore and reconcile saved activity before withdrawing.");
-        const value = await selectPosition(next);
-        if (attempt !== generation.current || controller.signal.aborted) return;
-        if (next.activity === "redeemed") {
-          try {
-            if (await earnWithdrawalService.available()) {
-              const result = await exitChecker.check(value, controller.signal);
-              const payouts = await earnWithdrawalService.list(value);
-              if (attempt !== generation.current || controller.signal.aborted) return;
-              if (isCompleteInvestmentExit(result, value, payouts)) {
-                checked[positionKey(next)] = "accepted";
-                proofsRef.current = { ...checked };
-                setProofs(proofsRef.current);
-                continue;
-              }
-            }
-          } catch (error) {
-            // A failed check is uncertainty, not evidence of an unfinished return.
-            if (!(error instanceof InvestmentExitPendingError))
-              throw new Error(
-                "Previous withdrawal status could not be checked. " +
-                  (error instanceof Error ? error.message : "Retry the status check."),
-              );
-          }
+          .filter((row) => row.profileId === profileId)
+          .sort(
+            (a, b) =>
+              a.cycleIndex - b.cycleIndex || (a.investmentSlot ?? -1) - (b.investmentSlot ?? -1),
+          );
+        if (attempt !== generation.current) return;
+        setRows(positions);
+        // Accepted exits stay complete during this visit while native activity is
+        // still redeemed. New investment, uncertainty or recovery revokes them.
+        // A later visit verifies native revisions before accepting recorded history.
+        // Unrecorded or explicitly rechecked exits still require fresh public state.
+        const checked: Record<string, number | "accepted"> = {};
+        for (const row of positions) {
+          const proof = proofsRef.current[positionKey(row)];
+          if (
+            row.activity === "redeemed" &&
+            !row.recoveryRequired &&
+            (proof === "accepted" || (typeof proof === "number" && proof > Date.now()))
+          )
+            checked[positionKey(row)] = "accepted";
         }
-        if (attempt !== generation.current || controller.signal.aborted) return;
-        selected.current = positionKey(next);
-        currentIntent.current = value;
-        setIntent(value);
-        return;
+        proofsRef.current = checked;
+        setProofs(checked);
+        for (const next of positions) {
+          if (next.activity === "returned" || checked[positionKey(next)] === "accepted") continue;
+          if (next.recoveryRequired)
+            throw new Error("Restore and reconcile saved activity before withdrawing.");
+          const value = await selectPosition(next);
+          if (attempt !== generation.current || controller.signal.aborted) return;
+          if (next.activity === "redeemed") {
+            try {
+              if (await earnWithdrawalService.available()) {
+                if (recheckHistory) await completedExitsStore.forget(value);
+                const journal = await (
+                  value.profileId === "robinhood-usdg" ? robinhood : liquidity
+                ).list(value);
+                assertReturnCredits(journal, value);
+                const savedPayouts = await earnWithdrawalService.list(value);
+                const savedRevision = exitHistoryRevision(
+                  exitActivityRevision(journal),
+                  savedPayouts,
+                );
+                const recorded =
+                  !recheckHistory &&
+                  savedRevision &&
+                  (await completedExitsStore.has(value, savedRevision));
+                if (attempt !== generation.current || controller.signal.aborted) return;
+                if (recorded) {
+                  checked[positionKey(next)] = "accepted";
+                  proofsRef.current = { ...checked };
+                  setProofs(proofsRef.current);
+                  continue;
+                }
+                const result = await exitChecker.check(value, controller.signal);
+                const payouts = await earnWithdrawalService.list(value);
+                if (attempt !== generation.current || controller.signal.aborted) return;
+                if (isCompleteInvestmentExit(result, value, payouts)) {
+                  const revision = exitHistoryRevision(result.journalRevision, payouts);
+                  if (revision) await completedExitsStore.save(value, revision);
+                  if (attempt !== generation.current || controller.signal.aborted) return;
+                  checked[positionKey(next)] = "accepted";
+                  proofsRef.current = { ...checked };
+                  setProofs(proofsRef.current);
+                  continue;
+                }
+              }
+            } catch (error) {
+              // A failed check is uncertainty, not evidence of an unfinished return.
+              if (!(error instanceof InvestmentExitPendingError))
+                throw new Error(
+                  "Previous withdrawal status could not be checked. " +
+                    (error instanceof Error ? error.message : "Retry the status check."),
+                );
+            }
+          }
+          if (attempt !== generation.current || controller.signal.aborted) return;
+          selected.current = positionKey(next);
+          currentIntent.current = value;
+          setIntent(value);
+          return;
+        }
+        currentIntent.current = null;
+      } catch (error) {
+        if (attempt === generation.current) {
+          setIntent(null);
+          selected.current = null;
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "Saved vault withdrawal activity is unavailable.",
+          );
+        }
+      } finally {
+        occupied.current = false;
+        if (active.current === controller) active.current = null;
+        if (attempt === generation.current) setLoading(false);
       }
-      currentIntent.current = null;
-    } catch (error) {
-      if (attempt === generation.current) {
-        setIntent(null);
-        selected.current = null;
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : "Saved vault withdrawal activity is unavailable.",
-        );
-      }
-    } finally {
-      occupied.current = false;
-      if (active.current === controller) active.current = null;
-      if (attempt === generation.current) setLoading(false);
-    }
-  }, [
-    investmentPositions,
-    selectPosition,
-    exitChecker,
-    session.walletId,
-    session.address,
-    profileId,
-  ]);
+    },
+    [
+      investmentPositions,
+      selectPosition,
+      exitChecker,
+      liquidity,
+      robinhood,
+      session.walletId,
+      session.address,
+      profileId,
+    ],
+  );
   useEffect(() => {
     const attempt = ++generation.current;
     selected.current = null;
@@ -196,6 +232,11 @@ export function useVaultPosition(profileId: EarnProfileId) {
     // Presentation only. Refresh rechecks expiry before accepting this proof.
     readyToContinue: intent !== null && typeof proofs[positionKey(intent)] === "number",
     recordCompletion,
+    recheckCompleted: () => {
+      if (occupied.current) return;
+      proofsRef.current = {};
+      return refresh(true);
+    },
     loading: loading || earnLoading,
     message,
     refresh,

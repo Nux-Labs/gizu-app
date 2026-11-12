@@ -25,6 +25,8 @@ export type ExitCompletion = {
   snapshot: ExitSnapshot;
   creditedReturnOperationIds: string[];
   creditedReturns?: { operationId: string; revision: number }[];
+  /** Revisions of the parsed native journal checked here; presentation history only. */
+  journalRevision?: string;
   complete: boolean;
 };
 export interface EarnExitCompletionService {
@@ -33,6 +35,29 @@ export interface EarnExitCompletionService {
 
 /** Valid journal activity that still needs settlement, distinct from a failed read. */
 export class InvestmentExitPendingError extends Error {}
+
+export function exitActivityRevision(
+  rows: readonly { operationId: string; revision: number; status: string; blocked: boolean }[],
+): string {
+  const revisions: [string, number, string, boolean][] = rows.map((row) => [
+    row.operationId,
+    row.revision,
+    row.status,
+    row.blocked,
+  ]);
+  revisions.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return JSON.stringify(revisions);
+}
+
+export function exitHistoryRevision(
+  journalRevision: string | undefined,
+  payouts: readonly EarnWithdrawalOperation[],
+): string | null {
+  return journalRevision &&
+    payouts.every((row) => !row.blocked && ["paid", "cancelled"].includes(row.status))
+    ? JSON.stringify([journalRevision, exitActivityRevision(payouts)])
+    : null;
+}
 
 /** Presentation completion only; current private holdings are irrelevant to a saved return. */
 export function isCompleteInvestmentExit(

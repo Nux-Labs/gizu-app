@@ -5,6 +5,7 @@ import type { EarnLiquidityService } from "@/domain/earn/ethereumLiquidity";
 import type { EarnRobinhoodService } from "@/domain/earn/robinhoodExecution";
 import {
   assertReturnCredits,
+  exitActivityRevision,
   parseExitSnapshot,
   type EarnExitCompletionService,
 } from "@/domain/earn/exitCompletion";
@@ -47,6 +48,7 @@ export function createEarnExitCompletionService(
         return {
           snapshot,
           creditedReturnOperationIds,
+          journalRevision: exitActivityRevision(rows),
           creditedReturns: rows
             .filter((row) => creditedReturnOperationIds.includes(row.operationId))
             .map(({ operationId, revision }) => ({ operationId, revision })),

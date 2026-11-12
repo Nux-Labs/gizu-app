@@ -102,6 +102,14 @@ export function VaultWithdrawalScreen({
           />
         ))}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
+      {v.completed > 0 && (
+        <Button
+          label="Check past withdrawals"
+          variant="quiet"
+          disabled={v.loading || earn.busy}
+          onPress={() => void v.recheckCompleted()}
+        />
+      )}
       <Button
         label={v.readyToContinue ? "Continue withdrawal" : "Refresh position"}
         variant={v.readyToContinue ? "primary" : "quiet"}
