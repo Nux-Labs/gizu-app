@@ -163,18 +163,22 @@ export function SwapSellForm({
         />
       ) : null}
       {holdings.notice ? <Notice message={holdings.notice} /> : null}
-      <Modal visible={picking} animationType="slide" onRequestClose={() => setPicking(false)}>
-        {picking && previewing && (
-          <TokenChoices
-            target={previewToken?.address ?? ""}
-            disabled={false}
-            onClose={() => setPicking(false)}
-            onSelect={(token) => {
-              setPreviewToken(token);
-              setPicking(false);
-            }}
-          />
-        )}
+      {picking && previewing && (
+        <TokenChoices
+          target={previewToken?.address ?? ""}
+          disabled={false}
+          onClose={() => setPicking(false)}
+          onSelect={(token) => {
+            setPreviewToken(token);
+            setPicking(false);
+          }}
+        />
+      )}
+      <Modal
+        visible={picking && !previewing}
+        animationType="slide"
+        onRequestClose={() => setPicking(false)}
+      >
         {picking && !previewing && (
           <Screen>
             <View className="flex-row items-center justify-between gap-3">
