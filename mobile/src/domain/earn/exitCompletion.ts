@@ -234,6 +234,7 @@ export function assertReturnCredits(
         ? ["fusionEthOrder", "fusionUsdcApproval", "returnUsdc", "returnEth"]
         : ["hoodDeposit", "hoodRedeemAll", "hoodTokenReturn"];
     if (!allowed.includes(row.kind)) throw Error("Exit journal changed.");
+    if (row.status === "expired") continue;
     if (row.status === "cancelled") {
       if (row.transactionHash) throw Error("Cancelled signed progress must be reconciled.");
       continue;

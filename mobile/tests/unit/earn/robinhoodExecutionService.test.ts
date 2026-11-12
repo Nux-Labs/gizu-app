@@ -39,6 +39,44 @@ function native() {
   };
 }
 afterEach(() => jest.restoreAllMocks());
+test("a vault withdrawal plan reports shares, fees and a stale reference separately", async () => {
+  const cases = [
+    [
+      "EARN_WITHDRAWAL_SHARES_ABSENT",
+      "The vault has no shares left to withdraw. Return the USDG already in the investment wallet.",
+    ],
+    [
+      "EARN_WITHDRAWAL_FEE_CHANGED",
+      "The withdrawal network fee changed. Refresh before authorizing.",
+    ],
+    [
+      "EARN_WITHDRAWAL_REFERENCE_STALE",
+      "The vault balance or network fee changed. Refresh before authorizing.",
+    ],
+    [
+      "EARN_ROBINHOOD_WITHDRAWAL_UNAVAILABLE",
+      "Could not verify current shares, actual USDG gas reserve and full fork withdrawal. No transaction was sent.",
+    ],
+  ] as const;
+  for (const [code, message] of cases) {
+    jest.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        code,
+        message:
+          "Could not verify current shares, actual USDG gas reserve and full fork withdrawal. No transaction was sent.",
+      }),
+    } as Response);
+    await expect(
+      createEarnRobinhoodService("https://backend.test", native, () => now).plan(
+        hoodIntent,
+        "hoodRedeemAll",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(message);
+  }
+});
 test("a rejected private-return fee review explains the return without suggesting another vault redemption", async () => {
   const b = native();
   const service = createEarnRobinhoodService(

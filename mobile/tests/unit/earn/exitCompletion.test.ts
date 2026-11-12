@@ -23,6 +23,22 @@ test("investment-only fresh snapshot calculates dust including explicit WETH, wi
 });
 test("all saved return legs need refreshed operation-specific native credit and canonical receipts", () => {
   expect(assertReturnCredits([returnRow()], hoodIntent)).toEqual(["return_1"]);
+  expect(
+    assertReturnCredits(
+      [
+        {
+          ...returnRow(),
+          operationId: "redeem_expired",
+          kind: "hoodRedeemAll",
+          status: "expired",
+          transactionHash: undefined,
+          creditedAtoms: undefined,
+        },
+        returnRow(),
+      ],
+      hoodIntent,
+    ),
+  ).toEqual(["return_1"]);
   for (const rows of [
     [],
     [{ ...returnRow(), status: "awaitingSettlement" as const }],

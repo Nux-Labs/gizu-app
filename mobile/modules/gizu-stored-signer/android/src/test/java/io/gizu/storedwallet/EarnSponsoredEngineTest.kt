@@ -385,6 +385,149 @@ class EarnSponsoredEngineTest {
   }
 
   @Test
+  fun expiredUnsentExitReleasesItsBlockAndKeepsTheSignature() = runBlocking {
+    val now = System.currentTimeMillis() / 1000
+    val journal = signedExit(1)
+    val rpc = Rpc()
+    assertEquals(true, journal.public(journal.get("hood-1"))["signatureExpired"])
+    retireExpiredUnsentExits(journal, rpc, { state() }, replacement(), now)
+    val retired = journal.get("hood-1")
+    assertEquals("expired", retired.getString("status"))
+    assertTrue(retired.getString("signedUserOperation").contains("private-signature"))
+    assertFalse(retired.sponsoredBlocked())
+    val view = journal.public(retired)
+    assertEquals("expired", view["status"])
+    assertEquals(false, view["blocked"])
+    assertEquals(false, view["canResume"])
+    assertFalse(view.toString().contains("private-signature"))
+    journal.create(
+      JSONObject(retired.getJSONObject("proposal").toString())
+        .put("operationId", "hood-2")
+        .put("deadline", now + 300),
+      JSONObject().put("sender", owner).put("nonce", "0x0").put("signature", "0x"),
+    )
+    assertEquals("planned", journal.get("hood-2").getString("status"))
+    assertEquals(0, rpc.sent)
+  }
+
+  @Test
+  fun replacementRefusesAValidSignatureAKnownOperationOrAChangedNonce() = runBlocking {
+    val now = System.currentTimeMillis() / 1000
+    val valid = signedExit(now + 300)
+    assertFalse(valid.public(valid.get("hood-1")).containsKey("signatureExpired"))
+    assertThrows(IllegalStateException::class.java) {
+      runBlocking { retireExpiredUnsentExits(valid, Rpc(), { state() }, replacement(), now) }
+    }
+    assertEquals("signed", valid.get("hood-1").getString("status"))
+    val known = signedExit(1)
+    val reported =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any =
+          if (method == "eth_getUserOperationByHash") JSONObject().put("userOperation", "present")
+          else Rpc().call(method, params)
+      }
+    assertThrows(IllegalStateException::class.java) {
+      runBlocking { retireExpiredUnsentExits(known, reported, { state() }, replacement(), now) }
+    }
+    assertEquals("signed", known.get("hood-1").getString("status"))
+    val moved = signedExit(1)
+    assertThrows(IllegalStateException::class.java) {
+      runBlocking {
+        retireExpiredUnsentExits(
+          moved,
+          Rpc(),
+          { state().copy(entryPointNonce = "0x1") },
+          replacement(),
+          now,
+        )
+      }
+    }
+    assertEquals("signed", moved.get("hood-1").getString("status"))
+    assertTrue(moved.get("hood-1").sponsoredBlocked())
+  }
+
+  @Test
+  fun providerFailureAndOtherActionsLeaveTheExpiredSignatureSendable() = runBlocking {
+    val now = System.currentTimeMillis() / 1000
+    val unavailable = signedExit(1)
+    val failing =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any = error("rpc down")
+      }
+    assertThrows(IllegalStateException::class.java) {
+      runBlocking {
+        retireExpiredUnsentExits(unavailable, failing, { state() }, replacement(), now)
+      }
+    }
+    assertEquals("signed", unavailable.get("hood-1").getString("status"))
+    val deposit = signedExit(1)
+    retireExpiredUnsentExits(
+      deposit,
+      Rpc(),
+      { error("A deposit must not read the exit") },
+      replacement().put("kind", "hoodDeposit"),
+      now,
+    )
+    assertEquals("signed", deposit.get("hood-1").getString("status"))
+    assertTrue(deposit.get("hood-1").has("signedUserOperation"))
+  }
+
+  @Test
+  fun settledRedeemReleasesOnlyAnExpiredUnsentRedeemBeforeTheReturn() = runBlocking {
+    val now = System.currentTimeMillis() / 1000
+    val open = signedExit(1)
+    val rpc = Rpc()
+    val incoming =
+      JSONObject().put("kind", "hoodTokenReturn").put("expectedFrom", owner).put("operationId", "return-1")
+    retireSettledRedeemBeforeReturn(open, rpc, { state() }, incoming, now)
+    assertEquals("signed", open.get("hood-1").getString("status"))
+    val journal = signedExit(1)
+    journal.update("hood-1", 4) { it.put("status", "finalized").put("redeemedUsdgAtoms", "900") }
+    val prior = JSONObject(journal.get("hood-1").getJSONObject("proposal").toString())
+      .put("operationId", "hood-2")
+      .put("deadline", 1)
+    journal.create(
+      prior,
+      JSONObject().put("sender", owner).put("nonce", "0x0").put("signature", "0x"),
+    )
+    journal.saveSigned(
+      "hood-2",
+      1,
+      hash,
+      "{\"signature\":\"private-signature\"}",
+      "review",
+      hash,
+      JSONObject().put("transactionNonce", "4"),
+    )
+    journal.update("hood-2", 2) { it.put("status", "signed").put("conflict", false) }
+    retireSettledRedeemBeforeReturn(journal, rpc, { state() }, incoming, now)
+    assertEquals("expired", journal.get("hood-2").getString("status"))
+    assertEquals("finalized", journal.get("hood-1").getString("status"))
+    assertTrue(journal.get("hood-2").getString("signedUserOperation").contains("private-signature"))
+  }
+
+  private fun replacement() =
+    JSONObject().put("kind", "hoodRedeemAll").put("expectedFrom", owner).put("operationId", "hood-2")
+
+  private fun signedExit(deadline: Long): EarnSponsoredJournal {
+    val journal = setup()
+    journal.update("hood-1", 1) {
+      it.getJSONObject("proposal").put("kind", "hoodRedeemAll").put("deadline", deadline)
+    }
+    journal.saveSigned(
+      "hood-1",
+      2,
+      hash,
+      "{\"signature\":\"private-signature\"}",
+      "review",
+      hash,
+      JSONObject().put("transactionNonce", "4"),
+    )
+    journal.update("hood-1", 3) { it.put("status", "signed").put("conflict", false) }
+    return journal
+  }
+
+  @Test
   fun restoredProfileCannotLoadSignerOrPrepareUserOp() = runBlocking {
     val j = setup()
     val rpc = Rpc()

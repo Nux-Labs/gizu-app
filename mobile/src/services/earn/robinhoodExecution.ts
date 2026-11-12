@@ -104,6 +104,15 @@ export function createEarnRobinhoodService(
                   : "A fresh private USDC return quote could not be verified. Your withdrawn USDG remains in the investment wallet. Refresh before approving the return.",
               );
             }
+            if (kind === "hoodRedeemAll") {
+              let body: { code?: unknown; message?: unknown } = {};
+              try {
+                body = await response.json();
+              } catch {
+                /* Keep the withdrawal-plan failure distinguishable from a fee change. */
+              }
+              throw new Error(withdrawalPlanFailure(body.code, body.message));
+            }
             throw new Error(
               "Fresh USDG fees, shares and funding could not be verified. Refresh before authorizing.",
             );
@@ -179,6 +188,27 @@ export function createEarnRobinhoodService(
     },
   };
 }
+const vaultWithdrawalPlanErrors = [
+  "The vault has no shares left to withdraw. Return the USDG already in the investment wallet.",
+  "The withdrawal network fee changed. Refresh before authorizing.",
+  "The vault balance or network fee changed. Refresh before authorizing.",
+  "The vault withdrawal could not be prepared. Refresh before authorizing. No transaction was sent.",
+  "Could not verify current shares, actual USDG gas reserve and full fork withdrawal. No transaction was sent.",
+];
+
+export function withdrawalPlanFailure(code: unknown, detail: unknown): string {
+  if (code === "EARN_WITHDRAWAL_SHARES_ABSENT") return vaultWithdrawalPlanErrors[0]!;
+  if (code === "EARN_WITHDRAWAL_FEE_CHANGED" || code === "EARN_WITHDRAWAL_RESERVE_INSUFFICIENT")
+    return vaultWithdrawalPlanErrors[1]!;
+  if (code === "EARN_WITHDRAWAL_REFERENCE_STALE") return vaultWithdrawalPlanErrors[2]!;
+  if (typeof detail === "string" && detail.length > 0 && detail.length <= 240) return detail;
+  return vaultWithdrawalPlanErrors[3]!;
+}
+
+export function isVaultWithdrawalPlanError(message: string) {
+  return vaultWithdrawalPlanErrors.includes(message);
+}
+
 export const earnRobinhoodService = createEarnRobinhoodService(
   process.env.EXPO_PUBLIC_API_URL ?? (__DEV__ ? "http://127.0.0.1:3000" : ""),
 );

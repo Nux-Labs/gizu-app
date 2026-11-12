@@ -70,6 +70,8 @@ internal suspend fun reconcileEarnSponsoredOperations(
 ) {
   for (op in journal.all()) {
     if (operationIds != null && op.getString("operationId") !in operationIds) continue
+    // A later read must not turn a replaced expired signature back into a sendable one.
+    if (op.optString("status") == "expired") continue
     if (
       !op.has("signedUserOperation") ||
         chainFilter != null && op.getJSONObject("proposal").getInt("chainId") != chainFilter
@@ -263,6 +265,7 @@ internal suspend fun reconcileEarnSponsoredOperations(
             "transactionHash",
             "settledShares",
             "residualShares",
+            "redeemedUsdgAtoms",
           )) if (op.has(field)) target.put(field, op.get(field))
       }
   }
@@ -316,7 +319,8 @@ internal fun requireSponsoredReceiptSemantics(
             sponsoredLogAddress(it, 3, owner)
         }
       val words = sponsoredLogWords(event, 2)
-      check(words[1] == amount)
+      check(words[0].signum() > 0 && words[1] == amount)
+      op.put("redeemedUsdgAtoms", words[0].toString())
       transfer(HOOD_EARN_ROUTER, owner, words[0])
     }
     else -> error("Unsupported sponsored action")
