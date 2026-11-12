@@ -8,7 +8,7 @@ import { useFundingWallet } from "@/features/wallet/WalletProvider";
 import { useEarn } from "./EarnProvider";
 import { createEarnExitCompletionService } from "@/services/earn/exitCompletion";
 import { earnWithdrawalService } from "@/services/earn/withdrawal";
-import { isCompleteInvestmentExit } from "@/domain/earn/exitCompletion";
+import { InvestmentExitPendingError, isCompleteInvestmentExit } from "@/domain/earn/exitCompletion";
 
 function positionKey(row: Pick<EarnInvestmentPosition, "intentId" | "investmentSlot">) {
   return `${row.intentId}:${row.investmentSlot ?? "legacy"}`;
@@ -131,8 +131,13 @@ export function useVaultPosition(profileId: EarnProfileId) {
                 continue;
               }
             }
-          } catch {
-            // Unverified exits remain reachable through the existing recovery UI.
+          } catch (error) {
+            // A failed check is uncertainty, not evidence of an unfinished return.
+            if (!(error instanceof InvestmentExitPendingError))
+              throw new Error(
+                "Previous withdrawal status could not be checked. " +
+                  (error instanceof Error ? error.message : "Retry the status check."),
+              );
           }
         }
         if (attempt !== generation.current || controller.signal.aborted) return;

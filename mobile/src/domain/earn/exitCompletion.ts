@@ -31,6 +31,9 @@ export interface EarnExitCompletionService {
   check(intent: EarnIntent, signal: AbortSignal): Promise<ExitCompletion>;
 }
 
+/** Valid journal activity that still needs settlement, distinct from a failed read. */
+export class InvestmentExitPendingError extends Error {}
+
 /** Presentation completion only; current private holdings are irrelevant to a saved return. */
 export function isCompleteInvestmentExit(
   result: ExitCompletion | null,
@@ -190,10 +193,11 @@ export function assertReturnCredits(
       row.walletId !== intent.walletId ||
       !same(row.from, investmentDestination(intent).address) ||
       row.chainId !== earnProfiles[intent.profileId].chainId ||
-      typeof row.blocked !== "boolean" ||
-      row.blocked
+      typeof row.blocked !== "boolean"
     )
       throw Error("Saved native progress must be reconciled.");
+    if (row.blocked)
+      throw new InvestmentExitPendingError("Saved native progress must be reconciled.");
     seen.add(row.operationId);
     const minimumReturnReceipt = parseMinimumReturn({ ...row }, intent);
     const isReturn =
@@ -224,15 +228,18 @@ export function assertReturnCredits(
         !hash(row.transactionHash) ||
         (row.status === "credited" && BigInt(earnAtoms(row.creditedAtoms)) === 0n)
       )
-        throw Error("Every submitted return needs authenticated operation credit.");
+        throw new InvestmentExitPendingError(
+          "Every submitted return needs authenticated operation credit.",
+        );
       returns.push(row.operationId);
     } else if (
       !["fusionFilled", "approvalFinalized", "invested", "withdrawn", "residualShares"].includes(
         row.status,
       )
     )
-      throw Error("Unfinished native operation must be reconciled.");
+      throw new InvestmentExitPendingError("Unfinished native operation must be reconciled.");
   }
-  if (returns.length === 0) throw Error("No authenticated investment return has been confirmed.");
+  if (returns.length === 0)
+    throw new InvestmentExitPendingError("No authenticated investment return has been confirmed.");
   return returns;
 }

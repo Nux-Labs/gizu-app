@@ -332,8 +332,28 @@ test.each(["unavailable", "remaining shares", "wrong owner"])(
       }
       return { ok: problem !== "unavailable", json: async () => raw } as Response;
     });
-    expect(await screen.findByRole("button", { name: "Verify private balance" })).toBeEnabled();
-    expect(h.select).not.toHaveBeenCalledWith(expect.anything(), second.intentId);
+    if (problem === "remaining shares") {
+      expect(await screen.findByRole("button", { name: "Verify private balance" })).toBeEnabled();
+    } else {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        problem === "unavailable" ? /could not be verified/ : /binding changed/,
+      );
+      expect(screen.queryByText("Return to private balance")).toBeNull();
+      jest.mocked(globalThis.fetch).mockImplementation(
+        async (_url, init) =>
+          ({
+            ok: true,
+            json: async () => ({
+              ...exitSnapshot(Date.now()),
+              owner: JSON.parse(String(init?.body)).owner,
+            }),
+          }) as Response,
+      );
+      await userEvent.press(screen.getByRole("button", { name: "Refresh position" }));
+      expect(await screen.findByRole("button", { name: "Review withdrawal" })).toBeEnabled();
+    }
+    if (problem === "remaining shares")
+      expect(h.select).not.toHaveBeenCalledWith(expect.anything(), second.intentId);
     expect(h.robinhood.execute).not.toHaveBeenCalled();
   },
 );
@@ -596,12 +616,12 @@ test("an expired exit snapshot cannot skip a saved portion", async () => {
         }),
       }) as Response,
   );
-  await userEvent.press(await screen.findByRole("button", { name: "Verify private balance" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/expired|stale/i);
+  expect(screen.queryByText("Return to private balance")).toBeNull();
   await userEvent.press(
     screen.getByRole("button", { name: /Refresh position|Continue withdrawal/ }),
   );
-  await screen.findByRole("button", { name: "Verify private balance" });
+  expect(await screen.findByRole("alert")).toHaveTextContent(/expired|stale/i);
   expect(h.selectInvestmentSlot).toHaveBeenLastCalledWith(expect.anything(), first.intentId, 0);
   expect(h.selectInvestmentSlot).not.toHaveBeenCalledWith(expect.anything(), first.intentId, 1);
 });

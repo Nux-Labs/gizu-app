@@ -38,7 +38,7 @@ unfinished old withdrawals before showing the current investment.
       overview; retain existing withdrawal/recovery functional coverage on its route.
 - [x] Run full JS suite/coverage, typecheck/lint/format and build the APK; obtain
       independent review of the navigation and withdrawal recovery boundary.
-- [ ] Push the reviewed change and install with adb install-r preserving wallet
+- [x] Push the reviewed change and install with adb install-r preserving wallet
       data if the phone is available.
 
 Ruling: Reuse the existing VaultPositionSummary for the overview. Keep the current
@@ -53,5 +53,6 @@ across the three affected functional suites now pass.
 
 Final validation: 978 tests across 105 suites pass with coverage thresholds met;
 typecheck, full lint, formatting and Android release assembly pass. Independent
-review found no substantive issues. The APK is ready; USB installation is pending
-because adb currently lists no connected device.
+review found no substantive issues. Replacement installation succeeded after USB
+reconnection, preserving wallet storage. The overview was verified on the phone;
+completed old-return selection was fixed and verified in the follow-up plan.

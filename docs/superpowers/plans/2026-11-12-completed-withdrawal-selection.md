@@ -30,8 +30,11 @@ exercise real navigation and externally mocked journal/RPC responses.
 - [x] Reuse fresh exit verification before selecting an unfinished portion; retain
       pending, missing-credit, residual, unavailable and cancellation safeguards.
 - [x] Cover all-complete, native/public failure, stale completion, and zero signing.
-- [ ] Run affected and full JS coverage/type/lint checks; review; build/install and
+- [x] Run affected and full JS coverage/type/lint checks; review; build/install and
       push the follow-up on fix/confidential-earn.
+- [x] Separate a valid pending settlement from an unavailable verification read;
+      unavailable reads show an alert/retry, never an unfinished-return prompt.
+- [ ] Capture the cause of the earlier intermittent read failure if it recurs.
 
 **Constraints:** No history API, no wallet reset or secret extraction, no AWS
 mutation, and no financial approval/signing/submission. A private balance that has
@@ -44,4 +47,14 @@ issues. Android assembly passes and replacement installation succeeded, preservi
 wallet storage. Before installation, the existing read-only verifier on the phone
 confirmed the old return complete with negligible residual value, despite its
 initial zero-completed counter. Full coverage passes: 984 tests across 105 suites.
-Final unlocked-device verification and push are pending.
+The first code is pushed. A repeated entry exposed a verification fallback:
+exceptions silently rendered the old return as unfinished. The follow-up
+distinguishes valid pending journal activity from operational read failures.
+Regressions cover unavailable/binding/expired reads with status retry, while
+unconfirmed credit and real residuals retain recovery. All 984 tests and coverage
+thresholds pass on this follow-up; typecheck, lint, formatting, independent review
+and Android assembly pass. Replacement installation succeeded. The latest build
+recognised the old return on two openings, without financial review or approval.
+The prior intermittent read exception itself was not captured. USB disconnected
+after these checks; no claim is made that an underlying provider/read failure was
+remediated. Wallet storage and existing authorization checks remain intact.
