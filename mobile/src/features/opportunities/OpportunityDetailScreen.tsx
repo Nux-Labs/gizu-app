@@ -73,9 +73,8 @@ export function OpportunityDetailScreen({
               position={profileId ? portfolioVaultPosition(wallet?.snapshot, profileId) : null}
               onWithdraw={() => {
                 if (profileId)
-                  navigation.navigate("VaultPosition", {
+                  navigation.navigate("VaultWithdrawal", {
                     profileId,
-                    opportunityId: load.opportunity.id,
                   });
               }}
             />

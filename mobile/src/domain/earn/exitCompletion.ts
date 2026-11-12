@@ -6,6 +6,7 @@ import { hoodWrappedNative } from "./robinhoodExecution";
 import type { LiquidityOperation } from "./ethereumLiquidity";
 import type { SponsoredOperation } from "./sourceFunding";
 import { parseMinimumReturn } from "./minimumReturn";
+import type { EarnWithdrawalOperation } from "./withdrawal";
 export type ExitSnapshot = {
   owner: string;
   profileId: EarnIntent["profileId"];
@@ -24,10 +25,57 @@ export type ExitCompletion = {
   snapshot: ExitSnapshot;
   creditedReturnOperationIds: string[];
   creditedReturns?: { operationId: string; revision: number }[];
+  /** Revisions of the parsed native journal checked here; presentation history only. */
+  journalRevision?: string;
   complete: boolean;
 };
 export interface EarnExitCompletionService {
   check(intent: EarnIntent, signal: AbortSignal): Promise<ExitCompletion>;
+}
+
+/** Valid journal activity that still needs settlement, distinct from a failed read. */
+export class InvestmentExitPendingError extends Error {}
+
+export function exitActivityRevision(
+  rows: readonly { operationId: string; revision: number; status: string; blocked: boolean }[],
+): string {
+  const revisions: [string, number, string, boolean][] = rows.map((row) => [
+    row.operationId,
+    row.revision,
+    row.status,
+    row.blocked,
+  ]);
+  revisions.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return JSON.stringify(revisions);
+}
+
+export function exitHistoryRevision(
+  journalRevision: string | undefined,
+  payouts: readonly EarnWithdrawalOperation[],
+): string | null {
+  return journalRevision &&
+    payouts.every((row) => !row.blocked && ["paid", "cancelled"].includes(row.status))
+    ? JSON.stringify([journalRevision, exitActivityRevision(payouts)])
+    : null;
+}
+
+/** Presentation completion only; current private holdings are irrelevant to a saved return. */
+export function isCompleteInvestmentExit(
+  result: ExitCompletion | null,
+  intent: EarnIntent,
+  withdrawals: readonly EarnWithdrawalOperation[],
+  now = Date.now(),
+): boolean {
+  return (
+    result?.complete === true &&
+    result.snapshot.expiresAtMs > now &&
+    result.snapshot.profileId === intent.profileId &&
+    result.snapshot.owner.toLowerCase() === investmentDestination(intent).address.toLowerCase() &&
+    result.creditedReturnOperationIds.length > 0 &&
+    withdrawals.every(
+      (row) => !row.blocked && (row.status === "paid" || row.status === "cancelled"),
+    )
+  );
 }
 const hash = (v: unknown) =>
   typeof v === "string" && /^0x[0-9a-f]{64}$/i.test(v) && !/^0x0{64}$/i.test(v);
@@ -170,10 +218,11 @@ export function assertReturnCredits(
       row.walletId !== intent.walletId ||
       !same(row.from, investmentDestination(intent).address) ||
       row.chainId !== earnProfiles[intent.profileId].chainId ||
-      typeof row.blocked !== "boolean" ||
-      row.blocked
+      typeof row.blocked !== "boolean"
     )
       throw Error("Saved native progress must be reconciled.");
+    if (row.blocked)
+      throw new InvestmentExitPendingError("Saved native progress must be reconciled.");
     seen.add(row.operationId);
     const minimumReturnReceipt = parseMinimumReturn({ ...row }, intent);
     const isReturn =
@@ -204,15 +253,18 @@ export function assertReturnCredits(
         !hash(row.transactionHash) ||
         (row.status === "credited" && BigInt(earnAtoms(row.creditedAtoms)) === 0n)
       )
-        throw Error("Every submitted return needs authenticated operation credit.");
+        throw new InvestmentExitPendingError(
+          "Every submitted return needs authenticated operation credit.",
+        );
       returns.push(row.operationId);
     } else if (
       !["fusionFilled", "approvalFinalized", "invested", "withdrawn", "residualShares"].includes(
         row.status,
       )
     )
-      throw Error("Unfinished native operation must be reconciled.");
+      throw new InvestmentExitPendingError("Unfinished native operation must be reconciled.");
   }
-  if (returns.length === 0) throw Error("No authenticated investment return has been confirmed.");
+  if (returns.length === 0)
+    throw new InvestmentExitPendingError("No authenticated investment return has been confirmed.");
   return returns;
 }

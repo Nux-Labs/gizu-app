@@ -6,6 +6,9 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { MainnetWalletProvider, useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { EarnProvider } from "@/features/earn/EarnProvider";
 import { DepositJourneyScreen } from "@/features/earn/DepositJourneyScreen";
+import { VaultPositionScreen } from "@/features/earn/VaultPositionScreen";
+import { EarnInvestmentScreen } from "@/features/earn/EarnInvestmentScreen";
+import type { RootStackParamList } from "@/navigation/types";
 import type { EarnDepositService, DepositSnapshot } from "@/domain/earn/depositJourney";
 import { depositSnapshot } from "../../support/depositJourney";
 import { distributionDepositSnapshot } from "../../support/depositDistribution";
@@ -13,7 +16,8 @@ import { parseDepositSnapshot } from "@/domain/earn/depositJourney";
 import { hoodIntent } from "../../support/robinhoodEarn";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
 import { deferred } from "../../support/renderApp";
-const Stack = createNativeStackNavigator();
+type TestRoutes = RootStackParamList & { Deposit: undefined; Other: undefined };
+const Stack = createNativeStackNavigator<TestRoutes>();
 function SharedBalance() {
   const { snapshot } = useMainnetWallet();
   return <Text>Shared USDC: {snapshot?.totalAtoms ?? "unknown"}</Text>;
@@ -63,7 +67,7 @@ function setup(
       ],
     })),
   };
-  const navigation = createNavigationContainerRef();
+  const navigation = createNavigationContainerRef<TestRoutes>();
   const app = (walletId: string) => (
     <MainnetWalletProvider
       session={{
@@ -91,6 +95,8 @@ function setup(
               {() => <DepositJourneyScreen profileId="robinhood-usdg" savedJourneyId={id} />}
             </Stack.Screen>
             <Stack.Screen name="Other" component={SharedBalance} />
+            <Stack.Screen name="VaultPosition" component={VaultPositionScreen} />
+            <Stack.Screen name="EarnInvestment" component={EarnInvestmentScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </EarnProvider>
@@ -106,6 +112,22 @@ function setup(
     ...result,
   };
 }
+test("completed deposit opens the invested overview instead of a saved recovery or return workflow", async () => {
+  const invested: DepositSnapshot = {
+    ...ready(),
+    phase: "invested",
+    completedSteps: ["funding", "credit", "payouts", "deposit"],
+    depositedAtoms: "2498000",
+    sharesAtoms: "2490000000000000000",
+  };
+  const h = setup({ status: jest.fn().mockResolvedValue(invested) }, invested.journeyId);
+  await userEvent.press(await screen.findByRole("button", { name: "View investment" }));
+  expect(h.navigation.getCurrentRoute()?.name).toBe("VaultPosition");
+  expect(h.navigation.getCurrentRoute()?.params).toEqual({ profileId: "robinhood-usdg" });
+  expect(await screen.findByText("Your vault position")).toBeVisible();
+  expect(screen.queryByText("Return to private balance")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
+});
 test("opening deposit after conversion resumes saved progress instead of requiring fresh USDC", async () => {
   const pending = parseDepositSnapshot(
     {

@@ -1,4 +1,5 @@
 import { VaultPositionScreen } from "@/features/earn/VaultPositionScreen";
+import { VaultWithdrawalScreen } from "@/features/earn/VaultWithdrawalScreen";
 import { ConfidentialWithdrawalScreen } from "@/features/wallet/ConfidentialWithdrawalScreen";
 import { EarnInvestmentScreen } from "@/features/earn/EarnInvestmentScreen";
 import { UnavailableScreen } from "./UnavailableScreen";
@@ -60,6 +61,12 @@ export function RootNavigator() {
           <Stack.Screen
             name="VaultPosition"
             component={native && session.chainId === 143 ? VaultPositionScreen : UnavailableScreen}
+          />
+          <Stack.Screen
+            name="VaultWithdrawal"
+            component={
+              native && session.chainId === 143 ? VaultWithdrawalScreen : UnavailableScreen
+            }
           />
           <Stack.Screen
             name="Notifications"

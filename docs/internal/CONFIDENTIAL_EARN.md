@@ -13,6 +13,32 @@ preserve earlier implementation stages.
 
 **Earn ends at an invested vault position.** The initial fee calculation simulates a future full redemption in a disposable server-side fork only to estimate the withdrawal reserve. It never withdraws the live position. The user must click Withdraw later, review fresh fees, and authorize redemption separately. Aurora return quotes and operations follow that requested exit; their future executable costs are excluded from the initial deposit estimate.
 
+When selecting withdrawal activity, a native `redeemed` inventory row is not proof
+of an unfinished private return. Selection reuses the existing exit verifier:
+authenticated saved operation credit (including minimum-return evidence), fresh
+zero shares and residual valuation, and no unresolved legacy public payout. A
+completed old exit is skipped before the next investment is shown. Reopening the
+screen re-reads the native journals. A previously verified full exit is retained
+as wallet/profile/intent/slot-scoped presentation history, matched against every
+native operation and legacy payout revision/status. It does not need new prices
+or the current private balance, which may already have been spent or redeposited.
+Unrecorded or changed activity still requires fresh public state and the existing
+completion checks. Pending and recovery activity cannot use recorded history.
+
+These non-secret observations never authorize spending or remove assets from
+portfolio reads. **Check past withdrawals** explicitly discards the observation
+before checking current balances/prices, keeping later external funds or residuals
+in an old investment wallet reachable. Failed checks show status unavailability;
+the position overview never invokes this flow. No provider history API is used.
+
+The position screen is an overview. Opening it or selecting **View investment**
+after a guided deposit does not select an old Earn cycle or mount withdrawal
+recovery. **Withdraw** opens the separate protected withdrawal route; an explicit
+Withdraw action in vault details goes directly there. That route retains older
+unfinished return activity and its recovery checks. Back returns to the screen
+that requested withdrawal. An old **Return to private balance** step must never
+be presented as the next step required to complete a new deposit.
+
 New guided Android deposits display the same **observed private USDC + public
 USDC** owned by the shared wallet portfolio, with a breakdown of both. Private
 USDC means the Monad-origin USDC asset in the native confidential catalogue;
@@ -64,6 +90,29 @@ amounts and requests are excluded. Responses keep the existing generic error con
 does not retry, relax funding checks or grant signing/execution authority. A live
 `EARN_ROBINHOOD_PLAN_UNAVAILABLE` requires this backend build to be deployed before
 the failing stage can be established from CloudWatch.
+
+Exit snapshot failures attach an `exitSnapshot` object to that same request-scoped
+`private.error` event. Filter CloudWatch for route `/v1/earn/exit-snapshot` and
+correlate using `reqId`. `stage` distinguishes chain reads, reference validation,
+price fetching, price validation, canonical checks, valuation and final freshness.
+`reason` retains a fixed internal validation label; HTTP/JSON-RPC status, allowlisted
+TLS/network codes and SDK error types survive without retaining the raw exception.
+Price validation includes `asset` (`token`, `usdc`, or `native`) and, when its
+timestamp is parseable, `priceAgeMs` and `priceMaxAgeMs`. Negative age identifies a
+future timestamp. Price-fetch failures retain HTTP status even if response JSON
+parsing fails; transport failures have no HTTP response status.
+
+For example, a stale-price failure would log the following diagnostic object
+(illustrative, not a captured production event):
+
+```json
+{"stage":"prices-validate","reason":"price-expired","asset":"token","priceAgeMs":300001,"priceMaxAgeMs":300000}
+```
+
+The logger excludes owners, balances, prices, URLs, headers, provider bodies,
+messages and raw stacks. Public error responses and all freshness/security checks
+are unchanged. This instrumentation requires a backend deployment; no app rebuild
+or AWS configuration change is needed.
 
 Native preparation rechecks eligible private accounts and selects them first.
 Their USDC goes directly through an advanced-confidentiality, exact-input route

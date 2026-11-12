@@ -234,3 +234,111 @@ test("captured credential-free production metadata and actual67second timestamp 
     "2730030000000000000000",
   );
 });
+
+test("failed price validation retains asset and age diagnostics without prices or wallet data", async () => {
+  const raw = prices();
+  raw.tokens[0]!.priceUpdatedAt = new Date(now - 300001).toISOString();
+  await assert.rejects(
+    new EarnExitSnapshot(
+      {},
+      providers({ prices: async () => raw }),
+      () => now,
+    ).read(request),
+    (error: any) => {
+      assert.deepEqual(error.diagnostic, {
+        stage: "prices-validate",
+        reason: "price-expired",
+        asset: "token",
+        priceAgeMs: 300001,
+        priceMaxAgeMs: 300000,
+      });
+      assert.equal(
+        error.message,
+        "Fresh investment-wallet exit snapshot unavailable",
+      );
+      assert.ok(!JSON.stringify(error).includes(owner));
+      return true;
+    },
+  );
+});
+
+test("failures distinguish chain, reference, price fetch and canonical stages using safe cause codes", async () => {
+  const upstream = new TypeError("private-provider-url-and-key", {
+    cause: Object.assign(new Error("private-certificate-details"), {
+      code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    }),
+  });
+  for (const [patch, want] of [
+    [
+      {
+        read: async () => {
+          throw upstream;
+        },
+      },
+      {
+        stage: "chain-read",
+        reason: "unclassified",
+        errorType: "TypeError",
+        transportCode: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      },
+    ],
+    [
+      {
+        read: async () => ({
+          ...(await providers().read(request)),
+          chainId: 1,
+        }),
+      },
+      { stage: "reference-validate", reason: "invalid-reference" },
+    ],
+    [
+      {
+        prices: async () => {
+          throw upstream;
+        },
+      },
+      {
+        stage: "prices-fetch",
+        reason: "unclassified",
+        errorType: "TypeError",
+        transportCode: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      },
+    ],
+    [
+      {
+        canonical: async () => {
+          throw Object.assign(new Error("private-rpc-response"), {
+            status: 429,
+            code: -32005,
+          });
+        },
+      },
+      {
+        stage: "canonical-check",
+        reason: "provider-throttled",
+        httpStatus: 429,
+        rpcCode: -32005,
+      },
+    ],
+    [
+      {
+        read: async () => {
+          throw Object.assign(new Error("private-throttle-response"), {
+            code: 429,
+          });
+        },
+      },
+      { stage: "chain-read", reason: "provider-throttled", rpcCode: 429 },
+    ],
+  ] as const) {
+    await assert.rejects(
+      new EarnExitSnapshot({}, providers(patch), () => now).read(request),
+      (error: any) => {
+        assert.deepEqual(error.diagnostic, want);
+        assert.ok(!JSON.stringify(error).includes("private-"));
+        assert.equal(error.cause, undefined);
+        return true;
+      },
+    );
+  }
+});

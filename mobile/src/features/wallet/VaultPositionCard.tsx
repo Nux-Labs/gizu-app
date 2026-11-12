@@ -59,7 +59,7 @@ export function VaultPositionCard({
     <PressableScale
       accessibilityRole="button"
       accessibilityLabel={`View ${vaultNames[profileId]} position`}
-      accessibilityHint="View your combined vault position and withdrawal progress"
+      accessibilityHint="View your combined vault position"
       onPress={onPress}
       className="gap-4 rounded-card border border-cardEdge bg-card p-5"
     >

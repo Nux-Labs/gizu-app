@@ -4,6 +4,7 @@ import { isPrivateRoute } from "./private-http.ts";
 import { DomainError } from "../domain/errors/domain-error.ts";
 import { GasPolicyError } from "../adapters/evm/gas-errors.ts";
 import { RobinhoodPlanFailure } from "../adapters/earn/robinhood-plan-error.ts";
+import { ExitSnapshotFailure } from "../adapters/earn/exit-snapshot-error.ts";
 import { InfrastructureError } from "../domain/errors/infrastructure-error.ts";
 import { NotFoundError } from "../domain/errors/not-found-error.ts";
 
@@ -46,6 +47,9 @@ export function mapRequestError(
         route: request.routeOptions.url ?? "unmatched",
         ...(error instanceof RobinhoodPlanFailure
           ? { planning: error.diagnostic }
+          : {}),
+        ...(error instanceof ExitSnapshotFailure
+          ? { exitSnapshot: error.diagnostic }
           : {}),
       },
       "private request failed",

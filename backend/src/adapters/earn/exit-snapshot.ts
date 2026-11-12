@@ -14,6 +14,10 @@ import { ROBINHOOD_PROFILE, robinhoodChain } from "./robinhood-vault.ts";
 import { ceilDiv } from "./policy.ts";
 import { auroraApi } from "../aurora/http.ts";
 import {
+  ExitSnapshotFailure,
+  type ExitSnapshotStage,
+} from "./exit-snapshot-error.ts";
+import {
   monadUsdcAssetId,
   ethereumUsdcAssetId,
   robinhoodUsdgAssetId,
@@ -104,51 +108,62 @@ export function exitPrices(
   let oldest = Number.POSITIVE_INFINITY;
   const updatedAt: Record<string, string> = {};
   function pick(
+    asset: "token" | "usdc" | "native",
     assetId: string,
     chain: string,
     decimals: number,
     token?: string,
   ) {
-    const matching = registry.map(record).filter((r) => r.assetId === assetId);
-    if (matching.length !== 1) throw Error("Missing or duplicate asset price");
-    const r = matching[0]!;
-    if (
-      r.blockchain !== chain ||
-      r.decimals !== decimals ||
-      (token &&
-        String(r.contractAddress).toLowerCase() !== token.toLowerCase()) ||
-      (!token &&
-        (r.symbol !== "ETH" ||
-          (r.contractAddress != null &&
-            !["native", "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"].includes(
-              String(r.contractAddress).toLowerCase(),
-            ))))
-    )
-      throw Error("Asset registry changed");
-    const t =
-      typeof r.priceUpdatedAt === "string" ? Date.parse(r.priceUpdatedAt) : NaN;
-    if (!Number.isFinite(t) || now - t > 300000 || t - now > 5000)
-      throw Error("Asset price expired");
-    oldest = Math.min(oldest, t);
-    updatedAt[assetId] = r.priceUpdatedAt as string;
-    return r.price;
+    let priceAgeMs: number | undefined;
+    try {
+      const matching = registry
+        .map(record)
+        .filter((r) => r.assetId === assetId);
+      if (matching.length !== 1)
+        throw Error("Missing or duplicate asset price");
+      const r = matching[0]!;
+      if (
+        r.blockchain !== chain ||
+        r.decimals !== decimals ||
+        (token &&
+          String(r.contractAddress).toLowerCase() !== token.toLowerCase()) ||
+        (!token &&
+          (r.symbol !== "ETH" ||
+            (r.contractAddress != null &&
+              ![
+                "native",
+                "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              ].includes(String(r.contractAddress).toLowerCase()))))
+      )
+        throw Error("Asset registry changed");
+      const t =
+        typeof r.priceUpdatedAt === "string"
+          ? Date.parse(r.priceUpdatedAt)
+          : NaN;
+      if (Number.isFinite(t)) priceAgeMs = now - t;
+      if (!Number.isFinite(t) || now - t > 300000 || t - now > 5000)
+        throw Error("Asset price expired");
+      oldest = Math.min(oldest, t);
+      updatedAt[assetId] = r.priceUpdatedAt as string;
+      return price18(r.price, asset !== "usdc").toString();
+    } catch (error) {
+      throw new ExitSnapshotFailure("prices-validate", error, {
+        asset,
+        ...(priceAgeMs !== undefined
+          ? { priceAgeMs, priceMaxAgeMs: 300000 }
+          : {}),
+      });
+    }
   }
-  const tokenUsd18 = price18(
-      pick(p.assetId, p.blockchain, 6, p.token),
-      true,
-    ).toString(),
-    usdcUsd18 = price18(
-      pick(
-        monadUsdcAssetId,
-        "monad",
-        6,
-        "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
-      ),
-      false,
-    ).toString(),
-    ethUsd18 = needEth
-      ? price18(pick(ethAsset, "eth", 18), true).toString()
-      : null;
+  const tokenUsd18 = pick("token", p.assetId, p.blockchain, 6, p.token),
+    usdcUsd18 = pick(
+      "usdc",
+      monadUsdcAssetId,
+      "monad",
+      6,
+      "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+    ),
+    ethUsd18 = needEth ? pick("native", ethAsset, "eth", 18) : null;
   return {
     tokenUsd18,
     usdcUsd18,
@@ -272,11 +287,20 @@ export class EarnExitSnapshot {
       },
       prices: async () => {
         if (!config.auroraApiKey) throw Error("Exit prices unavailable");
-        return auroraApi(
-          config.auroraApiKey,
-          fetch,
-          `tokens/{key}?valuationAt=${this.now()}`,
-        );
+        let httpStatus: number | undefined;
+        try {
+          return await auroraApi(
+            config.auroraApiKey,
+            async (input, init) => {
+              const response = await fetch(input, init);
+              httpStatus = response.status;
+              return response;
+            },
+            `tokens/{key}?valuationAt=${this.now()}`,
+          );
+        } catch (error) {
+          throw new ExitSnapshotFailure("prices-fetch", error, { httpStatus });
+        }
       },
       canonical: async (r, s) => {
         const b = await client(r).getBlock({ blockNumber: s.block.number });
@@ -286,6 +310,7 @@ export class EarnExitSnapshot {
     };
   }
   async read(request: ExitRequest) {
+    let stage: ExitSnapshotStage = "request-validate";
     try {
       if (
         !["ethereum-usdc", "robinhood-usdg"].includes(request.profileId) ||
@@ -293,10 +318,12 @@ export class EarnExitSnapshot {
       )
         throw Error("Invalid exit request");
       const owner = getAddress(request.owner),
-        p = profile(request.profileId),
-        s = await this.providers.read({ ...request, owner }),
+        p = profile(request.profileId);
+      stage = "chain-read";
+      const s = await this.providers.read({ ...request, owner }),
         now = this.now(),
         at = Number(s.block.timestamp) * 1000;
+      stage = "reference-validate";
       if (
         s.chainId !== p.chainId ||
         s.owner.toLowerCase() !== owner.toLowerCase() ||
@@ -313,13 +340,18 @@ export class EarnExitSnapshot {
         )
       )
         throw Error("Invalid exit reference");
+      stage = "prices-fetch";
+      const rawPrices = await this.providers.prices();
+      stage = "prices-validate";
       const prices = exitPrices(
-        await this.providers.prices(),
+        rawPrices,
         request.profileId,
         s.native + s.wrapped > 0n,
         this.now(),
       );
+      stage = "canonical-check";
       await this.providers.canonical(request, s);
+      stage = "valuation";
       const denominator = BigInt(prices.usdcUsd18),
         eth = BigInt(prices.ethUsd18 ?? "0"),
         residual =
@@ -330,6 +362,7 @@ export class EarnExitSnapshot {
           ceilDiv(s.native * eth * 1000000n, 10n ** 18n * denominator) +
           ceilDiv(s.wrapped * eth * 1000000n, 10n ** 18n * denominator);
       const observedAtMs = this.now();
+      stage = "freshness";
       const expiresAtMs = Math.min(
         at + 60000,
         prices.observedAtMs + 300000,
@@ -372,8 +405,10 @@ export class EarnExitSnapshot {
         ...result,
         snapshotHash: keccak256(toHex(JSON.stringify(result))),
       };
-    } catch {
-      throw Error("Fresh investment-wallet exit snapshot unavailable");
+    } catch (error) {
+      throw error instanceof ExitSnapshotFailure
+        ? error
+        : new ExitSnapshotFailure(stage, error);
     }
   }
 }

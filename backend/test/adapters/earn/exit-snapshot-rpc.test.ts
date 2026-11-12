@@ -14,12 +14,29 @@ const now = Date.parse("2026-09-30T10:00:00Z"),
 test("real read-only transport pins every contract/balance read then canonically rechecks after fresh server-held prices", async (t) => {
   const calls: { method: string; params: any[] }[] = [];
   const rpcOrigins = new Set<string>();
+  let priceFailure: "http" | "json" | "tls" | "unknown-code" | undefined;
   t.mock.method(globalThis, "fetch", async (url: any, init: any) => {
     if (
       String(url).startsWith(
         "https://intents-api.aurora.dev/api/tokens/server-held-test-key",
       )
-    )
+    ) {
+      if (priceFailure === "http")
+        return Response.json(
+          { message: "private-provider-response" },
+          { status: 503 },
+        );
+      if (priceFailure === "json")
+        return new Response("private-invalid-json", { status: 200 });
+      if (priceFailure === "tls" || priceFailure === "unknown-code")
+        throw new TypeError("private-keyed-url", {
+          cause: Object.assign(new Error("private-certificate-or-host"), {
+            code:
+              priceFailure === "tls"
+                ? "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+                : "private-arbitrary-error-code",
+          }),
+        });
       return Response.json({
         tokens: [
           {
@@ -40,6 +57,7 @@ test("real read-only transport pins every contract/balance read then canonically
           },
         ],
       });
+    }
     const origin = new URL(url instanceof Request ? url.url : String(url))
       .origin;
     assert.ok(
@@ -114,4 +132,51 @@ test("real read-only transport pins every contract/balance read then canonically
   ).read({ profileId: "robinhood-usdg", owner });
   assert.equal(defaultRpc.residualUsdcAtoms, "100000");
   assert.ok(rpcOrigins.has("https://rpc.mainnet.chain.robinhood.com"));
+  for (const [failure, want] of [
+    [
+      "http",
+      { stage: "prices-fetch", reason: "provider-http", httpStatus: 503 },
+    ],
+    [
+      "json",
+      {
+        stage: "prices-fetch",
+        reason: "provider-response-json",
+        httpStatus: 200,
+        errorType: "SyntaxError",
+      },
+    ],
+    [
+      "tls",
+      {
+        stage: "prices-fetch",
+        reason: "unclassified",
+        errorType: "TypeError",
+        transportCode: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      },
+    ],
+    [
+      "unknown-code",
+      { stage: "prices-fetch", reason: "unclassified", errorType: "TypeError" },
+    ],
+  ] as const) {
+    priceFailure = failure;
+    await assert.rejects(
+      new EarnExitSnapshot(
+        {
+          robinhoodRpcUrl: "https://hood-rpc.test",
+          auroraApiKey: "server-held-test-key",
+        },
+        undefined,
+        () => now,
+      ).read({ profileId: "robinhood-usdg", owner }),
+      (error: any) => {
+        assert.deepEqual(error.diagnostic, want);
+        assert.ok(!JSON.stringify(error).includes("private-"));
+        assert.ok(!JSON.stringify(error).includes("server-held-test-key"));
+        assert.equal(error.cause, undefined);
+        return true;
+      },
+    );
+  }
 });

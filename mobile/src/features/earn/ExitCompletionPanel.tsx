@@ -6,13 +6,18 @@ import { View } from "react-native";
 import { Button } from "@/components/atoms/Button";
 import { Typography } from "@/components/atoms/Typography";
 import type { EarnIntent } from "@/domain/earn/types";
-import type { EarnExitCompletionService, ExitCompletion } from "@/domain/earn/exitCompletion";
+import {
+  isCompleteInvestmentExit,
+  exitHistoryRevision,
+  type EarnExitCompletionService,
+  type ExitCompletion,
+} from "@/domain/earn/exitCompletion";
 import { createEarnExitCompletionService } from "@/services/earn/exitCompletion";
 import { formatUsdc } from "@/domain/wallet/amounts";
 import type { EarnInvestmentExitProof } from "@/domain/earn/investmentPositions";
-import { investmentDestination } from "@/domain/earn/distribution";
 import { useEarn } from "./EarnProvider";
 import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
+import { completedExitsStore } from "@/storage/completedExits";
 export function ExitCompletionPanel({
   intent,
   service,
@@ -69,22 +74,18 @@ export function ExitCompletionPanel({
     return () => clearTimeout(timer);
   }, [result]);
   useEffect(() => {
-    if (!onWithdrawalComplete) return;
     const complete =
-      result?.complete === true &&
-      result.snapshot.expiresAtMs > Date.now() &&
-      result.snapshot.profileId === intent.profileId &&
-      result.snapshot.owner.toLowerCase() === investmentDestination(intent).address.toLowerCase() &&
+      isCompleteInvestmentExit(result, intent, withdrawals.rows) &&
       !busy &&
       !withdrawals.busy &&
       !withdrawals.loading &&
       withdrawals.available &&
-      !withdrawals.message &&
-      result.creditedReturnOperationIds.length > 0 &&
-      withdrawals.rows.every(
-        (row) => !row.blocked && (row.status === "paid" || row.status === "cancelled"),
-      );
-    onWithdrawalComplete({
+      !withdrawals.message;
+    const revision = complete
+      ? exitHistoryRevision(result?.journalRevision, withdrawals.rows)
+      : null;
+    if (revision) void completedExitsStore.save(intent, revision);
+    onWithdrawalComplete?.({
       walletId: intent.walletId,
       intentId: intent.intentId,
       profileId: intent.profileId,
