@@ -56,6 +56,7 @@ export type LiquidityPlan = {
   resolverOverheadWei?: string;
 };
 export type LiquidityOperation = {
+  investmentSlot?: number;
   operationId: string;
   walletId: string;
   revision: number;
@@ -384,6 +385,7 @@ export function parseLiquidityOperations(value: unknown, intent: EarnIntent): Li
       operationId,
       walletId: intent.walletId,
       revision: number(q.revision, 1),
+      ...(q.investmentSlot !== undefined ? { investmentSlot: q.investmentSlot as number } : {}),
       kind: q.kind as LiquidityKind,
       chainId: 1,
       from: addr(q.from, owner),

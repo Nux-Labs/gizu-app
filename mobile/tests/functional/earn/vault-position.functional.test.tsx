@@ -16,9 +16,12 @@ import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
 import { getStoredEarnWithdrawalSigner } from "@/services/wallet/nativeBridge";
 import { exitSnapshot, returnRow, minimumReturnRow } from "../../support/exitCompletion";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createEarnRobinhoodService } from "@/services/earn/robinhoodExecution";
+import type { EarnRobinhoodService } from "@/domain/earn/robinhoodExecution";
 jest.mock("@/services/wallet/nativeBridge", () => ({
   ...jest.requireActual("@/services/wallet/nativeBridge"),
   getStoredEarnWithdrawalSigner: jest.fn(),
+  getSignerCapabilities: jest.fn().mockResolvedValue({ earnSponsoredExecution: true }),
 }));
 beforeEach(async () => {
   jest.mocked(getStoredEarnWithdrawalSigner).mockReset().mockReturnValue(null);
@@ -87,6 +90,7 @@ function setup(
     residualAtoms?: string;
     privateOnly?: boolean;
     savedOperations?: SponsoredOperation[];
+    robinhoodService?: EarnRobinhoodService;
   } = {},
 ) {
   let rows = options.rows ?? [position(first), position(first, 1), position(second)];
@@ -227,7 +231,7 @@ function setup(
         investmentPositions={createEarnInvestmentPositionsService(() => ({
           listEarnInvestmentPositions: listPositions,
         }))}
-        robinhood={robinhood}
+        robinhood={options.robinhoodService ?? robinhood}
       >
         <NavigationContainer>
           <Stack.Navigator
@@ -259,6 +263,53 @@ function setup(
     },
   };
 }
+test("a distributed saved withdrawal can be replaced with a fresh review through the real journal adapter", async () => {
+  const saved = {
+    ...operation(),
+    from: second.destinations[1]!.address,
+    kind: "hoodRedeemAll",
+    investmentSlot: 1,
+    cycleIndex: 1,
+    status: "authorizationSaved",
+    blocked: true,
+    canResume: true,
+    canCancelPreparation: true,
+  };
+  const native = {
+    executeEarnSponsored: jest.fn(),
+    listEarnSponsoredOperations: jest.fn().mockResolvedValue([saved]),
+    cancelEarnSponsoredOperation: jest.fn().mockImplementation(async () => ({
+      ...saved,
+      status: "cancelled",
+      blocked: false,
+      canResume: false,
+    })),
+    resumeEarnSponsoredOperation: jest.fn(),
+    readEarnSponsoredSettlement: jest.fn(),
+    prepareEarnSourceQuote: jest.fn(),
+    lock: jest.fn(),
+  };
+  jest.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    return {
+      ok: true,
+      json: async () => hoodRaw("hoodRedeemAll", Date.now(), body.operationId, body.revision),
+    } as Response;
+  });
+  setup({
+    rows: [position(second, 1)],
+    robinhoodService: createEarnRobinhoodService("https://backend.test", () => native),
+  });
+  await userEvent.press(await screen.findByRole("button", { name: "Start a fresh review" }));
+  expect(await screen.findByRole("button", { name: "Confirm withdrawal" })).toBeEnabled();
+  expect(native.cancelEarnSponsoredOperation).toHaveBeenCalledWith(
+    hoodIntent.walletId,
+    saved.operationId,
+    3,
+  );
+  expect(native.executeEarnSponsored).not.toHaveBeenCalled();
+  expect(screen.queryByText(/different investment wallet/)).toBeNull();
+});
 test("opening an invested position does not reopen an older private return or select its cycle", async () => {
   const h = setup({
     overview: true,

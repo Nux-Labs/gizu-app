@@ -61,6 +61,7 @@ export type VaultProposal = Omit<
   slippageBps: number;
 };
 export type VaultOperation = {
+  investmentSlot?: number;
   operationId: string;
   revision: number;
   walletId: string;
@@ -452,6 +453,7 @@ export function parseVaultOperations(value: unknown, intent: EarnIntent): VaultO
       operationId,
       revision: integer(row.revision, 1),
       walletId: intent.walletId,
+      ...(row.investmentSlot !== undefined ? { investmentSlot: row.investmentSlot as number } : {}),
       kind: row.kind,
       from: address(row.from, expected),
       amountAtoms: earnAtoms(row.amountAtoms),

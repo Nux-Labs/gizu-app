@@ -59,6 +59,7 @@ export type SponsoredRequest = {
   userOperation: Record<string, string>;
 };
 export type SponsoredOperation = {
+  investmentSlot?: number;
   fundingBatchId?: string;
   fundingBatchSize?: number;
   cycleIndex?: number;
@@ -439,6 +440,9 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
       operationId: r.operationId,
       walletId: intent.walletId,
       revision: r.revision,
+      ...(!source && r.investmentSlot !== undefined
+        ? { investmentSlot: r.investmentSlot as number }
+        : {}),
       kind: kind as SponsoredOperation["kind"],
       chainId,
       from,

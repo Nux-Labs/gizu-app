@@ -2,6 +2,7 @@ import type { EarnIntent } from "./types";
 import { earnAtoms, earnObject } from "./vaultExecution";
 import { assertInvestmentSlot } from "./distribution";
 export type EarnWithdrawalOperation = {
+  investmentSlot?: number;
   operationId: string;
   walletId: string;
   cycleIndex?: number;
@@ -115,6 +116,9 @@ export function parseEarnWithdrawals(
       return {
         operationId: row.operationId,
         walletId: intent.walletId,
+        ...(row.investmentSlot !== undefined
+          ? { investmentSlot: row.investmentSlot as number }
+          : {}),
         ...(row.cycleIndex !== undefined ? { cycleIndex: row.cycleIndex as number } : {}),
         ...(typeof row.returnOperationId === "string"
           ? { returnOperationId: row.returnOperationId }
