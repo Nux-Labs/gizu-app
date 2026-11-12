@@ -20,7 +20,7 @@ const querySchema = z.object({
 export function registerTokenRoutes(
   app: FastifyInstance,
   catalog: { list(chainId: number, category: CatalogCategory): Promise<CatalogToken[]> },
-  details?: Pick<RobinhoodTokenDetails, "details">,
+  details?: Pick<RobinhoodTokenDetails, "details" | "prices">,
 ) {
   app.withTypeProvider<ZodTypeProvider>().get(
     "/v1/tokens",
@@ -39,7 +39,12 @@ export function registerTokenRoutes(
         (token.issuer !== null && token.issuer.toLowerCase().includes(search))),
       );
       const { page, items } = request.query;
-      const list = matches.slice(page * items, (page + 1) * items);
+      const slice = matches.slice(page * items, (page + 1) * items);
+      // Buyable stocks carry their Robinhood Chain price; a missing price never fails the list.
+      const prices = details && slice.some((token) => token.buyable) ? await details.prices() : undefined;
+      const list = prices
+        ? slice.map((token) => token.buyable ? { ...token, priceUsd: prices.get(token.address.toLowerCase()) ?? null } : token)
+        : slice;
       return reply.code(200).send({ list, page, items, total: matches.length });
     },
   );

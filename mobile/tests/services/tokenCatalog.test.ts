@@ -47,6 +47,10 @@ test.each([
     { issuer: "unknown" },
     { category: "other" },
     { swapListed: "yes" },
+    { buyable: "yes" },
+    { priceUsd: 0 },
+    { priceUsd: "175.51" },
+    { priceUsd: Number.NaN },
     { fusionStatus: "available" },
   ].map((patch) => ({ ...catalogPage, list: [{ ...catalogToken, ...patch }] })),
   {
@@ -139,4 +143,15 @@ test("omits chainId to browse every network and validates DeFi categories", asyn
   await expect(service.list(all, new AbortController().signal)).rejects.toThrow(
     "Invalid token catalog",
   );
+});
+
+test("accepts a price, a missing price and no price field on a token", async () => {
+  for (const priceUsd of [175.51, null, undefined]) {
+    const token = { ...catalogToken, buyable: true, priceUsd };
+    response({ ...catalogPage, list: [token] });
+    await expect(service.list(query, new AbortController().signal)).resolves.toEqual({
+      ...catalogPage,
+      list: [token],
+    });
+  }
 });

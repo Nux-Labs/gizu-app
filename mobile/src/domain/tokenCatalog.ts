@@ -27,6 +27,8 @@ export interface CatalogToken {
   swapListed: boolean;
   /** `false` marks a listed stock outside the curated liquid set; older gateways omit it. */
   buyable?: boolean;
+  /** USD price on Robinhood Chain for buyable stocks; null when 1inch has none right now. */
+  priceUsd?: number | null;
   fusionStatus: "quote-required";
 }
 export interface TokenPage {

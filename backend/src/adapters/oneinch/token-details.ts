@@ -47,10 +47,16 @@ export type TokenDetails = {
 
 type Cached<T> = { until: number; value: T };
 
+const usdPrice = (raw: unknown): number | null => {
+  const value = typeof raw === "string" || typeof raw === "number" ? Number(raw) : NaN;
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
 /** Detail page data for a buyable Robinhood stock: Robinhood's asset record plus 1inch price and chart. */
 export class RobinhoodTokenDetails {
   private assets: Cached<Map<string, Asset>> | null = null;
-  private readonly prices = new Map<string, Cached<number | null>>();
+  private readonly priceCache = new Map<string, Cached<number | null>>();
+  private priceRefresh: Promise<void> | null = null;
   private readonly charts = new Map<string, Cached<TokenDetails["chart"]>>();
 
   constructor(
@@ -58,6 +64,38 @@ export class RobinhoodTokenDetails {
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly now: () => number = Date.now,
   ) {}
+
+  /**
+   * USD prices of every buy target keyed by lowercase address, for the picker list. One batched
+   * 1inch request refreshes them all and fills the cache the detail page reads.
+   */
+  async prices(): Promise<Map<string, number | null>> {
+    const keys = ROBINHOOD_BUY_TARGETS.map((target) => target.address.toLowerCase());
+    if (keys.some((key) => (this.priceCache.get(key)?.until ?? 0) <= this.now())) {
+      // Concurrent list requests share one refresh instead of each calling 1inch.
+      this.priceRefresh ??= this.refreshPrices(keys).finally(() => {
+        this.priceRefresh = null;
+      });
+      await this.priceRefresh;
+    }
+    return new Map(keys.map((key) => [key, this.priceCache.get(key)?.value ?? null]));
+  }
+
+  private async refreshPrices(keys: string[]): Promise<void> {
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await this.oneInch(
+        `https://api.1inch.com/price/v1.1/4663/${ROBINHOOD_BUY_TARGETS.map((target) => target.address).join(",")}?currency=USD`,
+      )) as Record<string, unknown>;
+    } catch {
+      // Every price stays null for a minute; the list still loads without them.
+    }
+    const at = this.now();
+    for (const key of keys) {
+      const value = usdPrice(body[key]);
+      this.priceCache.set(key, { until: at + (value === null ? 60_000 : PRICE_TTL_MS), value });
+    }
+  }
 
   /** Undefined for a token a buy cannot target. */
   async details(address: string, period: DetailPeriod): Promise<TokenDetails | undefined> {
@@ -117,10 +155,9 @@ export class RobinhoodTokenDetails {
 
   // Price and chart are optional on the page: a failure is cached briefly as null instead of failing it.
   private async price(address: string): Promise<number | null> {
-    return this.cached(this.prices, address, PRICE_TTL_MS, async () => {
+    return this.cached(this.priceCache, address.toLowerCase(), PRICE_TTL_MS, async () => {
       const body = await this.oneInch(`https://api.1inch.com/price/v1.1/4663/${address}?currency=USD`);
-      const value = Number((body as Record<string, unknown>)[address.toLowerCase()]);
-      return Number.isFinite(value) && value > 0 ? value : null;
+      return usdPrice((body as Record<string, unknown>)[address.toLowerCase()]);
     });
   }
 

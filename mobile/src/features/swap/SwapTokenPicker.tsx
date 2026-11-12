@@ -19,6 +19,7 @@ import type { ListedToken } from "./confidentialSwap";
 import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
 import { RobinhoodChainMark } from "./components/RobinhoodChainMark";
 import { TokenDetail } from "./TokenDetail";
+import { formatUsd } from "./formatUsd";
 
 export function SwapTokenPicker({
   tokens,
@@ -138,12 +139,14 @@ export function TokenChoices({
           item.buyable !== false;
         const checked =
           item.chainId === 4663 && item.address.toLowerCase() === target.toLowerCase();
+        const price = typeof item.priceUsd === "number" ? formatUsd(item.priceUsd) : null;
         return (
           <View className="mb-2 flex-row items-stretch gap-2">
             <PressableScale
               accessibilityRole="radio"
               accessibilityLabel={`${item.symbol} · ${tokenDisplayName(item.name)}`}
               accessibilityState={{ checked, disabled: disabled || !selectable }}
+              accessibilityValue={price ? { text: price } : undefined}
               disabled={disabled || !selectable}
               onPress={() => {
                 if (selectable && !disabled) onSelect(item);
@@ -154,6 +157,11 @@ export function TokenChoices({
                 <Typography variant="rowTitle" className={`flex-1 ${checked ? "!text-neon" : ""}`}>
                   {item.symbol}
                 </Typography>
+                {price && (
+                  <Typography variant="rowValue" style={{ fontVariant: ["tabular-nums"] }}>
+                    {price}
+                  </Typography>
+                )}
                 {item.chainId === 4663 ? (
                   <RobinhoodChainMark />
                 ) : (
