@@ -141,7 +141,17 @@ class GizuStoredSignerModule : Module() {
     WalletBuildPolicy.isAvailable(Build.VERSION.SDK_INT, activity != null)
 
   private fun requireForeground(activity: Activity) {
-    check(foreground && !activity.isFinishing && !activity.isDestroyed && activity.hasWindowFocus())
+    check(activity.hasWindowFocus())
+    requireVisible(activity)
+  }
+
+  /**
+   * Gizu is in front and the phone is unlocked. Read-only work needs only this: pulling down the
+   * notification shade or a system dialog takes window focus without leaving Gizu, and leaving
+   * Gizu already cancels the running read. Approvals keep the focus check in [requireForeground].
+   */
+  private fun requireVisible(activity: Activity) {
+    check(foreground && !activity.isFinishing && !activity.isDestroyed)
     check(
       !(activity.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
     )
@@ -274,6 +284,8 @@ class GizuStoredSignerModule : Module() {
     promise: Promise,
     wait: Boolean = false,
     timeoutMs: Long = CEREMONY_TIMEOUT_MS,
+    /** Read-only work runs while Gizu is in front even without window focus. */
+    readOnly: Boolean = false,
     block: suspend (Activity, WalletStore) -> Any?,
   ) {
     scope.launch {
@@ -296,13 +308,13 @@ class GizuStoredSignerModule : Module() {
       ceremonySession = session
       try {
         WalletRecoveryRuntime.initialize(activity!!.applicationContext)
-        requireForeground(activity)
+        if (readOnly) requireVisible(activity) else requireForeground(activity)
         check(depositHost?.busy != true) {
           "A native deposit is running. Check its progress or stop its remaining approval first."
         }
         val result = session.run { block(activity, walletStore(activity.applicationContext)) }
         currentCoroutineContext().ensureActive()
-        requireForeground(activity)
+        if (readOnly) requireVisible(activity) else requireForeground(activity)
         promise.resolve(result)
       } catch (error: CancellationException) {
         val (code, location) = depositFailureDiagnostic(error)
@@ -1946,7 +1958,7 @@ class GizuStoredSignerModule : Module() {
       }
     }
     AsyncFunction("getSwapDeposit") { promise: Promise ->
-      runCeremony(promise) { _, store ->
+      runCeremony(promise, readOnly = true) { _, store ->
         withContext(Dispatchers.IO) {
           store.load().use { record ->
             check(record.verified)
@@ -2047,7 +2059,7 @@ class GizuStoredSignerModule : Module() {
       }
     }
     AsyncFunction("getCachedMainnetPortfolio") { promise: Promise ->
-      runCeremony(promise) { activity, store ->
+      runCeremony(promise, readOnly = true) { activity, store ->
         withContext(Dispatchers.IO) {
           store.load().use { record ->
             check(record.verified)
@@ -2079,7 +2091,7 @@ class GizuStoredSignerModule : Module() {
       }
     }
     AsyncFunction("getMainnetPortfolio") { promise: Promise ->
-      runCeremony(promise, timeoutMs = 180_000L) { activity, store ->
+      runCeremony(promise, timeoutMs = 180_000L, readOnly = true) { activity, store ->
         withContext(Dispatchers.IO) {
           store.load().use { record ->
             check(record.verified)
@@ -2163,7 +2175,7 @@ class GizuStoredSignerModule : Module() {
       }
     }
     AsyncFunction("getSwapHoldings") { target: String, promise: Promise ->
-      runCeremony(promise, timeoutMs = 180_000L) { activity, store ->
+      runCeremony(promise, timeoutMs = 180_000L, readOnly = true) { activity, store ->
         withContext(Dispatchers.IO) {
           store.load().use { record ->
             check(record.verified)
@@ -2214,7 +2226,7 @@ class GizuStoredSignerModule : Module() {
       }
     }
     AsyncFunction("getSwapStatus") { gateway: String, promise: Promise ->
-      runCeremony(promise) { activity, store ->
+      runCeremony(promise, readOnly = true) { activity, store ->
         withContext(Dispatchers.IO) {
           store.load().use { record ->
             val saved = SwapStore(activity.applicationContext, record)
