@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { InfrastructureError } from "../../src/domain/errors/infrastructure-error.ts";
 import { OneInchTokenCatalog } from "../../src/adapters/oneinch/token-catalog.ts";
+import { ROBINHOOD_BUY_TARGETS, robinhoodBuyRank } from "../../src/adapters/oneinch/swap-targets.ts";
 
 const stock = "0x1111111111111111111111111111111111111111";
 const unrelated = "0x2222222222222222222222222222222222222222";
@@ -106,4 +108,30 @@ test("rejects missing documented token tags instead of treating them as non-RWA"
     [stock]: { address: stock, symbol: "XYZ", name: "Token", decimals: 18, logoURI: null },
   } }));
   await assert.rejects(catalog.list(1, "all"), InfrastructureError);
+});
+
+test("only curated liquid Robinhood stocks are buyable and they lead in liquidity order", async () => {
+  const [first, second] = ROBINHOOD_BUY_TARGETS;
+  assert.ok(first && second);
+  const asset = (symbol: string, address: string) => ({ tokenSymbol: symbol, tokenName: symbol, tokenDecimals: 18, status: "ASSET_STATUS_ACTIVE", logoUrl: "https://cdn.robinhood.com/x.png", deployments: [{ chainId: 4663, contractAddress: address }] });
+  const listed = (symbol: string, address: string) => ({ address, symbol, name: symbol, decimals: 18, logoURI: null, tags: [] });
+  const catalog = new OneInchTokenCatalog("key", async (input) => String(input).includes("robinhood.com")
+    ? Response.json({ assets: [asset("AAA", stock), asset(second.symbol, second.address), asset(first.symbol, first.address), asset("ZZZ", unlisted)] })
+    : Response.json({ tokens: { [stock]: listed("AAA", stock), [second.address]: listed(second.symbol, second.address), [first.address]: listed(first.symbol, first.address) } }));
+  const result = await catalog.list(4663, "rwa");
+  assert.deepEqual(result.map(({ symbol, swapListed, buyable }) => ({ symbol, swapListed, buyable })), [
+    { symbol: first.symbol, swapListed: true, buyable: true },
+    { symbol: second.symbol, swapListed: true, buyable: true },
+    { symbol: "AAA", swapListed: true, buyable: false },
+    { symbol: "ZZZ", swapListed: false, buyable: false },
+  ]);
+});
+
+test("backend buy targets match the shared liquidity list the native engine pins", () => {
+  const shared = JSON.parse(readFileSync(new URL("../../../shared/swap-targets-v1.json", import.meta.url), "utf8")) as { version: string; chainId: number; targets: Array<{ symbol: string; address: string }> };
+  assert.equal(shared.version, "gizu-swap-targets-v1");
+  assert.equal(shared.chainId, 4663);
+  assert.deepEqual(ROBINHOOD_BUY_TARGETS.map(({ symbol, address }) => ({ symbol, address })), shared.targets.map(({ symbol, address }) => ({ symbol, address })));
+  assert.equal(robinhoodBuyRank(shared.targets[0]!.address.toUpperCase().replace("0X", "0x")), 0);
+  assert.equal(robinhoodBuyRank(unlisted), undefined);
 });

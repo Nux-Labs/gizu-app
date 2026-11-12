@@ -163,7 +163,7 @@ test("pull-to-refresh reloads saved swap status without a refresh button", async
   expect(readStatus).toHaveBeenCalledTimes(2);
 });
 
-test("picker opens on stocks from every network with a network badge on each token", async () => {
+test("picker lists only Robinhood stocks without a token type switch", async () => {
   render(
     <SafeAreaProvider>
       <NativeSwapScreen />
@@ -172,30 +172,71 @@ test("picker opens on stocks from every network with a network badge on each tok
   await screen.findByText("COIN");
   fireEvent.press(screen.getByRole("button", { name: "Choose receive token" }));
   expect(await screen.findByRole("radio", { name: "COIN · Coinbase" })).toBeEnabled();
-  expect(screen.getByRole("radio", { name: "Stocks", checked: true })).toBeVisible();
-  expect(screen.queryByRole("radiogroup", { name: "Token network" })).toBeNull();
-  expect(screen.getAllByText("Robinhood")).toHaveLength(2);
+  expect(screen.queryByRole("radiogroup", { name: "Token type" })).toBeNull();
+  expect(screen.queryByRole("radio", { name: "DeFi" })).toBeNull();
+  expect(screen.getAllByLabelText("Robinhood Chain")).toHaveLength(2);
+  expect(screen.queryByText("Robinhood")).toBeNull();
   expect(tokenCatalogService.list).toHaveBeenCalledWith(
-    expect.objectContaining({ chainId: null, category: "rwa", page: 0 }),
+    expect.objectContaining({ chainId: 4663, category: "rwa", liquidOnly: true, page: 0 }),
     expect.anything(),
   );
   expect(start).not.toHaveBeenCalled();
 });
 
-test("picker DeFi tab lists non-stock tokens that cannot be swap targets", async () => {
+test("picker hides stocks outside the liquid set and never defaults to one", async () => {
+  jest.mocked(tokenCatalogService.list).mockImplementation(async (query) => {
+    const tokens = [
+      {
+        ...catalogToken,
+        address: secondToken,
+        symbol: "GOOGL",
+        name: "Alphabet • Robinhood Token",
+        buyable: true,
+      },
+      { ...catalogToken, address: token, symbol: "COIN", name: "Coinbase", buyable: false },
+    ].filter((item) => !query.liquidOnly || item.buyable);
+    return { list: tokens, total: tokens.length, items: 20, page: query.page };
+  });
+  jest.mocked(globalThis.fetch).mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      list: [
+        {
+          address: token,
+          symbol: "COIN",
+          name: "Coinbase",
+          decimals: 18,
+          swapListed: true,
+          buyable: false,
+        },
+        {
+          address: secondToken,
+          symbol: "GOOGL",
+          name: "Alphabet • Robinhood Token",
+          decimals: 18,
+          swapListed: true,
+          buyable: true,
+        },
+      ],
+    }),
+  } as Response);
   render(
     <SafeAreaProvider>
       <NativeSwapScreen />
     </SafeAreaProvider>,
   );
-  await screen.findByText("COIN");
+  await screen.findByText("GOOGL");
   fireEvent.press(screen.getByRole("button", { name: "Choose receive token" }));
-  await screen.findByRole("radio", { name: "COIN · Coinbase" });
-  fireEvent.press(screen.getByRole("radio", { name: "DeFi" }));
-  expect(await screen.findByRole("radio", { name: "COIN · Coinbase" })).toBeDisabled();
-  expect(screen.getAllByText("Not available for swaps").length).toBeGreaterThan(0);
+  expect(
+    await screen.findByRole("radio", { name: "GOOGL · Alphabet", checked: true }),
+  ).toBeEnabled();
+  expect(screen.queryByRole("radio", { name: "COIN · Coinbase" })).toBeNull();
+  // The list row and the "You receive" note both drop Robinhood's name suffix.
+  expect(screen.getAllByText("Alphabet").length).toBeGreaterThanOrEqual(2);
+  expect(screen.queryByText(/Robinhood Token/)).toBeNull();
+  expect(screen.queryByText(/most liquid Robinhood stocks/)).toBeNull();
   expect(tokenCatalogService.list).toHaveBeenCalledWith(
-    expect.objectContaining({ chainId: null, category: "other", page: 0 }),
+    expect.objectContaining({ chainId: 4663, category: "rwa", liquidOnly: true }),
     expect.anything(),
   );
 });

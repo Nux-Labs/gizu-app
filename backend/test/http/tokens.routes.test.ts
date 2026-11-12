@@ -9,9 +9,9 @@ test("GET /v1/tokens filters, paginates, and validates explicit query fields", a
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   registerTokenRoutes(app, { list: async () => [
-    { chainId: 143, address: "0x1111111111111111111111111111111111111111", symbol: "AAPLx", name: "Apple xStock", decimals: 18, logoURI: null, category: "rwa", issuer: null, swapListed: true, fusionStatus: "quote-required" },
-    { chainId: 143, address: "0x2222222222222222222222222222222222222222", symbol: "MSFTx", name: "Microsoft xStock", decimals: 18, logoURI: null, category: "rwa", issuer: null, swapListed: true, fusionStatus: "quote-required" },
-    { chainId: 143, address: "0x3333333333333333333333333333333333333333", symbol: "USDC", name: "USD Coin", decimals: 6, logoURI: null, category: "other", issuer: null, swapListed: true, fusionStatus: "quote-required" },
+    { chainId: 143, address: "0x1111111111111111111111111111111111111111", symbol: "AAPLx", name: "Apple xStock", decimals: 18, logoURI: null, category: "rwa", issuer: null, swapListed: true, buyable: false, fusionStatus: "quote-required" },
+    { chainId: 143, address: "0x2222222222222222222222222222222222222222", symbol: "MSFTx", name: "Microsoft xStock", decimals: 18, logoURI: null, category: "rwa", issuer: null, swapListed: true, buyable: false, fusionStatus: "quote-required" },
+    { chainId: 143, address: "0x3333333333333333333333333333333333333333", symbol: "USDC", name: "USD Coin", decimals: 6, logoURI: null, category: "other", issuer: null, swapListed: true, buyable: false, fusionStatus: "quote-required" },
   ] });
   const good = await app.inject("/v1/tokens?chainId=143&category=rwa&search=xstock&page=1&items=1");
   assert.equal(good.statusCode, 200);
@@ -36,12 +36,25 @@ test("GET /v1/tokens without chainId merges every catalog chain, Robinhood first
   const calls: Array<[number, string]> = [];
   registerTokenRoutes(app, { list: async (chainId, category) => {
     calls.push([chainId, category]);
-    return [{ chainId, address: `0x${String(chainId).padStart(40, "0")}`, symbol: `T${chainId}`, name: "Token", decimals: 18, logoURI: null, category: "rwa", issuer: null, swapListed: true, fusionStatus: "quote-required" }];
+    return [{ chainId, address: `0x${String(chainId).padStart(40, "0")}`, symbol: `T${chainId}`, name: "Token", decimals: 18, logoURI: null, category: "rwa", issuer: null, swapListed: true, buyable: false, fusionStatus: "quote-required" }];
   } });
   const all = await app.inject("/v1/tokens?category=rwa&search=&page=0&items=10");
   assert.equal(all.statusCode, 200);
   assert.deepEqual(all.json().list.map((token: {symbol: string}) => token.symbol), ["T4663", "T143", "T1"]);
   assert.equal(all.json().total, 3);
   assert.deepEqual(calls, [[4663, "rwa"], [143, "rwa"], [1, "rwa"]]);
+  await app.close();
+});
+
+test("GET /v1/tokens with liquidOnly lists only tokens a buy can target", async () => {
+  const app = Fastify();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  const token = (symbol: string, issuer: "Robinhood" | null, buyable: boolean) => ({ chainId: 4663, address: `0x${symbol.padStart(40, "0")}`, symbol, name: symbol, decimals: 18, logoURI: null, category: "rwa" as const, issuer, swapListed: true, buyable, fusionStatus: "quote-required" as const });
+  registerTokenRoutes(app, { list: async () => [token("AAA", "Robinhood", true), token("BBB", "Robinhood", false), token("CCC", null, false)] });
+  const symbols = async (url: string) => (await app.inject(url)).json().list.map((t: { symbol: string }) => t.symbol);
+  assert.deepEqual(await symbols("/v1/tokens?chainId=4663&category=rwa&search=&page=0&items=10&liquidOnly=true"), ["AAA"]);
+  assert.deepEqual(await symbols("/v1/tokens?chainId=4663&category=rwa&search=&page=0&items=10"), ["AAA", "BBB", "CCC"]);
+  assert.equal((await app.inject("/v1/tokens?chainId=4663&category=rwa&search=&page=0&items=10&liquidOnly=yes")).statusCode, 400);
   await app.close();
 });

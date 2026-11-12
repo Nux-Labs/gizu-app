@@ -21,6 +21,13 @@ test("sends all five parameters with encoded search and returns a validated page
     { signal: expect.anything() },
   );
 });
+test("asks the gateway to hide illiquid stocks only when the query says so", async () => {
+  await service.list({ ...query, liquidOnly: true }, new AbortController().signal);
+  expect(fetch).toHaveBeenCalledWith(
+    "https://api.example.com/v1/tokens?chainId=4663&category=rwa&search=&page=0&items=20&liquidOnly=true",
+    { signal: expect.anything() },
+  );
+});
 test.each([
   null,
   {},
