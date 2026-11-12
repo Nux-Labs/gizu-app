@@ -66,19 +66,17 @@ export function SwapTokenPicker({
           <ChevronDown size={14} color={colors.fg["70"]} />
         </PressableScale>
       </SwapAmountBox>
-      <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
-        {open && (
-          <TokenChoices
-            target={target}
-            disabled={disabled}
-            onClose={() => setOpen(false)}
-            onSelect={(token) => {
-              onSelect(token);
-              setOpen(false);
-            }}
-          />
-        )}
-      </Modal>
+      {open && (
+        <TokenChoices
+          target={target}
+          disabled={disabled}
+          onClose={() => setOpen(false)}
+          onSelect={(token) => {
+            onSelect(token);
+            setOpen(false);
+          }}
+        />
+      )}
     </>
   );
 }
@@ -102,16 +100,14 @@ export function TokenChoices({
   });
   // The list's data and query live here, so returning from a detail page keeps them.
   const [detail, setDetail] = useState<CatalogToken | null>(null);
-  if (detail)
-    return (
-      <TokenDetail
-        address={detail.address}
-        disabled={disabled}
-        onBack={() => setDetail(null)}
-        onSelect={() => onSelect(detail)}
-      />
-    );
-  return (
+  const content = detail ? (
+    <TokenDetail
+      address={detail.address}
+      disabled={disabled}
+      onBack={() => setDetail(null)}
+      onSelect={() => onSelect(detail)}
+    />
+  ) : (
     <InfiniteListScreen
       list={list}
       queryKey={queryKey}
@@ -194,5 +190,17 @@ export function TokenChoices({
         );
       }}
     />
+  );
+  return (
+    <Modal
+      visible
+      animationType="slide"
+      onRequestClose={() => {
+        if (detail) setDetail(null);
+        else onClose();
+      }}
+    >
+      {content}
+    </Modal>
   );
 }

@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
+import { Modal } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NativeSwapScreen } from "@/features/swap/NativeSwapScreen";
 import { tokenCatalogService } from "@/services/tokenCatalog";
@@ -39,7 +40,10 @@ beforeEach(() => {
         buyable: true,
       },
     ];
-    return { list: tokens, total: tokens.length, items: 20, page: query.page };
+    const matches = tokens.filter((token) =>
+      `${token.symbol} ${token.name}`.toLowerCase().includes(query.search.toLowerCase()),
+    );
+    return { list: matches, total: matches.length, items: 20, page: query.page };
   });
   jest.spyOn(globalThis, "fetch").mockResolvedValue({
     ok: true,
@@ -71,6 +75,7 @@ beforeEach(() => {
   jest.mocked(getStoredSwapSigner).mockReturnValue({
     getSwapDeposit: jest.fn().mockResolvedValue({ fundingAddress: status.fundingAddress }),
     getSwapStatus: jest.fn().mockResolvedValue(status),
+    getSwapHoldings: jest.fn().mockResolvedValue({ holdings: [], checkedAt: 0, block: "0x1" }),
     startSwap: jest.fn(),
   } as unknown as NonNullable<ReturnType<typeof getStoredSwapSigner>>);
 });
@@ -88,6 +93,51 @@ async function openDetails(symbol: string) {
   // The first details request settles inside act, like a user waiting for the page.
   await act(async () => fireEvent.press(info));
 }
+
+function systemBack() {
+  const modal = screen.UNSAFE_getAllByType(Modal).find((item) => item.props.visible);
+  if (!modal) throw new Error("No visible modal to dismiss.");
+  // Android delivers system Back to Modal.onRequestClose, not BackHandler.
+  fireEvent(modal, "requestClose");
+}
+
+test.each(["buy", "sell"] as const)(
+  "Android Back preserves the %s picker search from details, then dismisses the list",
+  async (mode) => {
+    render(
+      <SafeAreaProvider>
+        <NativeSwapScreen />
+      </SafeAreaProvider>,
+    );
+    await screen.findByText("COIN");
+    const chooser = mode === "buy" ? "Choose receive token" : "Choose token to sell";
+    if (mode === "sell") fireEvent.press(screen.getByRole("button", { name: "Reverse direction" }));
+    fireEvent.press(await screen.findByRole("button", { name: chooser }));
+    await screen.findByRole("button", { name: "GOOGL details" });
+    fireEvent.changeText(screen.getByLabelText("Search tokens"), "Alphabet");
+    await screen.findByRole("radio", { name: "GOOGL · Alphabet Class A" });
+    expect(screen.queryByRole("radio", { name: "COIN · Coinbase" })).toBeNull();
+    await act(async () => fireEvent.press(screen.getByRole("button", { name: "GOOGL details" })));
+    expect(await screen.findByRole("button", { name: "Select GOOGL" })).toBeVisible();
+
+    systemBack();
+
+    expect(screen.getByLabelText("Search tokens")).toHaveDisplayValue("Alphabet");
+    expect(
+      screen.getByRole("radio", { name: "GOOGL · Alphabet Class A", checked: false }),
+    ).toBeVisible();
+    expect(screen.queryByRole("radio", { name: "COIN · Coinbase" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Select GOOGL" })).toBeNull();
+
+    systemBack();
+
+    expect(screen.queryByLabelText("Search tokens")).toBeNull();
+    expect(screen.getByRole("button", { name: chooser, expanded: false })).toBeVisible();
+    fireEvent.press(screen.getByRole("button", { name: chooser }));
+    expect(await screen.findByRole("radio", { name: "COIN · Coinbase" })).toBeVisible();
+    expect(screen.getByLabelText("Search tokens")).toHaveDisplayValue("");
+  },
+);
 
 test("the info button opens a stock's details without selecting it, and Back returns to the list", async () => {
   await openDetails("GOOGL");
