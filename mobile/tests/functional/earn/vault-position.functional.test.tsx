@@ -5,6 +5,7 @@ import { MainnetWalletProvider } from "@/features/wallet/MainnetWalletProvider";
 import { EarnProvider } from "@/features/earn/EarnProvider";
 import { createEarnInvestmentPositionsService } from "@/services/wallet/investmentPositions";
 import { VaultPositionScreen } from "@/features/earn/VaultPositionScreen";
+import { VaultWithdrawalScreen } from "@/features/earn/VaultWithdrawalScreen";
 import { parseRobinhoodPlan } from "@/domain/earn/robinhoodExecution";
 import { hoodIntent, hoodRaw } from "../../support/robinhoodEarn";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
@@ -73,6 +74,7 @@ function operation(status: SponsoredOperation["status"] = "invested"): Sponsored
 }
 function setup(
   options: {
+    overview?: boolean;
     rows?: EarnInvestmentPosition[];
     cycles?: EarnIntent[];
     pending?: boolean;
@@ -209,10 +211,17 @@ function setup(
         robinhood={robinhood}
       >
         <NavigationContainer>
-          <Stack.Navigator>
+          <Stack.Navigator
+            initialRouteName={options.overview ? "VaultPosition" : "VaultWithdrawal"}
+          >
             <Stack.Screen
               name="VaultPosition"
               component={VaultPositionScreen}
+              initialParams={{ profileId: "robinhood-usdg" }}
+            />
+            <Stack.Screen
+              name="VaultWithdrawal"
+              component={VaultWithdrawalScreen}
               initialParams={{ profileId: "robinhood-usdg" }}
             />
           </Stack.Navigator>
@@ -231,6 +240,42 @@ function setup(
     },
   };
 }
+test("opening an invested position does not reopen an older private return or select its cycle", async () => {
+  const h = setup({
+    overview: true,
+    rows: [position(first, 0, "redeemed"), position(second)],
+    savedOperations: [
+      { ...operation("withdrawn"), kind: "hoodRedeemAll" },
+      { ...minimumReturnRow(), from: first.destinations[0].address },
+    ],
+  });
+  expect(await screen.findByText(/3 USDG/)).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Withdraw" })).toBeEnabled();
+  expect(screen.queryByText("Return to private balance")).toBeNull();
+  expect(screen.queryByText("STEP 2 OF 2")).toBeNull();
+  expect(h.select).not.toHaveBeenCalled();
+  expect(h.listPositions).not.toHaveBeenCalled();
+  expect(h.robinhood.list).not.toHaveBeenCalled();
+});
+
+test("withdrawal recovery opens only after Withdraw and Back returns to the invested overview", async () => {
+  const h = setup({
+    overview: true,
+    rows: [position(first, 0, "redeemed"), position(second)],
+    savedOperations: [
+      { ...operation("withdrawn"), kind: "hoodRedeemAll" },
+      { ...minimumReturnRow(), from: first.destinations[0].address },
+    ],
+  });
+  await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
+  expect(await screen.findByText("Return to private balance")).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Verify private balance" })).toBeEnabled();
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+  await userEvent.press(screen.getByRole("button", { name: "Back" }));
+  expect(await screen.findByRole("button", { name: "Withdraw" })).toBeEnabled();
+  expect(screen.queryByText("Return to private balance")).toBeNull();
+});
 test("vault withdrawal selects its saved profile and slot, displays one combined position and never funds", async () => {
   const h = setup();
   expect(await screen.findByText("Steakhouse USDG")).toBeVisible();

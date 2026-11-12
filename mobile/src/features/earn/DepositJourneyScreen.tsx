@@ -379,7 +379,7 @@ export function DepositJourneyScreen({
       ) : invested ? (
         <Button
           label="View investment"
-          onPress={() => navigation.navigate("EarnInvestment", { intentId: row.intentId })}
+          onPress={() => navigation.navigate("VaultPosition", { profileId })}
         />
       ) : paused &&
         !["recoveryRequired", "unsupportedCapability"].includes(row.pauseReason ?? "") ? (

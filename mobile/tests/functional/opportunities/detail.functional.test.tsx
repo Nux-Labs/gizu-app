@@ -188,7 +188,7 @@ test("a deposited vault shows its aggregate amount and routes Withdraw to that v
                 component={OpportunityDetailScreen}
                 initialParams={{ id: "op-1" }}
               />
-              <Stack.Screen name="VaultPosition">
+              <Stack.Screen name="VaultWithdrawal">
                 {({ route }) => (
                   <Typography>{`Withdrawal for ${route.params.profileId}`}</Typography>
                 )}

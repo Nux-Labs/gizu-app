@@ -13,6 +13,14 @@ preserve earlier implementation stages.
 
 **Earn ends at an invested vault position.** The initial fee calculation simulates a future full redemption in a disposable server-side fork only to estimate the withdrawal reserve. It never withdraws the live position. The user must click Withdraw later, review fresh fees, and authorize redemption separately. Aurora return quotes and operations follow that requested exit; their future executable costs are excluded from the initial deposit estimate.
 
+The position screen is an overview. Opening it or selecting **View investment**
+after a guided deposit does not select an old Earn cycle or mount withdrawal
+recovery. **Withdraw** opens the separate protected withdrawal route; an explicit
+Withdraw action in vault details goes directly there. That route retains older
+unfinished return activity and its recovery checks. Back returns to the screen
+that requested withdrawal. An old **Return to private balance** step must never
+be presented as the next step required to complete a new deposit.
+
 New guided Android deposits display the same **observed private USDC + public
 USDC** owned by the shared wallet portfolio, with a breakdown of both. Private
 USDC means the Monad-origin USDC asset in the native confidential catalogue;
