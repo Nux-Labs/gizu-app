@@ -296,6 +296,8 @@ internal class EarnSponsoredEngine(
           )
         }
       }
+      retireExpiredUnsentExits(journal, bundler, stateReader, p)
+      retireSettledRedeemBeforeReturn(journal, bundler, stateReader, p)
       journal.create(p, op).also {
         if (p.optInt("fundingBatchSize", 0) == 1)
           reservations?.commitBatch(p.getString("fundingBatchId"))
@@ -653,6 +655,79 @@ internal fun rpcEarnAuthorization(a: NativeSignedEarnAuthorization): JSONObject 
     .put("r", a.r)
     .put("s", a.s)
     .put("yParity", "0x" + a.yParity.toString(16).padStart(2, '0'))
+
+internal fun redeemedUsdg(op: JSONObject): Boolean {
+  val amount = op.optString("redeemedUsdgAtoms")
+  return amount.isNotEmpty() && amount.toBigInteger().signum() > 0
+}
+
+/** A delivered vault receipt releases only an expired unsent redeem so the return can be signed. */
+internal suspend fun retireSettledRedeemBeforeReturn(
+  journal: EarnSponsoredJournal,
+  bundler: TransferRpc,
+  stateReader: suspend (JSONObject) -> NativeSponsoredState,
+  incoming: JSONObject,
+  nowSeconds: Long = System.currentTimeMillis() / 1000,
+) {
+  if (incoming.getString("kind") != "hoodTokenReturn") return
+  val owner = incoming.getString("expectedFrom")
+  val settled =
+    journal.all().any { op ->
+      val proposal = op.getJSONObject("proposal")
+      op.getString("status") == "finalized" &&
+        proposal.getString("kind") == "hoodRedeemAll" &&
+        proposal.getString("expectedFrom").equals(owner, true) &&
+        redeemedUsdg(op)
+    }
+  if (!settled) return
+  retireExpiredUnsentExits(
+    journal,
+    bundler,
+    stateReader,
+    JSONObject(incoming.toString()).put("kind", "hoodRedeemAll"),
+    nowSeconds,
+  )
+}
+
+internal suspend fun retireExpiredUnsentExits(
+  journal: EarnSponsoredJournal,
+  bundler: TransferRpc,
+  stateReader: suspend (JSONObject) -> NativeSponsoredState,
+  incoming: JSONObject,
+  nowSeconds: Long = System.currentTimeMillis() / 1000,
+) {
+  val kind = incoming.getString("kind")
+  if (kind !in setOf("hoodRedeemAll", "hoodTokenReturn")) return
+  val owner = incoming.getString("expectedFrom")
+  val priors =
+    journal.all().filter { op ->
+      val proposal = op.getJSONObject("proposal")
+      proposal.getString("kind") == kind &&
+        proposal.getString("expectedFrom").equals(owner, true) &&
+        op.getString("status") != "expired" &&
+        op.getString("status") !in terminalSteps &&
+        op.sponsoredSpendSaved()
+    }
+  for (prior in priors) {
+    val proposal = prior.getJSONObject("proposal")
+    check(prior.getString("status") == "signed" && !prior.optBoolean("conflict")) {
+      "Saved sponsored operation must be reconciled before replacing it"
+    }
+    check(proposal.getLong("deadline") <= nowSeconds) { "Saved sponsored deadline is still valid" }
+    val known =
+      bundler.call("eth_getUserOperationByHash", JSONArray().put(prior.getString("userOperationHash")))
+    check(known === JSONObject.NULL) { "Saved sponsored operation is already with the bundler" }
+    val state = stateReader(proposal)
+    val binding = prior.getJSONObject("stateBinding")
+    check(
+      quantity(state.entryPointNonce) == quantity(proposal.getString("nonce")) &&
+        state.transactionNonce.toString() == binding.getString("transactionNonce")
+    ) {
+      "Saved operation native state changed"
+    }
+    journal.retireExpiredUnsent(prior.getString("operationId"), prior.getInt("revision"), nowSeconds)
+  }
+}
 
 internal fun checkSponsoredRetry(op: JSONObject, state: NativeSponsoredState) {
   val saved = op.getJSONObject("stateBinding")

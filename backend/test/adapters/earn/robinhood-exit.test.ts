@@ -14,6 +14,7 @@ import {
   RobinhoodReturnPlanner,
   robinhoodReturnProbeRecipient,
 } from "../../../src/adapters/earn/robinhood-exit-planner.ts";
+import { InfrastructureError } from "../../../src/domain/errors/infrastructure-error.ts";
 import type { RobinhoodExitProviders } from "../../../src/adapters/earn/robinhood-exit-planner.ts";
 import { ROBINHOOD_PROFILE } from "../../../src/adapters/earn/robinhood-vault.ts";
 import type { RobinhoodState } from "../../../src/adapters/earn/robinhood-deposit-planner.ts";
@@ -172,6 +173,34 @@ test("separate withdrawal previews every current share and real USDG fee reserve
   assert.equal(p.operation.signature, undefined);
   assert.equal(p.operation.eip7702Auth, undefined);
   assert.ok(Object.isFrozen(p));
+});
+test("an empty vault and a changed withdrawal fee stay distinct from a generic planner failure", async () => {
+  const empty = setup({}, { ...state, shares: 0n });
+  await assert.rejects(
+    () =>
+      new RobinhoodWithdrawalPlanner({ rpcUrl: "test" }, empty.providers, () => now).plan(
+        request,
+      ),
+    (error: unknown) =>
+      error instanceof InfrastructureError && error.code === "EARN_WITHDRAWAL_SHARES_ABSENT",
+  );
+  let prepares = 0;
+  const f = setup();
+  const rising = setup({
+    prepare: async (calls, fees) => {
+      const prepared = await f.providers.prepare(calls, fees);
+      if (++prepares === 2) prepared.feeCap = 20000n;
+      return prepared;
+    },
+  });
+  await assert.rejects(
+    () =>
+      new RobinhoodWithdrawalPlanner({ rpcUrl: "test" }, rising.providers, () => now).plan(
+        request,
+      ),
+    (error: unknown) =>
+      error instanceof InfrastructureError && error.code === "EARN_WITHDRAWAL_FEE_CHANGED",
+  );
 });
 test("withdrawal insufficient current reserve, zero shares and unresolved native assets reject", async () => {
   for (const changed of [

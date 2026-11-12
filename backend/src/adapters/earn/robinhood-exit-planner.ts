@@ -471,7 +471,12 @@ export class RobinhoodWithdrawalPlanner {
         owner = getAddress(request.owner),
         s = await providers.readState(owner);
       stateValid(s, owner, this.now());
-      if (s.shares <= 0n) throw new Error("No current shares");
+      if (s.shares <= 0n)
+        throw new InfrastructureError(
+          409,
+          "EARN_WITHDRAWAL_SHARES_ABSENT",
+          "The vault has no shares left to withdraw. No transaction was sent.",
+        );
       const fees = buffered(await providers.market()),
         calls = await providers.withdrawalCalls(s),
         initial = await providers.prepare(calls, fees);
@@ -486,7 +491,11 @@ export class RobinhoodWithdrawalPlanner {
       const final = await providers.prepare(calls, fees);
       preparedValid(final, s, fees, this.now());
       if (final.feeCap > budget)
-        throw new Error("Exact withdrawal fee exceeds budget");
+        throw new InfrastructureError(
+          409,
+          "EARN_WITHDRAWAL_FEE_CHANGED",
+          "The withdrawal network fee changed. Refresh before authorizing.",
+        );
       const simulation = await providers.simulate(
         s,
         robinhoodPreparedCalls(final),
@@ -500,7 +509,16 @@ export class RobinhoodWithdrawalPlanner {
         simulation.rows.length > 4
       )
         throw new Error("Full withdrawal simulation failed");
-      await providers.assertFresh(s, fees);
+      try {
+        await providers.assertFresh(s, fees);
+      } catch (error) {
+        if (error instanceof InfrastructureError) throw error;
+        throw new InfrastructureError(
+          409,
+          "EARN_WITHDRAWAL_REFERENCE_STALE",
+          "Vault shares, the USDG balance, or the network fee changed. Refresh before authorizing. No transaction was sent.",
+        );
+      }
       const plan: RobinhoodWithdrawalPlan = {
         ...base(request, s, final, fees, budget, this.now()),
         kind: "hoodRedeemAll",

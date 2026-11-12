@@ -292,6 +292,7 @@ class EarnSponsoredReconcilerTest {
       )
       val result = journal.public(journal.get("op"))
       assertEquals(if (rpc.redeem) "withdrawn" else "awaitingSettlement", result["status"])
+      if (rpc.redeem) assertEquals("900", result["redeemedUsdgAtoms"])
       assertFalse(result["blocked"] as Boolean)
       assertFalse(result.containsKey("creditedAtoms"))
       assertEquals(transaction, result["transactionHash"])
@@ -335,6 +336,20 @@ class EarnSponsoredReconcilerTest {
       assertTrue(journal.get("op").sponsoredBlocked())
       assertNotEquals("finalized", journal.get("op").getString("status"))
     }
+  }
+
+  @Test
+  fun expiredExitIsNotRestoredToASendableSignature() = runBlocking {
+    val j = setup("hoodRedeemAll")
+    j.update("op", j.get("op").getInt("revision")) { it.put("status", "expired") }
+    val rpc = Rpc()
+    rpc.redeem = true
+    reconcileEarnSponsoredOperations(j, rpc, rpc, ::topic, { state() })
+    val op = j.get("op")
+    assertEquals("expired", op.getString("status"))
+    assertTrue(op.has("signedUserOperation"))
+    assertFalse(op.sponsoredBlocked())
+    assertEquals(false, j.public(op)["canResume"])
   }
 
   @Test

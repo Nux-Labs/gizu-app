@@ -59,6 +59,7 @@ export type SponsoredRequest = {
   userOperation: Record<string, string>;
 };
 export type SponsoredOperation = {
+  investmentSlot?: number;
   fundingBatchId?: string;
   fundingBatchSize?: number;
   cycleIndex?: number;
@@ -80,6 +81,7 @@ export type SponsoredOperation = {
     | "authorizationSaved"
     | "unknown"
     | "signed"
+    | "expired"
     | "pending"
     | "cancelled"
     | "reverted"
@@ -92,12 +94,14 @@ export type SponsoredOperation = {
     | "minimumReceived"
     | "credited";
   userOperationHash?: string;
+  signatureExpired?: boolean;
   transactionHash?: string;
   actualTokenFeeAtoms?: string;
   creditedAtoms?: string;
   verifiedMinimumAtoms?: string;
   minimumReturnReceipt?: MinimumReturnReceipt;
   residualShares?: string;
+  redeemedUsdgAtoms?: string;
 };
 export type SourceFundingPlan = {
   fundingBatchId?: string;
@@ -359,6 +363,7 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
         "authorizationSaved",
         "unknown",
         "signed",
+        "expired",
         "pending",
         "cancelled",
         "reverted",
@@ -413,6 +418,10 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
         throw new Error("Invalid preparation cancellation state.");
       optional.canCancelPreparation = r.canCancelPreparation;
     }
+    if (r.signatureExpired !== undefined) {
+      if (r.signatureExpired !== true) throw new Error("Invalid saved signature expiry.");
+      optional.signatureExpired = true;
+    }
     if (r.preparationCancellationDisclosure !== undefined) {
       if (
         typeof r.preparationCancellationDisclosure !== "string" ||
@@ -430,6 +439,13 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
     for (const key of ["actualTokenFeeAtoms", "creditedAtoms", "residualShares"] as const) {
       if (r[key] !== undefined) optional[key] = earnAtoms(r[key]);
     }
+    if (r.redeemedUsdgAtoms !== undefined) {
+      const redeemed = earnAtoms(r.redeemedUsdgAtoms);
+      if (redeemed === "0") throw new Error("Invalid redeemed USDG amount.");
+      optional.redeemedUsdgAtoms = redeemed;
+    }
+    if (r.kind === "hoodRedeemAll" && r.status === "withdrawn" && !optional.redeemedUsdgAtoms)
+      throw new Error("Missing redeemed USDG receipt.");
     if (
       r.status === "credited" &&
       (BigInt(optional.creditedAtoms ?? "0") === 0n || !optional.transactionHash)
@@ -439,6 +455,9 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
       operationId: r.operationId,
       walletId: intent.walletId,
       revision: r.revision,
+      ...(!source && r.investmentSlot !== undefined
+        ? { investmentSlot: r.investmentSlot as number }
+        : {}),
       kind: kind as SponsoredOperation["kind"],
       chainId,
       from,

@@ -31,6 +31,14 @@ before checking current balances/prices, keeping later external funds or residua
 in an old investment wallet reachable. Failed checks show status unavailability;
 the position overview never invokes this flow. No provider history API is used.
 
+Parsed native operations retain their validated `investmentSlot` across journal
+reads, UI state and later resume/cancel/settlement validation. Robinhood sponsored
+operations, Ethereum vault/liquidity operations and private payouts use the same
+strict slot binding. Dropping this field after the first parse caused valid saved
+operations to fail subsequent checks with “Saved operation belongs to a different
+investment wallet.” The fix preserves that identity; it does not infer a missing
+slot, relax the binding check, change native journals or authorize a transaction.
+
 The position screen is an overview. Opening it or selecting **View investment**
 after a guided deposit does not select an old Earn cycle or mount withdrawal
 recovery. **Withdraw** opens the separate protected withdrawal route; an explicit

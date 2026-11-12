@@ -10,6 +10,8 @@ internal fun JSONObject.sponsoredSpendSaved() =
 
 internal fun JSONObject.sponsoredBlocked(): Boolean =
   when {
+    // An expired exit keeps its signed bytes, but they can no longer block a replacement.
+    getString("status") == "expired" -> false
     sponsoredSpendSaved() -> getString("status") !in terminalSteps
     optBoolean("signingPending") -> true
     else -> !optBoolean("cancelled") // Discarded preparation never submits its retained delegation.
@@ -292,6 +294,22 @@ internal class EarnSponsoredJournal(
         .put("status", "unknown")
     }
 
+  fun retireExpiredUnsent(id: String, revision: Int, nowSeconds: Long): JSONObject =
+    update(id, revision) { op ->
+      val proposal = op.getJSONObject("proposal")
+      check(
+        op.getString("status") == "signed" &&
+          !op.optBoolean("conflict") &&
+          op.has("signedUserOperation") &&
+          op.has("userOperationHash") &&
+          proposal.getString("kind") in setOf("hoodRedeemAll", "hoodTokenReturn") &&
+          proposal.getLong("deadline") <= nowSeconds
+      ) {
+        "Only an expired unsent exit signature can be replaced"
+      }
+      op.put("status", "expired")
+    }
+
   fun cancel(id: String, revision: Int) =
     synchronized(signingLock) {
       update(id, revision) {
@@ -343,7 +361,9 @@ internal class EarnSponsoredJournal(
           when (p.getString("kind")) {
             "hoodDeposit" -> "invested"
             "hoodRedeemAll" ->
-              if (op.optString("residualShares", "0") == "0") "withdrawn" else "residualShares"
+              if (op.optString("residualShares", "0") != "0") "residualShares"
+              else if (redeemedUsdg(op)) "withdrawn"
+              else "residualShares"
             "sourceFunding",
             "hoodTokenReturn" ->
               if (minimum != null) "minimumReceived"
@@ -360,6 +380,7 @@ internal class EarnSponsoredJournal(
         put("verifiedMinimumAtoms", minimum.getString("verifiedMinimumAtoms"))
       }
       if (op.has("residualShares")) put("residualShares", op.getString("residualShares"))
+      if (redeemedUsdg(op)) put("redeemedUsdgAtoms", op.getString("redeemedUsdgAtoms"))
       if (status == "finalized" && op.has("settlement")) {
         val settlement = op.getJSONObject("settlement")
         put("settlement", sponsoredSettlementPublic(settlement))
@@ -367,6 +388,14 @@ internal class EarnSponsoredJournal(
           put("creditedAtoms", settlement.getString("creditedAtoms"))
       }
       if (op.has("userOperationHash")) put("userOperationHash", op.getString("userOperationHash"))
+      if (
+        status == "signed" &&
+          !op.optBoolean("conflict") &&
+          op.has("signedUserOperation") &&
+          p.getString("kind") in setOf("hoodRedeemAll", "hoodTokenReturn") &&
+          p.optLong("deadline") <= System.currentTimeMillis() / 1000
+      )
+        put("signatureExpired", true)
       if (op.has("transactionHash")) put("transactionHash", op.getString("transactionHash"))
       if (status in terminalSteps && op.has("actualTokenFeeAtoms"))
         put("actualTokenFeeAtoms", op.getString("actualTokenFeeAtoms"))

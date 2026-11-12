@@ -16,9 +16,12 @@ import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
 import { getStoredEarnWithdrawalSigner } from "@/services/wallet/nativeBridge";
 import { exitSnapshot, returnRow, minimumReturnRow } from "../../support/exitCompletion";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createEarnRobinhoodService } from "@/services/earn/robinhoodExecution";
+import type { EarnRobinhoodService } from "@/domain/earn/robinhoodExecution";
 jest.mock("@/services/wallet/nativeBridge", () => ({
   ...jest.requireActual("@/services/wallet/nativeBridge"),
   getStoredEarnWithdrawalSigner: jest.fn(),
+  getSignerCapabilities: jest.fn().mockResolvedValue({ earnSponsoredExecution: true }),
 }));
 beforeEach(async () => {
   jest.mocked(getStoredEarnWithdrawalSigner).mockReset().mockReturnValue(null);
@@ -87,6 +90,7 @@ function setup(
     residualAtoms?: string;
     privateOnly?: boolean;
     savedOperations?: SponsoredOperation[];
+    robinhoodService?: EarnRobinhoodService;
   } = {},
 ) {
   let rows = options.rows ?? [position(first), position(first, 1), position(second)];
@@ -227,7 +231,7 @@ function setup(
         investmentPositions={createEarnInvestmentPositionsService(() => ({
           listEarnInvestmentPositions: listPositions,
         }))}
-        robinhood={robinhood}
+        robinhood={options.robinhoodService ?? robinhood}
       >
         <NavigationContainer>
           <Stack.Navigator
@@ -259,6 +263,53 @@ function setup(
     },
   };
 }
+test("a distributed saved withdrawal can be replaced with a fresh review through the real journal adapter", async () => {
+  const saved = {
+    ...operation(),
+    from: second.destinations[1]!.address,
+    kind: "hoodRedeemAll",
+    investmentSlot: 1,
+    cycleIndex: 1,
+    status: "authorizationSaved",
+    blocked: true,
+    canResume: true,
+    canCancelPreparation: true,
+  };
+  const native = {
+    executeEarnSponsored: jest.fn(),
+    listEarnSponsoredOperations: jest.fn().mockResolvedValue([saved]),
+    cancelEarnSponsoredOperation: jest.fn().mockImplementation(async () => ({
+      ...saved,
+      status: "cancelled",
+      blocked: false,
+      canResume: false,
+    })),
+    resumeEarnSponsoredOperation: jest.fn(),
+    readEarnSponsoredSettlement: jest.fn(),
+    prepareEarnSourceQuote: jest.fn(),
+    lock: jest.fn(),
+  };
+  jest.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    return {
+      ok: true,
+      json: async () => hoodRaw("hoodRedeemAll", Date.now(), body.operationId, body.revision),
+    } as Response;
+  });
+  setup({
+    rows: [position(second, 1)],
+    robinhoodService: createEarnRobinhoodService("https://backend.test", () => native),
+  });
+  await userEvent.press(await screen.findByRole("button", { name: "Start a fresh review" }));
+  expect(await screen.findByRole("button", { name: "Confirm withdrawal" })).toBeEnabled();
+  expect(native.cancelEarnSponsoredOperation).toHaveBeenCalledWith(
+    hoodIntent.walletId,
+    saved.operationId,
+    3,
+  );
+  expect(native.executeEarnSponsored).not.toHaveBeenCalled();
+  expect(screen.queryByText(/different investment wallet/)).toBeNull();
+});
 test("opening an invested position does not reopen an older private return or select its cycle", async () => {
   const h = setup({
     overview: true,
@@ -713,21 +764,29 @@ test("full withdrawal keeps review and native authorization separate for the exa
   raw.operation.sender = first.destinations[0].address;
   const plan = parseRobinhoodPlan(raw, first, "hoodRedeemAll", "withdraw_saved", 1, now);
   h.robinhood.plan.mockResolvedValueOnce(plan);
-  h.robinhood.execute.mockResolvedValueOnce({ ...operation("withdrawn"), kind: "hoodRedeemAll" });
+  const returnPlan = privateReturnPlan();
+  h.robinhood.plan.mockResolvedValueOnce(returnPlan);
+  h.robinhood.execute.mockResolvedValueOnce({
+    ...operation("withdrawn"),
+    kind: "hoodRedeemAll",
+    redeemedUsdgAtoms: "900000",
+  });
   await userEvent.press(await screen.findByRole("button", { name: "Review withdrawal" }));
   expect(await screen.findByRole("button", { name: "Confirm withdrawal" })).toBeVisible();
   expect(h.robinhood.execute).not.toHaveBeenCalled();
   await userEvent.press(screen.getByRole("button", { name: "Confirm withdrawal" }));
-  expect(
-    await screen.findByText(
-      "Your funds have left the vault. Return them to your private USDC balance next.",
-    ),
-  ).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Confirm private return" })).toBeVisible();
   expect(h.robinhood.execute).toHaveBeenCalledWith(
     expect.objectContaining({ intentId: first.intentId, investmentSlot: 0 }),
     plan,
   );
-  expect(screen.getByRole("button", { name: "Review private return" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Review private return" })).toBeNull();
+  expect(h.robinhood.plan).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "hoodTokenReturn",
+    expect.anything(),
+  );
+  expect(h.robinhood.execute).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
   expect(screen.queryByText(/Wallet [0-9]/)).toBeNull();
   expect(h.prepare).not.toHaveBeenCalled();
@@ -871,6 +930,15 @@ function unfinishedReview(status: SponsoredOperation["status"] = "planned"): Spo
     canCancelPreparation: status === "planned" || status === "authorizationSaved",
   };
 }
+function privateReturnPlan() {
+  const now = Date.now();
+  const raw = hoodRaw("hoodTokenReturn", now, "private_return");
+  raw.owner = first.destinations[0].address;
+  raw.operation.sender = first.destinations[0].address;
+  if (!("route" in raw)) throw new Error("Expected private return fixture.");
+  raw.route.refundOwner = first.destinations[0].address;
+  return parseRobinhoodPlan(raw, first, "hoodTokenReturn", "private_return", 1, now);
+}
 function withdrawalPlan() {
   const now = Date.now();
   const raw = hoodRaw("hoodRedeemAll", now, "fresh_withdrawal");
@@ -925,12 +993,55 @@ test("a signed withdrawal can only continue its saved transaction, never reset o
   const h = setup({ savedOperations: [operation(), saved] });
   h.robinhood.resume.mockResolvedValue({ ...saved, status: "pending", canResume: false });
   await userEvent.press(await screen.findByRole("button", { name: "Continue saved transaction" }));
-  expect(await screen.findByText("Checking your saved transaction")).toBeVisible();
+  expect(
+    await screen.findByText(
+      "Your vault withdrawal is confirming. The private return opens after the USDG arrives.",
+    ),
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Start a fresh review" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Review withdrawal" })).toBeNull();
   expect(h.robinhood.cancelUnsigned).not.toHaveBeenCalled();
   expect(h.robinhood.plan).not.toHaveBeenCalled();
   expect(h.robinhood.resume).toHaveBeenCalledTimes(1);
+});
+test("an expired saved signature asks for a new signature on the first continue", async () => {
+  const saved = {
+    ...unfinishedReview("signed"),
+    userOperationHash: "0x" + "a".repeat(64),
+    signatureExpired: true,
+  };
+  const h = setup({ savedOperations: [operation(), saved] });
+  h.robinhood.plan.mockResolvedValue(withdrawalPlan());
+  expect(
+    await screen.findByText("The saved sponsored deadline expired. Please re-sign the transaction"),
+  ).toBeVisible();
+  await userEvent.press(screen.getByRole("button", { name: "Continue saved transaction" }));
+  expect(await screen.findByRole("button", { name: "Confirm withdrawal" })).toBeEnabled();
+  expect(h.robinhood.resume).not.toHaveBeenCalled();
+  expect(h.robinhood.plan).toHaveBeenCalledWith(
+    expect.anything(),
+    "hoodRedeemAll",
+    expect.anything(),
+  );
+  expect(h.robinhood.cancelUnsigned).not.toHaveBeenCalled();
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+});
+test("another saved-signature failure keeps the same transaction ready to send", async () => {
+  const saved = { ...unfinishedReview("signed"), userOperationHash: "0x" + "a".repeat(64) };
+  const h = setup({ savedOperations: [operation(), saved] });
+  h.robinhood.resume.mockRejectedValue(new Error("The funding provider is unavailable."));
+  await userEvent.press(await screen.findByRole("button", { name: "Continue saved transaction" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The funding provider is unavailable.",
+  );
+  await userEvent.press(screen.getByRole("button", { name: "Continue saved transaction" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The funding provider is unavailable.",
+  );
+  expect(h.robinhood.resume).toHaveBeenCalledTimes(2);
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
+  expect(h.robinhood.cancelUnsigned).not.toHaveBeenCalled();
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
 });
 
 test("a failed transaction status check explains the error and preserves the saved withdrawal", async () => {
@@ -1009,32 +1120,59 @@ test("fresh-review retries preserve a successful cancellation when planning is u
   expect(h.robinhood.execute).not.toHaveBeenCalled();
 });
 
-test("the guided withdrawal needs separate approvals and verifies private credit before completion", async () => {
+test("a completed vault receipt opens the private return instead of asking for another vault signature", async () => {
+  const withdrawn = {
+    ...operation("withdrawn"),
+    operationId: "redeem_1",
+    kind: "hoodRedeemAll" as const,
+    redeemedUsdgAtoms: "900000",
+    blocked: false,
+  };
+  const saved = {
+    ...unfinishedReview("signed"),
+    userOperationHash: "0x" + "a".repeat(64),
+    signatureExpired: true,
+  };
+  const h = setup({ savedOperations: [operation(), withdrawn, saved] });
+  expect(
+    await screen.findByText(
+      "Your funds have left the vault. Return them to your private USDC balance next.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText(/Please re-sign/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Review private return" })).toBeEnabled();
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
+  expect(h.robinhood.resume).not.toHaveBeenCalled();
+});
+test("the guided withdrawal signs the return after the vault receipt and verifies private credit before completion", async () => {
   const h = setup();
-  const withdrawn = { ...operation("withdrawn"), operationId: "redeem_1", kind: "hoodRedeemAll" };
+  const withdrawn = {
+    ...operation("withdrawn"),
+    operationId: "redeem_1",
+    kind: "hoodRedeemAll" as const,
+    redeemedUsdgAtoms: "900000",
+  };
   const returning = {
     ...returnRow(),
     from: first.destinations[0].address,
-    status: "awaitingSettlement",
+    status: "awaitingSettlement" as const,
   };
-  h.robinhood.plan.mockResolvedValueOnce(withdrawalPlan());
+  const plan = privateReturnPlan();
+  if (!plan.route) throw new Error("Expected verified return route.");
+  plan.route.providerFeeBps = 45;
+  h.robinhood.plan.mockResolvedValueOnce(withdrawalPlan()).mockResolvedValueOnce(plan);
   h.robinhood.execute.mockResolvedValueOnce(withdrawn).mockResolvedValueOnce(returning);
   h.robinhood.reconcileCredit.mockResolvedValue({ ...returning, status: "credited" });
   await userEvent.press(await screen.findByRole("button", { name: "Review withdrawal" }));
   await userEvent.press(await screen.findByRole("button", { name: "Confirm withdrawal" }));
-  expect(await screen.findByRole("button", { name: "Review private return" })).toBeEnabled();
+  expect(await screen.findByRole("button", { name: "Confirm private return" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Review private return" })).toBeNull();
   expect(h.robinhood.execute).toHaveBeenCalledTimes(1);
-  const now = Date.now();
-  const raw = hoodRaw("hoodTokenReturn", now, "private_return");
-  raw.owner = first.destinations[0].address;
-  raw.operation.sender = first.destinations[0].address;
-  if (!("route" in raw)) throw new Error("Expected private return fixture.");
-  raw.route.refundOwner = first.destinations[0].address;
-  const plan = parseRobinhoodPlan(raw, first, "hoodTokenReturn", "private_return", 1, now);
-  if (!plan.route) throw new Error("Expected verified return route.");
-  plan.route.providerFeeBps = 45;
-  h.robinhood.plan.mockResolvedValueOnce(plan);
-  await userEvent.press(screen.getByRole("button", { name: "Review private return" }));
+  expect(h.robinhood.plan).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "hoodTokenReturn",
+    expect.anything(),
+  );
   expect(await screen.findByText("0.98 USDC")).toBeVisible();
   expect(
     screen.getByText(

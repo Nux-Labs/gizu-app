@@ -10,10 +10,15 @@ import type {
   RobinhoodKind,
   RobinhoodPlan,
 } from "@/domain/earn/robinhoodExecution";
+import { isVaultWithdrawalPlanError } from "@/services/earn/robinhoodExecution";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
 import { formatUsdc } from "@/domain/wallet/amounts";
 import { useEarnJournal } from "./useEarnJournal";
 import { ExitCompletionPanel } from "./ExitCompletionPanel";
+
+const expiredSponsoredSignature = "Saved sponsored deadline expired";
+const resignExpiredSignature =
+  "The saved sponsored deadline expired. Please re-sign the transaction";
 
 /** Guided vault exit. Native journals remain authoritative for every retry. */
 export function RobinhoodWithdrawalPanel({
@@ -42,8 +47,8 @@ export function RobinhoodWithdrawalPanel({
   const awaitingCredit =
     returned && ["returnSubmitted", "awaitingSettlement"].includes(returned.status);
   const returnConfirmed = returned && ["credited", "minimumReceived"].includes(returned.status);
-  // Never offer a new proposal over signed or uncertain spend. Cancellation is
-  // checked again by native code, including authorizations and signing in flight.
+  // A still-valid signature is resumed. Only an already expired exit signature can
+  // open a new review, and native code must prove it was never submitted.
   const fresh =
     saved &&
     blocking.length === 1 &&
@@ -52,6 +57,28 @@ export function RobinhoodWithdrawalPanel({
     (saved.canCancelPreparation ?? saved.status === "planned") &&
     (saved.kind === "hoodRedeemAll" || saved.kind === "hoodTokenReturn");
   const disabled = v.busy || v.loading || !v.available || intent.status !== "prepared";
+  const settledRedeem = v.rows.some(
+    (row) =>
+      row.kind === "hoodRedeemAll" &&
+      row.status === "withdrawn" &&
+      row.redeemedUsdgAtoms !== undefined &&
+      row.redeemedUsdgAtoms !== "0",
+  );
+  const savedRedeemAfterSettlement = settledRedeem && saved?.kind === "hoodRedeemAll";
+  const expiredSettledRedeem =
+    savedRedeemAfterSettlement &&
+    (saved?.signatureExpired === true || v.message === expiredSponsoredSignature);
+  const replaceExpiredSignature =
+    !savedRedeemAfterSettlement &&
+    (v.message === "" || v.message === expiredSponsoredSignature) &&
+    (saved?.signatureExpired === true || v.message === expiredSponsoredSignature) &&
+    (saved?.kind === "hoodRedeemAll" || saved?.kind === "hoodTokenReturn");
+  const replacingExpiredSignature =
+    plan !== null &&
+    blocking.length === 1 &&
+    blocking[0]?.status === "signed" &&
+    blocking[0]?.kind === plan.kind &&
+    (plan.kind === "hoodRedeemAll" || plan.kind === "hoodTokenReturn");
   const withdrawn = position?.status === "withdrawn";
   const redeemable = position?.status === "invested" || position?.status === "residualShares";
 
@@ -90,16 +117,28 @@ export function RobinhoodWithdrawalPanel({
     const reviewed = plan;
     void v.perform(
       async (signal) => {
+        let row: SponsoredOperation;
         try {
-          return await service.execute(intent, reviewed);
+          row = await service.execute(intent, reviewed);
         } catch (error) {
           if (!signal.aborted) setPlan(null);
           throw error;
         }
+        if (
+          reviewed.kind === "hoodRedeemAll" &&
+          row.status === "withdrawn" &&
+          row.redeemedUsdgAtoms !== undefined &&
+          row.redeemedUsdgAtoms !== "0"
+        ) {
+          setPlan(null);
+          return { row, next: await service.plan(intent, "hoodTokenReturn", signal) };
+        }
+        return { row, next: null };
       },
-      (row) => {
-        setPlan(null);
+      ({ row, next }) => {
         v.update(row);
+        setPlan(next);
+        setExpired(next !== null && next.expiresAtMs <= Date.now());
       },
     );
   };
@@ -132,7 +171,15 @@ export function RobinhoodWithdrawalPanel({
                       : awaitingCredit
                         ? "Your return is on its way. We will confirm it before marking this withdrawal complete."
                         : saved
-                          ? "Checking your saved transaction"
+                          ? saved.kind === "hoodRedeemAll" && saved.status === "pending"
+                            ? "Your vault withdrawal is confirming. The private return opens after the USDG arrives."
+                            : savedRedeemAfterSettlement
+                              ? expiredSettledRedeem
+                                ? "Your funds have left the vault. Return them to your private USDC balance next."
+                                : "A vault signature is still saved. It is checked before the private return."
+                              : replaceExpiredSignature
+                                ? resignExpiredSignature
+                                : "Checking your saved transaction"
                           : returned?.status === "minimumReceived"
                             ? "Your minimum return is verified. Check the final balance to finish."
                             : returned?.status === "credited"
@@ -156,11 +203,13 @@ export function RobinhoodWithdrawalPanel({
           </>
         )}
 
-        {v.message !== "" && (
-          <Typography accessibilityRole="alert" variant="negative">
-            {v.message}
-          </Typography>
-        )}
+        {v.message !== "" &&
+          !replaceExpiredSignature &&
+          !(settledRedeem && isVaultWithdrawalPlanError(v.message)) && (
+            <Typography accessibilityRole="alert" variant="negative">
+              {v.message}
+            </Typography>
+          )}
         {fresh && !plan && saved.preparationCancellationDisclosure && (
           <Typography variant="caption">
             Any wallet setup permission you already approved stays saved. Starting again does not
@@ -206,7 +255,10 @@ export function RobinhoodWithdrawalPanel({
                     ? "Confirm withdrawal"
                     : "Confirm private return"
               }
-              disabled={disabled || blocking.length > 0}
+              disabled={
+                disabled ||
+                (blocking.length > 0 && !replacingExpiredSignature && !expiredSettledRedeem)
+              }
               loading={v.busy}
               onPress={() => (expired ? review(plan.kind) : execute())}
             />
@@ -231,18 +283,26 @@ export function RobinhoodWithdrawalPanel({
               loading={v.busy}
               onPress={() => review(saved.kind as RobinhoodKind, saved)}
             />
-          ) : saved ? (
+          ) : saved && !expiredSettledRedeem ? (
             <Button
-              label={saved.canResume ? "Continue saved transaction" : "Check withdrawal status"}
+              label={
+                saved.canResume && !savedRedeemAfterSettlement
+                  ? "Continue saved transaction"
+                  : "Check withdrawal status"
+              }
               disabled={disabled}
               loading={v.busy}
               onPress={() =>
-                saved.canResume
-                  ? void v.perform(() => service.resume(intent, saved), v.update)
-                  : void v.refresh()
+                savedRedeemAfterSettlement
+                  ? void v.refresh()
+                  : replaceExpiredSignature
+                    ? review(saved.kind as RobinhoodKind)
+                    : saved.canResume
+                      ? void v.perform(() => service.resume(intent, saved), v.update)
+                      : void v.refresh()
               }
             />
-          ) : returnConfirmed ? null : redeemable ? (
+          ) : returnConfirmed ? null : redeemable && !settledRedeem ? (
             <Button
               label="Review withdrawal"
               disabled={disabled}
