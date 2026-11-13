@@ -167,21 +167,37 @@ test("USDC withdrawal never calls the testnet transfer signer", async () => {
   expect(transfers.history).not.toHaveBeenCalled();
 });
 
-test("failed native portfolio refresh preserves the prior balance until a fresh snapshot", async () => {
+test("a failed refresh keeps the prior balance with a quiet refresh instead of an error", async () => {
   const { portfolio } = setup();
   await open();
   await screen.findByLabelText("19.990574 USD");
   portfolio.getMainnetPortfolio.mockRejectedValueOnce(new Error("secret-sentinel provider error"));
   fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
-  expect(await screen.findByText(/Previously loaded balances may be stale/)).toBeVisible();
-  expect(screen.queryByText(/secret-sentinel/)).toBeNull();
-  fireEvent.press(screen.getByRole("button", { name: "Error details", expanded: false }));
-  expect(screen.getByText("Code: PORTFOLIO_READ_FAILED")).toBeVisible();
-  expect(screen.queryByText(/secret-sentinel/)).toBeNull();
+  expect(await screen.findByText("Showing your last known balance.")).toBeVisible();
+  expect(screen.queryByText("Couldn’t refresh your balance.")).toBeNull();
+  expect(screen.queryByText(/PORTFOLIO_READ_FAILED|secret-sentinel/)).toBeNull();
   expect(screen.getByLabelText("19.990574 USD")).toBeVisible();
   portfolio.getMainnetPortfolio.mockResolvedValue(mainnetPortfolio(walletId, address, "0"));
-  fireEvent.press(screen.getByRole("button", { name: "Retry balance" }));
+  fireEvent.press(screen.getByRole("button", { name: "Refresh balance" }));
   expect(await screen.findByLabelText("0 USD")).toBeVisible();
+  expect(screen.queryByText("Showing your last known balance.")).toBeNull();
+});
+
+test("a first balance read that fails shows a refreshable skeleton, not an error", async () => {
+  const { portfolio } = setup();
+  const pending = deferred<import("@/domain/wallet/storedSigner").MainnetPortfolioSnapshot>();
+  portfolio.getMainnetPortfolio.mockReturnValueOnce(pending.promise);
+  await open();
+  expect(await screen.findByLabelText("Loading your balance")).toBeVisible();
+  await act(async () => pending.reject(new Error("secret-sentinel provider error")));
+  expect(await screen.findByLabelText("Balance not updated yet")).toBeVisible();
+  expect(screen.getByText("Your balance is taking longer than usual.")).toBeVisible();
+  expect(screen.queryByText("Couldn’t refresh your balance.")).toBeNull();
+  expect(screen.queryByText(/PORTFOLIO_READ_FAILED|secret-sentinel/)).toBeNull();
+  portfolio.getMainnetPortfolio.mockResolvedValue(mainnetPortfolio(walletId, address));
+  fireEvent.press(screen.getByRole("button", { name: "Refresh balance" }));
+  expect(await screen.findByLabelText("19.990574 USD")).toBeVisible();
+  expect(screen.queryByLabelText("Balance not updated yet")).toBeNull();
 });
 
 test("disconnect ignores late native snapshots from the previous session", async () => {
@@ -210,7 +226,8 @@ test("a settled incomplete native cache is retryable and never exposes zero as s
     syncPending: true,
   });
   await open();
-  expect(await screen.findByRole("button", { name: "Retry balance" })).toBeVisible();
+  expect(await screen.findByLabelText("Balance not updated yet")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refresh balance" })).toBeVisible();
   expect(screen.queryByLabelText("Loading your balance")).toBeNull();
   expect(screen.queryByLabelText("0 USD")).toBeNull();
   await openEarnLink();
