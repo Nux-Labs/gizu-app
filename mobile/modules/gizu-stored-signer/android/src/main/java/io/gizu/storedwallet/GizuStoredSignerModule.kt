@@ -142,8 +142,8 @@ class GizuStoredSignerModule : Module() {
 
   /**
    * Gizu is in front and the phone is unlocked. Read-only work needs only this: pulling down the
-   * notification shade or a system dialog takes window focus without leaving Gizu, and leaving
-   * Gizu already cancels the running read. Approvals keep the focus check in [requireForeground].
+   * notification shade or a system dialog takes window focus without leaving Gizu, and leaving Gizu
+   * already cancels the running read. Approvals keep the focus check in [requireForeground].
    */
   private fun requireVisible(activity: Activity) {
     check(foreground && !activity.isFinishing && !activity.isDestroyed)
@@ -1406,6 +1406,79 @@ class GizuStoredSignerModule : Module() {
         journal.public(cancelled)
       }
     }
+    AsyncFunction("markEarnSponsoredReturnReceived") {
+      walletId: String,
+      id: String,
+      promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        fun checkTarget(record: WalletRecord) {
+          requireSponsoredWallet(record, walletId)
+          requirePrivateReadPermission(activity, record)
+          val row =
+            readEarnInvestmentPositions(activity, record, walletId).single {
+              it["lastReturnOperationId"] == id
+            }
+          check(
+            row["profileId"] == "robinhood-usdg" &&
+              row["recoveryRequired"] == false &&
+              row["activity"] in setOf("redeemed", "invested") &&
+              row["withdrawalAttention"] == "checking"
+          ) {
+            "Only a finalized historical return without other pending steps can be marked received"
+          }
+        }
+        val (journal, op) =
+          store.load().use { record ->
+            requireSponsoredWallet(record, walletId)
+            requirePrivateReadPermission(activity, record)
+            val journal = earnSponsoredJournal(activity, record)
+            val op = journal.get(id)
+            requireActiveEarnCycle(record, op.getJSONObject("proposal"))
+            if (!ownerReportedReturnCompleted(op, walletId, journal.generation)) checkTarget(record)
+            journal to op
+          }
+        if (!ownerReportedReturnCompleted(op, walletId, journal.generation)) {
+          // One supported status read closes a lost historical checkpoint, not an amount proof.
+          val expected = sponsoredSettlementExpected(op)
+          val route =
+            JSONObject(
+              NativeRpcTransport(
+                  EARN_NATIVE_BACKEND.removeSuffix("/earn/native") + "/swap/aurora/status"
+                )
+                .post(
+                  JSONObject()
+                    .put("depositAddress", expected.getString("depositAddress"))
+                    .toString()
+                )
+            )
+          check(route.getString("status") == "SUCCESS") {
+            "This return route has not completed. Check its status later."
+          }
+          val vaultEmpty = readReturnVaultEmpty(expected, EarnSponsoredChainRpc(4663))
+          currentCoroutineContext().ensureActive()
+          requireForeground(activity)
+          store.load().use { record ->
+            check(record.journalId == journal.generation)
+            requireActiveEarnCycle(record, op.getJSONObject("proposal"))
+            checkTarget(record)
+            journal.update(id, op.getInt("revision")) {
+              it.put(
+                "returnFlowCompletion",
+                ownerReceivedReturnRecord(
+                  it,
+                  walletId,
+                  journal.generation,
+                  System.currentTimeMillis(),
+                  route.getString("status"),
+                  vaultEmpty,
+                ),
+              )
+            }
+          }
+        }
+        mapOf("operationId" to id, "recorded" to true, "spendingAuthorized" to false)
+      }
+    }
     AsyncFunction("readEarnSponsoredSettlement") {
       walletId: String,
       id: String,
@@ -1417,7 +1490,17 @@ class GizuStoredSignerModule : Module() {
             requireSponsoredWallet(record, walletId)
             earnSponsoredJournal(activity, record)
           }
-        check(journal.get(id).getInt("revision") == revision)
+        val savedReturn = journal.get(id)
+        check(savedReturn.getInt("revision") == revision)
+        if (ownerReportedReturnCompleted(savedReturn, walletId, journal.generation)) {
+          store.load().use { record ->
+            requireSponsoredWallet(record, walletId)
+            check(record.journalId == journal.generation)
+            requireActiveEarnCycle(record, savedReturn.getJSONObject("proposal"))
+            requirePrivateReadPermission(activity, record)
+          }
+          return@runCeremony journal.public(savedReturn)
+        }
         val chain = journal.get(id).getJSONObject("proposal").getInt("chainId")
         reconcileEarnSponsoredOperations(
           journal,

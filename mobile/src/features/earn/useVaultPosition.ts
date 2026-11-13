@@ -157,6 +157,7 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
               (!historyOnly ||
                 row.activity === "redeemed" ||
                 row.activity === "returned" ||
+                row.withdrawalComplete === true ||
                 row.withdrawalAttention !== undefined),
           )
           .sort(
@@ -173,7 +174,7 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
           let unresolved: EarnIntent | null = null;
           let failure = "";
           for (const row of positions) {
-            if (row.activity === "returned") continue;
+            if (row.activity === "returned" || row.withdrawalComplete === true) continue;
             let value: EarnIntent | null = null;
             try {
               if (row.recoveryRequired)
@@ -244,7 +245,12 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
         proofsRef.current = checked;
         setProofs(checked);
         for (const next of positions) {
-          if (next.activity === "returned" || checked[positionKey(next)] === "accepted") continue;
+          if (
+            next.activity === "returned" ||
+            (next.withdrawalComplete === true && next.activity !== "invested") ||
+            checked[positionKey(next)] === "accepted"
+          )
+            continue;
           if (next.recoveryRequired)
             throw new Error("Restore and reconcile saved activity before withdrawing.");
           const value = await selectPosition(next);
@@ -372,12 +378,62 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
     };
   }, [refresh, earnLoading]);
   const completed = rows.filter(
-    (row) => row.activity === "returned" || proofs[positionKey(row)] === "accepted",
+    (row) =>
+      row.activity === "returned" ||
+      row.withdrawalComplete === true ||
+      proofs[positionKey(row)] === "accepted",
   ).length;
+  const correctable =
+    historyOnly && intent && profileId === "robinhood-usdg"
+      ? rows.find(
+          (row) =>
+            positionKey(row) === positionKey(intent) &&
+            !row.recoveryRequired &&
+            row.withdrawalAttention === "checking" &&
+            ["redeemed", "invested"].includes(row.activity) &&
+            row.lastReturnOperationId,
+        )
+      : undefined;
+  const markReceived = async () => {
+    if (!correctable?.lastReturnOperationId || occupied.current) return;
+    const attempt = generation.current;
+    occupied.current = true;
+    setLoading(true);
+    setMessage("");
+    let recorded = false;
+    try {
+      if (!robinhood.markReturnReceived)
+        throw new Error("Historical status correction requires the updated app.");
+      const selectedIntent = await selectPosition(correctable);
+      if (attempt !== generation.current) return;
+      await robinhood.markReturnReceived(selectedIntent, correctable.lastReturnOperationId);
+      recorded = true;
+    } catch (error) {
+      if (attempt === generation.current)
+        setMessage(
+          error instanceof Error ? error.message : "The saved return status could not be updated.",
+        );
+    } finally {
+      occupied.current = false;
+      if (attempt === generation.current) setLoading(false);
+    }
+    if (recorded && attempt === generation.current) await refresh();
+  };
   return {
     rows,
     intent,
     completed,
+    canMarkReceived: Boolean(correctable),
+    markReceived,
+    newWithdrawalAfter:
+      !historyOnly && intent
+        ? rows.find(
+            (row) =>
+              positionKey(row) === positionKey(intent) &&
+              row.activity === "invested" &&
+              row.withdrawalComplete === true,
+          )?.lastReturnOperationId
+        : undefined,
     // Presentation only. Refresh rechecks expiry before accepting this proof.
     readyToContinue: intent !== null && typeof proofs[positionKey(intent)] === "number",
     recordCompletion,
@@ -427,7 +483,8 @@ export function useSharedWithdrawalState() {
               if (
                 row.profileId !== "robinhood-usdg" ||
                 row.recoveryRequired ||
-                row.activity === "returned"
+                row.activity === "returned" ||
+                row.withdrawalComplete === true
               )
                 continue;
               const cycle = cycles?.find(

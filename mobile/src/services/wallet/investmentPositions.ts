@@ -37,6 +37,7 @@ export function createEarnInvestmentPositionsService(
               row.investmentSlot > 4)) ||
           !["invested", "redeemed", "returned", "pending"].includes(String(row.activity)) ||
           typeof row.recoveryRequired !== "boolean" ||
+          (row.withdrawalComplete !== undefined && typeof row.withdrawalComplete !== "boolean") ||
           (row.lastReturnOperationId !== undefined &&
             (typeof row.lastReturnOperationId !== "string" ||
               !/^[-a-zA-Z0-9_]{1,128}$/.test(row.lastReturnOperationId))) ||
@@ -63,6 +64,7 @@ export function createEarnInvestmentPositionsService(
             : {}),
           activity: row.activity as EarnInvestmentPosition["activity"],
           recoveryRequired: row.recoveryRequired,
+          ...(row.withdrawalComplete === true ? { withdrawalComplete: true } : {}),
           ...(typeof row.lastReturnOperationId === "string"
             ? { lastReturnOperationId: row.lastReturnOperationId }
             : {}),

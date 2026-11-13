@@ -25,21 +25,27 @@ export function RobinhoodWithdrawalPanel({
   intent,
   service,
   onWithdrawalComplete,
+  withdrawalStartsAfter,
 }: {
   intent: EarnIntent;
   service: EarnRobinhoodService;
   onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
+  withdrawalStartsAfter?: string;
 }) {
   const v = useEarnJournal(intent, service);
   const [plan, setPlan] = useState<RobinhoodPlan | null>(null);
   const [expired, setExpired] = useState(false);
   const [details, setDetails] = useState(false);
-  const blocking = v.rows.filter((row) => row.blocked);
+  const completedAt = withdrawalStartsAfter
+    ? v.rows.findIndex((row) => row.operationId === withdrawalStartsAfter)
+    : -1;
+  const flowRows = completedAt >= 0 ? v.rows.slice(completedAt + 1) : v.rows;
+  const blocking = flowRows.filter((row) => row.blocked);
   const saved = blocking[0];
-  const position = [...v.rows]
+  const position = [...flowRows]
     .reverse()
     .find((row) => ["invested", "withdrawn", "residualShares"].includes(row.status));
-  const returned = latestPrivateReturn(v.rows);
+  const returned = latestPrivateReturn(flowRows);
   const awaitingCredit =
     returned && ["returnSubmitted", "awaitingSettlement"].includes(returned.status);
   const returnConfirmed = returned && ["credited", "minimumReceived"].includes(returned.status);
@@ -53,7 +59,7 @@ export function RobinhoodWithdrawalPanel({
     (saved.canCancelPreparation ?? saved.status === "planned") &&
     (saved.kind === "hoodRedeemAll" || saved.kind === "hoodTokenReturn");
   const disabled = v.busy || v.loading || !v.available || intent.status !== "prepared";
-  const settledRedeem = v.rows.some(
+  const settledRedeem = flowRows.some(
     (row) => row.kind === "hoodRedeemAll" && row.status === "withdrawn",
   );
   const savedRedeemAfterSettlement = settledRedeem && saved?.kind === "hoodRedeemAll";
@@ -72,8 +78,11 @@ export function RobinhoodWithdrawalPanel({
     blocking[0]?.kind === plan.kind &&
     (plan.kind === "hoodRedeemAll" || plan.kind === "hoodTokenReturn");
   const withdrawn = position?.status === "withdrawn";
-  const redeemable = position?.status === "invested" || position?.status === "residualShares";
-  const privateReturned = privateReturnConfirmed(v.rows);
+  const redeemable =
+    position?.status === "invested" ||
+    position?.status === "residualShares" ||
+    Boolean(withdrawalStartsAfter && !position);
+  const privateReturned = privateReturnConfirmed(flowRows);
 
   useEffect(() => {
     if (!privateReturned || !onWithdrawalComplete) return;
@@ -348,7 +357,7 @@ export function RobinhoodWithdrawalPanel({
           ))
         )}
 
-        {v.rows.length > 0 && (
+        {flowRows.length > 0 && (
           <>
             <Button
               label={details ? "Hide activity details" : "Activity details"}
@@ -362,7 +371,7 @@ export function RobinhoodWithdrawalPanel({
                     {saved.preparationCancellationDisclosure}
                   </Typography>
                 )}
-                {v.rows.map((row) => (
+                {flowRows.map((row) => (
                   <View key={row.operationId} className="gap-1">
                     <Typography variant="caption">
                       {row.kind === "hoodDeposit"

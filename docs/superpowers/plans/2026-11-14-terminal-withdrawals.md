@@ -12,7 +12,8 @@ The user's explicit completion rule supplies the design: vault withdrawal → pu
 - [x] Remove minimum-return history recovery and its native opt-in header; preserve durable receipt replay and first-completion verification.
 - [x] Accept saved native completion directly, skip completed inventory targets and avoid reading completed journals on Home/vault focus.
 - [x] Run affected and full app/backend suites, affected native tests and independent review; build and install the production app against api.gizu.io.
-- [ ] After the owner unlocks the wallet, inspect the actual old record and report whether a saved terminal completion was restored. Do not claim an unrecorded historical completion was repaired.
+- [x] After the owner unlocks the wallet, inspect the actual old record. The device still showed the historical warning: neither the native final receipt nor the compatible completed UI observation had been saved.
+- [x] Install the historical checkpoint correction and verify the owner's already-received return stays complete on Home and the vault. The final build shows Past returns complete after the explicit status-only correction; Home and the vault no longer show the false warning, and 1.462806 USDG remains invested. See the companion historical checkpoint plan for final build and regression results.
 
 Review focus: a later actual redemption must remain new work; unsigned cancellation must not reopen an old completed return; incomplete private returns must remain incomplete; minimum-only evidence must not authorize spending; unavailable providers must not change a saved completion.
 

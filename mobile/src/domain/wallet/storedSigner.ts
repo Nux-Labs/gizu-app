@@ -323,6 +323,7 @@ export interface StoredSignerContract {
     operationId: string,
     revision: number,
   ): Promise<unknown>;
+  markEarnSponsoredReturnReceived?(walletId: string, operationId: string): Promise<unknown>;
   prepareEarnFusionQuote?(request: {
     walletId: string;
     operationId: string;

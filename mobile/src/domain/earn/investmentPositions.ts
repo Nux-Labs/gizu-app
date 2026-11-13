@@ -9,6 +9,8 @@ export type EarnInvestmentPosition = {
   activity: "invested" | "redeemed" | "returned" | "pending";
   recoveryRequired: boolean;
   lastReturnOperationId?: string;
+  /** Completed withdrawal lifecycle; the investment may still hold a remainder. */
+  withdrawalComplete?: boolean;
   withdrawalAttention?: "confirming" | "unfinished" | "returning" | "checking";
 };
 export interface EarnInvestmentPositionsService {

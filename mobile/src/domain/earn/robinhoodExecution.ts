@@ -82,6 +82,7 @@ export interface EarnRobinhoodService {
   list(intent: EarnIntent): Promise<SponsoredOperation[]>;
   resume(intent: EarnIntent, op: SponsoredOperation): Promise<SponsoredOperation>;
   reconcileCredit(intent: EarnIntent, op: SponsoredOperation): Promise<SponsoredOperation>;
+  markReturnReceived?(intent: EarnIntent, operationId: string): Promise<void>;
   cancelUnsigned(intent: EarnIntent, op: SponsoredOperation): Promise<SponsoredOperation>;
   cancel(): void;
 }

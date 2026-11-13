@@ -86,7 +86,7 @@ export function VaultWithdrawalScreen({
         <Typography>
           {historyOnly
             ? complete
-              ? "Past returns verified."
+              ? "Past returns complete."
               : "No past returns are saved for this vault."
             : complete
               ? "All saved withdrawals for this vault are complete."
@@ -105,6 +105,7 @@ export function VaultWithdrawalScreen({
             key={`${v.intent.intentId}:${v.intent.investmentSlot ?? "legacy"}`}
             intent={v.intent}
             service={earn.robinhood}
+            withdrawalStartsAfter={v.newWithdrawalAfter}
             presentation="withdrawal"
             onWithdrawalComplete={v.recordCompletion}
           />
@@ -117,6 +118,20 @@ export function VaultWithdrawalScreen({
           />
         ))}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
+      {historyOnly && v.canMarkReceived && (
+        <View className="gap-2">
+          <Typography variant="caption">
+            If you already received this past return, record it as done. This updates its saved
+            status only; it does not move funds or verify a credit receipt.
+          </Typography>
+          <Button
+            label="Mark this return received"
+            variant="quiet"
+            disabled={v.loading || earn.busy}
+            onPress={() => void v.markReceived()}
+          />
+        </View>
+      )}
       <PrivateBalanceRefresh showAmount onReadComplete={() => v.refresh()} />
       {!historyOnly && profileId !== "robinhood-usdg" && v.completed > 0 && (
         <Button

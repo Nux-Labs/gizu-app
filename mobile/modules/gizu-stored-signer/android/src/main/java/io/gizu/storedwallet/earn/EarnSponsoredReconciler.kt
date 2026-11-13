@@ -73,8 +73,7 @@ internal suspend fun reconcileEarnSponsoredOperations(
     rows.withIndex().filter { (_, op) ->
       op.optString("status") == "finalized" &&
         op.getJSONObject("proposal").optString("kind") == "hoodTokenReturn" &&
-        (op.optJSONObject("settlement")?.optString("status") == "credited" ||
-          savedMinimumReturnReceipt(op, journal.walletId, journal.generation) != null)
+        completedReturnLifecycle(op, journal.walletId, journal.generation)
     }
   for ((index, op) in rows.withIndex()) {
     if (operationIds != null && op.getString("operationId") !in operationIds) continue

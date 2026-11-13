@@ -1,12 +1,12 @@
 package io.gizu.storedwallet
 
 import android.content.Context
+import io.gizu.storedwallet.swap.SwapPortfolioStore
 import java.util.UUID
 import javax.crypto.SecretKey
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
-import io.gizu.storedwallet.swap.SwapPortfolioStore
 import uniffi.gizu_stored_signer_core.SwapOperation
 import uniffi.gizu_stored_signer_core.confidentialWithdrawalPlan
 
@@ -461,6 +461,14 @@ internal class RecoveredHistoryImporter(
       val operations = root.getJSONArray("operations")
       for (i in 0 until operations.length()) {
         val operation = operations.getJSONObject(i)
+        if (operation.has("returnFlowCompletion")) {
+          check(ownerReportedReturnCompleted(operation, walletId, sourceGeneration))
+          operation
+            .getJSONObject("returnFlowCompletion")
+            .getJSONObject("nativeBinding")
+            .put("generation", generation)
+          check(ownerReportedReturnCompleted(operation, walletId, generation))
+        }
         if (!operation.has("minimumReturnReceipt")) continue
         // Only this authenticated import boundary can move already validated evidence between
         // journal generations. Never repair a substituted source generation or wallet binding.

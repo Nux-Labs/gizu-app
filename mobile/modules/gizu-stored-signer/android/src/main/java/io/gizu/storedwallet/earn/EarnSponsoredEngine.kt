@@ -843,7 +843,9 @@ internal fun nativeJsonEqual(a: Any?, b: Any?): Boolean =
     else -> a == b
   }
 
-/** A private account has at most one uncredited incoming route across all investments. */
+/**
+ * Incoming routes are serialized. Provider-terminal historical closure supplies no credit amount.
+ */
 internal fun requireSequentialSourceCredit(
   rows: List<JSONObject>,
   current: JSONObject,
@@ -870,7 +872,12 @@ internal fun requireSequentialSourceCredit(
           (other.optJSONObject("settlement")?.optString("status") == "credited" ||
             (other.has("minimumReturnReceipt") &&
               savedMinimumReturnReceipt(other, checkNotNull(walletId), checkNotNull(generation)) !=
-                null))
+                null) ||
+            (walletId != null &&
+              generation != null &&
+              other.optJSONObject("returnFlowCompletion")?.optString("providerRouteStatus") ==
+                "SUCCESS" &&
+              ownerReportedReturnCompleted(other, walletId, generation)))
       ) {
         "Previous source credit must settle first"
       }
