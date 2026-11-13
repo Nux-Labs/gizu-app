@@ -7,9 +7,14 @@ import { Surface } from "@/components/molecules/Surface";
 import { BackAction } from "@/navigation/BackAction";
 import type { RootStackParamList } from "@/navigation/types";
 import { earnProfiles } from "@/domain/earn/types";
-import { portfolioVaultPosition, vaultNames } from "@/domain/wallet/portfolioValue";
+import {
+  portfolioAssetAmount,
+  portfolioVaultPosition,
+  vaultNames,
+} from "@/domain/wallet/portfolioValue";
 import { useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { VaultPositionSummary } from "@/features/wallet/VaultPositionCard";
+import { useSharedWithdrawalState } from "./useVaultPosition";
 
 /** Viewing an investment does not select or resume a withdrawal cycle. */
 export function VaultPositionScreen({
@@ -19,7 +24,10 @@ export function VaultPositionScreen({
   const { profileId } = route.params;
   const profile = earnProfiles[profileId];
   const portfolio = useMainnetWallet();
+  const coverage = useSharedWithdrawalState();
   const position = profile ? portfolioVaultPosition(portfolio.snapshot, profileId) : null;
+  const amount = position ? portfolioAssetAmount(position, true) : null;
+  const idle = amount !== null && BigInt(amount) === 0n && !coverage.canWithdraw(profileId);
   return (
     <Screen>
       <BackAction fallback="Vaults" />
@@ -40,10 +48,12 @@ export function VaultPositionScreen({
           )}
         </View>
       </Surface>
-      <Typography>Your funds remain invested until you choose to withdraw.</Typography>
+      {!idle && (
+        <Typography>Your funds remain invested until you choose to withdraw.</Typography>
+      )}
       <Button
         label="Withdraw"
-        disabled={!profile}
+        disabled={!profile || !coverage.canWithdraw(profileId)}
         onPress={() => navigation.navigate("VaultWithdrawal", { profileId })}
       />
       <Button

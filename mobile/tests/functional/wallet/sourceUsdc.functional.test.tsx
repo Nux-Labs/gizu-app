@@ -153,9 +153,7 @@ test("mainnet deposit keeps the explicit USDC receiving address", async () => {
   await screen.findByLabelText("19.990574 USD");
   await userEvent.press(screen.getByRole("button", { name: "Receive" }));
   expect(await screen.findByRole("header", { name: "Receive" })).toBeVisible();
-  expect(
-    screen.getByText("Swap funding address · Receive USDC on Monad mainnet only."),
-  ).toBeVisible();
+  expect(screen.getByText("Funding address · Receive USDC on Monad mainnet only.")).toBeVisible();
   await userEvent.press(screen.getByRole("button", { name: "Copy account address" }));
   expect(clipboard.copy).toHaveBeenCalledWith(address);
 });
@@ -611,40 +609,49 @@ function boughtStock() {
   };
 }
 
-test("a stock bought with Swap shows its catalog name and logo instead of its address", async () => {
-  const list = jest.spyOn(tokenCatalogService, "list").mockResolvedValue({
-    list: [
-      {
-        chainId: 4663,
-        address: "0xc72b96e0E48ecd4DC75E1e45396e26300BC39681",
-        symbol: "INTC",
-        name: "Intel • Robinhood Token",
-        decimals: 18,
-        logoURI: "https://example.com/intc.png",
-        category: "rwa",
-        issuer: "Robinhood",
-        swapListed: true,
-        fusionStatus: "quote-required",
-      },
-    ],
-    page: 0,
-    items: 20,
-    total: 1,
-  });
-  const { portfolio } = setup();
-  portfolio.getMainnetPortfolio.mockResolvedValue(boughtStock());
-  await open();
-  const row = await screen.findByRole("button", { name: "INTC holding details" });
-  expect(screen.getByLabelText("INTC logo")).toBeVisible();
-  expect(screen.getByText("0.0025 INTC")).toBeVisible();
-  expect(screen.queryByText(/Token c39681/)).toBeNull();
-  fireEvent.press(row);
-  expect(screen.getByText("Intel")).toBeVisible();
-  expect(list).toHaveBeenCalledWith(
-    { chainId: 4663, category: "all", search: intc, page: 0 },
-    expect.anything(),
-  );
-});
+test.each([false, true])(
+  "a stock bought with Swap keeps its name and logo with private access locked=%s",
+  async (locked) => {
+    const list = jest.spyOn(tokenCatalogService, "list").mockResolvedValue({
+      list: [
+        {
+          chainId: 4663,
+          address: "0xc72b96e0E48ecd4DC75E1e45396e26300BC39681",
+          symbol: "INTC",
+          name: "Intel • Robinhood Token",
+          decimals: 18,
+          logoURI: "https://example.com/intc.png",
+          category: "rwa",
+          issuer: "Robinhood",
+          swapListed: true,
+          fusionStatus: "quote-required",
+        },
+      ],
+      page: 0,
+      items: 20,
+      total: 1,
+    });
+    const { portfolio } = setup();
+    portfolio.getMainnetPortfolio.mockResolvedValue({
+      ...boughtStock(),
+      confidentialReadState: locked ? "locked" : "ready",
+    });
+    await open();
+    const row = await screen.findByRole("button", { name: "INTC holding details" });
+    if (locked)
+      expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
+    else expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
+    expect(screen.getByLabelText("INTC logo")).toBeVisible();
+    expect(screen.getByText("0.0025 INTC")).toBeVisible();
+    expect(screen.queryByText(/Token c39681/)).toBeNull();
+    fireEvent.press(row);
+    expect(screen.getByText("Intel")).toBeVisible();
+    expect(list).toHaveBeenCalledWith(
+      { chainId: 4663, category: "all", search: intc, page: 0 },
+      expect.anything(),
+    );
+  },
+);
 
 test("a stock the catalog cannot name keeps its native label and the rest of Home", async () => {
   jest.spyOn(tokenCatalogService, "list").mockRejectedValue(new Error("offline"));
@@ -679,7 +686,7 @@ test("a locked private balance explains wallet unlock without claiming a provide
     ],
   });
   await open();
-  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "USDC (private) holding details" }));
   expect(screen.getByText("Refresh to check your private USDC.")).toBeVisible();
   expect(screen.queryByText("USDC (private) balance unavailable. Refresh to retry.")).toBeNull();

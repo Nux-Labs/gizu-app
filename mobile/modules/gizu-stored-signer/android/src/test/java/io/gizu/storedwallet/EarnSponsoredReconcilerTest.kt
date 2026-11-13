@@ -1,7 +1,8 @@
 package io.gizu.storedwallet
 
 import javax.crypto.KeyGenerator
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -9,6 +10,168 @@ import org.junit.Test
 import uniffi.gizu_stored_signer_core.NativeSponsoredState
 
 class EarnSponsoredReconcilerTest {
+  @Test
+  fun receiptWithoutOperationLookupRemainsPendingUntilFullyVerified() = runBlocking {
+    val journal = setup("hoodDeposit")
+    val rpc =
+      Rpc().apply {
+        deposit = true
+        shares = 900
+        found(journal)
+      }
+    val signed = journal.get("op").getString("signedUserOperation")
+    val known = rpc.known
+    rpc.known = JSONObject.NULL
+    repeat(2) {
+      reconcileEarnSponsoredOperations(
+        journal,
+        rpc,
+        rpc,
+        ::topic,
+        { error("No nonce fallback with a receipt") },
+      )
+      assertEquals("pending", journal.get("op").getString("status"))
+      assertEquals(false, journal.public(journal.get("op"))["canResume"])
+      assertEquals(true, journal.public(journal.get("op"))["blocked"])
+      assertEquals(signed, journal.get("op").getString("signedUserOperation"))
+    }
+    rpc.known = known
+    reconcileEarnSponsoredOperations(
+      journal,
+      rpc,
+      rpc,
+      ::topic,
+      { error("No nonce fallback with a receipt") },
+    )
+    assertEquals("finalized", journal.get("op").getString("status"))
+    assertEquals("900", journal.get("op").getString("settledShares"))
+    assertEquals(signed, journal.get("op").getString("signedUserOperation"))
+  }
+
+  @Test
+  fun receiptLookupLagCannotTurnAnObservedOperationBackIntoASendableOne() = runBlocking {
+    val journal = setup()
+    val rpc = Rpc().apply { found(journal) }
+    rpc.known = JSONObject.NULL
+    reconcileEarnSponsoredOperations(journal, rpc, rpc, ::topic, { state() })
+    rpc.receipt = JSONObject.NULL
+    reconcileEarnSponsoredOperations(journal, rpc, rpc, ::topic, { state() })
+    assertEquals("pending", journal.get("op").getString("status"))
+    assertEquals(false, journal.public(journal.get("op"))["canResume"])
+    assertEquals(true, journal.public(journal.get("op"))["blocked"])
+  }
+
+  @Test
+  fun missingLookupDoesNotHideAnInvalidReceiptBinding() = runBlocking {
+    for (field in listOf("userOpHash", "sender", "nonce", "entryPoint")) {
+      val journal = setup()
+      val rpc = Rpc().apply { found(journal) }
+      rpc.known = JSONObject.NULL
+      (rpc.receipt as JSONObject).put(
+        field,
+        if (field == "nonce") "0x1" else "0x" + "7".repeat(if (field == "userOpHash") 64 else 40),
+      )
+      var rejected = false
+      try {
+        reconcileEarnSponsoredOperations(journal, rpc, rpc, ::topic, { state() })
+      } catch (_: IllegalStateException) {
+        rejected = true
+      }
+      assertTrue("Receipt binding $field must still be checked", rejected)
+      assertNotEquals("finalized", journal.get("op").getString("status"))
+    }
+  }
+
+  @Test
+  fun foregroundHostCompletesPayoutAndVaultStepsDespiteReceiptLookupLag() = runBlocking {
+    DistributionDepositFixtures.record(listOf(10000)).use { record ->
+      val journal = testDepositJournal()
+      val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+      journal.saveReview(id, 1, DistributionDepositFixtures.review(record).put("journeyId", id))
+      val base =
+        EarnDepositCoordinatorTest.Engines(record).apply {
+          creditReady = true
+          pendingPayoutSlot = 0
+        }
+      val receiptJournal = setup("hoodDeposit")
+      val rpc =
+        Rpc().apply {
+          deposit = true
+          shares = 900
+          found(receiptJournal)
+        }
+      val known = rpc.known
+      rpc.known = JSONObject.NULL
+      var submitted = false
+      val engines =
+        object : EarnDepositEngines by base {
+          override suspend fun execute(stage: String, child: String, grant: EarnDepositApproval) {
+            base.execute(stage, child, grant)
+            if (stage == "deposit") submitted = true
+          }
+
+          override suspend fun reconcile(
+            stage: String,
+            child: String,
+            grant: EarnDepositApproval?,
+          ): JSONObject {
+            val row = base.reconcile(stage, child, grant)
+            if (stage == "deposit" && submitted) {
+              reconcileEarnSponsoredOperations(
+                receiptJournal,
+                rpc,
+                rpc,
+                ::topic,
+                { error("No nonce fallback") },
+              )
+              row.put("status", receiptJournal.get("op").getString("status"))
+            }
+            return row
+          }
+        }
+      val ticks = Channel<Unit>(Channel.UNLIMITED)
+      val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+      var approvals = 0
+      val host =
+        EarnDepositHost(
+          scope,
+          journal,
+          { DistributionDepositFixtures.record(listOf(10000)) },
+          { EarnDepositCoordinator(journal, engines) },
+          { _, _, _ -> approvals++ },
+          {},
+          now = { 1002 },
+          wait = { ticks.receive() },
+        )
+      try {
+        host.confirm(id, 2, false)
+        assertEquals("payouts", host.status(id)["phase"])
+        assertTrue(host.busy)
+        assertEquals(2, base.signed)
+        base.rows.getValue("payout-source0-invest_0").put("status", "paid")
+        ticks.send(Unit)
+        assertEquals("depositing", host.status(id)["phase"])
+        assertNull(host.status(id)["pauseReason"])
+        assertTrue(journal.get(id).getJSONArray("completedSteps").toString().contains("payouts"))
+        assertEquals(3, base.signed)
+        ticks.send(Unit)
+        assertEquals("depositing", host.status(id)["phase"])
+        assertEquals(3, base.signed)
+        rpc.known = known
+        ticks.send(Unit)
+        assertEquals("invested", host.status(id)["phase"])
+        assertEquals(4, journal.get(id).getJSONArray("completedSteps").length())
+        assertEquals(1, approvals)
+        assertEquals(3, base.signed)
+        assertEquals(0, base.savedPayoutRetries)
+        assertFalse(host.busy)
+      } finally {
+        scope.cancel()
+        ticks.close()
+      }
+    }
+  }
+
   private val owner = "0x" + "1".repeat(40)
   private val recipient = "0x" + "2".repeat(40)
   private val hash = "0x" + "a".repeat(64)

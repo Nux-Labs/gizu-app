@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { RefreshControl } from "react-native";
+import { AppState, RefreshControl } from "react-native";
 import { AppRoot } from "@/application/AppRoot";
 import * as nativeBridge from "@/services/wallet/nativeBridge";
 import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
@@ -161,10 +161,10 @@ test("Home can unlock an expired private read and refresh the authenticated priv
       },
     ],
   });
-  fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
+  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
   expect(await screen.findByText("2.5 USD")).toBeVisible();
   expect(screen.getByLabelText("5.5 USD")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Refresh private balance" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
   expect(unlock).toHaveBeenCalledTimes(1);
   expect(transfers).not.toHaveBeenCalled();
 });
@@ -228,9 +228,9 @@ test("private unlock stays disabled during authentication and rejects another wa
   } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
   const { read } = await open({ ...snapshot, confidentialReadState: "locked", ownedAssets: [] });
   const readsBefore = read.mock.calls.length;
-  fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
-  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeDisabled();
-  fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
+  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeDisabled();
+  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
   await act(async () =>
     pending.resolve({ status: "ready", walletId: "another-wallet", accounts: [] }),
   );
@@ -247,9 +247,9 @@ test("a declined private balance unlock preserves cached amounts and allows a re
     openWallet: jest.fn().mockRejectedValue(new Error("Wallet unlock cancelled.")),
   } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
   await open({ ...snapshot, confidentialReadState: "locked", ownedAssets: [] });
-  fireEvent.press(screen.getByRole("button", { name: "Refresh private balance" }));
+  fireEvent.press(screen.getByRole("button", { name: "Unlock private balance" }));
   expect(await screen.findByText("Wallet unlock cancelled.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeEnabled();
   expect(screen.getByLabelText("3 USD")).toBeVisible();
 });
 
@@ -263,20 +263,20 @@ test("shared Rust, Swift and Kotlin fixtures satisfy the Home contract", () => {
 test("mainnet Home includes receiving USDC, Deposit uses funding address, Withdraw never signs", async () => {
   const { transfers } = await open();
   expect(screen.getByLabelText("3 USD")).toBeVisible();
-  expect(screen.queryByText("Swap funding: 0.5 USDC")).toBeNull();
+  expect(screen.queryByText("Funding: 0.5 USDC")).toBeNull();
   expect(screen.queryByText("USDC accounts")).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Balance details", expanded: false }));
-  expect(screen.getByText("Swap funding: 0.5 USDC")).toBeVisible();
+  expect(screen.getByText("Funding: 0.5 USDC")).toBeVisible();
   expect(screen.getByText("Receiving wallets: 2.5 USDC")).toBeVisible();
   expect(screen.queryByText("USDC accounts")).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Balance details", expanded: true }));
-  expect(screen.queryByText("Swap funding: 0.5 USDC")).toBeNull();
+  expect(screen.queryByText("Funding: 0.5 USDC")).toBeNull();
   expect(screen.getByLabelText("3 USD")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Wallet details" })).toBeNull();
   expect(screen.queryByText(/testnet MON/)).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Receive" }));
   expect(
-    await screen.findByText("Swap funding address · Receive USDC on Monad mainnet only."),
+    await screen.findByText("Funding address · Receive USDC on Monad mainnet only."),
   ).toBeVisible();
   expect(screen.getByLabelText(`Account address: ${funding}`)).toBeVisible();
   expect(screen.queryByText("USDC accounts")).toBeNull();
@@ -413,4 +413,59 @@ test("Home does not compare USD portfolio value against older USDC or liquid-onl
   expect(screen.queryByText("+$1.00 (+50%) · past month")).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Balance details", expanded: false }));
   expect(screen.getByLabelText("Balance history is not available yet")).toBeVisible();
+});
+
+test("returning from app switching refreshes private balances without another unlock", async () => {
+  const unlock = jest.fn();
+  jest.spyOn(nativeBridge, "getStoredSigner").mockReturnValue({
+    openWallet: unlock,
+  } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
+  const { read } = await open({ ...snapshot, confidentialReadState: "ready", ownedAssets: [] });
+  const callbacks = jest
+    .mocked(AppState.addEventListener)
+    .mock.calls.filter(([event]) => event === "change")
+    .map(([, callback]) => callback);
+  const readsBefore = read.mock.calls.length;
+  act(() => callbacks.forEach((callback) => callback("background")));
+  read.mockResolvedValue({
+    ...snapshot,
+    confidentialReadState: "ready",
+    fundingAtoms: "600000",
+    totalAtoms: "3100000",
+    accounts: [{ ...snapshot.accounts[0]!, balanceAtoms: "600000" }, snapshot.accounts[1]!],
+  });
+  await act(async () => callbacks.forEach((callback) => callback("active")));
+  expect(await screen.findByLabelText("3.1 USD")).toBeVisible();
+  expect(read.mock.calls.length).toBeGreaterThan(readsBefore);
+  expect(unlock).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
+});
+
+test("a balance read interrupted by backgrounding cannot overwrite the foreground refresh", async () => {
+  const pending = deferred<MainnetPortfolioSnapshot>();
+  const { read } = await open({ ...snapshot, confidentialReadState: "ready" });
+  await act(async () => {});
+  const initialReads = read.mock.calls.length;
+  read.mockReturnValueOnce(pending.promise);
+  fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(initialReads + 1));
+  const callbacks = jest
+    .mocked(AppState.addEventListener)
+    .mock.calls.filter(([event]) => event === "change")
+    .map(([, callback]) => callback);
+  act(() => callbacks.forEach((callback) => callback("background")));
+  await act(async () =>
+    pending.resolve({
+      ...snapshot,
+      confidentialReadState: "locked",
+      fundingAtoms: "1500000",
+      totalAtoms: "4000000",
+      accounts: [{ ...snapshot.accounts[0]!, balanceAtoms: "1500000" }, snapshot.accounts[1]!],
+    }),
+  );
+  expect(screen.getByLabelText("3 USD")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
+  read.mockResolvedValue({ ...snapshot, confidentialReadState: "ready" });
+  await act(async () => callbacks.forEach((callback) => callback("active")));
+  expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
 });

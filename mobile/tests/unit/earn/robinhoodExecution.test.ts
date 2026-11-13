@@ -1,6 +1,22 @@
 import { parseRobinhoodPlan, robinhoodProposal } from "@/domain/earn/robinhoodExecution";
 import { hoodIntent, hoodRaw } from "../../support/robinhoodEarn";
 const now = 1000000;
+test("new returns from historical investments target shared private cash", () => {
+  const shared = "0x" + "9".repeat(40);
+  const intent = { ...hoodIntent, returnConfidentialAddress: shared };
+  const raw = hoodRaw("hoodTokenReturn", now);
+  const route = (raw as { route: Record<string, unknown> }).route;
+  const plan = parseRobinhoodPlan(
+    { ...raw, route: { ...route, confidentialAccount: shared } },
+    intent,
+    "hoodTokenReturn",
+    "hood_1",
+    1,
+    now,
+  );
+  expect(robinhoodProposal(plan, intent, now).proposal.confidentialAccount).toBe(shared);
+  expect(() => parseRobinhoodPlan(raw, intent, "hoodTokenReturn", "hood_1", 1, now)).toThrow();
+});
 test("Hood deposit conserves actual USDG and forwards EntryPoint nonce with no signing placeholders", () => {
   const plan = parseRobinhoodPlan(
     hoodRaw("hoodDeposit", now),

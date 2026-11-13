@@ -27,7 +27,9 @@ import { clipboardService } from "@/services/clipboard";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
 import { SwapHoldingsSection, holdingAmount } from "@/features/swap/SwapHoldingsSection";
+import { useSharedWithdrawalState } from "@/features/earn/useVaultPosition";
 import { useMainnetWallet } from "./MainnetWalletProvider";
+import { PrivateBalanceRefresh } from "./PrivateBalanceRefresh";
 import { BalanceCard } from "./BalanceCard";
 import { PortfolioAssetRow } from "./PortfolioAssetRow";
 import { usePortfolioTokenNames } from "./usePortfolioTokenNames";
@@ -121,9 +123,7 @@ function ReceivingAccounts() {
         <Surface key={account.address}>
           <View className="gap-2 p-5">
             <Typography variant="rowTitle">
-              {account.role === "funding"
-                ? "Swap funding"
-                : `Receiving account ${account.accountIndex}`}
+              {account.role === "funding" ? "Funding" : `Receiving account ${account.accountIndex}`}
             </Typography>
             <Typography>
               {snapshot.balanceComplete === false
@@ -161,20 +161,23 @@ const visible = (asset: OwnedPortfolioAsset) =>
   !asset.complete || BigInt(asset.balanceAtoms ?? asset.observedAtoms) > 0n;
 const visibleAssets = (rows: OwnedPortfolioAsset[] | undefined) => rows?.filter(visible) ?? [];
 
+const withdrawalAttentionCopy = {
+  confirming: "Your vault withdrawal is confirming.",
+  checking: "A past private return needs verification. Open the vault to check its saved status.",
+  unfinished: "Your withdrawal is not finished. Open the vault to return the USDG to private USDC.",
+  returning: "Your private USDC return is confirming.",
+} as const;
+
 function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) => void }) {
-  const {
-    snapshot,
-    loading,
-    refresh,
-    unlockingPrivateBalance,
-    privateBalanceError,
-    unlockPrivateBalance,
-  } = useMainnetWallet();
+  const { snapshot, loading, refresh } = useMainnetWallet();
+  const attention = useSharedWithdrawalState().attention;
   const assets = usePortfolioTokenNames(visibleAssets(snapshot?.ownedAssets));
+
   if (!snapshot?.ownedAssets && !snapshot?.positions) return null;
   const positions = snapshot.positions?.filter(visible) ?? [];
   return (
     <View className="gap-5">
+      {attention && <Notice message={withdrawalAttentionCopy[attention]} />}
       {positions.length > 0 && (
         <View className="gap-3">
           <Typography variant="section">Your vaults</Typography>
@@ -219,23 +222,7 @@ function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) 
         </View>
       )}
       <View className="gap-2">
-        {snapshot.confidentialReadState === "locked" && (
-          <>
-            <Typography variant="micro">Refresh to update your private USDC.</Typography>
-            <Button
-              label="Refresh private balance"
-              variant="quiet"
-              disabled={loading || unlockingPrivateBalance}
-              loading={unlockingPrivateBalance}
-              onPress={() => void unlockPrivateBalance()}
-            />
-          </>
-        )}
-        {privateBalanceError !== "" && (
-          <Typography accessibilityRole="alert" variant="negative">
-            {privateBalanceError}
-          </Typography>
-        )}
+        <PrivateBalanceRefresh />
         {snapshot.ownedBalanceComplete === false && !loading && (
           <Button
             label="Retry token balances and positions"

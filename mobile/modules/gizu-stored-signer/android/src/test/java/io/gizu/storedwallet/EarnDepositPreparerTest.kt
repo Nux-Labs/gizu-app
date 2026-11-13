@@ -54,6 +54,41 @@ internal fun distributionDepositRecord(
 
 class EarnDepositPreparerTest {
   @Test
+  fun routeMinimumExplanationSurvivesThePublicSnapshot() = runBlocking {
+    distributionDepositRecord(weights = listOf(10000)).use { record ->
+      val journal = testDepositJournal()
+      val preparer =
+        EarnDepositPreparer(
+          journal,
+          EarnDepositGateway({ _, _ -> error("No preview should run") }),
+          { _, budget ->
+            val selection =
+              selectPrivateDepositSources(
+                budget,
+                listOf(JSONObject().put("address", "first"), JSONObject().put("address", "dust")),
+              ) {
+                if (it.getString("address") == "first") "1800000" else "142172"
+              }
+            requireRoutablePublicRemainder(selection, savedCycleDistribution(record))
+            error("The public shortfall must block preparation")
+          },
+          {},
+        )
+      val result = preparer.prepare(record, 4663, "1942172", null)
+      val public = JSONObject(journal.publicSnapshot(result.getString("journeyId")))
+      assertEquals("uneconomicAmount", public.getString("pauseReason"))
+      assertEquals(
+        "You can deposit 1.8 USDC from routable private balances before fees. " +
+          "The remaining 0.142172 USDC needs public funding, which requires at least 0.2 USDC. " +
+          "Change the amount to 1.8 USDC and review the fees.",
+        public.optString("message"),
+      )
+      assertFalse(public.has("review"))
+      assertEquals(0, result.getJSONObject("children").length())
+    }
+  }
+
+  @Test
   fun freshSourceShortfallIsInsufficientFundsRatherThanUnavailablePreview() = runBlocking {
     DepositFixtures.record().use { record ->
       val journal = testDepositJournal()

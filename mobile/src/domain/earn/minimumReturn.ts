@@ -1,4 +1,4 @@
-import { monadConfidentialUsdcAssetId, type EarnIntent } from "./types";
+import { monadConfidentialUsdcAssetId, earnReturnAddress, type EarnIntent } from "./types";
 import { earnAtoms, earnObject } from "./vaultExecution";
 
 /** Public native evidence of a minimum return, never an exact credit or spending allowance. */
@@ -75,7 +75,8 @@ export function parseMinimumReturn(
     r.revision < 1 ||
     !integer(row.revision) ||
     r.revision >= row.revision ||
-    !same(r.confidentialAddress, intent.confidentialAddress) ||
+    (!same(r.confidentialAddress, intent.confidentialAddress) &&
+      !same(r.confidentialAddress, earnReturnAddress(intent))) ||
     r.assetId !== monadConfidentialUsdcAssetId ||
     typeof r.depositAddress !== "string" ||
     !/^0x[0-9a-f]{40}$/i.test(r.depositAddress) ||

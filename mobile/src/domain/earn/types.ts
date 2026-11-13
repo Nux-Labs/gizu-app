@@ -38,12 +38,18 @@ export type EarnIntent = {
   sourceAddress: string;
   sourceChainId: 143;
   confidentialAddress: string;
+  /** Account 2 for new returns, including exits from historical investments. */
+  returnConfidentialAddress?: string;
   backupCovered: true;
   destinations: [EarnDestination, ...EarnDestination[]];
   distribution?: import("./distribution").EarnDistribution;
   investmentSlot?: number;
   distributionBudgetAtoms?: string;
 };
+export function earnReturnAddress(intent: EarnIntent): string {
+  return intent.returnConfidentialAddress ?? intent.confidentialAddress;
+}
+
 export type EarnWalletState = EarnIntent | { status: "absent" | "recoveryRequired" };
 export interface EarnWalletService {
   load(owner: EarnOwner): Promise<EarnWalletState>;

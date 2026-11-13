@@ -126,18 +126,20 @@ class EarnDepositRecoveryTest {
   }
 
   @Test
-  fun readonlyReconciliationRequiresTheCurrentLoginAndNeverRenewsIt() {
+  fun reconciliationUsesTheSharedReadGrantAndCannotRenewAClearedGrant() {
     DepositFixtures.record().use { r ->
-      requireDepositReadPermission(r, r.id, r.journalId, 121000, 1001)
-      for (now in listOf(999L, 121000L)) assertThrows(IllegalStateException::class.java) {
-        requireDepositReadPermission(r, r.id, r.journalId, 121000, now)
-      }
-      assertThrows(IllegalStateException::class.java) {
-        requireDepositReadPermission(r, "another-wallet", r.journalId, 121000, 1001)
-      }
-      assertThrows(IllegalStateException::class.java) {
-        requireDepositReadPermission(r, r.id, "another-generation", 121000, 1001)
-      }
+      val read = PrivateUsdcRead {}
+      assertThrows(IllegalStateException::class.java) { requireDepositReadPermission(r, read) }
+      read.grant(r.id, r.journalId)
+      requireDepositReadPermission(r, read)
+      read.grant("another-wallet", r.journalId)
+      assertThrows(IllegalStateException::class.java) { requireDepositReadPermission(r, read) }
+      read.grant(r.id, "another-generation")
+      assertThrows(IllegalStateException::class.java) { requireDepositReadPermission(r, read) }
+      read.grant(r.id, r.journalId)
+      read.clear()
+      assertThrows(IllegalStateException::class.java) { requireDepositReadPermission(r, read) }
+      assertFalse(read.allows(r.id, r.journalId))
     }
   }
 }

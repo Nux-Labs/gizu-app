@@ -109,7 +109,9 @@ internal class NativeOwnedConfidentialPortfolio(
     val recovered = discovered(record)
     val descriptor =
       recovered.joinToString { it.address } +
-        rows.joinToString("|") { "${it.getInt("chainId")}:${it.getInt("cycleIndex")}" }
+        rows.joinToString("|") {
+          "${it.getInt("chainId")}:${it.getInt("cycleIndex")}:${it.optString("privateAccount")}"
+        }
     val fingerprint =
       MessageDigest.getInstance("SHA-256").digest(descriptor.toByteArray()).joinToString("") {
         "%02x".format(it)
@@ -126,18 +128,20 @@ internal class NativeOwnedConfidentialPortfolio(
               0,
             )
           ) +
-            rows.map { row ->
-              val chain = row.getInt("chainId")
-              val cycle = row.getInt("cycleIndex")
-              NativeConfidentialTarget(
-                record.id,
-                record.journalId,
-                deriveEarn(record, chain, cycle).lowercase(),
-                "earn",
-                chain,
-                cycle,
-              )
-            } +
+            rows
+              .filter { it.optString("privateAccount") != "shared" }
+              .map { row ->
+                val chain = row.getInt("chainId")
+                val cycle = row.getInt("cycleIndex")
+                NativeConfidentialTarget(
+                  record.id,
+                  record.journalId,
+                  deriveEarn(record, chain, cycle).lowercase(),
+                  "earn",
+                  chain,
+                  cycle,
+                )
+              } +
             recovered)
           .distinctBy { it.address }
       require(
@@ -362,8 +366,8 @@ internal class NativeOwnedConfidentialPortfolio(
     val complete = snapshot["confidentialComplete"] == true
     val state =
       when {
-        complete -> "ready"
         !authorized -> "locked"
+        complete -> "ready"
         failed && successful == 0 -> "unavailable"
         else -> "partial"
       }

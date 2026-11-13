@@ -177,7 +177,8 @@ export class ConfidentialSettlement {
   }
 
   /** Actual operation history, not the quote's estimated output or an aggregate balance. */
-  private async historyCredit(
+  /** Caller must first authenticate the signer and validate its saved route expectation. */
+  async historyCredit(
     auth: ReadAuthentication,
     expected: SettlementExpectation,
     signer: string,

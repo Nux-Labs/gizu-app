@@ -90,6 +90,7 @@ export function createEarnDepositService(
                 "quoteUnavailable",
                 "insufficientFunds",
                 "uneconomicAmount",
+                "savedDepositOpen",
               ].includes(saved.pauseReason ?? "")
             )
           )

@@ -44,12 +44,37 @@ internal fun cycleInvestmentAddress(
   return cycleAddresses(record)[slot]
 }
 
+internal fun sharedConfidential(record: WalletRecord) =
+  deriveAccountAddressRange(record.entropy, 2u, 1u).single()
+
+/** Missing metadata belongs to historical operations and must keep its original identity. */
 internal fun cycleConfidential(record: WalletRecord) =
+  if (savedEarnCycle(record)?.optString("privateAccount") == "shared") sharedConfidential(record)
+  else legacyCycleConfidential(record)
+
+private fun legacyCycleConfidential(record: WalletRecord) =
   deriveEarnCycleConfidentialAddress(
     record.entropy,
     record.earnChain.toULong(),
     record.earnCycleIndex.toUInt(),
   )
+
+/** Saved routes may finish at their original private account; new returns use Account 2. */
+internal fun requireEarnConfidentialAccount(record: WalletRecord, address: String) {
+  check(
+    address.equals(sharedConfidential(record), true) ||
+      address.equals(legacyCycleConfidential(record), true)
+  ) {
+    "Private account does not belong to this investment"
+  }
+}
+
+/** New rows follow current policy; historical rows are resumed from their immutable journal. */
+internal fun requireFreshEarnPrivateAccount(record: WalletRecord, kind: String, address: String) {
+  val expected =
+    if (kind == "sourceFunding") cycleConfidential(record) else sharedConfidential(record)
+  check(address.equals(expected, true)) { "New Earn routes must use the current private account" }
+}
 
 internal fun requireActiveEarnCycle(record: WalletRecord, p: JSONObject) {
   check(p.optInt("cycleIndex", 0) == record.earnCycleIndex) {
@@ -96,16 +121,22 @@ internal fun cycleReadAuth(
   random: ByteArray,
   started: ULong,
   now: ULong,
-) =
-  authenticateEarnCycleRead(
-    record.entropy,
-    record.earnChain.toULong(),
-    record.earnCycleIndex.toUInt(),
-    salt,
-    random,
-    started,
-    now,
-  )
+  address: String = cycleConfidential(record),
+): EarnReadAuthentication {
+  requireEarnConfidentialAccount(record, address)
+  return if (address.equals(sharedConfidential(record), true))
+    authenticateSwapRead(record.entropy, salt, random, started, now)
+  else
+    authenticateEarnCycleRead(
+      record.entropy,
+      record.earnChain.toULong(),
+      record.earnCycleIndex.toUInt(),
+      salt,
+      random,
+      started,
+      now,
+    )
+}
 
 internal fun currentCycleRows(record: WalletRecord, rows: List<JSONObject>) =
   rows.filter {
@@ -113,6 +144,15 @@ internal fun currentCycleRows(record: WalletRecord, rows: List<JSONObject>) =
     proposal.optInt("cycleIndex", 0) == record.earnCycleIndex &&
       (!proposal.has("investmentSlot") ||
         proposal.getInt("investmentSlot") == selectedInvestmentSlot(record))
+  }
+
+/** Reads one saved portion. A negative slot is the legacy wallet that has no slot field. */
+internal fun sponsoredRowsForPortion(rows: List<JSONObject>, cycleIndex: Int, investmentSlot: Int) =
+  rows.filter { row ->
+    val proposal = row.getJSONObject("proposal")
+    proposal.optInt("cycleIndex", 0) == cycleIndex &&
+      if (investmentSlot < 0) !proposal.has("investmentSlot")
+      else proposal.optInt("investmentSlot", -1) == investmentSlot
   }
 
 internal fun recordForCycle(record: WalletRecord, cycle: JSONObject) =

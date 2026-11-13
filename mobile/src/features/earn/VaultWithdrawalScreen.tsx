@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { View } from "react-native";
 import { Screen } from "@/components/templates/Screen";
@@ -9,6 +10,7 @@ import type { RootStackParamList } from "@/navigation/types";
 import { earnProfiles } from "@/domain/earn/types";
 import { portfolioVaultPosition } from "@/domain/wallet/portfolioValue";
 import { formatUsdc } from "@/domain/wallet/amounts";
+import { PrivateBalanceRefresh } from "@/features/wallet/PrivateBalanceRefresh";
 import { useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { useEarn } from "./EarnProvider";
 import { useVaultPosition } from "./useVaultPosition";
@@ -23,10 +25,13 @@ export function VaultWithdrawalScreen({
   const portfolio = useMainnetWallet();
   const earn = useEarn();
   const v = useVaultPosition(profileId);
+  const refreshAfterAction = portfolio.refreshAfterAction;
+  useEffect(() => {
+    if (v.message) void refreshAfterAction();
+  }, [v.message, refreshAfterAction]);
   const position = profile && portfolioVaultPosition(portfolio.snapshot, profileId);
   const underlying = position?.underlyingAtoms ?? position?.observedUnderlyingAtoms;
   const complete = v.rows.length > 0 && v.completed === v.rows.length;
-  const completed = v.completed;
   const refresh = () => {
     void v.refresh();
     void portfolio.refresh();
@@ -64,8 +69,8 @@ export function VaultWithdrawalScreen({
         </View>
       </Surface>
       <Typography>
-        Withdraw to your private USDC balance in Gizu. First release your funds from the vault, then
-        approve their return. We will guide you through each part.
+        Withdraw to your private USDC balance in Gizu. One approval covers the vault withdrawal and
+        the private return that follows it.
       </Typography>
       {v.loading && (
         <Typography accessibilityLiveRegion="polite">
@@ -77,11 +82,6 @@ export function VaultWithdrawalScreen({
           {complete
             ? "All saved withdrawals for this vault are complete."
             : "No saved withdrawal activity for this vault."}
-        </Typography>
-      )}
-      {v.rows.length > 1 && (
-        <Typography accessibilityLiveRegion="polite">
-          Withdrawal progress: {completed} of {v.rows.length} saved portions complete.
         </Typography>
       )}
       {v.intent &&
@@ -102,6 +102,7 @@ export function VaultWithdrawalScreen({
           />
         ))}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
+      <PrivateBalanceRefresh showAmount onReadComplete={() => v.refresh()} />
       {v.completed > 0 && (
         <Button
           label="Check past withdrawals"
