@@ -245,7 +245,14 @@ internal object WalletRecoveryRuntime {
           val auth =
             recordForCycle(record, JSONObject().put("chainId", chain).put("cycleIndex", cycle))
               .use {
-                cycleReadAuth(it, salt, random, now.toULong(), System.currentTimeMillis().toULong())
+                cycleReadAuth(
+                  it,
+                  salt,
+                  random,
+                  now.toULong(),
+                  System.currentTimeMillis().toULong(),
+                  address,
+                )
               }
           found = (provider.read(auth, address)["available"] as String).toBigInteger().signum() > 0
         } else {

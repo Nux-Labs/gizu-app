@@ -256,9 +256,14 @@ impl EarnPayoutOperation {
                 .verifying_key(),
         );
         let confidential = address(
-            child(&seed, p.profile_chain_id, p.cycle_index, 2)?
-                .private_key()
-                .verifying_key(),
+            crate::earn_confidential_key(
+                &seed,
+                p.profile_chain_id,
+                p.cycle_index,
+                &p.expected_signer,
+            )?
+            .private_key()
+            .verifying_key(),
         );
         let recipient_key = if slot.is_some() {
             crate::earn_distribution::earn_investment_key(
@@ -465,9 +470,14 @@ impl EarnPayoutOperation {
             payload.len(),
             payload
         ));
-        let (sig, rec) = child(&seed, s.p.profile_chain_id, s.p.cycle_index, 2)?
-            .private_key()
-            .sign_prehash_recoverable(digest.as_ref());
+        let (sig, rec) = crate::earn_confidential_key(
+            &seed,
+            s.p.profile_chain_id,
+            s.p.cycle_index,
+            &s.p.expected_signer,
+        )?
+        .private_key()
+        .sign_prehash_recoverable(digest.as_ref());
         if rec.to_byte() > 1 {
             return Err(SignerError::CryptoFailed);
         }
@@ -820,9 +830,14 @@ impl ConfidentialEarnWithdrawalOperation {
         hash(&p.return_history_id)?;
         let seed = crate::roles::seed_from_entropy(entropy)?;
         let confidential = address(
-            crate::earn_cycle_key(&seed, p.profile_chain_id, p.cycle_index, 2)?
-                .private_key()
-                .verifying_key(),
+            crate::earn_confidential_key(
+                &seed,
+                p.profile_chain_id,
+                p.cycle_index,
+                &p.expected_signer,
+            )?
+            .private_key()
+            .verifying_key(),
         );
         let recipient = address(
             crate::roles::derive_key(&seed, p.recipient_index)?
@@ -1194,6 +1209,40 @@ mod tests {
         let (o, _) = approved(&p);
         o.invalidate();
         assert!(o.review_hash().is_err());
+    }
+
+    #[test]
+    fn shared_account_two_payout_signs_and_recovers_the_shared_key() {
+        for chain in [1, 4663] {
+            let mut p = proposal(chain, "invest");
+            let c = crate::derive_account_addresses(vec![0; 32]).unwrap()[2].clone();
+            p["expectedSigner"] = json!(c);
+            let (mut credit, mut quote, raw, mut journal) = evidence(&p);
+            credit.confidential_account = c.clone();
+            quote.confidential_account = c.clone();
+            quote.refund_account = c.clone();
+            let mut payload: Value = serde_json::from_str(&raw).unwrap();
+            payload["signer_id"] = json!(c.to_lowercase());
+            let raw = payload.to_string();
+            let digest = format!("{:#x}", keccak256(raw.as_bytes()));
+            quote.payload_hash = digest.clone();
+            journal.payload_hash = digest;
+            let o = EarnPayoutOperation::new(p.to_string(), vec![0; 32]).unwrap();
+            o.prepare(7, credit, quote, raw.clone(), journal.clone())
+                .unwrap();
+            o.approve(7, o.review_hash().unwrap()).unwrap();
+            let signed = o.sign(7, journal).unwrap();
+            let encoded = signed.signature.strip_prefix("secp256k1:").unwrap();
+            let bytes = bs58::decode(encoded).into_vec().unwrap();
+            let message = format!("\x19Ethereum Signed Message:\n{}{}", raw.len(), raw);
+            let key = k256::ecdsa::VerifyingKey::recover_from_prehash(
+                keccak256(message.as_bytes()).as_slice(),
+                &k256::ecdsa::Signature::from_slice(&bytes[..64]).unwrap(),
+                k256::ecdsa::RecoveryId::from_byte(bytes[64]).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(address(&key), c);
+        }
     }
 
     #[test]

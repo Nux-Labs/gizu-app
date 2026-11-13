@@ -8,9 +8,52 @@ export type EarnInvestmentPosition = {
   investmentSlot?: number;
   activity: "invested" | "redeemed" | "returned" | "pending";
   recoveryRequired: boolean;
+  withdrawalAttention?: "confirming" | "unfinished" | "returning" | "checking";
 };
 export interface EarnInvestmentPositionsService {
   list(owner: EarnOwner): Promise<EarnInvestmentPosition[]>;
+}
+
+export function investmentPositionKey(
+  row: Pick<EarnInvestmentPosition, "intentId" | "investmentSlot">,
+) {
+  return `${row.intentId}:${row.investmentSlot ?? "legacy"}`;
+}
+
+/** Native attention stands only while the vault's private-USDC decision has not finished it. */
+export function openWithdrawalAttention(
+  rows: readonly EarnInvestmentPosition[],
+  covered: Readonly<Record<string, true>>,
+): EarnInvestmentPosition["withdrawalAttention"] | null {
+  return (
+    rows.find((row) => row.withdrawalAttention && !covered[investmentPositionKey(row)])
+      ?.withdrawalAttention ?? null
+  );
+}
+
+/** A known-zero vault stays closed until a saved portion still needs its private return. */
+export function vaultWithdrawalAvailable(input: {
+  amountAtoms: string | null;
+  positions: readonly EarnInvestmentPosition[];
+  covered: Readonly<Record<string, true>>;
+  profileId: EarnProfileId;
+  checked: boolean;
+}): boolean {
+  if (input.amountAtoms === null) return true;
+  let amount: bigint;
+  try {
+    amount = BigInt(input.amountAtoms);
+  } catch {
+    return true;
+  }
+  if (amount > 0n) return true;
+  if (!input.checked) return false;
+  return input.positions.some(
+    (row) =>
+      row.profileId === input.profileId &&
+      row.withdrawalAttention !== undefined &&
+      !input.covered[investmentPositionKey(row)],
+  );
 }
 
 /** Screen-local proof; never persisted as native completion or spending authority. */
@@ -20,4 +63,6 @@ export type EarnInvestmentExitProof = {
   profileId: EarnProfileId;
   investmentSlot?: number;
   expiresAtMs: number | null;
+  /** The native return is confirmed; full exit checks must still verify public residuals and saved payouts. */
+  settled?: boolean;
 };

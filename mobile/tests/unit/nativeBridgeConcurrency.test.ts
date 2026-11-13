@@ -5,6 +5,7 @@ import {
   getStoredSwapSigner,
   getStoredEarnDepositSigner,
   getStoredWalletRecoverySigner,
+  getStoredEarnBalanceSigner,
 } from "@/services/wallet/nativeBridge";
 jest.mock("expo", () => ({ requireOptionalNativeModule: jest.fn() }));
 const originalOS = Platform.OS;
@@ -16,6 +17,26 @@ afterEach(() => {
 const tick = async () => {
   for (let i = 0; i < 15; i++) await Promise.resolve();
 };
+test("cancelling a balance operation preserves reads while explicit wallet lock revokes them", () => {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+  Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
+  let readsUnlocked = true;
+  const native = {
+    getCapabilities: jest.fn(),
+    readEarnBalance: jest.fn(),
+    cancelWalletOperation: jest.fn(),
+    lock: jest.fn(() => {
+      readsUnlocked = false;
+    }),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+  getStoredEarnBalanceSigner()!.lock();
+  expect(readsUnlocked).toBe(true);
+  expect(native.cancelWalletOperation).toHaveBeenCalledTimes(1);
+  getStoredSigner()!.lock();
+  expect(readsUnlocked).toBe(false);
+  expect(native.lock).toHaveBeenCalledTimes(1);
+});
 test("old native builds can resume legacy sales but cannot start a public-payout sale under the private UI", async () => {
   Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
   Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });

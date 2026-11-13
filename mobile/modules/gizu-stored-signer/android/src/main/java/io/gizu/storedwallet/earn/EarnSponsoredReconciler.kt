@@ -90,7 +90,6 @@ internal suspend fun reconcileEarnSponsoredOperations(
       requireSameSignedUserOp(saved, known.getJSONObject("userOperation"))
     } else check(known === JSONObject.NULL)
     if (reported is JSONObject) {
-      check(known is JSONObject)
       check(
         reported.getString("userOpHash").equals(hash, true) &&
           reported.getString("sender").equals(p.getString("expectedFrom"), true)
@@ -101,6 +100,15 @@ internal suspend fun reconcileEarnSponsoredOperations(
       )
       val reportedReceipt = reported.getJSONObject("receipt")
       val txHash = earnHash(reportedReceipt.getString("transactionHash"))
+      if (known === JSONObject.NULL) {
+        // Receipt and operation indexes may become available at different times. Keep the
+        // nonce reserved until the exact signed UserOp and canonical receipt can be verified.
+        if (op.getString("status") != "pending")
+          journal.update(op.getString("operationId"), op.getInt("revision")) {
+            it.put("status", "pending")
+          }
+        continue
+      }
       val receipt =
         chainRpc.call("eth_getTransactionReceipt", JSONArray().put(txHash)) as JSONObject
       check(
@@ -252,7 +260,13 @@ internal suspend fun reconcileEarnSponsoredOperations(
         val conflict =
           quantity(state.entryPointNonce) != quantity(p.getString("nonce")) ||
             state.transactionNonce.toString() != binding.getString("transactionNonce")
-        op.put("conflict", conflict).put("status", if (conflict) "unknown" else "signed")
+        op
+          .put("conflict", conflict)
+          .put(
+            "status",
+            if (conflict) "unknown"
+            else if (op.getString("status") == "pending") "pending" else "signed",
+          )
       }
     }
     if (before != op.toString())

@@ -184,10 +184,11 @@ internal class EarnSponsoredEngine(
   private val reservations: FundingReservations? = null,
   private val sourceReplanner: suspend (WalletRecord, JSONObject) -> Pair<JSONObject, JSONObject> =
     EarnSourceReplanner(journal.quotes)::replan,
+  private val privateCreditRows: (String) -> List<JSONObject> = { journal.all() },
   private val baselineReader: suspend (JSONObject, () -> Unit) -> JSONObject =
     { proposal, authority ->
       readNativeSponsoredBaseline(
-        nativeCycleReadAuth(store, authority),
+        nativeCycleReadAuth(store, authority, proposal.getString("confidentialAccount")),
         proposal.getString("confidentialAccount"),
       )
     },
@@ -238,7 +239,7 @@ internal class EarnSponsoredEngine(
       if (chain == 143L) check(!p.has("investmentSlot")) else attachInvestmentSlot(record, p)
       requireActiveEarnCycle(record, p)
       if (p.getString("kind") in setOf("sourceFunding", "hoodTokenReturn")) {
-        check(p.getString("confidentialAccount").equals(cycleConfidential(record), true))
+        requireEarnConfidentialAccount(record, p.getString("confidentialAccount"))
         check(p.getString("refundOwner").equals(owner, true))
       }
       signerFactory(p.toString(), record.entropy).use {}
@@ -253,6 +254,12 @@ internal class EarnSponsoredEngine(
         }
         return@use existing
       }
+      if (p.getString("kind") in setOf("sourceFunding", "hoodTokenReturn"))
+        requireFreshEarnPrivateAccount(
+          record,
+          p.getString("kind"),
+          p.getString("confidentialAccount"),
+        )
       if (p.getString("kind") == "sourceFunding") {
         val prior =
           currentCycleRows(record, journal.all()).filter {
@@ -478,7 +485,12 @@ internal class EarnSponsoredEngine(
     val baseline =
       if (review.kind == "operation" && route?.maximumCreditAtoms != null) {
         checkNotNull(route.recoveryEnvelope)
-        requireSequentialSourceCredit(journal.all(), op, journal.walletId, journal.generation)
+        requireSequentialSourceCredit(
+          privateCreditRows(p.getString("confidentialAccount")),
+          op,
+          journal.walletId,
+          journal.generation,
+        )
         baselineReader(p, authority).also {
           check(
             it.getString("confidentialAddress").equals(p.getString("confidentialAccount"), true)
@@ -661,6 +673,48 @@ internal fun redeemedUsdg(op: JSONObject): Boolean {
   return amount.isNotEmpty() && amount.toBigInteger().signum() > 0
 }
 
+/**
+ * One passkey for a vault withdrawal. The private return is signed later, only inside this window.
+ */
+internal data class OpenWithdrawalApproval(
+  val walletId: String,
+  val generation: String,
+  val redeemId: String,
+  val approvedAt: Long,
+)
+
+internal fun assertWithdrawalReturnAuthorized(
+  approval: OpenWithdrawalApproval,
+  walletId: String,
+  generation: String,
+  redeem: JSONObject,
+  proposal: JSONObject,
+  now: Long,
+) {
+  val age = now - approval.approvedAt
+  check(
+    approval.walletId == walletId && approval.generation == generation && age >= 0 && age < 900000
+  ) {
+    "Withdrawal approval expired"
+  }
+  check(
+    redeem.getString("operationId") == approval.redeemId &&
+      redeem.getString("status") == "finalized"
+  )
+  val saved = redeem.getJSONObject("proposal")
+  check(saved.getString("kind") == "hoodRedeemAll" && redeem.optString("residualShares") == "0")
+  check(redeemedUsdg(redeem))
+  check(proposal.getString("kind") == "hoodTokenReturn")
+  check(proposal.getString("expectedFrom").equals(saved.getString("expectedFrom"), true))
+  val redeemed = redeem.getString("redeemedUsdgAtoms").toBigInteger()
+  val spend =
+    proposal.getString("amountAtoms").toBigInteger() +
+      proposal.getString("maximumTokenFeeAtoms").toBigInteger()
+  check(spend.signum() > 0 && spend <= redeemed) {
+    "Private return exceeds the USDG from this withdrawal"
+  }
+}
+
 /** A delivered vault receipt releases only an expired unsent redeem so the return can be signed. */
 internal suspend fun retireSettledRedeemBeforeReturn(
   journal: EarnSponsoredJournal,
@@ -715,7 +769,10 @@ internal suspend fun retireExpiredUnsentExits(
     }
     check(proposal.getLong("deadline") <= nowSeconds) { "Saved sponsored deadline is still valid" }
     val known =
-      bundler.call("eth_getUserOperationByHash", JSONArray().put(prior.getString("userOperationHash")))
+      bundler.call(
+        "eth_getUserOperationByHash",
+        JSONArray().put(prior.getString("userOperationHash")),
+      )
     check(known === JSONObject.NULL) { "Saved sponsored operation is already with the bundler" }
     val state = stateReader(proposal)
     val binding = prior.getJSONObject("stateBinding")
@@ -725,7 +782,11 @@ internal suspend fun retireExpiredUnsentExits(
     ) {
       "Saved operation native state changed"
     }
-    journal.retireExpiredUnsent(prior.getString("operationId"), prior.getInt("revision"), nowSeconds)
+    journal.retireExpiredUnsent(
+      prior.getString("operationId"),
+      prior.getInt("revision"),
+      nowSeconds,
+    )
   }
 }
 
@@ -782,7 +843,7 @@ internal fun nativeJsonEqual(a: Any?, b: Any?): Boolean =
     else -> a == b
   }
 
-/** A dedicated cycle account has at most one uncredited incoming route at a time. */
+/** A private account has at most one uncredited incoming route across all investments. */
 internal fun requireSequentialSourceCredit(
   rows: List<JSONObject>,
   current: JSONObject,
@@ -800,7 +861,10 @@ internal fun requireSequentialSourceCredit(
     )
       continue
     if (!proposal.optString("confidentialAccount").equals(owner, true)) continue
-    if (other.sponsoredSpendSaved() && other.getString("status") != "reverted")
+    if (
+      other.sponsoredSpendSaved() &&
+        other.getString("status") !in setOf("reverted", "nonceCancelled")
+    )
       check(
         other.getString("status") == "finalized" &&
           (other.optJSONObject("settlement")?.optString("status") == "credited" ||

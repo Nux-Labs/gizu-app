@@ -152,9 +152,7 @@ test("mainnet deposit keeps the explicit USDC receiving address", async () => {
   await screen.findByLabelText("19.990574 USD");
   await userEvent.press(screen.getByRole("button", { name: "Receive" }));
   expect(await screen.findByRole("header", { name: "Receive" })).toBeVisible();
-  expect(
-    screen.getByText("Swap funding address · Receive USDC on Monad mainnet only."),
-  ).toBeVisible();
+  expect(screen.getByText("Funding address · Receive USDC on Monad mainnet only.")).toBeVisible();
   await userEvent.press(screen.getByRole("button", { name: "Copy account address" }));
   expect(clipboard.copy).toHaveBeenCalledWith(address);
 });
@@ -611,7 +609,7 @@ test("a locked private balance explains wallet unlock without claiming a provide
     ],
   });
   await open();
-  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "USDC (private) holding details" }));
   expect(screen.getByText("Refresh to check your private USDC.")).toBeVisible();
   expect(screen.queryByText("USDC (private) balance unavailable. Refresh to retry.")).toBeNull();

@@ -99,9 +99,18 @@ function decode(value: unknown, owner: EarnOwner, requested?: EarnProfileId): Ea
     row.confidentialAddress.toLowerCase() === row.sourceAddress.toLowerCase()
   )
     throw new Error("Invalid native confidential identity.");
+  if (
+    row.returnConfidentialAddress !== undefined &&
+    (!validAddress(row.returnConfidentialAddress) ||
+      row.returnConfidentialAddress.toLowerCase() === row.sourceAddress.toLowerCase())
+  )
+    throw new Error("Invalid native private return identity.");
   const addresses = new Set([
     row.sourceAddress.toLowerCase(),
     row.confidentialAddress.toLowerCase(),
+    ...(typeof row.returnConfidentialAddress === "string"
+      ? [row.returnConfidentialAddress.toLowerCase()]
+      : []),
   ]);
   const checked = destinations.map((value, index) => {
     const d = object(value);
@@ -131,6 +140,9 @@ function decode(value: unknown, owner: EarnOwner, requested?: EarnProfileId): Ea
     sourceAddress: row.sourceAddress,
     sourceChainId: 143,
     confidentialAddress: row.confidentialAddress,
+    ...(row.returnConfidentialAddress !== undefined
+      ? { returnConfidentialAddress: row.returnConfidentialAddress as string }
+      : {}),
     backupCovered: true,
     destinations: checked as EarnIntent["destinations"],
     ...(distribution

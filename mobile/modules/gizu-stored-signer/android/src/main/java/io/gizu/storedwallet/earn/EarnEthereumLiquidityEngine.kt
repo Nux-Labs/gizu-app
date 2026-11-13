@@ -185,10 +185,11 @@ internal class EarnLiquidityEngine(
   private val baselineReader: suspend (JSONObject, () -> Unit) -> JSONObject =
     { proposal, authority ->
       readNativeSponsoredBaseline(
-        nativeCycleReadAuth(store, authority),
+        nativeCycleReadAuth(store, authority, proposal.getString("confidentialAccount")),
         proposal.getString("confidentialAccount"),
       )
     },
+  private val privateCreditRows: (String) -> List<JSONObject> = { journal.all() },
 ) : AutoCloseable {
   private var signer: NativeLiquiditySigner? = null
   private var displayed: LiquidityReview? = null
@@ -206,16 +207,18 @@ internal class EarnLiquidityEngine(
     return store.load().use { record ->
       walletCheck(record)
       check(request["walletId"] == record.id)
+      val confidential =
+        (request["proposal"] as? Map<*, *>)?.get("confidentialAccount") as? String
+          ?: error("Missing private account")
+      requireEarnConfidentialAccount(record, confidential)
       val p =
         attachInvestmentSlot(
           record,
-          canonicalLiquidityProposal(
-            cycleInvestmentAddress(record),
-            cycleConfidential(record),
-            request,
-          ),
+          canonicalLiquidityProposal(cycleInvestmentAddress(record), confidential, request),
         )
       requireActiveEarnCycle(record, p)
+      if (p.getString("kind") in setOf("returnUsdc", "returnEth"))
+        requireFreshEarnPrivateAccount(record, p.getString("kind"), confidential)
       signerFactory(p.toString(), record.entropy).use {}
       journal.create(p)
     }
@@ -368,7 +371,12 @@ internal class EarnLiquidityEngine(
       val baseline =
         if (returning?.maximumCreditAtoms != null) {
           checkNotNull(returning?.recoveryEnvelope)
-          requireSequentialSourceCredit(journal.all(), op, journal.walletId, journal.generation)
+          requireSequentialSourceCredit(
+            privateCreditRows(p.getString("confidentialAccount")),
+            op,
+            journal.walletId,
+            journal.generation,
+          )
           baselineReader(p, authority).also { authority() }
         } else null
       val state = stateReader(p)

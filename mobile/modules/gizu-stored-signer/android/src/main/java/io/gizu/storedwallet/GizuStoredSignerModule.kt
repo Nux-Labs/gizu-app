@@ -52,14 +52,14 @@ class GizuStoredSignerModule : Module() {
   private var awaitingProvider = false
   private var foreground = true
   private val discoveryConsent = WalletDiscoveryConsent()
-  private var balanceReadWallet: String? = null
-  private var balanceReadGeneration: String? = null
-  private var balanceReadUntil = 0L
+  private val privateUsdc = PrivateUsdcRead {
+    observeDepositDepartures(checkNotNull(appContext.currentActivity ?: appContext.reactContext))
+  }
   private var depositHost: EarnDepositHost? = null
+  private var openWithdrawal: OpenWithdrawalApproval? = null
   private var depositPreparingId: String? = null
   private var departureContext: Context? = null
   private val depositLifecycle = EarnDepositLifecycle {
-    balanceReadUntil = 0
     discoveryConsent.clear()
     depositHost?.revoke("approvalExpired")
     task?.cancel()
@@ -67,6 +67,7 @@ class GizuStoredSignerModule : Module() {
   private val departureReceiver =
     object : BroadcastReceiver() {
       override fun onReceive(context: Context?, intent: Intent?) {
+        privateUsdc.onSystemEvent(intent?.action)
         depositLifecycle.onSystemEvent(intent?.action, intent?.getStringExtra("reason"))
       }
     }
@@ -117,13 +118,7 @@ class GizuStoredSignerModule : Module() {
           record.earnChain == 4663 &&
           record.earnCycleIndex == cycle
       )
-      requireDepositReadPermission(
-        record,
-        balanceReadWallet,
-        balanceReadGeneration,
-        balanceReadUntil,
-        System.currentTimeMillis(),
-      )
+      requirePrivateReadPermission(activity, record)
     }
     store.load().use { checkPermission(it) }
     val salt = ConfidentialBalance().salt()
@@ -465,7 +460,7 @@ class GizuStoredSignerModule : Module() {
       runCeremony(promise, timeoutMs = 180000L) { activity, store ->
         check(request.keys == setOf("walletId"))
         val wallet = request["walletId"] as? String ?: error("Missing wallet")
-        ensureDepositReadPermission(activity, store, wallet)
+        ensurePrivateReadPermission(activity, store, wallet)
         store.load().use { record ->
           check(record.id == wallet && record.verified)
           withContext(Dispatchers.IO) {
@@ -487,7 +482,7 @@ class GizuStoredSignerModule : Module() {
                       currentCoroutineContext().ensureActive()
                       source to
                         readPrivateDepositBalance(activity, record, source) {
-                          requirePrivateDepositReadPermission(activity, record)
+                          requirePrivateReadPermission(activity, record)
                         }
                     } finally {
                       limit.release()
@@ -546,7 +541,7 @@ class GizuStoredSignerModule : Module() {
           "Guided native deposits currently support Robinhood USDG only"
         }
         depositAtoms(budgetAtoms, true)
-        ensureDepositReadPermission(activity, store, walletId)
+        ensurePrivateReadPermission(activity, store, walletId)
         var id =
           store.load().use { record ->
             check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
@@ -575,7 +570,7 @@ class GizuStoredSignerModule : Module() {
           depositPreparingId = id
           try {
             nativeDepositPreparer(activity, record, journal) {
-                requirePrivateDepositReadPermission(activity, record)
+                requirePrivateReadPermission(activity, record)
               }
               .prepare(record, 4663, budgetAtoms, id)
           } finally {
@@ -638,7 +633,7 @@ class GizuStoredSignerModule : Module() {
       // Wait for a read-only status reconciliation instead of rejecting the user's action.
       runCeremony(promise, wait = true) { activity, store ->
         store.load().use { assertCashoutInactive(activity, it, deposit = true) }
-        ensureDepositReadPermission(activity, store, walletId)
+        ensurePrivateReadPermission(activity, store, walletId)
         val row =
           store.load().use { record ->
             check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
@@ -656,7 +651,7 @@ class GizuStoredSignerModule : Module() {
                 record,
                 journal,
                 foreground = { requireForeground(activity) },
-                readAuthority = { requirePrivateDepositReadPermission(activity, record) },
+                readAuthority = { requirePrivateReadPermission(activity, record) },
                 readAuth = {
                   depositReconciliationReadAuth(
                     activity,
@@ -790,15 +785,17 @@ class GizuStoredSignerModule : Module() {
             PasskeyGate(activity).authorize(identity.second, identity.first)
           }
           currentCoroutineContext().ensureActive()
-          withContext(Dispatchers.IO) {
-            store.load().use {
-              check(it.id == identity.first)
-              balanceReadWallet = it.id
-              balanceReadGeneration = it.journalId
-              balanceReadUntil = System.currentTimeMillis() + 120000
-              project(it)
+          val opened =
+            withContext(Dispatchers.IO) {
+              store.load().use {
+                check(it.id == identity.first)
+                it.journalId to project(it)
+              }
             }
-          }
+          requireForeground(activity)
+          check(deviceUnlocked()) { "Unlock your device to read private balances" }
+          privateUsdc.grant(identity.first, opened.first)
+          opened.second
         }
       }
     }
@@ -925,7 +922,7 @@ class GizuStoredSignerModule : Module() {
         confirm(
           activity,
           "Prepare a new investment",
-          "Create a fresh holding wallet, investment wallet and confidential account. Previous investments remain available for withdrawal and recovery. No funds move.",
+          "Create fresh holding and investment wallets using your existing private USDC balance. Previous investments remain available for withdrawal and recovery. No funds move.",
         )
         withProviderUi(activity) {
           PasskeyGate(activity).authorize(credential, walletId, "earn-new-cycle:$profile")
@@ -1021,15 +1018,7 @@ class GizuStoredSignerModule : Module() {
               Triple(record.credential, record.journalId, record.earnChain)
             }
           }
-        confirm(
-          activity,
-          "Check confidential USDC",
-          "Authenticate a read-only balance check for your prepared earn account. Gizu and the confidential provider receive this account identity. This does not transfer funds or confirm settlement for any operation.",
-        )
-        withProviderUi(activity) {
-          PasskeyGate(activity)
-            .authorize(identity.first, walletId, "earn-read:v1:${identity.third}")
-        }
+        ensurePrivateReadPermission(activity, store, walletId)
         val api = ConfidentialBalance()
         val salt = api.salt()
         currentCoroutineContext().ensureActive()
@@ -1044,11 +1033,10 @@ class GizuStoredSignerModule : Module() {
                   record.earnChain == identity.third &&
                   record.verified
               )
+              requirePrivateReadPermission(activity, record)
               cycleConfidential(record) to
-                uniffi.gizu_stored_signer_core.authenticateEarnCycleRead(
-                  record.entropy,
-                  record.earnChain.toULong(),
-                  record.earnCycleIndex.toUInt(),
+                cycleReadAuth(
+                  record,
                   salt,
                   random,
                   started.toULong(),
@@ -1136,7 +1124,7 @@ class GizuStoredSignerModule : Module() {
           store.load().use { record ->
             requireSponsoredWallet(record, walletId)
             check(record.earnChain == 4663)
-            cycleInvestmentAddress(record) to cycleConfidential(record)
+            cycleInvestmentAddress(record) to sharedConfidential(record)
           }
         val quote =
           NativeEarnQuoteGateway(quotes = quotes)
@@ -1181,6 +1169,9 @@ class GizuStoredSignerModule : Module() {
               journal,
               EarnSponsoredChainRpc(143),
               EarnSponsoredBundlerRpc(143),
+              privateCreditRows = { address ->
+                store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
+              },
               reservations = ledger,
             )
             .use { engine ->
@@ -1224,6 +1215,9 @@ class GizuStoredSignerModule : Module() {
             journal,
             EarnSponsoredChainRpc(chain),
             EarnSponsoredBundlerRpc(chain),
+            privateCreditRows = { address ->
+              store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
+            },
             reservations = store.load().use { fundingReservations(activity, it) },
           )
           .use { engine ->
@@ -1240,38 +1234,20 @@ class GizuStoredSignerModule : Module() {
     }
     AsyncFunction("listEarnSponsoredOperations") { walletId: String, promise: Promise ->
       runCeremony(promise) { activity, store ->
-        val journal =
-          store.load().use { record ->
-            requireSponsoredWallet(record, walletId)
-            earnSponsoredJournal(activity, record)
-          }
-        val active = store.load().use { record -> currentCycleRows(record, journal.all()) }
-        val pending =
-          active
-            .filter { it.getString("status") !in terminalSteps }
-            .map { it.getString("operationId") }
-            .toSet()
-        for (chain in
-          active
-            .map { it.getJSONObject("proposal").getInt("chainId") }
-            .distinct()) reconcileEarnSponsoredOperations(
-          journal,
-          EarnSponsoredChainRpc(chain),
-          EarnSponsoredBundlerRpc(chain),
-          chainFilter = chain,
-          operationIds = pending,
-        )
-        store.load().use { record ->
-          val ledger = fundingReservations(activity, record)
-          journal
-            .all()
-            .filter {
-              it.getString("status") in setOf("finalized", "reverted") && it.has("transactionHash")
-            }
-            .forEach { ledger.complete(it.getString("operationId")) }
+        listSponsoredOperations(activity, store, walletId) { record, rows ->
+          currentCycleRows(record, rows)
         }
-        store.load().use { record ->
-          currentCycleRows(record, journal.all()).map { journal.public(it) }
+      }
+    }
+    AsyncFunction("listEarnCycleOperations") {
+      walletId: String,
+      cycleIndex: Int,
+      investmentSlot: Int,
+      promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        check(cycleIndex >= 0 && investmentSlot >= -1 && investmentSlot <= 4)
+        listSponsoredOperations(activity, store, walletId) { _, rows ->
+          sponsoredRowsForPortion(rows, cycleIndex, investmentSlot)
         }
       }
     }
@@ -1293,9 +1269,98 @@ class GizuStoredSignerModule : Module() {
             journal,
             EarnSponsoredChainRpc(chain),
             EarnSponsoredBundlerRpc(chain),
+            privateCreditRows = { address ->
+              store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
+            },
             reservations = store.load().use { fundingReservations(activity, it) },
           )
           .use { engine -> approveEarnSponsored(activity, store, engine, id, revision) }
+      }
+    }
+    AsyncFunction("continueEarnWithdrawal") { request: Map<String, Any?>, promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        val walletId = request["walletId"] as? String ?: error("Missing wallet")
+        val approval = checkNotNull(openWithdrawal) { "Withdrawal approval expired" }
+        check(approval.walletId == walletId) { "Withdrawal approval expired" }
+        val journal =
+          store.load().use { record ->
+            requireSponsoredWallet(record, walletId)
+            check(record.journalId == approval.generation) { "Withdrawal approval expired" }
+            earnSponsoredJournal(activity, record)
+          }
+        val proposal = JSONObject(request["proposal"] as? Map<*, *> ?: error("Missing proposal"))
+        assertWithdrawalReturnAuthorized(
+          approval,
+          walletId,
+          journal.generation,
+          journal.get(approval.redeemId),
+          proposal,
+          System.currentTimeMillis(),
+        )
+        val chain = proposal.getInt("chainId")
+        check(chain == 4663)
+        EarnSponsoredEngine(
+            store,
+            journal,
+            EarnSponsoredChainRpc(chain),
+            EarnSponsoredBundlerRpc(chain),
+            privateCreditRows = { address ->
+              store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
+            },
+            reservations = store.load().use { fundingReservations(activity, it) },
+          )
+          .use { engine ->
+            val created = engine.create(request)
+            val id = created.getString("operationId")
+            try {
+              assertWithdrawalReturnAuthorized(
+                approval,
+                walletId,
+                journal.generation,
+                journal.get(approval.redeemId),
+                created.getJSONObject("proposal"),
+                System.currentTimeMillis(),
+              )
+              var current = created.getInt("revision")
+              var signed = false
+              repeat(2) {
+                val review = engine.prepare(id, current)
+                try {
+                  engine.execute(review) {
+                    requireForeground(activity)
+                    store.load().use { record ->
+                      requireSponsoredWallet(record, walletId)
+                      check(record.journalId == approval.generation)
+                      assertWithdrawalReturnAuthorized(
+                        approval,
+                        walletId,
+                        record.journalId,
+                        journal.get(approval.redeemId),
+                        journal.get(id).getJSONObject("proposal"),
+                        System.currentTimeMillis(),
+                      )
+                    }
+                  }
+                } catch (failure: Exception) {
+                  if (
+                    failure is CancellationException || !journal.get(id).has("signedUserOperation")
+                  )
+                    throw failure
+                  signed = true
+                  return@use journal.public(journal.get(id))
+                }
+                signed = journal.get(id).has("signedUserOperation")
+                current = journal.get(id).getInt("revision")
+                if (review.kind != "delegation") return@use journal.public(journal.get(id))
+              }
+              check(signed)
+              journal.public(journal.get(id))
+            } finally {
+              if (journal.get(id).has("signedUserOperation")) openWithdrawal = null
+              else if (!journal.get(id).sponsoredSpendSaved())
+                runCatching { journal.cancel(id, journal.get(id).getInt("revision")) }
+            }
+          }
       }
     }
     AsyncFunction("cancelEarnSponsoredOperation") {
@@ -1357,36 +1422,25 @@ class GizuStoredSignerModule : Module() {
             requireSponsoredWallet(record, walletId)
             check(record.journalId == journal.generation)
             requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
-            record.credential to record.earnChain
+            requirePrivateReadPermission(activity, record)
+            record.earnChain
           }
-        confirm(
-          activity,
-          "Confirm confidential funding settlement",
-          "Verify this funded route using its saved balance snapshot and authenticated private balance.\nOperation $id\nOrigin transaction ${expected.getString("transactionHash")}\nDeposit ${expected.getString("depositAddress")}\nMinimum private credit ${expected.getString("minimumCreditAtoms")} base units",
-          fullReview = true,
-        )
-        withProviderUi(activity) {
-          PasskeyGate(activity)
-            .authorize(
-              identity.first,
-              walletId,
-              "earn-settlement:v1:$id:${operation.getInt("revision")}:${operation.getString("userOperationHash")}",
-            )
-        }
         val salt = ConfidentialBalance().salt()
         val random = ByteArray(7).also { SecureRandom().nextBytes(it) }
         val started = System.currentTimeMillis()
         val auth =
           store.load().use { record ->
             requireSponsoredWallet(record, walletId)
-            check(record.journalId == journal.generation && record.earnChain == identity.second)
-            check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
+            check(record.journalId == journal.generation && record.earnChain == identity)
+            requirePrivateReadPermission(activity, record)
+            requireEarnConfidentialAccount(record, expected.getString("confidentialAccount"))
             cycleReadAuth(
               record,
               salt,
               random,
               started.toULong(),
               System.currentTimeMillis().toULong(),
+              expected.getString("confidentialAccount"),
             )
           }
         val proof = readNativeSponsoredSettlement(auth, expected, operation)
@@ -1394,9 +1448,10 @@ class GizuStoredSignerModule : Module() {
         requireForeground(activity)
         store.load().use { record ->
           requireSponsoredWallet(record, walletId)
-          check(record.journalId == journal.generation && record.earnChain == identity.second)
+          check(record.journalId == journal.generation && record.earnChain == identity)
           requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
-          check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
+          requirePrivateReadPermission(activity, record)
+          requireEarnConfidentialAccount(record, expected.getString("confidentialAccount"))
         }
         store.load().use { record ->
           invalidateEarnPrivateCreditCaches(activity, record, operation, proof)
@@ -1622,7 +1677,7 @@ class GizuStoredSignerModule : Module() {
         val identity =
           store.load().use { record ->
             requireEarnExecutionWallet(record, walletId)
-            Triple(record.journalId, cycleInvestmentAddress(record), cycleConfidential(record))
+            Triple(record.journalId, cycleInvestmentAddress(record), sharedConfidential(record))
           }
         val quote =
           NativeEarnQuoteGateway(quotes = quotes)
@@ -1657,16 +1712,24 @@ class GizuStoredSignerModule : Module() {
             )
             earnLiquidityJournal(activity, record)
           }
-        EarnLiquidityEngine(store, journal, EthereumEarnRpc()).use { engine ->
-          val operation = engine.create(request)
-          approveEarnLiquidity(
-            activity,
+        EarnLiquidityEngine(
             store,
-            engine,
-            operation.getString("operationId"),
-            operation.getInt("revision"),
+            journal,
+            EthereumEarnRpc(),
+            privateCreditRows = { address ->
+              store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
+            },
           )
-        }
+          .use { engine ->
+            val operation = engine.create(request)
+            approveEarnLiquidity(
+              activity,
+              store,
+              engine,
+              operation.getString("operationId"),
+              operation.getInt("revision"),
+            )
+          }
       }
     }
     AsyncFunction("listEarnEthereumLiquidityOperations") { walletId: String, promise: Promise ->
@@ -1699,9 +1762,15 @@ class GizuStoredSignerModule : Module() {
             )
             earnLiquidityJournal(activity, record)
           }
-        EarnLiquidityEngine(store, journal, EthereumEarnRpc()).use { engine ->
-          approveEarnLiquidity(activity, store, engine, id, revision)
-        }
+        EarnLiquidityEngine(
+            store,
+            journal,
+            EthereumEarnRpc(),
+            privateCreditRows = { address ->
+              store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
+            },
+          )
+          .use { engine -> approveEarnLiquidity(activity, store, engine, id, revision) }
       }
     }
     AsyncFunction("cancelEarnEthereumLiquidityOperation") {
@@ -1759,7 +1828,7 @@ class GizuStoredSignerModule : Module() {
             requireEarnExecutionWallet(record, walletId)
             check(record.journalId == journal.generation)
             requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
-            check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
+            requireEarnConfidentialAccount(record, expected.getString("confidentialAccount"))
             record.credential
           }
         confirm(
@@ -1784,13 +1853,14 @@ class GizuStoredSignerModule : Module() {
             requireEarnExecutionWallet(record, walletId)
             check(record.journalId == journal.generation)
             requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
-            check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
+            requireEarnConfidentialAccount(record, expected.getString("confidentialAccount"))
             cycleReadAuth(
               record,
               salt,
               random,
               started.toULong(),
               System.currentTimeMillis().toULong(),
+              expected.getString("confidentialAccount"),
             )
           }
         val proof = readNativeSponsoredSettlement(auth, expected, operation)
@@ -1800,7 +1870,7 @@ class GizuStoredSignerModule : Module() {
           requireEarnExecutionWallet(record, walletId)
           check(record.journalId == journal.generation)
           requireActiveEarnCycle(record, operation.getJSONObject("proposal"))
-          check(cycleConfidential(record).equals(expected.getString("confidentialAccount"), true))
+          requireEarnConfidentialAccount(record, expected.getString("confidentialAccount"))
         }
         store.load().use { record ->
           invalidateEarnPrivateCreditCaches(activity, record, operation, proof)
@@ -1998,7 +2068,7 @@ class GizuStoredSignerModule : Module() {
       runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
         check(request.keys == setOf("walletId", "amountAtoms"))
         val wallet = request["walletId"] as? String ?: error("Missing wallet")
-        ensureCashoutReadPermission(activity, store, wallet)
+        ensurePrivateReadPermission(activity, store, wallet)
         withContext(Dispatchers.IO) {
           cashoutEngine(activity, store, wallet)
             .prepare(request["amountAtoms"] as? String ?: error("Missing exact amount"))
@@ -2009,7 +2079,7 @@ class GizuStoredSignerModule : Module() {
       runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
         check(request.keys == setOf("walletId", "operationId", "revision"))
         val wallet = request["walletId"] as? String ?: error("Missing wallet")
-        ensureCashoutReadPermission(activity, store, wallet)
+        ensurePrivateReadPermission(activity, store, wallet)
         val revision = request["revision"] as? Number ?: error("Missing revision")
         check(revision.toDouble() == revision.toInt().toDouble() && revision.toInt() > 0)
         runCashout(
@@ -2026,7 +2096,7 @@ class GizuStoredSignerModule : Module() {
         check(request.keys == setOf("walletId", "operationId"))
         val wallet = request["walletId"] as? String ?: error("Missing wallet")
         val id = request["operationId"] as? String ?: error("Missing operation")
-        ensureCashoutReadPermission(activity, store, wallet)
+        ensurePrivateReadPermission(activity, store, wallet)
         val revision =
           store.load().use { record ->
             confidentialWithdrawalJournal(activity, record).get(id).getInt("revision")
@@ -2060,10 +2130,8 @@ class GizuStoredSignerModule : Module() {
               io.gizu.storedwallet.portfolio
                 .NativeOwnedConfidentialPortfolio(activity)
                 .snapshot(record)
-            val authorized =
-              balanceReadWallet == record.id &&
-                balanceReadGeneration == record.journalId &&
-                balanceReadUntil > System.currentTimeMillis()
+            privateUsdc.onDeviceState(interactive = deviceUnlocked(), locked = false)
+            val authorized = privateUsdc.allows(record.id, record.journalId)
             snapshot +
               confidential +
               mapOf(
@@ -2106,14 +2174,12 @@ class GizuStoredSignerModule : Module() {
                 try {
                   val cache =
                     io.gizu.storedwallet.portfolio.NativeOwnedConfidentialPortfolio(activity)
-                  val authorized =
-                    balanceReadWallet == record.id &&
-                      balanceReadGeneration == record.journalId &&
-                      balanceReadUntil > System.currentTimeMillis()
+                  privateUsdc.onDeviceState(interactive = deviceUnlocked(), locked = false)
+                  val authorized = privateUsdc.allows(record.id, record.journalId)
                   val api = ConfidentialBalance()
                   cache.refresh(record, authorized, { api.salt() }) { target, salt ->
                     currentCoroutineContext().ensureActive()
-                    check(balanceReadUntil > System.currentTimeMillis())
+                    requirePrivateReadPermission(activity, record)
                     val started = System.currentTimeMillis()
                     val random = ByteArray(7).also { SecureRandom().nextBytes(it) }
                     val auth =
@@ -2245,11 +2311,14 @@ class GizuStoredSignerModule : Module() {
       }
     }
     Function("lock") {
-      balanceReadUntil = 0
-      depositHost?.revoke("approvalExpired")
-      scope.launch { task?.cancel() }
+      privateUsdc.clear()
+      cancelWalletWork()
     }
-    OnActivityEntersForeground { foreground = true }
+    Function("cancelWalletOperation") { cancelWalletWork() }
+    OnActivityEntersForeground {
+      privateUsdc.onDeviceState(interactive = deviceUnlocked(), locked = false)
+      foreground = true
+    }
     OnUserLeavesActivity { depositLifecycle.onUserLeave(awaitingProvider) }
     OnActivityEntersBackground {
       foreground = false
@@ -2261,20 +2330,23 @@ class GizuStoredSignerModule : Module() {
       val locked =
         (systemContext?.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager)
           ?.isKeyguardLocked != false
+      privateUsdc.onDeviceState(interactive, locked)
       depositLifecycle.onBackground(awaitingProvider, interactive, locked)
       depositHost?.onBackground(awaitingProvider)
       if (!awaitingProvider) {
-        balanceReadUntil = 0
+        openWithdrawal = null
         task?.cancel()
       }
     }
     OnDestroy {
+      privateUsdc.clear()
       discoveryConsent.clear()
       departureContext?.let { context ->
         runCatching { context.unregisterReceiver(departureReceiver) }
       }
       departureContext = null
       depositHost?.close()
+      openWithdrawal = null
       task?.cancel()
       dialog?.dismiss()
       scope.cancel()
@@ -2519,6 +2591,9 @@ class GizuStoredSignerModule : Module() {
             journal,
             EarnSponsoredChainRpc(143),
             EarnSponsoredBundlerRpc(143),
+            privateCreditRows = { address ->
+              store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
+            },
             reservations = ledger,
           )
         try {
@@ -2654,28 +2729,29 @@ class GizuStoredSignerModule : Module() {
     )
   }
 
-  private suspend fun ensureDepositReadPermission(
-    activity: Activity,
-    store: WalletStore,
-    wallet: String,
-  ) {
-    ensureCashoutReadPermission(activity, store, wallet)
-    // Deposit history reconciliation uses the existing two-minute read-only permission.
-    balanceReadUntil = minOf(balanceReadUntil, System.currentTimeMillis() + 120000L)
+  private fun cancelWalletWork() {
+    openWithdrawal = null
+    depositHost?.revoke("approvalExpired")
+    scope.launch { task?.cancel() }
   }
 
-  private fun requirePrivateDepositReadPermission(activity: Activity, record: WalletRecord) {
+  private fun deviceUnlocked(): Boolean {
+    val context = departureContext ?: appContext.reactContext ?: return false
+    val interactive =
+      (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive == true
+    val locked =
+      (context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager)?.isKeyguardLocked !=
+        false
+    return interactive && !locked
+  }
+
+  private fun requirePrivateReadPermission(activity: Activity, record: WalletRecord) {
     requireForeground(activity)
-    check(
-      balanceReadWallet == record.id &&
-        balanceReadGeneration == record.journalId &&
-        balanceReadUntil > System.currentTimeMillis()
-    ) {
-      "Unlock your wallet to check private deposit funds"
-    }
+    privateUsdc.onDeviceState(interactive = deviceUnlocked(), locked = false)
+    requireDepositReadPermission(record, privateUsdc)
   }
 
-  private suspend fun ensureCashoutReadPermission(
+  private suspend fun ensurePrivateReadPermission(
     activity: Activity,
     store: WalletStore,
     wallet: String,
@@ -2685,28 +2761,25 @@ class GizuStoredSignerModule : Module() {
         check(record.id == wallet && record.verified)
         record.credential to record.journalId
       }
-    if (
-      balanceReadWallet == wallet &&
-        balanceReadGeneration == identity.second &&
-        balanceReadUntil > System.currentTimeMillis()
-    )
-      return
+    requireForeground(activity)
+    privateUsdc.onDeviceState(interactive = deviceUnlocked(), locked = false)
+    if (privateUsdc.allows(wallet, identity.second)) return
     confirm(
       activity,
-      "Check private cash",
-      "Check the available USDC in your confidential accounts. This read-only approval does not move funds.",
+      "Unlock private balance",
+      "Allow private balance reads for this wallet until you lock the screen or wallet, sign out, or restart Gizu. Switching apps keeps this read-only access. This approval cannot move funds.",
     )
     withProviderUi(activity) {
-      PasskeyGate(activity).authorize(identity.first, wallet, "cashout-read:v1:${identity.second}")
+      PasskeyGate(activity)
+        .authorize(identity.first, wallet, "private-balance-read:v1:${identity.second}")
     }
     currentCoroutineContext().ensureActive()
     requireForeground(activity)
     store.load().use { record ->
       check(record.id == wallet && record.journalId == identity.second && record.verified)
     }
-    balanceReadWallet = wallet
-    balanceReadGeneration = identity.second
-    balanceReadUntil = System.currentTimeMillis() + 900_000L
+    check(deviceUnlocked()) { "Unlock your device to read private balances" }
+    privateUsdc.grant(wallet, identity.second)
   }
 
   private fun cashoutEngine(
@@ -2721,11 +2794,8 @@ class GizuStoredSignerModule : Module() {
       }
     fun authority() {
       requireForeground(activity)
-      check(
-        balanceReadWallet == wallet &&
-          balanceReadGeneration == generation &&
-          balanceReadUntil > System.currentTimeMillis()
-      )
+      privateUsdc.onDeviceState(interactive = deviceUnlocked(), locked = false)
+      check(privateUsdc.allows(wallet, generation)) { "Unlock your private balance" }
       store.load().use { record ->
         check(record.id == wallet && record.journalId == generation && record.verified)
       }
@@ -2987,28 +3057,16 @@ class GizuStoredSignerModule : Module() {
         check(record.journalId == generation)
         record.credential to record.earnChain
       }
+    ensurePrivateReadPermission(activity, store, walletId)
     val random = ByteArray(7).also { SecureRandom().nextBytes(it) }
     val started = System.currentTimeMillis()
-    confirm(
-      activity,
-      "Review private payout read authentication",
-      "Authenticate a read-only confidential check to prepare or reconcile this funding allocation. This empty-intents authentication does not authorize an asset transfer.",
-      fullReview = true,
-    )
-    withProviderUi(activity) {
-      PasskeyGate(activity)
-        .authorize(
-          identity.first,
-          walletId,
-          "earn-payout-read:v1:${generation}:$started:${random.joinToString("") { "%02x".format(it) }}",
-        )
-    }
-    currentCoroutineContext().ensureActive()
-    requireForeground(activity)
     val salt = ConfidentialBalance().salt()
     return store.load().use { record ->
       requireSponsoredWallet(record, walletId)
       check(record.journalId == generation && record.earnChain == identity.second)
+      requirePrivateReadPermission(activity, record)
+      if (cycleConfidential(record).equals(sharedConfidential(record), true))
+        requireNoPendingSharedCredit(activity, record)
       cycleReadAuth(record, salt, random, started.toULong(), System.currentTimeMillis().toULong())
     }
   }
@@ -3190,6 +3248,9 @@ class GizuStoredSignerModule : Module() {
     revision: Int,
   ): Map<String, Any> {
     var current = revision
+    var prompted = false
+    val singleApproval =
+      engine.journal.get(id).getJSONObject("proposal").getString("kind") == "hoodRedeemAll"
     repeat(2) {
       val review = engine.prepare(id, current)
       val credential =
@@ -3199,20 +3260,27 @@ class GizuStoredSignerModule : Module() {
           requireEarnFundingCapacity(activity, record, engine.journal.get(id))
           record.credential
         }
-      confirm(
-        activity,
-        if (review.kind == "delegation") "Review persistent wallet delegation"
-        else "Review sponsored earn operation",
-        review.text,
-        fullReview = true,
-      )
-      withProviderUi(activity) {
-        PasskeyGate(activity)
-          .authorize(
-            credential,
-            engine.journal.walletId,
-            "earn-sponsored:v1:$id:${review.revision}:${review.kind}:${review.hash}",
-          )
+      if (!prompted || !singleApproval) {
+        confirm(
+          activity,
+          if (review.kind == "delegation") "Review persistent wallet delegation"
+          else if (singleApproval) "Review withdrawal to private USDC"
+          else "Review sponsored earn operation",
+          if (singleApproval)
+            review.text +
+              "\n\nThis approval also returns the received USDG to your private USDC balance after the vault receipt."
+          else review.text,
+          fullReview = true,
+        )
+        withProviderUi(activity) {
+          PasskeyGate(activity)
+            .authorize(
+              credential,
+              engine.journal.walletId,
+              "earn-sponsored:v1:$id:${review.revision}:${review.kind}:${review.hash}",
+            )
+        }
+        prompted = true
       }
       currentCoroutineContext().ensureActive()
       try {
@@ -3227,12 +3295,27 @@ class GizuStoredSignerModule : Module() {
       } catch (failure: Exception) {
         if (failure is CancellationException || !engine.journal.get(id).has("signedUserOperation"))
           throw failure
+        if (singleApproval && review.kind != "delegation") rememberWithdrawalApproval(engine, id)
         return engine.journal.public(engine.journal.get(id))
       }
       current = engine.journal.get(id).getInt("revision")
-      if (review.kind != "delegation") return engine.journal.public(engine.journal.get(id))
+      if (review.kind != "delegation") {
+        if (singleApproval) rememberWithdrawalApproval(engine, id)
+        return engine.journal.public(engine.journal.get(id))
+      }
     }
     return engine.journal.public(engine.journal.get(id))
+  }
+
+  private fun rememberWithdrawalApproval(engine: EarnSponsoredEngine, id: String) {
+    if (!engine.journal.get(id).has("signedUserOperation")) return
+    openWithdrawal =
+      OpenWithdrawalApproval(
+        engine.journal.walletId,
+        engine.journal.generation,
+        id,
+        System.currentTimeMillis(),
+      )
   }
 
   private suspend fun approveEarnVault(
@@ -3342,6 +3425,7 @@ class GizuStoredSignerModule : Module() {
       "sourceAddress" to deriveAccountAddresses(record.entropy)[0],
       "sourceChainId" to 143,
       "confidentialAddress" to cycleConfidential(record),
+      "returnConfidentialAddress" to sharedConfidential(record),
       "backupCovered" to true,
       "destinations" to
         addresses.mapIndexed { index, address ->
@@ -3372,4 +3456,43 @@ class GizuStoredSignerModule : Module() {
           deriveAccountAddresses(record.entropy).mapIndexed { index, address ->
             mapOf("accountIndex" to index, "address" to address, "chainId" to 10143)
           })
+}
+
+internal suspend fun listSponsoredOperations(
+  activity: Context,
+  store: WalletStore,
+  walletId: String,
+  select: (WalletRecord, List<JSONObject>) -> List<JSONObject>,
+): List<Map<String, Any>> {
+  val journal =
+    store.load().use { record ->
+      requireSponsoredWallet(record, walletId)
+      earnSponsoredJournal(activity, record)
+    }
+  val active = store.load().use { record -> select(record, journal.all()) }
+  val pending =
+    active
+      .filter { it.getString("status") !in terminalSteps }
+      .map { it.getString("operationId") }
+      .toSet()
+  for (chain in
+    active
+      .map { it.getJSONObject("proposal").getInt("chainId") }
+      .distinct()) reconcileEarnSponsoredOperations(
+    journal,
+    EarnSponsoredChainRpc(chain),
+    EarnSponsoredBundlerRpc(chain),
+    chainFilter = chain,
+    operationIds = pending,
+  )
+  store.load().use { record ->
+    val ledger = fundingReservations(activity, record)
+    journal
+      .all()
+      .filter {
+        it.getString("status") in setOf("finalized", "reverted") && it.has("transactionHash")
+      }
+      .forEach { ledger.complete(it.getString("operationId")) }
+  }
+  return store.load().use { record -> select(record, journal.all()).map { journal.public(it) } }
 }

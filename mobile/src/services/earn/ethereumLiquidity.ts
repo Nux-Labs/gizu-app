@@ -10,7 +10,7 @@ import {
   parseLiquidityOperations,
   type EarnLiquidityService,
 } from "@/domain/earn/ethereumLiquidity";
-import type { EarnIntent } from "@/domain/earn/types";
+import { earnReturnAddress, type EarnIntent } from "@/domain/earn/types";
 export function createEarnLiquidityService(
   baseUrl: string,
   bridgeFactory = getStoredEarnLiquiditySigner,
@@ -86,7 +86,7 @@ export function createEarnLiquidityService(
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             owner: investmentDestination(intent).address,
-            confidentialAccount: intent.confidentialAddress,
+            confidentialAccount: earnReturnAddress(intent),
             operationId,
             revision,
             returnAsset: asset,

@@ -12,6 +12,7 @@ import {
 } from "@/domain/wallet/confidentialWithdrawal";
 import { createConfidentialWithdrawalService } from "@/services/wallet/confidentialWithdrawal";
 import { useMainnetWallet } from "./MainnetWalletProvider";
+import { PrivateBalanceRefresh } from "./PrivateBalanceRefresh";
 import { useConfidentialWithdrawal } from "./useConfidentialWithdrawal";
 import colors from "@/theme/colors.json";
 
@@ -52,6 +53,7 @@ export function ConfidentialWithdrawalScreen() {
                 ? `Last observed private cash: ${formatUsdc(cash.observedAtoms)} USDC`
                 : "Confidential cash needs verification."}
           </Typography>
+          <PrivateBalanceRefresh />
           <Typography variant="caption">
             Choose an amount to make public. Gizu distributes the payout across fresh receiving
             wallets you own on Monad. Fees reduce the amount received.

@@ -84,11 +84,94 @@ class EarnInvestmentPositionsTest {
   }
 
   @Test
+  fun anUnfinishedVaultWithdrawalStaysVisibleWithoutChangingACompletedReturn() {
+    record().use { r ->
+      val deposit = operation(r, 1, 0, "hoodDeposit")
+      val redeem = operation(r, 1, 0, "hoodRedeemAll")
+      fun attention(rows: List<JSONObject>) =
+        earnInvestmentPositions(r, r.id, emptyList(), rows, emptyList(), emptyList())
+          .single()["withdrawalAttention"]
+      assertEquals("unfinished", attention(listOf(deposit, redeem)))
+      val returned =
+        operation(r, 1, 0, "hoodTokenReturn", id = "return0")
+          .put("settlement", JSONObject().put("status", "credited"))
+      assertNull(attention(listOf(deposit, redeem, returned)))
+      val pending =
+        operation(r, 1, 0, "hoodRedeemAll", "unknown").put("signedUserOperation", "saved")
+      assertEquals("confirming", attention(listOf(deposit, pending)))
+      assertNull(attention(listOf(deposit, pending, returned)))
+      assertEquals(
+        "redeemed",
+        earnInvestmentPositions(
+            r,
+            r.id,
+            emptyList(),
+            listOf(deposit, pending, returned),
+            emptyList(),
+            emptyList(),
+          )
+          .single()["activity"],
+      )
+      assertEquals("confirming", attention(listOf(deposit, returned, pending)))
+      val returning =
+        operation(r, 1, 0, "hoodTokenReturn", "unknown", "return0")
+          .put("signedUserOperation", "saved")
+      assertEquals("returning", attention(listOf(deposit, redeem, returning)))
+    }
+  }
+
+  @Test
+  fun finalizedReturnWithoutPrivateProofNeedsVerificationRatherThanAnotherWithdrawal() {
+    record().use { r ->
+      val redeem = operation(r, 1, 0, "hoodRedeemAll")
+      val returned = operation(r, 1, 0, "hoodTokenReturn")
+      fun attention() =
+        earnInvestmentPositions(
+            r,
+            r.id,
+            emptyList(),
+            listOf(redeem, returned),
+            emptyList(),
+            emptyList(),
+          )
+          .single()["withdrawalAttention"]
+      assertEquals("checking", attention())
+      returned.put("settlement", JSONObject().put("status", "credited"))
+      assertNull(attention())
+    }
+  }
+
+  @Test
+  fun aCompletedOlderReturnCannotCloseALaterRedeemOrReinvestment() {
+    record().use { r ->
+      val oldRedeem = operation(r, 1, 0, "hoodRedeemAll", id = "redeem1")
+      val returned =
+        operation(r, 1, 0, "hoodTokenReturn")
+          .put("settlement", JSONObject().put("status", "credited"))
+      val newRedeem = operation(r, 1, 0, "hoodRedeemAll", id = "redeem2")
+      fun attention(last: JSONObject) =
+        earnInvestmentPositions(
+            r,
+            r.id,
+            emptyList(),
+            listOf(oldRedeem, returned, last),
+            emptyList(),
+            emptyList(),
+          )
+          .single()["withdrawalAttention"]
+      assertEquals("unfinished", attention(newRedeem))
+      assertNull(attention(operation(r, 1, 0, "hoodDeposit", id = "deposit2")))
+    }
+  }
+
+  @Test
   fun paidReturnsStillRequireFreshExitCheckAndUnknownWorkRemainsVisible() {
     record().use { r ->
       val deposit = operation(r, 1, 0, "hoodDeposit")
       val redeem = operation(r, 1, 0, "hoodRedeemAll")
-      val returned = operation(r, 1, 0, "hoodTokenReturn", id = "return0")
+      val returned =
+        operation(r, 1, 0, "hoodTokenReturn", id = "return0")
+          .put("settlement", JSONObject().put("status", "credited"))
       val paid = operation(r, 1, 0, "confidentialWithdrawal", "paid")
       paid.getJSONObject("proposal").put("returnOperationId", "return0")
       fun inventory(sponsored: List<JSONObject>, withdrawals: List<JSONObject> = emptyList()) =
@@ -143,7 +226,9 @@ class EarnInvestmentPositionsTest {
   fun cancelledUnsignedWithdrawalDoesNotCreatePendingWork() {
     record().use { r ->
       val redeem = operation(r, 1, 0, "hoodRedeemAll")
-      val returned = operation(r, 1, 0, "hoodTokenReturn", id = "return0")
+      val returned =
+        operation(r, 1, 0, "hoodTokenReturn", id = "return0")
+          .put("settlement", JSONObject().put("status", "credited"))
       val paid = operation(r, 1, 0, "confidentialWithdrawal", "paid")
       paid.getJSONObject("proposal").put("returnOperationId", "return0")
       val cancelled = operation(r, 1, 0, "confidentialWithdrawal", "cancelled")

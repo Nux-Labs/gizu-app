@@ -23,6 +23,29 @@ pub use wallet_discovery::wallet_discovery_candidates;
 use zeroize::Zeroizing;
 uniffi::setup_scaffolding!();
 
+/// New Earn routes share Account 2. Historical routes may still use their exact
+/// profile/cycle private identity; no arbitrary owned account is a private signer.
+pub(crate) fn earn_confidential_key(
+    seed: &[u8; 64],
+    chain: u64,
+    cycle: u32,
+    expected: &str,
+) -> Result<XPrv, SignerError> {
+    let legacy = earn_cycle_key(seed, chain, cycle, 2)?;
+    let shared = roles::derive_key(seed, CONFIDENTIAL_ACCOUNT)?;
+    let expected: Address = expected.parse().map_err(|_| SignerError::InvalidInput)?;
+    for key in [shared, legacy] {
+        if address(key.private_key().verifying_key())
+            .parse::<Address>()
+            .map_err(|_| SignerError::InvalidInput)?
+            == expected
+        {
+            return Ok(key);
+        }
+    }
+    Err(SignerError::InvalidInput)
+}
+
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SignerError {
     #[error("Invalid native input")]

@@ -72,6 +72,19 @@ internal class EarnDepositGateway(
         .put("recipient", recipient)
         .put("leg", leg)
         .put("amountAtoms", depositAtoms(amount, true).toString())
+    val quoted = depositAtoms(amount, true)
+    runCatching {
+      android.util.Log.w(
+        "GizuEarnDeposit",
+        "payout quote class=${if (quoted < PAYOUT_QUOTE_FLOOR) "below" else "routable"} same=${recipient.equals(cycleConfidential(record), true)}",
+      )
+    }
+    if (quoted < PAYOUT_QUOTE_FLOOR)
+      throw DepositBelowRouteMinimum(
+        "One bridge transfer is ${routeUsdc(quoted)} USDC, below its " +
+          "${routeUsdc(PAYOUT_QUOTE_FLOOR)} USDC minimum. Review a larger deposit; " +
+          "the final review will show routing fees and the amount invested."
+      )
     val row = JSONObject(post("/native/payout/preview", request.toString()))
     preview(row, "indicative-unfunded-confidential-route")
     check(

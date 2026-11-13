@@ -72,6 +72,7 @@ export function registerEarnSettlementRoutes(
             await minimum.minimumReturn(
               request.body.signedData,
               request.body.expected,
+              request.headers["x-gizu-return-history-recovery"] === "v1",
             ),
           );
       }

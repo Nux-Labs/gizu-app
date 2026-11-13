@@ -29,7 +29,32 @@ These non-secret observations never authorize spending or remove assets from
 portfolio reads. **Check past withdrawals** explicitly discards the observation
 before checking current balances/prices, keeping later external funds or residuals
 in an old investment wallet reachable. Failed checks show status unavailability;
-the position overview never invokes this flow. No provider history API is used.
+the position overview never invokes this flow.
+
+Opening Withdraw counts no investment inventory as a withdrawal in progress.
+Native-confirmed private returns remain confirmed after the USDC is spent or
+reinvested. Full exit completion still requires the existing public residual,
+zero-share and legacy payout checks. Home distinguishes a finalized return whose
+private proof needs checking from a pending onchain return.
+
+Withdraw can reconcile a saved Robinhood return using the shared read-only wallet
+session. This signs only the fixed empty-intents authentication, checks the grant
+again before saving the result, and cannot execute or resume a financial action.
+If no durable minimum receipt was captured before a later debit, updated clients
+send `x-gizu-return-history-recovery: v1` alongside the existing
+`x-gizu-settlement-proof: minimum-return-v1`. The backend can then verify the
+authenticated provider history against the saved quote, recipient, owner, asset,
+input amount and origin transaction. It persists only a bound minimum receipt
+through the existing durable sequence/route store. Route SUCCESS alone and the
+current private balance never substitute for that historical proof.
+
+Deploy the updated backend for consumed-return history recovery. No schema
+migration or new environment variable is introduced; the provider credential must
+allow authenticated account history. Old servers safely ignore the additional
+header and retain their prior minimum-verification behavior. Missing history or a
+failed verification remains unavailable, never proof of another withdrawal or
+permission to repeat one. Previously saved receipts replay without requiring
+current holdings or another provider history read.
 
 Parsed native operations retain their validated `investmentSlot` across journal
 reads, UI state and later resume/cancel/settlement validation. Robinhood sponsored

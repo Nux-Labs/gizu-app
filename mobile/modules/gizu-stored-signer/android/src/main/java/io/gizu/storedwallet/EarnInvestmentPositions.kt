@@ -73,7 +73,8 @@ internal fun earnInvestmentPositions(
         if (withdrawal) {
           if (
             p.optInt("profileChainId", -1) != chain ||
-              !p.optString("expectedSigner").equals(confidential, true)
+              (!p.optString("expectedSigner").equals(confidential, true) &&
+                !p.optString("expectedSigner").equals(sharedConfidential(selected), true))
           )
             return false
         } else if (
@@ -127,12 +128,25 @@ internal fun earnInvestmentPositions(
       }
       val last = primary.lastOrNull(::completed)
       val completedReturns = returns.filter(::completed)
+      // A settled return closes the redeem that produced it. A later redeem is a new withdrawal.
+      val settledReturnAt =
+        completedReturns.maxOfOrNull { sponsored.indexOf(it) }?.takeIf { it >= 0 }
+      fun supersededRedeem(op: JSONObject): Boolean {
+        val at = settledReturnAt ?: return false
+        if (op.getJSONObject("proposal").optString("kind") != "hoodRedeemAll") return false
+        val index = sponsored.indexOf(op)
+        return index >= 0 && index < at
+      }
+      fun open(op: JSONObject) = pending(op) && !supersededRedeem(op)
+      val depositStillOpen =
+        last != null &&
+          last.getJSONObject("proposal").getString("kind") in
+            setOf("vaultDeposit", "hoodDeposit") &&
+          (settledReturnAt == null || sponsored.indexOfLast { it === last } > settledReturnAt)
       val activity =
         when {
-          (primary + returns + payouts).any(::pending) -> "pending"
-          last != null &&
-            last.getJSONObject("proposal").getString("kind") in
-              setOf("vaultDeposit", "hoodDeposit") -> "invested"
+          (primary + returns + payouts).any(::open) -> "pending"
+          depositStillOpen -> "invested"
           last != null &&
             (if (last.has("steps")) last.steps().last().optString("residualShares", "")
             else last.optString("residualShares", "")) != "0" -> "invested"
@@ -140,6 +154,36 @@ internal fun earnInvestmentPositions(
           // this target reachable until the existing fresh exit checker verifies it.
           last != null || completedReturns.isNotEmpty() -> "redeemed"
           else -> null
+        }
+      val attention =
+        if (chain != 4663) null
+        else {
+          val redeemPending =
+            primary.any {
+              open(it) && it.getJSONObject("proposal").optString("kind") == "hoodRedeemAll"
+            }
+          val returnPending = returns.any(::pending)
+          val redeemSettled =
+            last?.let {
+              it.getJSONObject("proposal").optString("kind") == "hoodRedeemAll" &&
+                it.optString("residualShares") == "0"
+            } == true
+          val latestPrimaryAt = last?.let { sponsored.indexOf(it) } ?: -1
+          val currentReturns = returns.filter { sponsored.indexOf(it) > latestPrimaryAt }
+          val returnFinalized = currentReturns.any(::completed)
+          val returnSettled =
+            currentReturns.any { op ->
+              completed(op) &&
+                (op.optJSONObject("settlement")?.optString("status") == "credited" ||
+                  savedMinimumReturnReceipt(op, record.id, record.journalId) != null)
+            }
+          when {
+            returnPending -> "returning"
+            redeemPending -> "confirming"
+            returnFinalized && !returnSettled -> "checking"
+            redeemSettled && !returnSettled -> "unfinished"
+            else -> null
+          }
         }
       if (activity != null)
         result.add(
@@ -150,6 +194,7 @@ internal fun earnInvestmentPositions(
             if (slot != null) put("investmentSlot", slot)
             put("activity", activity)
             put("recoveryRequired", record.earnRecoveryRequired || record.discoveryRecoveryRequired)
+            if (attention != null) put("withdrawalAttention", attention)
           }
         )
     }

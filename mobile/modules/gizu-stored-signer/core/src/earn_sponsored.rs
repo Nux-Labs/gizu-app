@@ -1058,9 +1058,16 @@ fn check_quote(
     let clock = now()?;
     let seed = a.seed.as_ref().ok_or(SignerError::InvalidInput)?;
     let c = address(
-        crate::earn_cycle_key(seed, p.profile_chain_id, p.cycle_index, 2)?
-            .private_key()
-            .verifying_key(),
+        crate::earn_confidential_key(
+            seed,
+            p.profile_chain_id,
+            p.cycle_index,
+            p.confidential_account
+                .as_deref()
+                .ok_or(SignerError::InvalidInput)?,
+        )?
+        .private_key()
+        .verifying_key(),
     );
     if q.operation_id != a.operation_id
         || q.revision != a.revision
@@ -2045,6 +2052,22 @@ mod tests {
         }
     }
     #[test]
+    fn shared_account_two_source_funding_binds_quote_before_signing() {
+        let c = crate::derive_account_addresses(vec![0; 32]).unwrap()[2].clone();
+        let mut p = proposal();
+        p["confidentialAccount"] = json!(c);
+        let operation = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        let q = proof(&p);
+        operation
+            .prepare(7, op().to_string(), state(143), Some(q), None)
+            .unwrap();
+        operation
+            .approve(7, operation.review_hash().unwrap())
+            .unwrap();
+        assert!(operation.sign(7, state(143)).is_ok());
+    }
+
+    #[test]
     fn non_source_proposals_reject_source_index_and_confidential_index_is_not_public() {
         let mut p = proposal();
         p["sourceAccountIndex"] = json!(2);
@@ -2141,67 +2164,72 @@ mod tests {
     }
     #[test]
     fn distribution_hood_return_binds_confidential_cycle_and_refund_owner() {
-        let mut current = state(4663);
-        let selected = crate::distribution_test_address(4663, 2, 4);
-        current.owner = selected.clone();
-        let mut p = hood_proposal("hoodTokenReturn");
-        p["cycleIndex"] = json!(2);
-        p["investmentSlot"] = json!(4);
-        p["expectedFrom"] = json!(selected);
-        p["recipient"] = json!("0x1111111111111111111111111111111111111111");
-        p["quoteId"] = json!("return1");
-        p["confidentialAccount"] =
-            json!(crate::derive_earn_cycle_confidential_address(vec![0; 32], 4663, 2).unwrap());
-        p["refundOwner"] = json!(selected);
-        let mut rpc = hood_op(&hood_proposal("hoodDeposit"));
-        rpc["sender"] = json!(selected);
-        rpc["callData"] = json!(alloy_primitives::hex::encode_prefixed(encode_calls(&[
-            token_call(
-                USDG,
-                "transfer",
-                p["recipient"].as_str().unwrap(),
-                U256::from(2000000)
-            )
-            .unwrap()
-        ])));
-        let mut proof = proof(&proposal());
-        proof.chain_id = 4663;
-        proof.token = USDG.into();
-        proof.quote_id = "return1".into();
-        proof.amount_atoms = "2000000".into();
-        proof.refund_owner = selected.clone();
-        proof.confidential_account = p["confidentialAccount"].as_str().unwrap().into();
-        proof.expires_at = p["deadline"].as_u64().unwrap();
-        let o = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
-        assert!(
-            o.prepare(7, rpc.to_string(), current.clone(), None, None)
-                .is_err()
-        );
-        for i in 0..6 {
-            let mut q = proof.clone();
-            match i {
-                0 => q.chain_id = 143,
-                1 => q.token = TOKEN.into(),
-                2 => q.refund_owner = SOURCE.into(),
-                3 => q.confidential_account = SOURCE.into(),
-                4 => q.expires_at = now() - 1,
-                _ => q.authenticated_body_hash = format!("0x{}", "00".repeat(32)),
-            };
+        for shared in [false, true] {
+            let mut current = state(4663);
+            let selected = crate::distribution_test_address(4663, 2, 4);
+            current.owner = selected.clone();
+            let mut p = hood_proposal("hoodTokenReturn");
+            p["cycleIndex"] = json!(2);
+            p["investmentSlot"] = json!(4);
+            p["expectedFrom"] = json!(selected);
+            p["recipient"] = json!("0x1111111111111111111111111111111111111111");
+            p["quoteId"] = json!("return1");
+            p["confidentialAccount"] = json!(if shared {
+                crate::derive_account_addresses(vec![0; 32]).unwrap()[2].clone()
+            } else {
+                crate::derive_earn_cycle_confidential_address(vec![0; 32], 4663, 2).unwrap()
+            });
+            p["refundOwner"] = json!(selected);
+            let mut rpc = hood_op(&hood_proposal("hoodDeposit"));
+            rpc["sender"] = json!(selected);
+            rpc["callData"] = json!(alloy_primitives::hex::encode_prefixed(encode_calls(&[
+                token_call(
+                    USDG,
+                    "transfer",
+                    p["recipient"].as_str().unwrap(),
+                    U256::from(2000000)
+                )
+                .unwrap()
+            ])));
+            let mut proof = proof(&proposal());
+            proof.chain_id = 4663;
+            proof.token = USDG.into();
+            proof.quote_id = "return1".into();
+            proof.amount_atoms = "2000000".into();
+            proof.refund_owner = selected.clone();
+            proof.confidential_account = p["confidentialAccount"].as_str().unwrap().into();
+            proof.expires_at = p["deadline"].as_u64().unwrap();
             let o = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
             assert!(
-                o.prepare(7, rpc.to_string(), current.clone(), Some(q), None)
+                o.prepare(7, rpc.to_string(), current.clone(), None, None)
                     .is_err()
             );
+            for i in 0..6 {
+                let mut q = proof.clone();
+                match i {
+                    0 => q.chain_id = 143,
+                    1 => q.token = TOKEN.into(),
+                    2 => q.refund_owner = SOURCE.into(),
+                    3 => q.confidential_account = SOURCE.into(),
+                    4 => q.expires_at = now() - 1,
+                    _ => q.authenticated_body_hash = format!("0x{}", "00".repeat(32)),
+                };
+                let o = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+                assert!(
+                    o.prepare(7, rpc.to_string(), current.clone(), Some(q), None)
+                        .is_err()
+                );
+            }
+            let mut bad_state = current.clone();
+            bad_state.recipient_code = "0x6000".into();
+            assert!(
+                o.prepare(7, rpc.to_string(), bad_state, Some(proof.clone()), None)
+                    .is_err()
+            );
+            o.prepare(7, rpc.to_string(), current.clone(), Some(proof), None)
+                .unwrap();
+            o.approve(7, o.review_hash().unwrap()).unwrap();
+            assert!(o.sign(7, current.clone()).is_ok());
         }
-        let mut bad_state = current.clone();
-        bad_state.recipient_code = "0x6000".into();
-        assert!(
-            o.prepare(7, rpc.to_string(), bad_state, Some(proof.clone()), None)
-                .is_err()
-        );
-        o.prepare(7, rpc.to_string(), current.clone(), Some(proof), None)
-            .unwrap();
-        o.approve(7, o.review_hash().unwrap()).unwrap();
-        assert!(o.sign(7, current.clone()).is_ok());
     }
 }

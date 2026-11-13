@@ -103,6 +103,33 @@ export type SponsoredOperation = {
   residualShares?: string;
   redeemedUsdgAtoms?: string;
 };
+
+function decimalAtoms(value: string | null | undefined): string | null {
+  return typeof value === "string" && /^(0|[1-9]\d*)$/.test(value) ? value : null;
+}
+
+/** A historical return cannot describe a later deposit or redeem. */
+export function latestPrivateReturn(
+  rows: readonly SponsoredOperation[],
+): SponsoredOperation | undefined {
+  for (const row of [...rows].reverse()) {
+    if (["cancelled", "reverted", "expired"].includes(row.status)) continue;
+    if (row.kind === "hoodDeposit" || row.kind === "hoodRedeemAll") return undefined;
+    if (row.kind === "hoodTokenReturn") return row;
+  }
+  return undefined;
+}
+
+/** Native-confirmed return history survives subsequent spending of the private USDC. */
+export function privateReturnConfirmed(rows: readonly SponsoredOperation[]): boolean {
+  if (rows.some((row) => row.blocked)) return false;
+  const returned = latestPrivateReturn(rows);
+  if (!returned || !["credited", "minimumReceived"].includes(returned.status)) return false;
+  const required = decimalAtoms(
+    returned.status === "minimumReceived" ? returned.verifiedMinimumAtoms : returned.creditedAtoms,
+  );
+  return required !== null && BigInt(required) > 0n;
+}
 export type SourceFundingPlan = {
   fundingBatchId?: string;
   fundingBatchSize?: number;
@@ -444,8 +471,6 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
       if (redeemed === "0") throw new Error("Invalid redeemed USDG amount.");
       optional.redeemedUsdgAtoms = redeemed;
     }
-    if (r.kind === "hoodRedeemAll" && r.status === "withdrawn" && !optional.redeemedUsdgAtoms)
-      throw new Error("Missing redeemed USDG receipt.");
     if (
       r.status === "credited" &&
       (BigInt(optional.creditedAtoms ?? "0") === 0n || !optional.transactionHash)

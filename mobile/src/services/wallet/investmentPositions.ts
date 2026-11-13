@@ -35,7 +35,11 @@ export function createEarnInvestmentPositionsService(
               row.investmentSlot < 0 ||
               row.investmentSlot > 4)) ||
           !["invested", "redeemed", "returned", "pending"].includes(String(row.activity)) ||
-          typeof row.recoveryRequired !== "boolean"
+          typeof row.recoveryRequired !== "boolean" ||
+          (row.withdrawalAttention !== undefined &&
+            !["confirming", "unfinished", "returning", "checking"].includes(
+              String(row.withdrawalAttention),
+            ))
         )
           throw new Error("Invalid saved vault activity.");
         const expected =
@@ -55,6 +59,12 @@ export function createEarnInvestmentPositionsService(
             : {}),
           activity: row.activity as EarnInvestmentPosition["activity"],
           recoveryRequired: row.recoveryRequired,
+          ...(row.withdrawalAttention === "confirming" ||
+          row.withdrawalAttention === "unfinished" ||
+          row.withdrawalAttention === "returning" ||
+          row.withdrawalAttention === "checking"
+            ? { withdrawalAttention: row.withdrawalAttention }
+            : {}),
         };
       });
     },

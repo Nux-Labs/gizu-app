@@ -148,7 +148,7 @@ export function BalanceCard({
                 : "Your chart builds as Gizu checks your balance over time."}
             </Typography>
             <View className="gap-3 rounded-2xl bg-well p-4">
-              <Typography>Swap funding: {holdingAmount(snapshot.fundingAtoms, 6)} USDC</Typography>
+              <Typography>Funding: {holdingAmount(snapshot.fundingAtoms, 6)} USDC</Typography>
               <Typography>
                 Receiving wallets: {holdingAmount(snapshot.returnAtoms, 6)} USDC
               </Typography>
