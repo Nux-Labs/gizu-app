@@ -59,21 +59,19 @@ move funds, change derivation, or expand the native testnet transfer policy.
 
 ## Confidential-swap holdings: Android and iOS
 
-Home shows **Token holdings** when tracked Robinhood token balances exist; a successful
-empty read shows **Confidential vaults** instead. Loading and failures do not imply an
+Swapped Robinhood tokens appear on Home as ordinary asset rows; Home has no separate
+holdings section and always shows the **Earn** vault preview below the assets. Selling a
+swapped token happens in Swap's sell mode, which reads swap holdings through the native
+adapter after its swap capability check. Loading and failures do not imply an
 empty portfolio. Home no longer shows the Wallet details toggle; account details remain
 available on Receive/Send. Home totals public and private USDC, owned stablecoins,
-and valued vault positions in USD. Both iOS and Android render the same holdings section;
-the native adapter checks swap capability before reading balances. Unsupported
-builds show a retryable holdings error rather than an iOS-only restriction. This branch's Swap tab uses the native confidential-swap
+and valued vault positions in USD. This branch's Swap tab uses the native confidential-swap
 journey; the read-only Swap row above describes the earlier catalog baseline.
 
 - Wallet, holdings and catalog errors use plain-language messages with read-only retry
   actions and expandable fixed diagnostic codes. Raw provider errors are not rendered.
   Sale failures direct users to Swap for status review rather than resubmitting a sale.
 - Holding cards show the token symbol, amount and verified value when available.
-  Expand Holding details for network/contract information and existing sale actions.
-  Holdings tools contains refresh and earlier-purchase discovery, even with no holdings.
   Missing valuations are never treated as zero. Supported USDC and USDG retain their
   dollar face value when market pricing is unavailable; verified USD prices take precedence.
   The USD total retains the latest observed private/token balances when reads expire or

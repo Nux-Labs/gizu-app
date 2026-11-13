@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NativeSwapScreen } from "@/features/swap/NativeSwapScreen";
 import { ROBINHOOD_USDG } from "@/features/swap/confidentialSwap";
@@ -6,6 +6,7 @@ import { parseTokenAmount } from "@/domain/swap";
 import type { SwapHoldingsSnapshot } from "@/domain/wallet/storedSigner";
 import { tokenCatalogService } from "@/services/tokenCatalog";
 import { getStoredSwapSigner } from "@/services/wallet/nativeBridge";
+import { deferred } from "../../support/renderApp";
 import { catalogToken } from "../../support/tokenCatalog";
 
 jest.mock("@/services/tokenCatalog", () => ({ tokenCatalogService: { list: jest.fn() } }));
@@ -120,6 +121,51 @@ test("a balance in a partial wallet group can still be sold", async () => {
   openSell();
   expect(await screen.findByLabelText("Estimated 12.5 USDC")).toBeVisible();
   expect(screen.getByRole("button", { name: "Swap" })).toBeEnabled();
+});
+
+test("pressing Swap twice starts one native sale", async () => {
+  const pending = deferred<{ phase: string }>();
+  holdingsRead.mockResolvedValue(withHolding);
+  sell.mockReturnValueOnce(pending.promise);
+  openSell();
+  await screen.findByLabelText("Estimated 12.5 USDC");
+  const button = screen.getByRole("button", { name: "Swap" });
+  fireEvent.press(button);
+  fireEvent.press(button);
+  expect(sell).toHaveBeenCalledTimes(1);
+  await act(async () => pending.resolve({ phase: "COMPLETE" }));
+});
+
+test("a failed holdings read disables selling stale balances until retried", async () => {
+  holdingsRead
+    .mockRejectedValueOnce(new Error("RPC secret-sentinel https://provider.invalid/?key=secret"))
+    .mockResolvedValue(withHolding);
+  openSell();
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Couldn’t refresh your holdings/);
+  expect(screen.queryByText(/secret-sentinel/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Swap" })).toBeDisabled();
+  fireEvent.press(screen.getByRole("button", { name: "Retry holdings" }));
+  expect(await screen.findByText("Available: 1.2345 GOOGL")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Swap" })).toBeEnabled();
+  expect(sell).not.toHaveBeenCalled();
+});
+
+test("a failed sale offers a status check instead of resubmitting or raw errors", async () => {
+  holdingsRead.mockResolvedValue(withHolding);
+  sell.mockRejectedValueOnce(new Error("secret-sentinel provider payload"));
+  openSell();
+  await screen.findByLabelText("Estimated 12.5 USDC");
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
+  expect(
+    await screen.findByText(
+      "Couldn’t finish the swap. Check its status in Swap before trying again.",
+    ),
+  ).toBeVisible();
+  await act(async () => {});
+  expect(screen.queryByText(/secret-sentinel/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Swap" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Check status" })).toBeVisible();
+  expect(sell).toHaveBeenCalledTimes(1);
 });
 
 test("without holdings any swap token can be previewed but not sold", async () => {

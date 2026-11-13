@@ -1,5 +1,4 @@
-import { displayAmount, groupDigits } from "@/domain/wallet/amounts";
-import { holdingAmount } from "@/features/swap/SwapHoldingsSection";
+import { displayAmount, groupDigits, holdingAmount } from "@/domain/wallet/amounts";
 
 test("groups whole digits without touching the fraction", () => {
   expect(groupDigits("12485.25")).toBe("12,485.25");

@@ -1,4 +1,4 @@
-import { displayAmount } from "@/domain/wallet/amounts";
+import { displayAmount, holdingAmount } from "@/domain/wallet/amounts";
 import { Image, View } from "react-native";
 import { ArrowUpRight } from "lucide-react-native";
 import type { OwnedPortfolioPosition } from "@/domain/wallet/storedSigner";
@@ -7,7 +7,6 @@ import { vaultNames, vaultNetworks } from "@/domain/wallet/portfolioValue";
 import { Typography } from "@/components/atoms/Typography";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { protocolLogo } from "@/features/opportunities/protocolLogos";
-import { holdingAmount } from "@/features/swap/SwapHoldingsSection";
 import colors from "@/theme/colors.json";
 
 /** One vault aggregate; wallet ownership stays behind the native execution boundary. */
