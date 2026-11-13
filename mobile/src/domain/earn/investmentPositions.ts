@@ -25,9 +25,13 @@ export function openWithdrawalAttention(
   rows: readonly EarnInvestmentPosition[],
   covered: Readonly<Record<string, true>>,
 ): EarnInvestmentPosition["withdrawalAttention"] | null {
+  const open = rows.filter(
+    (row) => row.withdrawalAttention && !covered[investmentPositionKey(row)],
+  );
   return (
-    rows.find((row) => row.withdrawalAttention && !covered[investmentPositionKey(row)])
-      ?.withdrawalAttention ?? null
+    open.find((row) => row.withdrawalAttention !== "checking")?.withdrawalAttention ??
+    open[0]?.withdrawalAttention ??
+    null
   );
 }
 
@@ -52,6 +56,7 @@ export function vaultWithdrawalAvailable(input: {
     (row) =>
       row.profileId === input.profileId &&
       row.withdrawalAttention !== undefined &&
+      row.withdrawalAttention !== "checking" &&
       !input.covered[investmentPositionKey(row)],
   );
 }

@@ -14,6 +14,7 @@ import {
 } from "@/domain/wallet/portfolioValue";
 import { useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { VaultPositionSummary } from "@/features/wallet/VaultPositionCard";
+import { WithdrawalStatusNotice } from "./WithdrawalStatusNotice";
 import { useSharedWithdrawalState } from "./useVaultPosition";
 
 /** Viewing an investment does not select or resume a withdrawal cycle. */
@@ -48,9 +49,14 @@ export function VaultPositionScreen({
           )}
         </View>
       </Surface>
-      {!idle && (
-        <Typography>Your funds remain invested until you choose to withdraw.</Typography>
-      )}
+      <WithdrawalStatusNotice
+        attention={coverage.attentionFor(profileId)}
+        canCheckPastReturn={coverage.hasPastReturn(profileId)}
+        onCheckPastReturn={() =>
+          navigation.navigate("VaultWithdrawal", { profileId, historyOnly: true })
+        }
+      />
+      {!idle && <Typography>Your funds remain invested until you choose to withdraw.</Typography>}
       <Button
         label="Withdraw"
         disabled={!profile || !coverage.canWithdraw(profileId)}

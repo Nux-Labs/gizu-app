@@ -29,7 +29,7 @@ import { completedExitsStore } from "@/storage/completedExits";
 function positionKey(row: Pick<EarnInvestmentPosition, "intentId" | "investmentSlot">) {
   return `${row.intentId}:${row.investmentSlot ?? "legacy"}`;
 }
-export function useVaultPosition(profileId: EarnProfileId) {
+export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) {
   const {
     investmentPositions,
     selectPosition,
@@ -151,7 +151,14 @@ export function useVaultPosition(profileId: EarnProfileId) {
             address: session.address,
           })
         )
-          .filter((row) => row.profileId === profileId)
+          .filter(
+            (row) =>
+              row.profileId === profileId &&
+              (!historyOnly ||
+                row.activity === "redeemed" ||
+                row.activity === "returned" ||
+                row.withdrawalAttention !== undefined),
+          )
           .sort(
             (a, b) =>
               a.cycleIndex - b.cycleIndex || (a.investmentSlot ?? -1) - (b.investmentSlot ?? -1),
@@ -159,6 +166,67 @@ export function useVaultPosition(profileId: EarnProfileId) {
         if (attempt !== generation.current) return;
         rowsRef.current = positions;
         setRows(positions);
+        if (historyOnly) {
+          // Read every saved portion, including invested rows with an older missing receipt.
+          // Receipt verification is not full exit completion and must never populate its cache.
+          const verified: Record<string, "accepted"> = {};
+          let unresolved: EarnIntent | null = null;
+          let failure = "";
+          for (const row of positions) {
+            if (row.activity === "returned") continue;
+            let value: EarnIntent | null = null;
+            try {
+              if (row.recoveryRequired)
+                throw new Error(
+                  "Restore and reconcile saved activity before checking this return.",
+                );
+              value = await selectPosition(row);
+              if (attempt !== generation.current || controller.signal.aborted) return;
+              let journal = await (
+                value.profileId === "robinhood-usdg" ? robinhood : liquidity
+              ).list(value);
+              if (attempt !== generation.current || controller.signal.aborted) return;
+              if (value.profileId === "robinhood-usdg") {
+                if (!journal.some((entry) => entry.blocked)) {
+                  for (const returned of journal) {
+                    if (
+                      returned.kind !== "hoodTokenReturn" ||
+                      !["returnSubmitted", "awaitingSettlement"].includes(returned.status)
+                    )
+                      continue;
+                    if (attempt !== generation.current || controller.signal.aborted) return;
+                    await robinhood.reconcileCredit(value, returned as SponsoredOperation);
+                    if (attempt !== generation.current || controller.signal.aborted) return;
+                  }
+                  journal = await robinhood.list(value);
+                }
+                if (attempt !== generation.current || controller.signal.aborted) return;
+                if (!privateReturnConfirmed(journal as SponsoredOperation[])) {
+                  unresolved ??= value;
+                  continue;
+                }
+              } else {
+                assertReturnCredits(journal, value);
+              }
+              verified[positionKey(row)] = "accepted";
+            } catch (error) {
+              if (!(error instanceof InvestmentExitPendingError))
+                failure ||=
+                  "Past return status could not be checked. " +
+                  (error instanceof Error ? error.message : "Retry the status check.");
+              unresolved ??= value;
+            }
+            if (attempt !== generation.current || controller.signal.aborted) return;
+          }
+          if (attempt !== generation.current || controller.signal.aborted) return;
+          proofsRef.current = verified;
+          setProofs(verified);
+          selected.current = unresolved ? positionKey(unresolved) : null;
+          currentIntent.current = unresolved;
+          setIntent(unresolved);
+          setMessage(failure);
+          return;
+        }
         // Accepted exits stay complete during this visit while native activity is
         // still redeemed. New investment, uncertainty or recovery revokes them.
         // A later visit verifies native revisions before accepting recorded history.
@@ -272,6 +340,7 @@ export function useVaultPosition(profileId: EarnProfileId) {
       session.walletId,
       session.address,
       profileId,
+      historyOnly,
     ],
   );
   useEffect(() => {
@@ -381,6 +450,26 @@ export function useSharedWithdrawalState() {
   );
   return {
     attention: checked ? openWithdrawalAttention(positions, covered) : null,
+    attentionFor: (profileId: EarnProfileId) =>
+      checked
+        ? openWithdrawalAttention(
+            positions.filter((row) => row.profileId === profileId),
+            covered,
+          )
+        : null,
+    historyProfile: checked
+      ? positions.find(
+          (row) => row.withdrawalAttention === "checking" && !covered[investmentPositionKey(row)],
+        )?.profileId
+      : undefined,
+    hasPastReturn: (profileId: EarnProfileId) =>
+      checked &&
+      positions.some(
+        (row) =>
+          row.profileId === profileId &&
+          row.withdrawalAttention === "checking" &&
+          !covered[investmentPositionKey(row)],
+      ),
     canWithdraw: (profileId: EarnProfileId) => {
       if (!earn) return true;
       const position = portfolioVaultPosition(wallet?.snapshot, profileId);
