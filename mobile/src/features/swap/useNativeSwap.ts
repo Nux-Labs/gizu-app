@@ -50,7 +50,7 @@ export function useNativeSwap() {
         if (!live) return;
         diagnostic("tokens", "completed");
         setTokens(list);
-        setTarget((current) => current || list[0]?.address || "");
+        setTarget((current) => current || list.find((t) => t.buyable !== false)?.address || "");
       })
       .catch((cause: unknown) => {
         diagnostic("tokens", "failed");
@@ -126,7 +126,7 @@ export function useNativeSwap() {
     target,
     setTarget,
     selectToken: (token: CatalogToken) => {
-      if (token.chainId !== 4663 || !token.swapListed || busy) return;
+      if (token.chainId !== 4663 || !token.swapListed || token.buyable === false || busy) return;
       setTokens((current) =>
         current.some((item) => item.address === token.address) ? current : [...current, token],
       );

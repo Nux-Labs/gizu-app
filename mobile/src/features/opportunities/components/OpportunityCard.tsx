@@ -1,3 +1,4 @@
+import { displayAmount } from "@/domain/wallet/amounts";
 import { VaultCard } from "@/components/organisms/VaultList";
 import { tvlChange, type Opportunity } from "@/domain/opportunities";
 import { useTvlSeries } from "../useTvlSeries";
@@ -58,7 +59,7 @@ export function OpportunityCard({
       depositedAmount={
         hasPosition
           ? position.underlyingAtoms !== null && position.complete && position.decimals !== null
-            ? `${holdingAmount(position.underlyingAtoms, position.decimals)} ${position.symbol} deposited`
+            ? `${displayAmount(position.underlyingAtoms, position.decimals)} ${position.symbol} deposited`
             : "Checking position…"
           : undefined
       }

@@ -32,6 +32,7 @@ import { useMainnetWallet } from "./MainnetWalletProvider";
 import { PrivateBalanceRefresh } from "./PrivateBalanceRefresh";
 import { BalanceCard } from "./BalanceCard";
 import { PortfolioAssetRow } from "./PortfolioAssetRow";
+import { usePortfolioTokenNames } from "./usePortfolioTokenNames";
 import { VaultPositionCard } from "./VaultPositionCard";
 import { vaultPositionProfile } from "@/domain/wallet/portfolioValue";
 import type { EarnProfileId } from "@/domain/earn/types";
@@ -156,6 +157,10 @@ function ReceivingAccounts() {
   );
 }
 
+const visible = (asset: OwnedPortfolioAsset) =>
+  !asset.complete || BigInt(asset.balanceAtoms ?? asset.observedAtoms) > 0n;
+const visibleAssets = (rows: OwnedPortfolioAsset[] | undefined) => rows?.filter(visible) ?? [];
+
 const withdrawalAttentionCopy = {
   confirming: "Your vault withdrawal is confirming.",
   checking: "A past private return needs verification. Open the vault to check its saved status.",
@@ -166,10 +171,9 @@ const withdrawalAttentionCopy = {
 function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) => void }) {
   const { snapshot, loading, refresh } = useMainnetWallet();
   const attention = useSharedWithdrawalState().attention;
+  const assets = usePortfolioTokenNames(visibleAssets(snapshot?.ownedAssets));
+
   if (!snapshot?.ownedAssets && !snapshot?.positions) return null;
-  const visible = (asset: OwnedPortfolioAsset) =>
-    !asset.complete || BigInt(asset.balanceAtoms ?? asset.observedAtoms) > 0n;
-  const assets = snapshot.ownedAssets?.filter(visible) ?? [];
   const positions = snapshot.positions?.filter(visible) ?? [];
   return (
     <View className="gap-5">

@@ -7,6 +7,7 @@ import { createStoredWalletAccess } from "@/services/wallet/storedAccess";
 import { defaultPreferences } from "@/domain/preferences";
 import { deferred } from "../../support/renderApp";
 import { earnProfiles } from "@/domain/earn/types";
+import { tokenCatalogService } from "@/services/tokenCatalog";
 
 import { requireOptionalNativeModule } from "expo";
 
@@ -583,6 +584,82 @@ test("a successful swap balance remains visible when its owned aggregate is unav
   fireEvent.press(screen.getAllByRole("button", { name: "USDG holding details" })[0]!);
   expect(screen.getByText("USDG balance unavailable. Refresh to retry.")).toBeVisible();
   expect(screen.queryByText("0 USDG")).toBeNull();
+});
+
+const intc = "0xc72b96e0e48ecd4dc75e1e45396e26300bc39681";
+function boughtStock() {
+  return {
+    ...mainnetPortfolio(walletId, address),
+    ownedAssets: [
+      {
+        assetId: `4663:${intc}`,
+        chainId: 4663,
+        token: intc,
+        symbol: "Token c39681",
+        decimals: null,
+        balanceAtoms: "2500000000000000",
+        observedAtoms: "2500000000000000",
+        complete: true,
+        stale: false,
+        checkedAt: 1,
+        valueUsdcAtoms: null,
+        valuationUnavailable: true,
+      },
+    ],
+  };
+}
+
+test.each([false, true])(
+  "a stock bought with Swap keeps its name and logo with private access locked=%s",
+  async (locked) => {
+    const list = jest.spyOn(tokenCatalogService, "list").mockResolvedValue({
+      list: [
+        {
+          chainId: 4663,
+          address: "0xc72b96e0E48ecd4DC75E1e45396e26300BC39681",
+          symbol: "INTC",
+          name: "Intel • Robinhood Token",
+          decimals: 18,
+          logoURI: "https://example.com/intc.png",
+          category: "rwa",
+          issuer: "Robinhood",
+          swapListed: true,
+          fusionStatus: "quote-required",
+        },
+      ],
+      page: 0,
+      items: 20,
+      total: 1,
+    });
+    const { portfolio } = setup();
+    portfolio.getMainnetPortfolio.mockResolvedValue({
+      ...boughtStock(),
+      confidentialReadState: locked ? "locked" : "ready",
+    });
+    await open();
+    const row = await screen.findByRole("button", { name: "INTC holding details" });
+    if (locked)
+      expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
+    else expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
+    expect(screen.getByLabelText("INTC logo")).toBeVisible();
+    expect(screen.getByText("0.0025 INTC")).toBeVisible();
+    expect(screen.queryByText(/Token c39681/)).toBeNull();
+    fireEvent.press(row);
+    expect(screen.getByText("Intel")).toBeVisible();
+    expect(list).toHaveBeenCalledWith(
+      { chainId: 4663, category: "all", search: intc, page: 0 },
+      expect.anything(),
+    );
+  },
+);
+
+test("a stock the catalog cannot name keeps its native label and the rest of Home", async () => {
+  jest.spyOn(tokenCatalogService, "list").mockRejectedValue(new Error("offline"));
+  const { portfolio } = setup();
+  portfolio.getMainnetPortfolio.mockResolvedValue(boughtStock());
+  await open();
+  expect(await screen.findByRole("button", { name: "Token c39681 holding details" })).toBeVisible();
+  expect(screen.getByLabelText("Token c39681 logo unavailable")).toBeVisible();
 });
 
 test("a locked private balance explains wallet unlock without claiming a provider outage", async () => {

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react-native";
+import { ChevronDown, Info } from "lucide-react-native";
 import colors from "@/theme/colors.json";
 import { Modal, View } from "react-native";
 import { Button } from "@/components/atoms/Button";
@@ -8,15 +8,18 @@ import { Typography } from "@/components/atoms/Typography";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { InfiniteListScreen } from "@/components/templates/InfiniteListScreen";
 import { Badge } from "@/components/atoms/Badge";
-import { tokenIdentity, tokenNetworks, type CatalogToken } from "@/domain/tokenCatalog";
+import {
+  tokenDisplayName,
+  tokenIdentity,
+  tokenNetworks,
+  type CatalogToken,
+} from "@/domain/tokenCatalog";
 import { useTokenCatalog } from "./useTokenCatalog";
 import type { ListedToken } from "./confidentialSwap";
 import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
-
-const tokenKinds = [
-  { category: "rwa", label: "Stocks" },
-  { category: "other", label: "DeFi" },
-] as const;
+import { RobinhoodChainMark } from "./components/RobinhoodChainMark";
+import { TokenDetail } from "./TokenDetail";
+import { formatUsd } from "./formatUsd";
 
 export function SwapTokenPicker({
   tokens,
@@ -37,7 +40,7 @@ export function SwapTokenPicker({
     <>
       <SwapAmountBox
         label="You receive"
-        note={selected?.name}
+        note={selected && tokenDisplayName(selected.name)}
         info={estimate && !estimate.loading ? ESTIMATE_INFO : undefined}
       >
         <Typography
@@ -63,19 +66,17 @@ export function SwapTokenPicker({
           <ChevronDown size={14} color={colors.fg["70"]} />
         </PressableScale>
       </SwapAmountBox>
-      <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
-        {open && (
-          <TokenChoices
-            target={target}
-            disabled={disabled}
-            onClose={() => setOpen(false)}
-            onSelect={(token) => {
-              onSelect(token);
-              setOpen(false);
-            }}
-          />
-        )}
-      </Modal>
+      {open && (
+        <TokenChoices
+          target={target}
+          disabled={disabled}
+          onClose={() => setOpen(false)}
+          onSelect={(token) => {
+            onSelect(token);
+            setOpen(false);
+          }}
+        />
+      )}
     </>
   );
 }
@@ -91,8 +92,22 @@ export function TokenChoices({
   onClose: () => void;
   onSelect: (token: CatalogToken) => void;
 }) {
-  const { query, queryKey, list, change } = useTokenCatalog({ category: "rwa", chainId: null });
-  return (
+  // Swap buys only Robinhood stocks, so the picker lists nothing a buy cannot target.
+  const { query, queryKey, list, change } = useTokenCatalog({
+    category: "rwa",
+    chainId: 4663,
+    liquidOnly: true,
+  });
+  // The list's data and query live here, so returning from a detail page keeps them.
+  const [detail, setDetail] = useState<CatalogToken | null>(null);
+  const content = detail ? (
+    <TokenDetail
+      address={detail.address}
+      disabled={disabled}
+      onBack={() => setDetail(null)}
+      onSelect={() => onSelect(detail)}
+    />
+  ) : (
     <InfiniteListScreen
       list={list}
       queryKey={queryKey}
@@ -108,70 +123,84 @@ export function TokenChoices({
             </Typography>
             <Button label="Close" variant="quiet" onPress={onClose} />
           </View>
-          <View
-            className="flex-row gap-1 rounded-full bg-well p-1"
-            accessibilityRole="radiogroup"
-            accessibilityLabel="Token type"
-          >
-            {tokenKinds.map(({ category, label }) => {
-              const selected = query.category === category;
-              return (
-                <PressableScale
-                  key={category}
-                  accessibilityRole="radio"
-                  accessibilityLabel={label}
-                  accessibilityState={{ checked: selected }}
-                  onPress={() => change({ category })}
-                  className={`min-h-11 flex-1 items-center justify-center rounded-full ${selected ? "bg-neon/10" : ""}`}
-                >
-                  <Typography variant="caption" className={selected ? "!text-neon" : ""}>
-                    {label}
-                  </Typography>
-                </PressableScale>
-              );
-            })}
-          </View>
           <SearchInput
             label="Search tokens"
             value={query.search}
             maxLength={200}
             onChangeText={(search) => change({ search })}
           />
-          <Typography variant="micro">
-            Swaps currently support Robinhood stocks only; availability is checked during review.
-          </Typography>
         </>
       }
       renderItem={(item) => {
-        const selectable = item.chainId === 4663 && item.category === "rwa" && item.swapListed;
+        const selectable =
+          item.chainId === 4663 &&
+          item.category === "rwa" &&
+          item.swapListed &&
+          item.buyable !== false;
         const checked =
           item.chainId === 4663 && item.address.toLowerCase() === target.toLowerCase();
+        const price = typeof item.priceUsd === "number" ? formatUsd(item.priceUsd) : null;
         return (
-          <PressableScale
-            accessibilityRole="radio"
-            accessibilityLabel={`${item.symbol} · ${item.name}`}
-            accessibilityState={{ checked, disabled: disabled || !selectable }}
-            disabled={disabled || !selectable}
-            onPress={() => {
-              if (selectable && !disabled) onSelect(item);
-            }}
-            className={`mb-2 gap-1 rounded-2xl px-4 py-3 ${checked ? "bg-neon/10" : "bg-well"} ${!selectable ? "opacity-60" : ""}`}
-          >
-            <View className="flex-row items-center justify-between gap-3">
-              <Typography variant="rowTitle" className={`flex-1 ${checked ? "!text-neon" : ""}`}>
-                {item.symbol}
-              </Typography>
-              <Badge
-                label={
-                  tokenNetworks.find((network) => network.chainId === item.chainId)?.name ?? ""
-                }
-              />
-            </View>
-            <Typography variant="micro">{item.name}</Typography>
-            {!selectable && <Typography variant="micro">Not available for swaps</Typography>}
-          </PressableScale>
+          <View className="mb-2 flex-row items-stretch gap-2">
+            <PressableScale
+              accessibilityRole="radio"
+              accessibilityLabel={`${item.symbol} · ${tokenDisplayName(item.name)}`}
+              accessibilityState={{ checked, disabled: disabled || !selectable }}
+              accessibilityValue={price ? { text: price } : undefined}
+              disabled={disabled || !selectable}
+              onPress={() => {
+                if (selectable && !disabled) onSelect(item);
+              }}
+              className={`flex-1 gap-1 rounded-2xl px-4 py-3 ${checked ? "bg-neon/10" : "bg-well"} ${!selectable ? "opacity-60" : ""}`}
+            >
+              <View className="flex-row items-center justify-between gap-3">
+                <Typography variant="rowTitle" className={`flex-1 ${checked ? "!text-neon" : ""}`}>
+                  {item.symbol}
+                </Typography>
+                {price && (
+                  <Typography variant="rowValue" style={{ fontVariant: ["tabular-nums"] }}>
+                    {price}
+                  </Typography>
+                )}
+                {item.chainId === 4663 ? (
+                  <RobinhoodChainMark />
+                ) : (
+                  <Badge
+                    label={
+                      tokenNetworks.find((network) => network.chainId === item.chainId)?.name ?? ""
+                    }
+                  />
+                )}
+              </View>
+              <Typography variant="micro">{tokenDisplayName(item.name)}</Typography>
+              {!selectable && <Typography variant="micro">Not available for swaps</Typography>}
+            </PressableScale>
+            {selectable && (
+              <PressableScale
+                accessibilityRole="button"
+                accessibilityLabel={`${item.symbol} details`}
+                onPress={() => setDetail(item)}
+                hitSlop={4}
+                className="w-12 items-center justify-center rounded-2xl bg-well"
+              >
+                <Info size={18} color={colors.fg["55"]} />
+              </PressableScale>
+            )}
+          </View>
         );
       }}
     />
+  );
+  return (
+    <Modal
+      visible
+      animationType="slide"
+      onRequestClose={() => {
+        if (detail) setDetail(null);
+        else onClose();
+      }}
+    >
+      {content}
+    </Modal>
   );
 }

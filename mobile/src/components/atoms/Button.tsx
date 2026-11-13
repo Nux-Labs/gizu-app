@@ -16,7 +16,7 @@ type Props = {
 };
 
 const surfaces: Record<Variant, string> = {
-  primary: "overflow-hidden bg-neon",
+  primary: "bg-neon",
   sell: "bg-sell",
   secondary: "border border-cardEdge bg-well",
   destructive: "border border-glassBorder bg-glass",

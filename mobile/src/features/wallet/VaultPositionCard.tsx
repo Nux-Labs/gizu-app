@@ -1,3 +1,4 @@
+import { displayAmount } from "@/domain/wallet/amounts";
 import { Image, View } from "react-native";
 import { ArrowUpRight } from "lucide-react-native";
 import type { OwnedPortfolioPosition } from "@/domain/wallet/storedSigner";
@@ -23,7 +24,7 @@ export function VaultPositionSummary({
     <View className="gap-1">
       <Typography variant="rowValue">
         {amount !== null && position.decimals !== null
-          ? `${holdingAmount(amount, position.decimals)} ${position.symbol} deposited`
+          ? `${displayAmount(amount, position.decimals)} ${position.symbol} deposited`
           : loading
             ? "Checking vault position…"
             : "Vault balance unavailable. Refresh to retry."}
@@ -35,7 +36,7 @@ export function VaultPositionSummary({
       )}
       {amount === null && observed && observed !== "0" && position.decimals !== null && (
         <Typography variant="micro">
-          {`Last observed: ${holdingAmount(observed, position.decimals)} ${position.symbol}`}
+          {`Last observed: ${displayAmount(observed, position.decimals)} ${position.symbol}`}
         </Typography>
       )}
       {position.stale && <Typography variant="micro">Updating position value…</Typography>}

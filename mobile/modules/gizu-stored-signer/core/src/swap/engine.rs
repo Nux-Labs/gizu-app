@@ -2882,6 +2882,11 @@ impl SwapOperation {
         {
             return Err(SignerError::InvalidInput);
         }
+        // A new buy may only target a curated deep-liquidity stock. Sell and recovery are not
+        // limited, so a holding or a half-finished buy stays completable after a token is delisted.
+        if (plan.kind == "confidentialSwap" || payout) && !is_buy_target(plan.target) {
+            return Err(SignerError::InvalidInput);
+        }
         if (plan.kind != "confidentialSwap" && !sell && !payout && !recovery)
             || plan.recipient_indices.iter().any(|i| *i < FIRST_RECIPIENT)
             || plan

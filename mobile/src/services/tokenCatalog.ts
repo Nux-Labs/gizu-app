@@ -30,6 +30,12 @@ function isToken(value: unknown, query: TokenQuery): value is CatalogToken {
     (query.category === "all" || value.category === query.category) &&
     (value.issuer === null || value.issuer === "Robinhood") &&
     typeof value.swapListed === "boolean" &&
+    (value.buyable === undefined || typeof value.buyable === "boolean") &&
+    (value.priceUsd === undefined ||
+      value.priceUsd === null ||
+      (typeof value.priceUsd === "number" &&
+        Number.isFinite(value.priceUsd) &&
+        value.priceUsd > 0)) &&
     value.fusionStatus === "quote-required"
   );
 }
@@ -57,7 +63,8 @@ export function createTokenCatalogService(baseUrl: string): TokenCatalogService 
     async list(query, signal) {
       if (!root) throw new Error("Token catalog is not configured.");
       const chain = query.chainId === null ? "" : `chainId=${query.chainId}&`;
-      const params = `${chain}category=${query.category}&search=${encodeURIComponent(query.search)}&page=${query.page}&items=${TOKEN_PAGE_SIZE}`;
+      const liquid = query.liquidOnly ? "&liquidOnly=true" : "";
+      const params = `${chain}category=${query.category}&search=${encodeURIComponent(query.search)}&page=${query.page}&items=${TOKEN_PAGE_SIZE}${liquid}`;
       const body = await getJson(
         `${root}/v1/tokens?${params}`,
         signal,

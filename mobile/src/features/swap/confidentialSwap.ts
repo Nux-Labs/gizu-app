@@ -14,6 +14,7 @@ export type ListedToken = {
   name: string;
   decimals: number;
   swapListed: boolean;
+  buyable?: boolean;
 };
 
 export function sourceAtoms(amount: string): string | null {
@@ -102,6 +103,7 @@ export async function loadSwapTokens(fetchImpl: typeof fetch = fetch): Promise<L
         name: token.name,
         decimals: typeof token.decimals === "number" ? token.decimals : 0,
         swapListed: true,
+        ...(typeof token.buyable === "boolean" ? { buyable: token.buyable } : {}),
       },
     ];
   });
