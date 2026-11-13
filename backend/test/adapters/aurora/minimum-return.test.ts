@@ -682,3 +682,40 @@ test("HTTP opt-in recovers consumed return history while legacy minimum requests
     await app.close();
   }
 });
+
+test("history recovery reports only safe failure-stage diagnostics for an unavailable saved return", async () => {
+  const f = fixture(),
+    signed = await auth();
+  const baseline = await f.service().baseline(signed);
+  f.setBalance("0");
+  f.setHistory({ recipient: owner });
+  const events: unknown[] = [];
+  await assert.rejects(
+    f
+      .service({ diagnose: (event) => events.push(event) })
+      .minimumReturn(
+        signed,
+        { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
+        true,
+      ),
+  );
+  assert.deepEqual(events, [
+    {
+      event: "earn.settlement-history",
+      stage: "route",
+      httpStatus: 200,
+      reason: "recipient",
+    },
+  ]);
+  const logged = JSON.stringify(events);
+  for (const secret of [
+    owner,
+    C,
+    deposit,
+    tx,
+    signed.payload,
+    signed.signature,
+  ])
+    assert.equal(logged.includes(secret), false);
+  assert.equal(f.store.receipts.size, 0);
+});

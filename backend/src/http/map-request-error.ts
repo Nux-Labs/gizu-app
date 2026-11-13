@@ -38,8 +38,10 @@ export function mapRequestError(
               : validation
                 ? 400
                 : 500;
-    request.log.error(
+    // A route may suppress request logging; the sanitized failure still needs its code.
+    request.server.log.error(
       {
+        reqId: request.id,
         event: request.routeOptions.url?.startsWith("/v1/swap/")
           ? "swap.error"
           : "private.error",
@@ -54,11 +56,14 @@ export function mapRequestError(
       },
       "private request failed",
     );
-    return reply.header("Cache-Control", "no-store").code(status).send({
-      code,
-      message: "The private request could not be completed.",
-      ...(error instanceof GasPolicyError ? { retryable: false } : {}),
-    });
+    return reply
+      .header("Cache-Control", "no-store")
+      .code(status)
+      .send({
+        code,
+        message: "The private request could not be completed.",
+        ...(error instanceof GasPolicyError ? { retryable: false } : {}),
+      });
   }
   const logError = () =>
     request.log.error(

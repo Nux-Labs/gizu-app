@@ -38,6 +38,7 @@ type Options = {
   origin?: MinimumReturnOrigin;
   fetcher?: typeof fetch;
   now?: () => number;
+  diagnose?: ConstructorParameters<typeof ConfidentialSettlement>[4];
 };
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -403,6 +404,8 @@ export class MinimumReturnVerifier {
             this.options.key,
             this.fetcher,
             this.now,
+            undefined,
+            this.options.diagnose,
           ).historyCredit(auth, expected, signer);
           if (BigInt(credit) < BigInt(expected.minimumCreditAtoms))
             throw Error("Missing historical credit");
