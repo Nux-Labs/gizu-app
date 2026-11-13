@@ -80,6 +80,14 @@ outside the catalogue are never discovered. iOS has no recovery catalogue yet an
   actions and expandable fixed diagnostic codes. Raw provider errors are not rendered.
   Sale failures direct users to Swap for status review rather than resubmitting a sale.
 - Holding cards show the token symbol, amount and verified value when available.
+  Swapped stocks without a native valuation use the catalogue's market price (refreshed with
+  the balance, at most every five minutes) for an estimated USD value shown with the share
+  amount and included in the Home total; a stock without a market price shows its amount only.
+  Assets are ordered by USD value, unpriced holdings last. A stock's detail shows its name,
+  market price only (the row already shows value and shares), without chain, contract or check
+  time, and **Sell** opens Swap's sell form with that stock chosen. Other rows add no shortcuts;
+  Receive, Send and Withdraw already sit above Assets. A complete read with no holdings and no public USDC shows **No assets yet**
+  with **Buy a stock** and **Receive USDC**.
   Missing valuations are never treated as zero. Supported USDC and USDG retain their
   dollar face value when market pricing is unavailable; verified USD prices take precedence.
   The USD total retains the latest observed private/token balances when reads expire or

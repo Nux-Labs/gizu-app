@@ -1,5 +1,7 @@
 import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { useState } from "react";
+import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
+import type { MainTabParamList } from "@/navigation/types";
 import { TextInput, View } from "react-native";
 import { ArrowDown } from "lucide-react-native";
 import { Button } from "@/components/atoms/Button";
@@ -18,9 +20,20 @@ import { portfolioPublicUsdcAtoms } from "@/domain/wallet/portfolioValue";
 import colors from "@/theme/colors.json";
 import { useNativeSwap } from "./useNativeSwap";
 
-export function NativeSwapScreen() {
+export function NativeSwapScreen({
+  route,
+}: Partial<BottomTabScreenProps<MainTabParamList, "Exchange">> = {}) {
   const swap = useNativeSwap();
   const [mode, setMode] = useState<"buy" | "sell">("buy");
+  const request = route?.params;
+  const [sellToken, setSellToken] = useState<string | undefined>();
+  // Home asset shortcuts open a direction (and the held token to sell) on each tap.
+  const [handled, setHandled] = useState<number | undefined>();
+  if (request && request.request !== handled) {
+    setHandled(request.request);
+    setMode(request.mode);
+    setSellToken(request.mode === "sell" ? request.token?.toLowerCase() : undefined);
+  }
   const [showLast, setShowLast] = useState(false);
   const wallet = useOptionalMainnetWallet();
   const publicAtoms = wallet?.snapshot ? portfolioPublicUsdcAtoms(wallet.snapshot) : null;
@@ -75,6 +88,8 @@ export function NativeSwapScreen() {
       {active && swap.status ? <ActiveSwapCard status={swap.status} /> : null}
       {!active && mode === "sell" && (
         <SwapSellForm
+          key={sellToken ?? "default"}
+          initialToken={sellToken}
           flip={flip}
           fundingAddress={swap.fundingAddress}
           onSettled={() => void swap.refresh()}
