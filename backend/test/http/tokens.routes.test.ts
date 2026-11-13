@@ -101,3 +101,30 @@ test("GET /v1/tokens adds prices to buyable tokens on the page only", async () =
   assert.equal(priceCalls, 1);
   await app.close();
 });
+
+test("GET /v1/token-addresses lists every swap-listed address on one chain, deduplicated", async () => {
+  const app = Fastify();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  const calls: Array<[number, string]> = [];
+  const token = (address: string, swapListed: boolean) => ({ chainId: 4663, address, symbol: "T", name: "T", decimals: 18, logoURI: null, category: "rwa" as const, issuer: "Robinhood" as const, swapListed, buyable: false, fusionStatus: "quote-required" as const });
+  registerTokenRoutes(app, { list: async (chainId, category) => {
+    calls.push([chainId, category]);
+    return [
+      token("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", true),
+      token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true),
+      token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", true),
+      token("0xcccccccccccccccccccccccccccccccccccccccc", false),
+    ];
+  } });
+  const good = await app.inject("/v1/token-addresses?chainId=4663");
+  assert.equal(good.statusCode, 200);
+  assert.deepEqual(good.json(), {
+    chainId: 4663,
+    addresses: ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+  });
+  assert.deepEqual(calls, [[4663, "all"]]);
+  assert.equal((await app.inject("/v1/token-addresses?chainId=999")).statusCode, 400);
+  assert.equal((await app.inject("/v1/token-addresses")).statusCode, 400);
+  await app.close();
+});

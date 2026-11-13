@@ -25,14 +25,17 @@ export function SwapSellForm({
   flip,
   fundingAddress,
   onSettled,
+  initialToken,
 }: {
   flip: ReactNode;
   fundingAddress: string;
   onSettled: () => void;
+  /** A held token to choose first, e.g. from a Home asset row; ignored when not held. */
+  initialToken?: string;
 }) {
   const holdings = useSwapHoldings(onSettled);
   const list = holdings.snapshot?.holdings ?? [];
-  const [chosen, setChosen] = useState("");
+  const [chosen, setChosen] = useState(initialToken ?? "");
   const holding = list.find((item) => item.token === chosen) ?? list[0];
 
   const previewing = !!holdings.snapshot && !holding;

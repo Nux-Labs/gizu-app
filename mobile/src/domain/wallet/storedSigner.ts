@@ -106,6 +106,8 @@ export type SwapHoldingsSnapshot = {
   checkedAt: number;
   block: string;
 };
+/** `swept` is false when native skipped a chain checked within its schedule. */
+export type SwapAssetSweepResult = { swept: boolean; added: string[] };
 
 export type OwnedPortfolioAsset = {
   assetId: string;
@@ -236,6 +238,11 @@ export interface StoredSignerContract {
   getSwapDeposit(): Promise<{ fundingAddress: string }>;
   startSwap(target: string, amountAtoms: string, gateway: string): Promise<StoredSwapView>;
   getSwapHoldings(target: string): Promise<SwapHoldingsSnapshot>;
+  /**
+   * Read-only recovery sweep: native checks the public catalogue `tokens` against the wallet's own
+   * swap recipients on `chainId` and adds held tokens to its asset ledger. Android only for now.
+   */
+  sweepSwapAssets?(chainId: number, tokens: string[]): Promise<SwapAssetSweepResult>;
   sellSwapHolding(holdingId: string, gateway: string): Promise<StoredSwapView>;
   startSell(gateway: string): Promise<StoredSwapView>;
   /** Buy `target` with the private balance C already holds; nothing is sent from Monad. */

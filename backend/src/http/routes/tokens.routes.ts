@@ -48,6 +48,26 @@ export function registerTokenRoutes(
       return reply.code(200).send({ list, page, items, total: matches.length });
     },
   );
+  // Swap asset recovery checks a wallet's own balances for every swap-listed token on a chain, so it
+  // needs the whole address list at once rather than paging through display rows. Public data only.
+  app.withTypeProvider<ZodTypeProvider>().get(
+    "/v1/token-addresses",
+    {
+      schema: {
+        querystring: z.object({
+          chainId: z.coerce.number().int().refine((id) => CATALOG_CHAIN_IDS.includes(id)),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { chainId } = request.query;
+      const tokens = await catalog.list(chainId, "all");
+      const addresses = [
+        ...new Set(tokens.filter((token) => token.swapListed).map((token) => token.address.toLowerCase())),
+      ].sort();
+      return reply.code(200).send({ chainId, addresses });
+    },
+  );
   if (!details) return;
   // Token addresses are public, so unlike wallet routes this one can carry its address in the path.
   app.withTypeProvider<ZodTypeProvider>().get(

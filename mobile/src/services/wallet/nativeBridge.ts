@@ -280,6 +280,7 @@ export type StoredSwapBridge = Pick<
   | "getCachedMainnetPortfolio"
   | "getSwapDeposit"
   | "getSwapHoldings"
+  | "sweepSwapAssets"
   | "sellSwapHolding"
   | "startSwap"
   | "startSell"
@@ -328,6 +329,16 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
         return native.getSwapHoldings(target);
       });
     },
+    ...(typeof native.sweepSwapAssets === "function"
+      ? {
+          sweepSwapAssets(chainId: number, tokens: string[]) {
+            return readNative(async () => {
+              await checked(native, "swaps");
+              return native.sweepSwapAssets!(chainId, tokens);
+            });
+          },
+        }
+      : {}),
     async sellSwapHolding(holdingId, gateway) {
       await checked(native, "swaps");
       await checked(native, "confidentialSaleProceeds");

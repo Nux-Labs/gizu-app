@@ -68,10 +68,26 @@ available on Receive/Send. Home totals public and private USDC, owned stablecoin
 and valued vault positions in USD. This branch's Swap tab uses the native confidential-swap
 journey; the read-only Swap row above describes the earlier catalog baseline.
 
+Android keeps a swap asset ledger: every token a swap approves is recorded with its chain, and
+the ledger is part of the encrypted wallet recovery catalogue, so a restored wallet keeps its
+swapped stocks and swap history. Ledger tokens are read through Multicall3 in one pinned block.
+After the first balance read Home runs a read-only recovery sweep: native checks every
+swap-listed catalogue token (`GET /v1/token-addresses`) against the wallet's own swap recipients
+and adds held tokens to the ledger. It runs once after a restore and then at most daily; tokens
+outside the catalogue are never discovered. iOS has no recovery catalogue yet and skips the sweep.
+
 - Wallet, holdings and catalog errors use plain-language messages with read-only retry
   actions and expandable fixed diagnostic codes. Raw provider errors are not rendered.
   Sale failures direct users to Swap for status review rather than resubmitting a sale.
 - Holding cards show the token symbol, amount and verified value when available.
+  Swapped stocks without a native valuation use the catalogue's market price (refreshed with
+  the balance, at most every five minutes) for an estimated USD value shown with the share
+  amount and included in the Home total; a stock without a market price shows its amount only.
+  Assets are ordered by USD value, unpriced holdings last. A stock's detail shows its name,
+  market price only (the row already shows value and shares), without chain, contract or check
+  time, and **Sell** opens Swap's sell form with that stock chosen. Other rows add no shortcuts;
+  Receive, Send and Withdraw already sit above Assets. A complete read with no holdings and no public USDC shows **No assets yet**
+  with **Buy a stock** and **Receive USDC**.
   Missing valuations are never treated as zero. Supported USDC and USDG retain their
   dollar face value when market pricing is unavailable; verified USD prices take precedence.
   The USD total retains the latest observed private/token balances when reads expire or

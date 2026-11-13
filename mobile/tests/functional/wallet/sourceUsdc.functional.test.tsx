@@ -670,6 +670,102 @@ test("a stock the catalog cannot name keeps its native label and the rest of Hom
   expect(screen.getByLabelText("Token c39681 logo unavailable")).toBeVisible();
 });
 
+function nativeWithSweep(sweep: jest.Mock) {
+  jest.mocked(requireOptionalNativeModule).mockReturnValue({
+    getCapabilities: capabilities,
+    getSwapHoldings: readHoldings,
+    sellSwapHolding: sellHolding,
+    sweepSwapAssets: sweep,
+  });
+}
+
+test("Home sweeps the swap catalogue once after the first read and shows a stock it rediscovers", async () => {
+  const spcx = "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea";
+  const sweep = jest.fn().mockResolvedValue({ swept: true, added: [intc] });
+  nativeWithSweep(sweep);
+  const addresses = jest.spyOn(tokenCatalogService, "addresses").mockResolvedValue([intc, spcx]);
+  jest.spyOn(tokenCatalogService, "list").mockRejectedValue(new Error("offline"));
+  const { portfolio } = setup();
+  portfolio.getMainnetPortfolio
+    .mockResolvedValueOnce(mainnetPortfolio(walletId, address))
+    .mockResolvedValue(boughtStock());
+  await open();
+  // The rediscovered stock joins Assets through the refresh the sweep requested.
+  expect(await screen.findByRole("button", { name: "Token c39681 holding details" })).toBeVisible();
+  expect(addresses).toHaveBeenCalledTimes(1);
+  expect(addresses).toHaveBeenCalledWith(4663, expect.anything());
+  expect(sweep).toHaveBeenCalledTimes(1);
+  expect(sweep).toHaveBeenCalledWith(4663, [intc, spcx]);
+  expect(portfolio.getMainnetPortfolio.mock.calls.length).toBeGreaterThanOrEqual(2);
+});
+
+test("a sweep that finds nothing, or cannot reach the catalogue, leaves Home quiet", async () => {
+  const sweep = jest.fn().mockResolvedValue({ swept: false, added: [] });
+  nativeWithSweep(sweep);
+  const addresses = jest
+    .spyOn(tokenCatalogService, "addresses")
+    .mockRejectedValueOnce(new Error("offline"));
+  const { portfolio } = setup();
+  await open();
+  expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
+  await act(async () => {});
+  expect(addresses).toHaveBeenCalledTimes(1);
+  expect(sweep).not.toHaveBeenCalled();
+  expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("a build without the native sweep never asks the catalogue for addresses", async () => {
+  const addresses = jest.spyOn(tokenCatalogService, "addresses");
+  setup();
+  await open();
+  expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
+  expect(addresses).not.toHaveBeenCalled();
+});
+
+test("a swapped token on another catalogue chain is named from that chain", async () => {
+  const token = "0x" + "ab".repeat(20);
+  const list = jest.spyOn(tokenCatalogService, "list").mockResolvedValue({
+    list: [
+      {
+        chainId: 143,
+        address: token,
+        symbol: "AAPLx",
+        name: "Apple xStock",
+        decimals: 18,
+        logoURI: null,
+        category: "rwa",
+        issuer: null,
+        swapListed: true,
+        fusionStatus: "quote-required",
+      },
+    ],
+    page: 0,
+    items: 20,
+    total: 1,
+  });
+  const { portfolio } = setup();
+  const stock = boughtStock();
+  portfolio.getMainnetPortfolio.mockResolvedValue({
+    ...stock,
+    ownedAssets: [
+      {
+        ...stock.ownedAssets[0]!,
+        assetId: `143:${token}`,
+        chainId: 143,
+        token,
+        symbol: "Token ababab",
+      },
+    ],
+  });
+  await open();
+  expect(await screen.findByRole("button", { name: "AAPLx holding details" })).toBeVisible();
+  expect(list).toHaveBeenCalledWith(
+    { chainId: 143, category: "all", search: token, page: 0 },
+    expect.anything(),
+  );
+});
+
 test("a locked private balance explains wallet unlock without claiming a provider outage", async () => {
   const { portfolio } = setup();
   portfolio.getMainnetPortfolio.mockResolvedValue({

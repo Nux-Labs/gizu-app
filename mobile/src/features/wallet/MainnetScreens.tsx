@@ -28,14 +28,15 @@ import { AccountAddress } from "@/features/account/AccountAddress";
 import { clipboardService } from "@/services/clipboard";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
+import { useSwapAssetSweep } from "@/features/swap/useSwapAssetSweep";
 import { useSharedWithdrawalState } from "@/features/earn/useVaultPosition";
 import { useMainnetWallet } from "./MainnetWalletProvider";
 import { PrivateBalanceRefresh } from "./PrivateBalanceRefresh";
 import { BalanceCard } from "./BalanceCard";
-import { PortfolioAssetRow } from "./PortfolioAssetRow";
-import { usePortfolioTokenNames } from "./usePortfolioTokenNames";
+import { PortfolioAssetRow, type PortfolioAssetAction } from "./PortfolioAssetRow";
+import { usePortfolioTokenNames, type NamedPortfolioAsset } from "./usePortfolioTokenNames";
 import { VaultPositionCard } from "./VaultPositionCard";
-import { vaultPositionProfile } from "@/domain/wallet/portfolioValue";
+import { portfolioAssetValue, vaultPositionProfile } from "@/domain/wallet/portfolioValue";
 import type { EarnProfileId } from "@/domain/earn/types";
 
 function usePortfolio() {
@@ -160,7 +161,6 @@ function ReceivingAccounts() {
 
 const visible = (asset: OwnedPortfolioAsset) =>
   !asset.complete || BigInt(asset.balanceAtoms ?? asset.observedAtoms) > 0n;
-const visibleAssets = (rows: OwnedPortfolioAsset[] | undefined) => rows?.filter(visible) ?? [];
 
 const withdrawalAttentionCopy = {
   confirming: "Your vault withdrawal is confirming.",
@@ -169,16 +169,82 @@ const withdrawalAttentionCopy = {
   returning: "Your private USDC return is confirming.",
 } as const;
 
-function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) => void }) {
+/** Largest USD value first; assets without a value follow, by symbol. */
+function byValue(a: NamedPortfolioAsset, b: NamedPortfolioAsset) {
+  const left = portfolioAssetValue(a);
+  const right = portfolioAssetValue(b);
+  if (left !== null && right !== null && left !== right)
+    return BigInt(right) > BigInt(left) ? 1 : -1;
+  if (left !== null && right === null) return -1;
+  if (left === null && right !== null) return 1;
+  return a.symbol.localeCompare(b.symbol);
+}
+
+type AssetNavigation = {
+  onSell: (token: string) => void;
+  onBuy: () => void;
+  onReceive: () => void;
+};
+
+/** Only stocks get a row shortcut; Receive, Send and Withdraw already sit above Assets. */
+function assetActions(asset: NamedPortfolioAsset, go: AssetNavigation): PortfolioAssetAction[] {
+  // Swap sells Robinhood Chain holdings; the sell form picks this token.
+  if (asset.fromSwap && asset.chainId === 4663)
+    return [
+      {
+        label: "Sell",
+        accessibilityLabel: `Sell ${asset.symbol}`,
+        onPress: () => go.onSell(asset.token),
+      },
+    ];
+  return [];
+}
+
+function OwnedBalances({
+  assets,
+  onOpenVault,
+  navigation,
+}: {
+  assets: NamedPortfolioAsset[];
+  onOpenVault: (profile: EarnProfileId) => void;
+  navigation: AssetNavigation;
+}) {
   const { snapshot, loading, refresh } = useMainnetWallet();
   const attention = useSharedWithdrawalState().attention;
-  const assets = usePortfolioTokenNames(visibleAssets(snapshot?.ownedAssets));
-
   if (!snapshot?.ownedAssets && !snapshot?.positions) return null;
   const positions = snapshot.positions?.filter(visible) ?? [];
+  // Only a complete read with nothing held, including no public USDC, is an empty portfolio.
+  const empty =
+    !loading &&
+    snapshot.ownedBalanceComplete !== false &&
+    snapshot.balanceComplete !== false &&
+    snapshot.totalAtoms === "0" &&
+    assets.length === 0 &&
+    positions.length === 0;
   return (
     <View className="gap-5">
       {attention && <Notice message={withdrawalAttentionCopy[attention]} />}
+      {empty && (
+        <View className="gap-3">
+          <Typography variant="section">Assets</Typography>
+          <Surface>
+            <View className="gap-3 p-5">
+              <Typography variant="rowTitle">No assets yet</Typography>
+              <Typography variant="caption">
+                Buy a stock with USDC, or receive USDC to get started.
+              </Typography>
+              <View className="flex-row gap-3 pt-1">
+                <View className="flex-1">
+                  <Button label="Buy a stock" onPress={navigation.onBuy} />
+                </View>
+                <View className="flex-1">
+                  <Button label="Receive USDC" variant="secondary" onPress={navigation.onReceive} />
+                </View>
+              </View>
+            </View>
+          </Surface>
+        </View>
+      )}
       {positions.length > 0 && (
         <View className="gap-3">
           <Typography variant="section">Your vaults</Typography>
@@ -211,6 +277,7 @@ function OwnedBalances({ onOpenVault }: { onOpenVault: (profile: EarnProfileId) 
                 <PortfolioAssetRow
                   key={asset.assetId}
                   asset={asset}
+                  actions={assetActions(asset, navigation)}
                   loading={loading}
                   privateLocked={
                     snapshot.confidentialReadState === "locked" &&
@@ -283,6 +350,8 @@ export function MainnetPortfolioScreen({
 }: BottomTabScreenProps<MainTabParamList, "Home">) {
   const wallet = useMainnetWallet();
   const root = navigation.getParent<NativeStackNavigationProp<RootStackParamList>>();
+  // A restored wallet rediscovers stocks its earlier swaps bought; found tokens join Assets.
+  useSwapAssetSweep(!!wallet.snapshot, () => void wallet.refresh());
   const actions = (
     <PortfolioActions
       onDeposit={() => root.navigate("Transaction", { kind: "deposit" })}
@@ -290,6 +359,15 @@ export function MainnetPortfolioScreen({
       onActivity={() => root.navigate("Activity")}
     />
   );
+  // Names and market prices swapped stocks once, so the total and the Assets rows agree.
+  const owned = usePortfolioTokenNames(
+    wallet.snapshot?.ownedAssets ?? [],
+    wallet.snapshot?.checkedAt ?? 0,
+  );
+  const valued = wallet.snapshot?.ownedAssets
+    ? { ...wallet.snapshot, ownedAssets: owned }
+    : wallet.snapshot;
+  const assets = owned.filter(visible).sort(byValue);
   const ready = !!wallet.snapshot && wallet.snapshot.balanceComplete !== false;
   return (
     <Screen refreshing={wallet.loading} onRefresh={() => void wallet.refresh()}>
@@ -308,10 +386,10 @@ export function MainnetPortfolioScreen({
           />
         }
       />
-      {wallet.snapshot && ready ? (
+      {valued && ready ? (
         <>
-          <BalanceCard snapshot={wallet.snapshot} actions={actions} />
-          {!wallet.loading && (wallet.error || wallet.snapshot.stale) && (
+          <BalanceCard snapshot={valued} actions={actions} />
+          {!wallet.loading && (wallet.error || valued.stale) && (
             // A failed refresh keeps the last balance; say so quietly instead of raising an error.
             <View className="-mt-2 flex-row items-center justify-between gap-3 px-1">
               <Typography variant="micro" className="flex-1">
@@ -338,7 +416,16 @@ export function MainnetPortfolioScreen({
         variant="secondary"
         onPress={() => root.navigate("ConfidentialWithdrawal")}
       />
-      <OwnedBalances onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })} />
+      <OwnedBalances
+        assets={assets}
+        onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })}
+        navigation={{
+          onSell: (token) =>
+            navigation.navigate("Exchange", { mode: "sell", token, request: Date.now() }),
+          onBuy: () => navigation.navigate("Exchange", { mode: "buy", request: Date.now() }),
+          onReceive: () => root.navigate("Transaction", { kind: "deposit" }),
+        }}
+      />
       <VaultPreview
         onSeeAll={() => navigation.navigate("Vaults")}
         onOpen={(id) => root.navigate("OpportunityDetail", { id })}

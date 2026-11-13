@@ -4,7 +4,8 @@ import type { NavigatorScreenParams } from "@react-navigation/native";
 export type MainTabParamList = {
   Home: undefined;
   Vaults: undefined;
-  Exchange: undefined;
+  /** `sell` opens the sell form with `token` chosen; `request` makes a repeat tap reopen it. */
+  Exchange: { mode: "buy" | "sell"; token?: string; request: number } | undefined;
   Settings: undefined;
 };
 export type RootStackParamList = {

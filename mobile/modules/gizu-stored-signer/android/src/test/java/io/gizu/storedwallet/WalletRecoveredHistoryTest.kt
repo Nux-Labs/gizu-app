@@ -583,6 +583,40 @@ class WalletRecoveredHistoryTest {
   }
 
   @Test
+  fun swapAssetLedgerFollowsTheWalletIntoTheRestoredJournal() {
+    val intc = "0xc72b96e0e48ecd4dc75e1e45396e26300bc39681"
+    val spcx = "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea"
+    // A device that never rewrote its v1 ledger exports it without the wallet binding.
+    val legacy =
+      JSONObject()
+        .put("version", 1)
+        .put("tokens", JSONArray().put(intc))
+        .put("history", JSONObject().put("op1", JSONObject().put("operationId", "op1").put("phase", "COMPLETE")))
+    val newer =
+      JSONObject()
+        .put("version", 2)
+        .put("walletId", wallet)
+        .put(
+          "assets",
+          JSONArray()
+            .put(JSONObject().put("chainId", 4663).put("token", spcx).put("source", "discovered").put("firstSeenAt", 7)),
+        )
+        .put("history", JSONObject())
+        .put("swept", JSONObject().put("4663", 7))
+    importer().import(JSONArray().put(row("gizu-holdings", legacy)).put(row("gizu-holdings", newer)))
+    val restored = JSONObject(read("gizu-holdings"))
+    assertEquals(2, restored.getInt("version"))
+    assertEquals(wallet, restored.getString("walletId"))
+    val assets = restored.getJSONArray("assets")
+    assertEquals(listOf(intc, spcx), (0 until assets.length()).map { assets.getJSONObject(it).getString("token") })
+    assertTrue(restored.getJSONObject("history").has("op1"))
+    // The restored wallet sweeps its chains again rather than trusting the old device's schedule.
+    assertEquals(0, restored.getJSONObject("swept").length())
+    val foreign = JSONObject(newer.toString()).put("walletId", "someone-else")
+    assertThrows(Exception::class.java) { importer().import(JSONArray().put(row("gizu-holdings", foreign))) }
+  }
+
+  @Test
   fun newerSnapshotProvenanceSelectsNonRevisionedSwapWithoutTrustingArrayOrder() {
     fun swap(revision: Int, state: String) =
       row(

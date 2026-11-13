@@ -2271,6 +2271,41 @@ class GizuStoredSignerModule : Module() {
         }
       }
     }
+    // Recovery sweep for the swap asset ledger. JS passes the public catalogue; native owns the
+    // recipient addresses, the schedule and the ledger. Read-only: nothing is signed or sent.
+    AsyncFunction("sweepSwapAssets") { chainId: Int, tokens: List<String>, promise: Promise ->
+      runCeremony(promise, timeoutMs = 180_000L, readOnly = true) { activity, store ->
+        withContext(Dispatchers.IO) {
+          val chain =
+            io.gizu.storedwallet.swap.SwapChains.of(chainId.toLong())
+              ?: throw IllegalArgumentException("Unsupported swap chain")
+          store.load().use { record ->
+            check(record.verified)
+            val ledger = SwapStore(activity.applicationContext, record).portfolio
+            if (!ledger.sweepDue(chain.chainId))
+              return@withContext mapOf("swept" to false, "added" to emptyList<String>())
+            val tracked = ledger.targets(chain.chainId).toSet()
+            val holders =
+              io.gizu.storedwallet.swap.SwapHoldings.recipientAddresses(
+                record,
+                io.gizu.storedwallet.swap.SwapHoldings.recipientIndices(record),
+              )
+            val found =
+              withTimeoutOrNull(60_000L) {
+                io.gizu.storedwallet.swap
+                  .SwapAssetSweep(chain)
+                  .held(tokens.map(String::lowercase).filter { it !in tracked }, holders)
+              } ?: throw io.gizu.storedwallet.portfolio.PortfolioReadTimeout()
+            val added = ledger.recordSweep(chain.chainId, found)
+            if (added.isNotEmpty())
+              io.gizu.storedwallet.portfolio
+                .NativeOwnedPortfolio(activity.applicationContext)
+                .invalidateTokens(record, chain.chainId, added.toSet())
+            mapOf("swept" to true, "added" to added)
+          }
+        }
+      }
+    }
     AsyncFunction("sellSwapHolding") { holdingId: String, gateway: String, promise: Promise ->
       runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
         store.load().use { assertCashoutInactive(activity, it) }

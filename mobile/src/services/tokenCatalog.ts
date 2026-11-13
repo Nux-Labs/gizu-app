@@ -72,7 +72,32 @@ export function createTokenCatalogService(baseUrl: string): TokenCatalogService 
       );
       return validatePage(body, query);
     },
+    async addresses(chainId, signal) {
+      if (!root) throw new Error("Token catalog is not configured.");
+      const body = await getJson(
+        `${root}/v1/token-addresses?chainId=${chainId}`,
+        signal,
+        "Token catalog unavailable.",
+      );
+      return validateAddresses(body, chainId);
+    },
   };
+}
+const MAX_SWEEP_ADDRESSES = 4096;
+function validateAddresses(body: unknown, chainId: number): string[] {
+  if (
+    !isRecord(body) ||
+    body.chainId !== chainId ||
+    !Array.isArray(body.addresses) ||
+    body.addresses.length > MAX_SWEEP_ADDRESSES ||
+    !body.addresses.every(
+      (address) => typeof address === "string" && /^0x[0-9a-f]{40}$/.test(address),
+    ) ||
+    new Set(body.addresses).size !== body.addresses.length
+  ) {
+    throw new Error("Invalid token catalog response.");
+  }
+  return body.addresses as string[];
 }
 export const tokenCatalogService = createTokenCatalogService(
   process.env.EXPO_PUBLIC_API_URL ?? (__DEV__ ? "http://127.0.0.1:3000" : ""),

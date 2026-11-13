@@ -13,6 +13,8 @@ internal val walletRecoveryHistoryDomains =
     "gizu-discovered-wallets" to "gizu-discovered-wallets",
     "gizu-operations" to "gizu-stored-operations",
     "gizu-swap" to "gizu-swap",
+    // The swap asset ledger: which tokens swaps bought, so a restored wallet still shows them.
+    "gizu-holdings" to "gizu-holdings",
     "gizu-earn-vault" to "gizu-earn-vault",
     "gizu-earn-sponsored" to "gizu-earn-sponsored",
     "gizu-earn-payout" to "gizu-earn-payout",

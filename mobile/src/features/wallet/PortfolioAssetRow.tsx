@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Image, Pressable, View } from "react-native";
 import { LockKeyhole } from "lucide-react-native";
 import { Typography } from "@/components/atoms/Typography";
+import { Button } from "@/components/atoms/Button";
 import type { NamedPortfolioAsset } from "./usePortfolioTokenNames";
 import { earnProfiles } from "@/domain/earn/types";
 import { portfolioAssetAmount, portfolioAssetValue } from "@/domain/wallet/portfolioValue";
@@ -11,16 +12,31 @@ import usdgLogo from "../../../assets/logos/tokens/usdg.png";
 import monadLogo from "../../../assets/logos/monad-white.png";
 import colors from "@/theme/colors.json";
 
+export type PortfolioAssetAction = {
+  label: string;
+  accessibilityLabel?: string;
+  onPress: () => void;
+};
+
+const usdPrice = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 2,
+});
+
 export function PortfolioAssetRow({
   asset,
   position = false,
   loading,
   privateLocked = false,
+  actions = [],
 }: {
   asset: NamedPortfolioAsset;
   position?: boolean;
   loading: boolean;
   privateLocked?: boolean;
+  /** Shortcuts shown when the row is open, such as selling a stock or receiving USDC. */
+  actions?: PortfolioAssetAction[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const amount = portfolioAssetAmount(asset, position);
@@ -74,13 +90,31 @@ export function PortfolioAssetRow({
             </View>
           )}
         </View>
-        <Typography variant="rowValue">
-          {value !== null
-            ? `${holdingAmount(value, 6)} USD`
-            : (formattedAmount ?? (loading ? "Checking…" : "Unavailable"))}
-        </Typography>
+        <View className="flex-1 items-end gap-0.5">
+          <Typography variant="rowValue">
+            {value !== null
+              ? `${holdingAmount(value, 6)} USD`
+              : (formattedAmount ?? (loading ? "Checking…" : "Unavailable"))}
+          </Typography>
+          {/* A priced stock shows how many shares the value stands for; USD stablecoins need not. */}
+          {value !== null && formattedAmount !== null && !usdc && !usdg && (
+            <Typography variant="micro">{formattedAmount}</Typography>
+          )}
+        </View>
       </Pressable>
-      {expanded && (
+      {expanded && asset.fromSwap && (
+        <StockDetail
+          asset={asset}
+          amount={
+            amount !== null && asset.decimals !== null
+              ? displayAmount(amount, asset.decimals)
+              : null
+          }
+          loading={loading}
+          actions={actions}
+        />
+      )}
+      {expanded && !asset.fromSwap && (
         <View className="gap-3 pb-4">
           <Typography variant="rowTitle">{asset.symbol}</Typography>
           {asset.name && <Typography variant="caption">{asset.name}</Typography>}
@@ -107,8 +141,87 @@ export function PortfolioAssetRow({
               {loading ? "Checking USD value…" : "USD value unavailable."}
             </Typography>
           )}
+          <AssetActions actions={actions} />
         </View>
       )}
+    </View>
+  );
+}
+
+function AssetActions({ actions }: { actions: PortfolioAssetAction[] }) {
+  if (actions.length === 0) return null;
+  return (
+    <View className="flex-row gap-3 pt-1">
+      {actions.map((action) => (
+        <View key={action.label} className="flex-1">
+          <Button
+            label={action.label}
+            accessibilityLabel={action.accessibilityLabel}
+            variant="secondary"
+            onPress={action.onPress}
+          />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  accessibilityLabel,
+}: {
+  label: string;
+  value: string;
+  accessibilityLabel?: string;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={accessibilityLabel ?? `${label} ${value}`}
+      className="flex-1 gap-1.5 rounded-2xl bg-well p-4"
+    >
+      <Typography variant="label11" className="uppercase">
+        {label}
+      </Typography>
+      <Typography variant="value" numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Typography>
+    </View>
+  );
+}
+
+/** A stock's detail: what it is and its market price; the row already shows value and shares. */
+function StockDetail({
+  asset,
+  amount,
+  loading,
+  actions,
+}: {
+  asset: NamedPortfolioAsset;
+  amount: string | null;
+  loading: boolean;
+  actions: PortfolioAssetAction[];
+}) {
+  return (
+    <View className="gap-4 pb-4">
+      <View className="gap-0.5">
+        <Typography variant="cardTitle">{asset.name ?? asset.symbol}</Typography>
+        {asset.name ? <Typography variant="caption">{asset.symbol}</Typography> : null}
+      </View>
+      <View className="flex-row">
+        {asset.priceUsd !== undefined ? (
+          <Stat label="Market price" value={usdPrice.format(asset.priceUsd)} />
+        ) : (
+          <Stat label="Market price" value="—" accessibilityLabel="Market price unavailable" />
+        )}
+      </View>
+      {amount === null && !loading && (
+        <Typography variant="caption">
+          {asset.symbol} balance unavailable. Refresh to retry.
+        </Typography>
+      )}
+      <AssetActions actions={actions} />
     </View>
   );
 }
