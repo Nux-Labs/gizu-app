@@ -83,9 +83,9 @@ export function RobinhoodWithdrawalPanel({
       profileId: intent.profileId,
       investmentSlot: intent.investmentSlot,
       expiresAtMs: null,
-      settled: true,
+      settled: returned?.status === "minimumReceived",
     });
-  }, [privateReturned, onWithdrawalComplete, intent]);
+  }, [privateReturned, onWithdrawalComplete, intent, returned?.status]);
 
   useEffect(() => {
     if (!plan) return;

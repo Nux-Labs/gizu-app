@@ -136,6 +136,18 @@ class EarnInvestmentPositionsTest {
           )
           .single()["withdrawalAttention"]
       assertEquals("checking", attention())
+      assertEquals(
+        "hoodTokenReturn",
+        earnInvestmentPositions(
+            r,
+            r.id,
+            emptyList(),
+            listOf(redeem, returned),
+            emptyList(),
+            emptyList(),
+          )
+          .single()["lastReturnOperationId"],
+      )
       returned.put("settlement", JSONObject().put("status", "credited"))
       assertNull(attention())
     }
@@ -165,7 +177,7 @@ class EarnInvestmentPositionsTest {
   }
 
   @Test
-  fun paidReturnsStillRequireFreshExitCheckAndUnknownWorkRemainsVisible() {
+  fun completedPrivateReturnsAreTerminalAndLaterWorkRemainsVisible() {
     record().use { r ->
       val deposit = operation(r, 1, 0, "hoodDeposit")
       val redeem = operation(r, 1, 0, "hoodRedeemAll")
@@ -178,7 +190,7 @@ class EarnInvestmentPositionsTest {
         earnInvestmentPositions(r, r.id, emptyList(), sponsored, emptyList(), withdrawals)
           .single()["activity"]
       assertEquals("redeemed", inventory(listOf(deposit, redeem)))
-      assertEquals("redeemed", inventory(listOf(deposit, redeem, returned), listOf(paid)))
+      assertEquals("returned", inventory(listOf(deposit, redeem, returned), listOf(paid)))
       val unknown =
         operation(r, 1, 0, "hoodRedeemAll", "unknown")
           .put("signedUserOperation", "private signed payload")
@@ -241,7 +253,7 @@ class EarnInvestmentPositionsTest {
           emptyList(),
           listOf(paid, cancelled),
         )
-      assertEquals("redeemed", rows.single()["activity"])
+      assertEquals("returned", rows.single()["activity"])
     }
   }
 

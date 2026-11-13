@@ -44,10 +44,10 @@ class EarnMinimumReturnTest {
     bindMinimumReturnReceipt(op, receipt(op), f.wallet, "generation")
 
   @Test
-  fun returnReadsOptIntoHistoricalRecoveryWithoutChangingTheMinimumProofContract() {
+  fun returnReadsNeverOptIntoInviteOnlyHistory() {
     val headers = sponsoredSettlementRequestHeaders(returned())
     assertEquals("minimum-return-v1", headers["x-gizu-settlement-proof"])
-    assertEquals("v1", headers["x-gizu-return-history-recovery"])
+    assertFalse(headers.containsKey("x-gizu-return-history-recovery"))
     assertFalse(
       sponsoredSettlementRequestHeaders(null).containsKey("x-gizu-return-history-recovery")
     )

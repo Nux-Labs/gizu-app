@@ -123,7 +123,6 @@ internal fun sponsoredSettlementRequestHeaders(operation: JSONObject?): Map<Stri
   buildMap {
     val capability = sponsoredSettlementCapability(operation)
     put("x-gizu-settlement-proof", capability)
-    if (capability == "minimum-return-v1") put("x-gizu-return-history-recovery", "v1")
   }
 
 internal suspend fun readNativeSponsoredSettlement(

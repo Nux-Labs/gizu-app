@@ -1,5 +1,7 @@
 # Withdrawal history completion implementation plan
 
+**Superseded on 2026-11-14:** The authenticated-history recovery approach below violated the user's no-invite-only-history constraint. Do not use it or request history entitlement. The correction is [terminal withdrawal completion](2026-11-14-terminal-withdrawals.md): save the final private-return completion once and do not reopen it.
+
 **Goal:** Completed returns stay complete after their USDC is spent; opening Withdraw never describes investment inventory as an active withdrawal.
 
 **Architecture:** Keep native journals and existing exit checks authoritative. Reuse authenticated provider history to recover a missing minimum receipt, with an explicit opt-in header and the same durable route binding. No transaction execution, resubmission, financial approval, history deletion or backend deployment is part of verification.

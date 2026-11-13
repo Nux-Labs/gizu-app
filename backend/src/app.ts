@@ -134,13 +134,6 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
     new MinimumReturnVerifier({
       key: secret.AURORA_API_KEY,
       recoveryKey: secret.EARN_GATEWAY_RECOVERY_KEY,
-      diagnose: (event) => {
-        if (event.event === "earn.settlement-history")
-          app.log.info(
-            { event: event.event, stage: event.stage, httpStatus: event.httpStatus, reason: event.reason },
-            "earn minimum return history check",
-          );
-      },
       store: new PgMinimumReturnStore(pgPool),
       origin: new MinimumReturnOriginReceipts({
         ethereumRpcUrl: ethereumPlannerConfig.rpcUrl,

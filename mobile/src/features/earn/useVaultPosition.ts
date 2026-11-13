@@ -10,7 +10,11 @@ import {
   openWithdrawalAttention,
   vaultWithdrawalAvailable,
 } from "@/domain/earn/investmentPositions";
-import { privateReturnConfirmed, type SponsoredOperation } from "@/domain/earn/sourceFunding";
+import {
+  latestPrivateReturn,
+  privateReturnConfirmed,
+  type SponsoredOperation,
+} from "@/domain/earn/sourceFunding";
 import { portfolioVaultPosition, portfolioAssetAmount } from "@/domain/wallet/portfolioValue";
 import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { useFundingWallet } from "@/features/wallet/WalletProvider";
@@ -28,6 +32,12 @@ import { completedExitsStore } from "@/storage/completedExits";
 
 function positionKey(row: Pick<EarnInvestmentPosition, "intentId" | "investmentSlot">) {
   return `${row.intentId}:${row.investmentSlot ?? "legacy"}`;
+}
+/** Local native journal only: an older public payout remains separate unfinished work. */
+async function legacyPayoutsFinished(intent: EarnIntent): Promise<boolean> {
+  if (!(await earnWithdrawalService.available())) return false;
+  const payouts = await earnWithdrawalService.list(intent);
+  return payouts.every((row) => !row.blocked && ["paid", "cancelled"].includes(row.status));
 }
 export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) {
   const {
@@ -52,14 +62,13 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
   const proofsRef = useRef<Record<string, number | "accepted">>({});
   const rowsRef = useRef<EarnInvestmentPosition[]>([]);
   const currentIntent = useRef<EarnIntent | null>(null);
-  const checkingCompletion = useRef(new Set<string>());
+  const completing = useRef(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const selected = useRef<string | null>(null);
   const occupied = useRef(false);
   const generation = useRef(0);
   const active = useRef<AbortController | null>(null);
-  const completionRead = useRef<AbortController | null>(null);
   const recordCompletion = useCallback(
     (proof: EarnInvestmentExitProof) => {
       const current = currentIntent.current;
@@ -75,43 +84,34 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
       const key = positionKey(proof);
       if (proofsRef.current[key] === "accepted") return;
       if (proof.settled) {
+        if (completing.current.has(key)) return;
+        completing.current.add(key);
         const attempt = generation.current;
-        const row = rowsRef.current.find((item) => positionKey(item) === key);
-        if (!row || row.recoveryRequired || checkingCompletion.current.has(key)) return;
-        checkingCompletion.current.add(key);
-        const controller = new AbortController();
-        completionRead.current = controller;
-        // A private receipt does not prove that public shares/residuals or legacy payouts are done.
         void (async () => {
           try {
-            const result = await exitChecker.check(current, controller.signal);
-            if (attempt !== generation.current || controller.signal.aborted) return;
-            const payouts = await earnWithdrawalService.list(current);
             if (
+              !(await legacyPayoutsFinished(current)) ||
               attempt !== generation.current ||
-              selected.current !== key ||
-              !isCompleteInvestmentExit(result, current, payouts)
+              selected.current !== key
             )
               return;
-            const revision = exitHistoryRevision(result.journalRevision, payouts);
-            if (revision) await completedExitsStore.save(current, revision);
-            if (attempt !== generation.current || selected.current !== key) return;
+            // The private receipt is saved. This completes the remaining local step bookkeeping.
             proofsRef.current = { ...proofsRef.current, [key]: "accepted" };
             setProofs(proofsRef.current);
-            const open = rowsRef.current.some(
-              (item) =>
-                item.activity !== "returned" && proofsRef.current[positionKey(item)] !== "accepted",
-            );
-            if (!open) {
+            if (
+              !rowsRef.current.some(
+                (row) =>
+                  row.activity !== "returned" && proofsRef.current[positionKey(row)] !== "accepted",
+              )
+            ) {
               selected.current = null;
               currentIntent.current = null;
               setIntent(null);
             }
           } catch {
-            // Retain recovery controls; a failed fresh check cannot erase history or mark it pending.
+            // Retain recovery for unreadable local legacy journals without repeating a return.
           } finally {
-            checkingCompletion.current.delete(key);
-            if (completionRead.current === controller) completionRead.current = null;
+            completing.current.delete(key);
           }
         })();
         return;
@@ -128,7 +128,7 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
       }
       setProofs(proofsRef.current);
     },
-    [session.walletId, profileId, exitChecker],
+    [session.walletId, profileId],
   );
   const refresh = useCallback(
     async (recheckHistory = false) => {
@@ -251,6 +251,20 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
           if (attempt !== generation.current || controller.signal.aborted) return;
           if (next.activity === "redeemed") {
             try {
+              if (value.profileId === "robinhood-usdg") {
+                const completed = await robinhood.list(value);
+                if (attempt !== generation.current || controller.signal.aborted) return;
+                if (
+                  privateReturnConfirmed(completed) &&
+                  latestPrivateReturn(completed)?.status === "minimumReceived" &&
+                  (await legacyPayoutsFinished(value))
+                ) {
+                  checked[positionKey(next)] = "accepted";
+                  proofsRef.current = { ...checked };
+                  setProofs(proofsRef.current);
+                  continue;
+                }
+              }
               if (await earnWithdrawalService.available()) {
                 if (recheckHistory) await completedExitsStore.forget(value);
                 let journal = await (
@@ -355,7 +369,6 @@ export function useVaultPosition(profileId: EarnProfileId, historyOnly = false) 
     return () => {
       generation.current = attempt + 1;
       active.current?.abort();
-      completionRead.current?.abort();
     };
   }, [refresh, earnLoading]);
   const completed = rows.filter(
@@ -411,7 +424,12 @@ export function useSharedWithdrawalState() {
             const next: Record<string, SponsoredOperation[]> = {};
             let waitingForCycle = false;
             for (const row of rows) {
-              if (row.profileId !== "robinhood-usdg" || row.recoveryRequired) continue;
+              if (
+                row.profileId !== "robinhood-usdg" ||
+                row.recoveryRequired ||
+                row.activity === "returned"
+              )
+                continue;
               const cycle = cycles?.find(
                 (item) => item.intentId === row.intentId && item.profileId === row.profileId,
               );

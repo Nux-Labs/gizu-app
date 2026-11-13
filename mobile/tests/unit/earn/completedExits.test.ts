@@ -60,3 +60,32 @@ test("unavailable observation storage falls back safely while a failed explicit 
   await expect(history.save(hoodIntent, "revision")).resolves.toBeUndefined();
   await expect(history.forget(hoodIntent)).rejects.toThrow("Storage unavailable");
 });
+
+test("a recorded completed return stays done after its receipt revision changes, without completing a later return", async () => {
+  const io = storage();
+  const completed = createCompletedExitsStore(io);
+  // Use the persisted v1 structure produced by exitHistoryRevision, independent of today's balances.
+  await completed.save(
+    hoodIntent,
+    JSON.stringify([JSON.stringify([["return_old", 4, "minimumReceived", false]]), "[]"]),
+  );
+  expect(await createCompletedExitsStore(io).hasReturn(hoodIntent, "return_old")).toBe(true);
+  expect(await completed.hasReturn(hoodIntent, "return_new")).toBe(false);
+  expect(
+    await completed.hasReturn({ ...hoodIntent, walletId: "another-wallet" }, "return_old"),
+  ).toBe(false);
+});
+
+test("malformed completion entries and pending payout history cannot close a return", async () => {
+  const completed = createCompletedExitsStore(storage());
+  for (const [journal, payouts] of [
+    [[["return_old", 0, "minimumReceived", false]], []],
+    [[["return_old", 4, "minimumReceived", false]], [["payout", 2, "pending", true]]],
+  ]) {
+    await completed.save(
+      hoodIntent,
+      JSON.stringify([JSON.stringify(journal), JSON.stringify(payouts)]),
+    );
+    expect(await completed.hasReturn(hoodIntent, "return_old")).toBe(false);
+  }
+});

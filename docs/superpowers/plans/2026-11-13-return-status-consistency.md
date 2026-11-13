@@ -1,5 +1,7 @@
 # Historical return status consistency
 
+**Updated on 2026-11-14:** Additional history diagnostics do not solve the unsupported-history dependency. See [terminal withdrawal completion](2026-11-14-terminal-withdrawals.md). Minimum-return historical recovery has been removed rather than enabled or retried.
+
 Goal: Home and vault details expose the same historical verification state without claiming that a new redemption is pending. A user can check old return status separately from starting or continuing a withdrawal.
 
 Evidence: installed main `960113c`; Home shows `checking`, vault overview omits it. Explicit read-only historical reconciliation returns HTTP 503 while balance and exit-snapshot reads return 200. ECS service is healthy. CloudWatch records the 503 but no failure code: the error handler logs through a request logger whose settlement route is `silent`. The client also lacks the new minimum-history error mapping. None of this proves an active redemption or authorizes declaring an old credit complete.

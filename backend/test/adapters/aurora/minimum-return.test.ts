@@ -84,15 +84,11 @@ function fixture(originAsset = robinhoodUsdgAssetId) {
     clock = now,
     status = "SUCCESS",
     originValid = true,
-    balanceHook: (() => Promise<void>) | undefined,
-    history: Record<string, unknown> | undefined;
+    balanceHook: (() => Promise<void>) | undefined;
   const fetcher: typeof fetch = async (url) => {
     const path = String(url);
     calls.push(path);
-    if (path.includes("history")) {
-      if (!history) throw Error("History unavailable");
-      return new Response(JSON.stringify({ items: [history] }));
-    }
+    if (path.includes("history")) throw Error("History must never be used");
     if (path.includes("/account/balances/") && balanceHook) await balanceHook();
     const body = path.includes("authenticate")
       ? { accessToken: "PRIVATE-JWT" }
@@ -182,24 +178,6 @@ function fixture(originAsset = robinhoodUsdgAssetId) {
     calls,
     get confirmations() {
       return confirmations;
-    },
-    setHistory(patch: Record<string, unknown> = {}) {
-      history = {
-        depositAddress: deposit,
-        status: "SUCCESS",
-        depositType: "ORIGIN_CHAIN",
-        recipientType: "CONFIDENTIAL_INTENTS",
-        refundType: "ORIGIN_CHAIN",
-        originAsset,
-        destinationAsset: monadUsdcAssetId,
-        recipient: C,
-        refundTo: owner,
-        createdAt: new Date(now).toISOString(),
-        quoteTransactions: [{ txHash: tx, sender: owner }],
-        amountInFormatted: "1",
-        amountOutFormatted: "0.995",
-        ...patch,
-      };
     },
     setBalance(v: string) {
       balance = v;
@@ -540,182 +518,36 @@ test("minimum capability routes to independent service with the unchanged body a
   }
 });
 
-test("opt-in history recovers a return consumed before its first confirmation and replays after restart", async () => {
-  const f = fixture(),
-    signed = await auth();
-  const baseline = await f.service().baseline(signed);
-  const expected = {
-    ...f.expected,
-    baselineEnvelope: baseline.baselineEnvelope,
-  };
-  // The returned amount has already been reinvested, leaving less than the baseline.
-  f.setBalance("0");
-  f.setHistory();
-  const proof = await f.service().minimumReturn(signed, expected, true);
-  assert.equal(proof.status, "minimumReceived");
-  assert.equal(proof.verifiedMinimumAtoms, "990000");
-  assert.equal(proof.exactAmountKnown, false);
-  assert.equal(proof.spendingAuthorized, false);
-  assert.equal("creditedAtoms" in proof, false);
-  assert.equal(f.store.receipts.size, 1);
-  const calls = f.calls.length;
-  const replay = await f
-    .service()
-    .minimumReturn(signed, { ...expected, revision: 7 }, true);
-  assert.equal(replay.status, "minimumReceived");
-  assert.equal(replay.observedAtMs, proof.observedAtMs);
-  assert.equal(f.calls.length, calls);
-});
-
-test("history recovery remains route-bound after another return advances the balance observation sequence", async () => {
-  const f = fixture(),
-    signed = await auth();
-  const baseline = await f.service().baseline(signed);
-  f.setBalance("1995100");
-  await f
-    .service()
-    .minimumReturn(signed, {
-      ...otherRoute(f),
-      baselineEnvelope: baseline.baselineEnvelope,
-    });
-  f.setBalance("0");
-  f.setHistory();
-  const proof = await f
-    .service()
-    .minimumReturn(
-      signed,
-      { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
-      true,
-    );
-  assert.equal(proof.status, "minimumReceived");
-  assert.equal(f.store.receipts.size, 2);
-  assert.deepEqual([...f.store.sequences.values()], ["2"]);
-});
-
-test("history recovery cannot confirm an unrelated, failed or undersized return", async () => {
-  for (const patch of [
-    { recipient: owner },
-    { depositAddress: "0x" + "9".repeat(40) },
-    { quoteTransactions: [{ txHash: "0x" + "c".repeat(64), sender: owner }] },
-    { refundTo: deposit },
-    { originAsset: monadUsdcAssetId },
-    { destinationAsset: robinhoodUsdgAssetId },
-    { amountInFormatted: "2" },
-    { amountOutFormatted: "0.1" },
-    { status: "PROCESSING" },
-  ]) {
-    const f = fixture(),
-      signed = await auth();
-    const baseline = await f.service().baseline(signed);
-    f.setBalance("0");
-    f.setHistory(patch);
-    await assert.rejects(
-      f
-        .service()
-        .minimumReturn(
-          signed,
-          { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
-          true,
-        ),
-    );
-    assert.equal(f.store.receipts.size, 0);
-  }
-});
-
-test("unavailable authenticated history does not turn a spent historical return into pending or complete", async () => {
+test("obsolete history-recovery headers never request invite-only history", async () => {
   const f = fixture(),
     signed = await auth();
   const baseline = await f.service().baseline(signed);
   f.setBalance("100");
-  await assert.rejects(
-    f
-      .service()
-      .minimumReturn(
-        signed,
-        { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
-        true,
-      ),
-    { code: "EARN_MINIMUM_RETURN_HISTORY_UNAVAILABLE" },
-  );
-  assert.equal(f.store.receipts.size, 0);
-});
-
-test("HTTP opt-in recovers consumed return history while legacy minimum requests retain their contract", async () => {
-  const f = fixture(),
-    signed = await auth();
-  const baseline = await f.service().baseline(signed);
-  f.setBalance("100");
-  f.setHistory();
   const app = Fastify({ logger: false });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   registerEarnSettlementRoutes(app, new ConfidentialSettlement(), f.service());
-  const payload = {
-    signedData: signed,
-    expected: { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
-  };
   try {
-    const legacy = await app.inject({
+    await app.inject({
       method: "POST",
       url: "/v1/earn/native/settlement",
-      payload,
-      headers: { "x-gizu-settlement-proof": "minimum-return-v1" },
-    });
-    assert.equal(legacy.statusCode, 200);
-    assert.equal(legacy.json().status, "awaitingSettlement");
-    assert.ok(!f.calls.some((url) => url.includes("history")));
-    const updated = await app.inject({
-      method: "POST",
-      url: "/v1/earn/native/settlement",
-      payload,
+      payload: {
+        signedData: signed,
+        expected: {
+          ...f.expected,
+          baselineEnvelope: baseline.baselineEnvelope,
+        },
+      },
       headers: {
         "x-gizu-settlement-proof": "minimum-return-v1",
         "x-gizu-return-history-recovery": "v1",
       },
     });
-    assert.equal(updated.statusCode, 200);
-    assert.equal(updated.json().status, "minimumReceived");
-    assert.equal(updated.headers["cache-control"], "no-store");
-    assert.equal(updated.json().spendingAuthorized, false);
-    assert.equal(updated.json().creditedAtoms, undefined);
+    assert.equal(
+      f.calls.some((url) => url.includes("/account/history/")),
+      false,
+    );
   } finally {
     await app.close();
   }
-});
-
-test("history recovery reports only safe failure-stage diagnostics for an unavailable saved return", async () => {
-  const f = fixture(),
-    signed = await auth();
-  const baseline = await f.service().baseline(signed);
-  f.setBalance("0");
-  f.setHistory({ recipient: owner });
-  const events: unknown[] = [];
-  await assert.rejects(
-    f
-      .service({ diagnose: (event) => events.push(event) })
-      .minimumReturn(
-        signed,
-        { ...f.expected, baselineEnvelope: baseline.baselineEnvelope },
-        true,
-      ),
-  );
-  assert.deepEqual(events, [
-    {
-      event: "earn.settlement-history",
-      stage: "route",
-      httpStatus: 200,
-      reason: "recipient",
-    },
-  ]);
-  const logged = JSON.stringify(events);
-  for (const secret of [
-    owner,
-    C,
-    deposit,
-    tx,
-    signed.payload,
-    signed.signature,
-  ])
-    assert.equal(logged.includes(secret), false);
-  assert.equal(f.store.receipts.size, 0);
 });

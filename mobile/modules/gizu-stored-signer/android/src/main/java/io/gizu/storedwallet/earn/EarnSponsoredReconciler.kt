@@ -68,7 +68,15 @@ internal suspend fun reconcileEarnSponsoredOperations(
   chainFilter: Int? = null,
   operationIds: Set<String>? = null,
 ) {
-  for (op in journal.all()) {
+  val rows = journal.all()
+  val completedReturns =
+    rows.withIndex().filter { (_, op) ->
+      op.optString("status") == "finalized" &&
+        op.getJSONObject("proposal").optString("kind") == "hoodTokenReturn" &&
+        (op.optJSONObject("settlement")?.optString("status") == "credited" ||
+          savedMinimumReturnReceipt(op, journal.walletId, journal.generation) != null)
+    }
+  for ((index, op) in rows.withIndex()) {
     if (operationIds != null && op.getString("operationId") !in operationIds) continue
     // A later read must not turn a replaced expired signature back into a sendable one.
     if (op.optString("status") == "expired") continue
@@ -78,6 +86,22 @@ internal suspend fun reconcileEarnSponsoredOperations(
     )
       continue
     val p = op.getJSONObject("proposal")
+    // The encrypted final return is the completion checkpoint for its preceding steps.
+    // Later lookups and later investment balances cannot reopen those steps.
+    if (
+      op.optString("status") == "finalized" &&
+        p.optString("kind") in setOf("hoodDeposit", "hoodRedeemAll", "hoodTokenReturn") &&
+        completedReturns.any { (end, returned) ->
+          val q = returned.getJSONObject("proposal")
+          end >= index &&
+            p.getInt("chainId") == q.getInt("chainId") &&
+            p.optInt("cycleIndex", 0) == q.optInt("cycleIndex", 0) &&
+            p.has("investmentSlot") == q.has("investmentSlot") &&
+            p.optInt("investmentSlot", -1) == q.optInt("investmentSlot", -1) &&
+            p.getString("expectedFrom").equals(q.getString("expectedFrom"), true)
+        }
+    )
+      continue
     check(quantity(chainRpc.text("eth_chainId")) == p.getLong("chainId").toBigInteger())
     val hash = op.getString("userOperationHash")
     val saved = JSONObject(op.getString("signedUserOperation"))

@@ -4,6 +4,7 @@ import type {
   EarnInvestmentPositionsService,
 } from "@/domain/earn/investmentPositions";
 import { getStoredEarnSigner } from "./nativeBridge";
+import { completedExitsStore } from "@/storage/completedExits";
 
 type Bridge = { listEarnInvestmentPositions?(walletId: string): Promise<unknown> };
 export function createEarnInvestmentPositionsService(
@@ -20,7 +21,7 @@ export function createEarnInvestmentPositionsService(
       if (!Array.isArray(result) || result.length > 1280)
         throw new Error("Invalid saved vault activity.");
       const seen = new Set<string>();
-      return result.map((value): EarnInvestmentPosition => {
+      const positions = result.map((value): EarnInvestmentPosition => {
         if (!value || typeof value !== "object" || Array.isArray(value))
           throw new Error("Invalid saved vault activity.");
         const row = value as Record<string, unknown>;
@@ -36,6 +37,9 @@ export function createEarnInvestmentPositionsService(
               row.investmentSlot > 4)) ||
           !["invested", "redeemed", "returned", "pending"].includes(String(row.activity)) ||
           typeof row.recoveryRequired !== "boolean" ||
+          (row.lastReturnOperationId !== undefined &&
+            (typeof row.lastReturnOperationId !== "string" ||
+              !/^[-a-zA-Z0-9_]{1,128}$/.test(row.lastReturnOperationId))) ||
           (row.withdrawalAttention !== undefined &&
             !["confirming", "unfinished", "returning", "checking"].includes(
               String(row.withdrawalAttention),
@@ -59,6 +63,9 @@ export function createEarnInvestmentPositionsService(
             : {}),
           activity: row.activity as EarnInvestmentPosition["activity"],
           recoveryRequired: row.recoveryRequired,
+          ...(typeof row.lastReturnOperationId === "string"
+            ? { lastReturnOperationId: row.lastReturnOperationId }
+            : {}),
           ...(row.withdrawalAttention === "confirming" ||
           row.withdrawalAttention === "unfinished" ||
           row.withdrawalAttention === "returning" ||
@@ -67,6 +74,22 @@ export function createEarnInvestmentPositionsService(
             : {}),
         };
       });
+      return Promise.all(
+        positions.map(async (row) => {
+          if (
+            !row.recoveryRequired &&
+            row.activity === "redeemed" &&
+            row.withdrawalAttention === "checking" &&
+            row.lastReturnOperationId &&
+            (await completedExitsStore.hasReturn(
+              { ...row, walletId: owner.walletId },
+              row.lastReturnOperationId,
+            ))
+          )
+            return { ...row, activity: "returned" as const, withdrawalAttention: undefined };
+          return row;
+        }),
+      );
     },
   };
 }

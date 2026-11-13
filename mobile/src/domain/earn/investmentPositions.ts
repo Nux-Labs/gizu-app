@@ -8,6 +8,7 @@ export type EarnInvestmentPosition = {
   investmentSlot?: number;
   activity: "invested" | "redeemed" | "returned" | "pending";
   recoveryRequired: boolean;
+  lastReturnOperationId?: string;
   withdrawalAttention?: "confirming" | "unfinished" | "returning" | "checking";
 };
 export interface EarnInvestmentPositionsService {

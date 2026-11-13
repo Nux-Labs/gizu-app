@@ -11,6 +11,38 @@ import uniffi.gizu_stored_signer_core.NativeSponsoredState
 
 class EarnSponsoredReconcilerTest {
   @Test
+  fun aCompletedPrivateReturnNeverReopensWhenTheProviderForgetsItsReceipt() = runBlocking {
+    val journal = setup("hoodTokenReturn")
+    val rpc =
+      Rpc().apply {
+        returning = true
+        found(journal)
+      }
+    reconcileEarnSponsoredOperations(journal, rpc, rpc, ::topic, { error("No nonce fallback") })
+    val finalized = journal.get("op")
+    assertEquals("finalized", finalized.getString("status"))
+    journal.update("op", finalized.getInt("revision")) {
+      it.put("settlement", JSONObject().put("status", "credited").put("creditedAtoms", "1000"))
+    }
+    val saved = journal.get("op").toString()
+    rpc.known = JSONObject.NULL
+    rpc.receipt = JSONObject.NULL
+    val unavailable =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any =
+          error("Completed flow must not call $method")
+      }
+    reconcileEarnSponsoredOperations(
+      journal,
+      unavailable,
+      unavailable,
+      ::topic,
+      { error("No new state read") },
+    )
+    assertEquals(saved, journal.get("op").toString())
+  }
+
+  @Test
   fun receiptWithoutOperationLookupRemainsPendingUntilFullyVerified() = runBlocking {
     val journal = setup("hoodDeposit")
     val rpc =

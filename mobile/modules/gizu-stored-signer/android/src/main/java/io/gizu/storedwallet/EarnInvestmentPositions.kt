@@ -143,10 +143,23 @@ internal fun earnInvestmentPositions(
           last.getJSONObject("proposal").getString("kind") in
             setOf("vaultDeposit", "hoodDeposit") &&
           (settledReturnAt == null || sponsored.indexOfLast { it === last } > settledReturnAt)
+      val latestPrimaryAt = last?.let { sponsored.indexOf(it) } ?: -1
+      val currentReturns = returns.filter { sponsored.indexOf(it) > latestPrimaryAt }
+      val returnComplete =
+        chain == 4663 &&
+          last?.getJSONObject("proposal")?.optString("kind") == "hoodRedeemAll" &&
+          last.optString("residualShares") == "0" &&
+          currentReturns.isNotEmpty() &&
+          currentReturns.all { op ->
+            completed(op) &&
+              (op.optJSONObject("settlement")?.optString("status") == "credited" ||
+                savedMinimumReturnReceipt(op, record.id, record.journalId) != null)
+          }
       val activity =
         when {
           (primary + returns + payouts).any(::open) -> "pending"
           depositStillOpen -> "invested"
+          returnComplete -> "returned"
           last != null &&
             (if (last.has("steps")) last.steps().last().optString("residualShares", "")
             else last.optString("residualShares", "")) != "0" -> "invested"
@@ -168,8 +181,6 @@ internal fun earnInvestmentPositions(
               it.getJSONObject("proposal").optString("kind") == "hoodRedeemAll" &&
                 it.optString("residualShares") == "0"
             } == true
-          val latestPrimaryAt = last?.let { sponsored.indexOf(it) } ?: -1
-          val currentReturns = returns.filter { sponsored.indexOf(it) > latestPrimaryAt }
           val returnFinalized = currentReturns.any(::completed)
           val returnSettled =
             currentReturns.any { op ->
@@ -193,6 +204,10 @@ internal fun earnInvestmentPositions(
             put("profileId", profile)
             if (slot != null) put("investmentSlot", slot)
             put("activity", activity)
+            if (chain == 4663)
+              currentReturns.lastOrNull(::completed)?.let {
+                put("lastReturnOperationId", it.getString("operationId"))
+              }
             put("recoveryRequired", record.earnRecoveryRequired || record.discoveryRecoveryRequired)
             if (attention != null) put("withdrawalAttention", attention)
           }

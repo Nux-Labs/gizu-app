@@ -118,7 +118,7 @@ export function VaultWithdrawalScreen({
         ))}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
       <PrivateBalanceRefresh showAmount onReadComplete={() => v.refresh()} />
-      {!historyOnly && v.completed > 0 && (
+      {!historyOnly && profileId !== "robinhood-usdg" && v.completed > 0 && (
         <Button
           label="Check past withdrawals"
           variant="quiet"

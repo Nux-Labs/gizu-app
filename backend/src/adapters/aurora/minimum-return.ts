@@ -16,10 +16,7 @@ import {
   robinhoodUsdgAssetId,
 } from "./assets.ts";
 import { auroraApi } from "./http.ts";
-import {
-  ConfidentialSettlement,
-  type SettlementExpectation,
-} from "./settlement.ts";
+import type { SettlementExpectation } from "./settlement.ts";
 
 export type MinimumReturnOrigin = {
   confirm(
@@ -38,7 +35,6 @@ type Options = {
   origin?: MinimumReturnOrigin;
   fetcher?: typeof fetch;
   now?: () => number;
-  diagnose?: ConstructorParameters<typeof ConfidentialSettlement>[4];
 };
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -321,7 +317,6 @@ export class MinimumReturnVerifier {
   async minimumReturn(
     auth: ReadAuthentication,
     expected: SettlementExpectation,
-    allowHistoryRecovery = false,
   ) {
     this.configured();
     let signer: string;
@@ -354,9 +349,8 @@ export class MinimumReturnVerifier {
         return this.proof(expected, signer, existing);
       }
       const { baseline, quote } = this.saved(expected, signer);
-      let expectedSequence = baseline.observationSequence ?? "0";
-      const currentSequence = await this.current(identity.accountKey);
-      if (currentSequence !== expectedSequence && !allowHistoryRecovery)
+      const expectedSequence = baseline.observationSequence ?? "0";
+      if ((await this.current(identity.accountKey)) !== expectedSequence)
         conflict();
       if (!this.options.origin)
         throw new InfrastructureError(
@@ -389,35 +383,9 @@ export class MinimumReturnVerifier {
       const balance = await this.balances.read(auth);
       const delta =
         BigInt(balance.available) - BigInt(baseline.available as string);
-      if (
-        currentSequence !== expectedSequence ||
-        delta < BigInt(expected.minimumCreditAtoms)
-      ) {
-        if (!allowHistoryRecovery) {
-          if (delta < 0n) conflict();
-          return this.proof(expected, signer);
-        }
-        try {
-          // A later debit invalidates a balance delta, not a bound historical credit.
-          // Persist only the quoted minimum, never the exact history output or a spend grant.
-          const credit = await new ConfidentialSettlement(
-            this.options.key,
-            this.fetcher,
-            this.now,
-            undefined,
-            this.options.diagnose,
-          ).historyCredit(auth, expected, signer);
-          if (BigInt(credit) < BigInt(expected.minimumCreditAtoms))
-            throw Error("Missing historical credit");
-          expectedSequence = currentSequence;
-        } catch {
-          throw new InfrastructureError(
-            503,
-            "EARN_MINIMUM_RETURN_HISTORY_UNAVAILABLE",
-            "The saved private return could not be verified from authenticated history. Retry the status check; do not withdraw again.",
-          );
-        }
-      }
+      if (delta < 0n) conflict();
+      if (delta < BigInt(expected.minimumCreditAtoms))
+        return this.proof(expected, signer);
       if (
         this.now() - balance.timestampMs < -5000 ||
         this.now() - balance.timestampMs > 60000
