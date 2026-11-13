@@ -10,6 +10,57 @@ For the current feature flow, cycle allocation and rollout record, start with
 [Confidential Earn](CONFIDENTIAL_EARN.md). The v1 boundary below records the initial
 derivation and authorization design; it does not supersede later cycle allocation.
 
+## Shared private cash (2026-11-13)
+
+Android uses one in-memory private-balance read session across Home, Earn,
+reconciliation and cashout preparation. Login or an explicit private-balance
+unlock grants it for the current wallet generation. Ordinary app switching pauses
+requests and revokes spending approvals, while retaining read permission. Screen
+lock, wallet lock/sign-out and process restart revoke the read grant. Device-lock
+observation starts before a grant is opened. There is no read-session timer;
+individual empty-intents requests and quotes retain their existing short expiry.
+Spending still requires its own operation-bound review and passkey approval.
+Feature cleanup uses `cancelWalletOperation` to cancel work and spending authority;
+explicit wallet lock/sign-out additionally clear the read session. Older native
+builds keep the safe full-lock fallback.
+
+New Earn cycles persist `privateAccount: "shared"` in encrypted cycle metadata and
+backups. Their public top-ups are shielded into main-list Account 2 before any
+payout, and their private payout signatures use that account. Account 2's existing
+private USDC remains the first source for distributed deposits. Public destination
+wallet derivation, slot allocation and vault execution are unchanged.
+
+Native intent results expose `returnConfidentialAddress` as Account 2. New return
+plans use it even when exiting an older investment. Saved legacy return proposals,
+signatures and settlement reads keep the original recipient. A cycle without the
+shared marker retains its historical funding identity, and historical private
+balances remain discoverable and spendable. Recovery refuses conflicting private
+identity markers instead of silently changing an existing cycle.
+
+When an unsigned deposit has a public remainder below its route minimum, native
+preparation returns the exact selected private amount, uncovered amount and
+minimum public budget in the public snapshot's `message`. The UI displays that
+explanation for `uneconomicAmount`, including a private-only budget when one was
+selected. A zero selected private amount explains the per-source minimum instead
+of recommending a smaller deposit. Legacy public-funded drafts state their saved
+public funding minimum separately. All amounts use six-decimal integer arithmetic;
+the final review still determines fees and vault credit.
+
+Incoming shared-account credits are sequenced across sponsored and Ethereum
+journals. Unfinished shared-account deposit payouts and signed private payouts
+reserve their cash; an unfinished Swap must be reconciled before another incoming
+balance snapshot. Confirmed Ethereum nonce cancellations release their reservation.
+Normal public-funded Swap buys spend at most their own guaranteed route credit;
+pre-existing Earn proceeds and execution surplus remain private in Account 2.
+
+Shared cycles do not add unused legacy private accounts to balance discovery.
+Platform reads and Rust signing still validate the actual owned private identity,
+including an explicit historical candidate when recovering older addresses.
+
+These changes require rebuilding the native signer and app. They do not move old
+private balances automatically or alter already signed operations. iOS preserves
+the metadata/read contract within its existing execution capabilities.
+
 ## Confidential Earn v1 boundary
 
 New distribution deposits use the versioned plan described in

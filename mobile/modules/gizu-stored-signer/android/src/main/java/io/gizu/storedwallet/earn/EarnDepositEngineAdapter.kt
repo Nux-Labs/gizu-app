@@ -45,6 +45,9 @@ internal class EarnDepositEngineAdapter(
       EarnSponsoredChainRpc(chain),
       EarnSponsoredBundlerRpc(chain),
       reservations = record { fundingReservations(context, it) },
+      privateCreditRows = { address ->
+        record { earnPrivateCreditRowsForSigning(context, it, address) }
+      },
       sourceReplanner = { record, row ->
         val annotated = JSONObject(row.toString())
         executionGrant?.let { grant ->
@@ -83,6 +86,8 @@ internal class EarnDepositEngineAdapter(
     foreground()
     return record { r ->
       grant.assertRead(r, now())
+      if (cycleConfidential(r).equals(sharedConfidential(r), true))
+        requireNoPendingSharedCredit(context, r)
       cycleReadAuth(r, salt, random, started.toULong(), now().toULong())
     }
   }
@@ -521,7 +526,7 @@ internal class EarnDepositEngineAdapter(
   }
 
   /**
-   * Reconciles saved children using login's bounded read-only permission, never a spending grant.
+   * Reconciles saved children using the shared balance-only session, never a spending grant.
    */
   private var remainingGroupReconciled = false
 

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, userEvent } from "@testing-library/react-native";
-import { Linking, Platform } from "react-native";
+import { Linking, Platform, RefreshControl } from "react-native";
 import { requireOptionalNativeModule } from "expo";
 import { AppRoot } from "@/application/AppRoot";
 import { defaultPreferences } from "@/domain/preferences";
@@ -272,4 +272,35 @@ test("market value rounds down at the token's precision", () => {
   expect(marketValueAtoms("2500000000000000", 18, 60)).toBe("150000");
   expect(marketValueAtoms("21163707187261869", 18, 61.619999999959994)).toBe("1304107");
   expect(marketValueAtoms("1", 18, 60)).toBe("0");
+});
+
+test("valued stock rows retain private-read unlock and Earn without bringing back holdings tools", async () => {
+  setup({
+    ...mainnetPortfolio(walletId, address),
+    confidentialReadState: "locked",
+    ownedAssets: [stock(intc, "2500000000000000")],
+  });
+  await open();
+  expect(await screen.findByText("0.15 USD")).toBeVisible();
+  expect(screen.getByLabelText("20.140574 USD")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
+  expect(screen.getByRole("header", { name: "Earn" })).toBeVisible();
+  expect(screen.queryByText("Holdings tools")).toBeNull();
+  expect(readHoldings).not.toHaveBeenCalled();
+});
+
+test("a failed refresh preserves the priced stock total with main's quiet recovery controls", async () => {
+  const { portfolio } = setup({
+    ...mainnetPortfolio(walletId, address),
+    ownedAssets: [stock(intc, "2500000000000000")],
+  });
+  await open();
+  await screen.findByLabelText("20.140574 USD");
+  portfolio.getMainnetPortfolio.mockRejectedValueOnce(new Error("private-provider-sentinel"));
+  fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
+  expect(await screen.findByText("Showing your last known balance.")).toBeVisible();
+  expect(screen.getByLabelText("20.140574 USD")).toBeVisible();
+  expect(screen.getByText("0.15 USD")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refresh balance" })).toBeEnabled();
+  expect(screen.queryByText(/PORTFOLIO_READ_FAILED|private-provider-sentinel/)).toBeNull();
 });

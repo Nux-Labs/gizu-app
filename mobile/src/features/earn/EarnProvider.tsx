@@ -312,3 +312,6 @@ export function useEarn() {
   if (!value) throw new Error("EarnProvider required.");
   return value;
 }
+export function useOptionalEarn() {
+  return useContext(EarnContext);
+}

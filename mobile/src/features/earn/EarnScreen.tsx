@@ -269,7 +269,7 @@ function EarnJourney({ profile }: { profile?: EarnProfileId }) {
             Review current fees before funding, then approve each operation with your passkey. Earn
             stops invested; withdrawal and return need a separate user request.
           </Typography>
-          <PrivateBalancePanel key={`private:${intent.intentId}`} intent={intent} />
+          <PrivateBalancePanel key={`private:${intent.intentId}`} />
           <SourceFundingPanel key={`source:${intent.intentId}`} intent={intent} />
           <PreflightPanel key={intent.intentId} intent={intent} />
           {intent.profileId === "ethereum-usdc" ? (

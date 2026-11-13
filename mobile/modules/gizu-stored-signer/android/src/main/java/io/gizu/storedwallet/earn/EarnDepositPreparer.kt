@@ -30,8 +30,11 @@ internal fun nativeDepositPreparer(
         if (savedCycleDistribution(current) != null) {
           assertNoPrivateDeposit(context, current, own.getString("journeyId"))
           assertCashoutCanStart(context, current, own.getString("journeyId"))
-          selectPrivateDepositSources(budget, privateDepositCandidates(context, current)) { source
-            ->
+          selectPrivateDepositSources(
+            budget,
+            privateDepositCandidates(context, current),
+            minimumRoutableSource(savedCycleDistribution(current)),
+          ) { source ->
             readPrivateDepositBalance(context, current, source, privateReadAuthority)
               .getValue("available")
               .toString()
@@ -77,6 +80,7 @@ internal fun nativeDepositPreparer(
       repeat(3) {
         if (planned == null) {
           try {
+            requireRoutablePublicRemainder(private, savedCycleDistribution(current))
             planned =
               JSONObject(
                 NativeFundingPlanner(context, current)
@@ -198,6 +202,7 @@ internal class EarnDepositPreparer(
         it.remove("review")
         it.remove("indicativeReview")
         it.remove("pauseReason")
+        it.remove("message")
       }
     var draft: DepositSourceDraft? = null
     var stage = "sources"
@@ -383,6 +388,9 @@ internal class EarnDepositPreparer(
               ?: "GATEWAY_REJECTED"
           is RpcFailure -> failure.code.name
           is CancellationException -> "CANCELLED"
+          is UnfinishedPrivateWork -> "PRIVATE_WORK_${failure.kind}_${failure.status}"
+          is DepositPhaseBlocked -> "DEPOSIT_PHASE_${failure.phase}"
+          is DepositBelowRouteMinimum -> "BELOW_ROUTE"
           else -> "VALIDATION"
         }
       val frame =
@@ -405,7 +413,14 @@ internal class EarnDepositPreparer(
           saved.getString("pauseReason")
         else if (failure is RpcFailure && failure.code == RpcFailureCode.INSUFFICIENT_FUNDS)
           "insufficientFunds"
-        else "previewUnavailable",
+        else if (failure is DepositPhaseBlocked) "savedDepositOpen"
+        else if (failure is DepositBelowRouteMinimum) "uneconomicAmount" else "previewUnavailable",
+        if (
+          failure is DepositBelowRouteMinimum &&
+            saved.optString("pauseReason") !in setOf("cancelled", "approvalExpired")
+        )
+          failure.message
+        else null,
       )
       if (failure is CancellationException) throw failure
       return journal.get(id)

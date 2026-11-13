@@ -272,6 +272,22 @@ function useMainnetState(
     });
     return actionRefresh.current;
   }, [refresh]);
+  useEffect(() => {
+    let wasBackground = AppState.currentState === "background";
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "background") {
+        wasBackground = true;
+        // A read finishing after departure must not publish stale permission or balances.
+        generation.current += 1;
+        controller.current?.abort();
+      } else if (state === "active" && wasBackground) {
+        wasBackground = false;
+        // Native keeps read permission across app switching, and clears it on device lock.
+        void refreshAfterAction();
+      }
+    });
+    return () => subscription.remove();
+  }, [refreshAfterAction]);
   const unlockPrivateBalance = useCallback(async () => {
     if (busy.current || unlocking.current) return;
     const ownerLifetime = lifetime.current;

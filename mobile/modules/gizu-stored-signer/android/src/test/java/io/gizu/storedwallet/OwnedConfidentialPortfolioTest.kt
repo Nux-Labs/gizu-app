@@ -14,6 +14,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class OwnedConfidentialPortfolioTest {
+  @Test
+  fun revokedReadPermissionRemainsLockedEvenWhenCachedBalancesAreFresh() = runBlocking {
+    val f = Fixture(cycleCount = 1)
+    val cache = f.cache()
+    val authorized =
+      cache.refresh(f.record, true, { ByteArray(4) }) { target, _ -> f.observation(target) }
+    assertEquals("ready", authorized["confidentialReadState"])
+    val locked =
+      cache.refresh(f.record, false, { error("No authentication after lock") }) { _, _ ->
+        error("No private request after lock")
+      }
+    assertEquals("locked", locked["confidentialReadState"])
+    assertEquals(asset(authorized)["observedAtoms"], asset(locked)["observedAtoms"])
+  }
+
   private class File : WalletFile {
     var bytes: ByteArray? = null
 
@@ -70,6 +85,27 @@ class OwnedConfidentialPortfolioTest {
         "authenticated" to true,
         "operationScoped" to false,
       )
+  }
+
+  @Test
+  fun sharedInvestmentsDoNotCreateExtraPrivateBalanceReadTargets() {
+    val f = Fixture(cycleCount = 128)
+    val cycles = JSONArray(f.record.earnCycles)
+    cycles.objects().forEach { it.put("privateAccount", "shared") }
+    WalletRecord(
+        f.record.id,
+        f.record.credential,
+        f.record.entropy.copyOf(),
+        earnChain = 1,
+        earnCycleIndex = 127,
+        earnCycles = cycles.toString(),
+      )
+      .use { shared ->
+        val targets = f.cache().ownedTargets(shared)
+        assertEquals(1, targets.size)
+        assertEquals("swap", targets.single().kind)
+        assertEquals(0, f.derives)
+      }
   }
 
   @Test

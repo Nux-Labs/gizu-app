@@ -190,7 +190,7 @@ test("an active display removes expired external prices while preserving native 
   }
 });
 
-test("foreground and price expiry keep the shared balance without another native balance request", async () => {
+test("foreground refreshes balances while price expiry alone does not request another native balance", async () => {
   jest.useFakeTimers();
   try {
     const address = "0x" + "1".repeat(40);
@@ -220,11 +220,12 @@ test("foreground and price expiry keep the shared balance without another native
       .mock.calls.filter(([event]) => event === "change")
       .map(([, callback]) => callback);
     act(() => callbacks.forEach((callback) => callback("background")));
-    act(() => callbacks.forEach((callback) => callback("active")));
+    await act(async () => callbacks.forEach((callback) => callback("active")));
+    expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(2);
     await act(async () => {
       jest.advanceTimersByTime(1001);
     });
-    expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+    expect(service.getMainnetPortfolio).toHaveBeenCalledTimes(2);
     expect(screen.getByText("2670000 atoms")).toBeVisible();
   } finally {
     jest.useRealTimers();

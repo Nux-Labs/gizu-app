@@ -13,7 +13,7 @@ import type { RootStackParamList } from "@/navigation/types";
 import type { EarnIntent } from "@/domain/earn/types";
 import type { EarnInvestmentPosition } from "@/domain/earn/investmentPositions";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
-import { getStoredEarnWithdrawalSigner } from "@/services/wallet/nativeBridge";
+import { getStoredSigner, getStoredEarnWithdrawalSigner } from "@/services/wallet/nativeBridge";
 import { exitSnapshot, returnRow, minimumReturnRow } from "../../support/exitCompletion";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createEarnRobinhoodService } from "@/services/earn/robinhoodExecution";
@@ -21,10 +21,12 @@ import type { EarnRobinhoodService } from "@/domain/earn/robinhoodExecution";
 jest.mock("@/services/wallet/nativeBridge", () => ({
   ...jest.requireActual("@/services/wallet/nativeBridge"),
   getStoredEarnWithdrawalSigner: jest.fn(),
+  getStoredSigner: jest.fn(),
   getSignerCapabilities: jest.fn().mockResolvedValue({ earnSponsoredExecution: true }),
 }));
 beforeEach(async () => {
   jest.mocked(getStoredEarnWithdrawalSigner).mockReset().mockReturnValue(null);
+  jest.mocked(getStoredSigner).mockReset().mockReturnValue(null);
   await AsyncStorage.clear();
 });
 afterEach(() => jest.restoreAllMocks());
@@ -89,6 +91,10 @@ function setup(
     withdrawalPending?: boolean;
     residualAtoms?: string;
     privateOnly?: boolean;
+    privateUsdcAtoms?: string;
+    privateLocked?: boolean;
+    onPrivateUnlock?: () => void;
+    underlyingAtoms?: string;
     savedOperations?: SponsoredOperation[];
     robinhoodService?: EarnRobinhoodService;
   } = {},
@@ -114,6 +120,12 @@ function setup(
       ),
     plan: jest.fn().mockRejectedValue(new Error("Fresh review unavailable")),
     execute: jest.fn(),
+    finishWithdrawal: jest
+      .fn()
+      .mockImplementation(async (_intent: EarnIntent, row: SponsoredOperation) => ({
+        row,
+        signed: null,
+      })),
     resume: jest.fn().mockResolvedValue(operation()),
     reconcileCredit: jest.fn(),
     cancelUnsigned: jest.fn(),
@@ -186,6 +198,35 @@ function setup(
     });
   }
   const portfolio = mainnetPortfolio(hoodIntent.walletId, hoodIntent.sourceAddress);
+  if (options.privateUsdcAtoms) {
+    portfolio.confidentialReadState = "partial";
+    portfolio.ownedAssets = [
+      {
+        assetId: "confidential-usdc",
+        chainId: 143,
+        token: "confidential:monad-usdc",
+        symbol: "USDC",
+        decimals: 6,
+        balanceAtoms: null,
+        observedAtoms: options.privateUsdcAtoms,
+        complete: false,
+        stale: true,
+        checkedAt: Date.now(),
+        valueUsdcAtoms: null,
+        valuationUnavailable: true,
+      },
+    ];
+  }
+  if (options.privateLocked) {
+    portfolio.confidentialReadState = "locked";
+    jest.mocked(getStoredSigner).mockReturnValue({
+      openWallet: async () => {
+        options.onPrivateUnlock?.();
+        portfolio.confidentialReadState = "ready";
+        return { status: "ready", walletId: hoodIntent.walletId };
+      },
+    } as NonNullable<ReturnType<typeof getStoredSigner>>);
+  }
   portfolio.positions = [
     {
       assetId: "hood-vault",
@@ -193,10 +234,10 @@ function setup(
       token: "0xBeEff033F34C046626B8D0A041844C5d1A5409dd",
       symbol: "USDG",
       decimals: 6,
-      balanceAtoms: "3000000",
-      observedAtoms: "3000000",
-      shareAtoms: "3000000000000000000",
-      underlyingAtoms: "3000000",
+      balanceAtoms: options.underlyingAtoms ?? "3000000",
+      observedAtoms: options.underlyingAtoms ?? "3000000",
+      shareAtoms: options.underlyingAtoms === "0" ? "0" : "3000000000000000000",
+      underlyingAtoms: options.underlyingAtoms ?? "3000000",
       complete: true,
       stale: false,
       checkedAt: Date.now(),
@@ -324,8 +365,19 @@ test("opening an invested position does not reopen an older private return or se
   expect(screen.queryByText("Return to private balance")).toBeNull();
   expect(screen.queryByText("STEP 2 OF 2")).toBeNull();
   expect(h.select).not.toHaveBeenCalled();
-  expect(h.listPositions).not.toHaveBeenCalled();
-  expect(h.robinhood.list).not.toHaveBeenCalled();
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+});
+
+test("a finished empty vault does not offer another withdrawal", async () => {
+  setup({
+    overview: true,
+    underlyingAtoms: "0",
+    privateUsdcAtoms: "2186703",
+    rows: [{ ...position(first), withdrawalAttention: "confirming" }],
+    savedOperations: [{ ...minimumReturnRow(), from: first.destinations[0].address }],
+  });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Withdraw" })).toBeDisabled());
+  expect(screen.queryByText("Your funds remain invested until you choose to withdraw.")).toBeNull();
 });
 
 test("a completed return is recognised on every visit to Withdraw for a later deposit", async () => {
@@ -425,7 +477,8 @@ test("a newly pending legacy payout prevents reuse of a completed private exit",
   screen.unmount();
   const h = setup({ ...options, withdrawalPending: true });
   await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
-  expect(await screen.findByRole("button", { name: "Verify private balance" })).toBeVisible();
+  expect(await screen.findByText("Private USDC return verified.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
   expect(h.select).not.toHaveBeenCalledWith(expect.anything(), second.intentId);
   expect(h.robinhood.execute).not.toHaveBeenCalled();
 });
@@ -477,7 +530,8 @@ test("explicitly checking past withdrawals restores later residual recovery and 
     return { ok: true, json: async () => raw } as Response;
   });
   await userEvent.press(screen.getByRole("button", { name: "Check past withdrawals" }));
-  expect(await screen.findByRole("button", { name: "Verify private balance" })).toBeVisible();
+  expect(await screen.findByText("Private USDC return verified.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
   expect(h.selectInvestmentSlot).toHaveBeenLastCalledWith(expect.anything(), first.intentId, 0);
   expect(h.robinhood.execute).not.toHaveBeenCalled();
   screen.unmount();
@@ -487,7 +541,7 @@ test("explicitly checking past withdrawals restores later residual recovery and 
   expect(await screen.findByRole("alert")).toHaveTextContent(/could not be verified/);
 });
 
-test("the existing final verification panel records completion for the next app visit", async () => {
+test("a refreshed historical receipt selects the next investment without requiring a balance refresh", async () => {
   const options = {
     overview: true,
     redeemed: true,
@@ -495,6 +549,8 @@ test("the existing final verification panel records completion for the next app 
     rows: [position(first, 0, "redeemed"), position(second)],
   };
   const h = setup(options);
+  await screen.findByRole("button", { name: "Withdraw" });
+  await waitFor(() => expect(h.robinhood.list).toHaveBeenCalled());
   h.robinhood.list.mockResolvedValueOnce([
     { ...operation("withdrawn"), kind: "hoodRedeemAll" },
     {
@@ -505,16 +561,13 @@ test("the existing final verification panel records completion for the next app 
       creditedAtoms: undefined,
     },
   ]);
-  await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
-  await userEvent.press(await screen.findByRole("button", { name: "Verify private balance" }));
-  await screen.findByText("Private return verified for this part.");
-  screen.unmount();
-  setup(options);
-  jest.mocked(globalThis.fetch).mockResolvedValue({ ok: false } as Response);
-  jest.mocked(globalThis.fetch).mockClear();
-  await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
+  await userEvent.press(screen.getByRole("button", { name: "Withdraw" }));
   expect(await screen.findByRole("button", { name: "Review withdrawal" })).toBeEnabled();
-  expect(globalThis.fetch).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Refresh private balance" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
+  expect(screen.queryByText("Private return verified for this part.")).toBeNull();
+  expect(h.select).toHaveBeenCalledWith(expect.anything(), second.intentId);
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
 });
 
 test("leaving Withdraw during a stored observation read ignores its late match", async () => {
@@ -574,7 +627,8 @@ test.each(["unavailable", "remaining shares", "wrong owner"])(
       return { ok: problem !== "unavailable", json: async () => raw } as Response;
     });
     if (problem === "remaining shares") {
-      expect(await screen.findByRole("button", { name: "Verify private balance" })).toBeEnabled();
+      expect(await screen.findByText("Private USDC return verified.")).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
     } else {
       expect(await screen.findByRole("alert")).toHaveTextContent(
         problem === "unavailable" ? /could not be verified/ : /binding changed/,
@@ -655,8 +709,10 @@ test("withdrawal recovery opens only after Withdraw and Back returns to the inve
     ],
   });
   await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
-  expect(await screen.findByText("Return to private balance")).toBeVisible();
-  expect(await screen.findByRole("button", { name: "Verify private balance" })).toBeEnabled();
+  expect(await screen.findByText("Private USDC received")).toBeVisible();
+  expect(await screen.findByText("Private USDC return verified.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Refresh private balance" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
   expect(h.robinhood.plan).not.toHaveBeenCalled();
   expect(h.robinhood.execute).not.toHaveBeenCalled();
   await userEvent.press(screen.getByRole("button", { name: "Back" }));
@@ -843,12 +899,12 @@ test.each([{ residualAtoms: "700000" }, { withdrawalPending: true }])(
       redeemed: true,
       rows: [position(first, 0, "redeemed"), position(first, 1)],
     });
-    await userEvent.press(await screen.findByRole("button", { name: "Verify private balance" }));
-    await screen.findByText(/Private return verified|Some funds are still/);
+    expect(await screen.findByText("Private USDC return verified.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
     await userEvent.press(
       screen.getByRole("button", { name: /Refresh position|Continue withdrawal/ }),
     );
-    await screen.findByRole("button", { name: "Verify private balance" });
+    expect(await screen.findByText("Private USDC return verified.")).toBeVisible();
     expect(h.selectInvestmentSlot).toHaveBeenLastCalledWith(expect.anything(), first.intentId, 0);
     expect(h.selectInvestmentSlot).not.toHaveBeenCalledWith(expect.anything(), first.intentId, 1);
   },
@@ -995,7 +1051,7 @@ test("a signed withdrawal can only continue its saved transaction, never reset o
   await userEvent.press(await screen.findByRole("button", { name: "Continue saved transaction" }));
   expect(
     await screen.findByText(
-      "Your vault withdrawal is confirming. The private return opens after the USDG arrives.",
+      "Your vault withdrawal is confirming. Private USDC follows from this approval.",
     ),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Start a fresh review" })).toBeNull();
@@ -1120,6 +1176,23 @@ test("fresh-review retries preserve a successful cancellation when planning is u
   expect(h.robinhood.execute).not.toHaveBeenCalled();
 });
 
+test("a finalized vault withdrawal still offers the private return before the new receipt amount is stored", async () => {
+  const h = setup({
+    savedOperations: [
+      {
+        ...operation("withdrawn"),
+        kind: "hoodRedeemAll",
+        transactionHash: "0x" + "ab".repeat(32),
+      },
+    ],
+  });
+  expect(await screen.findByText("Finish withdrawal")).toBeVisible();
+  expect(screen.getByText("Return to private balance")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Review private return" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Review withdrawal" })).toBeNull();
+  expect(screen.queryByText(/Please re-sign/)).toBeNull();
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
+});
 test("a completed vault receipt opens the private return instead of asking for another vault signature", async () => {
   const withdrawn = {
     ...operation("withdrawn"),
@@ -1143,6 +1216,37 @@ test("a completed vault receipt opens the private return instead of asking for a
   expect(screen.getByRole("button", { name: "Review private return" })).toBeEnabled();
   expect(h.robinhood.plan).not.toHaveBeenCalled();
   expect(h.robinhood.resume).not.toHaveBeenCalled();
+});
+test("one withdrawal approval signs the private return without a second confirmation", async () => {
+  const h = setup();
+  const withdrawn = {
+    ...operation("withdrawn"),
+    operationId: "redeem_1",
+    kind: "hoodRedeemAll" as const,
+    redeemedUsdgAtoms: "900000",
+  };
+  const returning = {
+    ...returnRow(),
+    from: first.destinations[0].address,
+    status: "pending" as const,
+    blocked: true,
+    canResume: false,
+  };
+  h.robinhood.plan.mockResolvedValueOnce(withdrawalPlan());
+  h.robinhood.execute.mockResolvedValueOnce(withdrawn);
+  h.robinhood.finishWithdrawal.mockResolvedValueOnce({ row: withdrawn, signed: returning });
+  await userEvent.press(await screen.findByRole("button", { name: "Review withdrawal" }));
+  expect(screen.getByText(/returns the received USDG to your private USDC balance/)).toBeVisible();
+  await userEvent.press(screen.getByRole("button", { name: "Confirm withdrawal" }));
+  expect(await screen.findByText("Returning your USDG to private USDC.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Confirm private return" })).toBeNull();
+  expect(h.robinhood.finishWithdrawal).toHaveBeenCalledTimes(1);
+  expect(h.robinhood.execute).toHaveBeenCalledTimes(1);
+  expect(h.robinhood.plan).not.toHaveBeenCalledWith(
+    expect.anything(),
+    "hoodTokenReturn",
+    expect.anything(),
+  );
 });
 test("the guided withdrawal signs the return after the vault receipt and verifies private credit before completion", async () => {
   const h = setup();
@@ -1186,7 +1290,8 @@ test("the guided withdrawal signs the return after the vault receipt and verifie
   expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
   expect(h.robinhood.execute).toHaveBeenCalledTimes(2);
   await userEvent.press(screen.getByRole("button", { name: "Check private return" }));
-  expect(await screen.findByRole("button", { name: "Verify private balance" })).toBeVisible();
+  expect(await screen.findByText("Private USDC return verified.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
   expect(h.robinhood.reconcileCredit).toHaveBeenCalledWith(
     expect.objectContaining({ investmentSlot: 0 }),
     returning,
@@ -1209,10 +1314,230 @@ test("restored minimum return exposes final verification without repeating withd
     ],
   });
   expect(await screen.findByText("At least 0.899 USDC verified")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Verify private balance" })).toBeEnabled();
+  expect(screen.getByText("Private USDC return verified.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Refresh private balance" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Review private return" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Review withdrawal" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Check private return" })).toBeNull();
   expect(h.robinhood.execute).not.toHaveBeenCalled();
   expect(h.robinhood.plan).not.toHaveBeenCalled();
 });
+
+test("a confirmed return with no public residuals stays complete after its USDC is spent", async () => {
+  setup({
+    redeemed: true,
+    privateOnly: true,
+    privateUsdcAtoms: "0",
+    rows: [position(first, 0, "redeemed"), position(first, 1, "returned")],
+    savedOperations: [
+      { ...operation("withdrawn"), operationId: "redeem_1", kind: "hoodRedeemAll" },
+      { ...minimumReturnRow(), from: first.destinations[0].address },
+    ],
+  });
+  expect(
+    await screen.findByText("All saved withdrawals for this vault are complete."),
+  ).toBeVisible();
+  expect(screen.queryByText(/Withdrawal progress:/)).toBeNull();
+  expect(screen.queryByText("Private USDC return verified.")).toBeNull();
+  expect(screen.queryByText("Return to private balance")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Verify private balance" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Review private return" })).toBeNull();
+});
+
+test("opening withdrawal does not count past exits and untouched investments as a withdrawal in progress", async () => {
+  const h = setup({
+    rows: [
+      position(first, 0, "returned"),
+      position(first, 1, "returned"),
+      position(second, 0, "invested"),
+      position(second, 1, "invested"),
+    ],
+  });
+  expect(await screen.findByText("Your investment is ready to withdraw.")).toBeVisible();
+  expect(screen.queryByText(/Withdrawal progress:/)).toBeNull();
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+});
+
+test("opening withdrawal verifies an old return read-only before selecting the current investment", async () => {
+  const h = setup({
+    overview: true,
+    redeemed: true,
+    privateOnly: true,
+    privateUsdcAtoms: "0",
+    rows: [position(first, 0, "redeemed"), position(second)],
+  });
+  const confirmed = { ...returnRow(), from: first.destinations[0].address };
+  let checked = false;
+  const returning = {
+    ...confirmed,
+    status: "awaitingSettlement" as const,
+    creditedAtoms: undefined,
+  };
+  h.robinhood.list.mockImplementation(async (intent: EarnIntent) =>
+    intent.intentId === first.intentId
+      ? [
+          { ...operation("withdrawn"), kind: "hoodRedeemAll", from: first.destinations[0].address },
+          checked ? confirmed : returning,
+        ]
+      : [operation()],
+  );
+  h.robinhood.reconcileCredit.mockImplementation(async () => {
+    checked = true;
+    return confirmed;
+  });
+  await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
+  expect(await screen.findByRole("button", { name: "Review withdrawal" })).toBeEnabled();
+  expect(h.robinhood.reconcileCredit).toHaveBeenCalledTimes(1);
+  expect(h.robinhood.reconcileCredit).toHaveBeenCalledWith(
+    expect.objectContaining({ intentId: first.intentId, investmentSlot: 0 }),
+    returning,
+  );
+  expect(screen.queryByText(/Withdrawal progress:/)).toBeNull();
+  expect(h.selectInvestmentSlot).toHaveBeenLastCalledWith(expect.anything(), second.intentId, 0);
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+  expect(h.robinhood.resume).not.toHaveBeenCalled();
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
+});
+
+test("a failed historical credit read is uncertainty and never starts another withdrawal", async () => {
+  const h = setup({
+    overview: true,
+    redeemed: true,
+    privateOnly: true,
+    rows: [position(first, 0, "redeemed"), position(second)],
+  });
+  h.robinhood.list.mockResolvedValue([
+    {
+      ...returnRow(),
+      from: first.destinations[0].address,
+      status: "awaitingSettlement",
+      creditedAtoms: undefined,
+    },
+  ]);
+  h.robinhood.reconcileCredit.mockRejectedValue(new Error("History unavailable"));
+  await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /status could not be checked.*History unavailable/,
+  );
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+  expect(h.robinhood.resume).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Your return is on its way/)).toBeNull();
+});
+
+test("closing withdrawal ignores a late historical credit check without selecting a later investment", async () => {
+  const h = setup({
+    overview: true,
+    redeemed: true,
+    privateOnly: true,
+    rows: [position(first, 0, "redeemed"), position(second)],
+  });
+  const returned = { ...returnRow(), from: first.destinations[0].address };
+  h.robinhood.list.mockResolvedValue([
+    { ...returned, status: "awaitingSettlement", creditedAtoms: undefined },
+  ]);
+  let finish: (row: SponsoredOperation) => void = () => {};
+  h.robinhood.reconcileCredit.mockImplementation(
+    () =>
+      new Promise<SponsoredOperation>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
+  await waitFor(() => expect(h.robinhood.reconcileCredit).toHaveBeenCalledTimes(1));
+  await userEvent.press(screen.getByRole("button", { name: "Back" }));
+  finish(returned);
+  expect(await screen.findByRole("button", { name: "Withdraw" })).toBeEnabled();
+  expect(h.select).not.toHaveBeenCalledWith(expect.anything(), second.intentId);
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+});
+
+test("leaving withdrawal aborts the fresh exit check triggered by a restored private receipt", async () => {
+  let finish: (response: Response) => void = () => {};
+  let signal: AbortSignal | undefined;
+  const fetcher = jest.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    signal = init?.signal as AbortSignal;
+    return new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  });
+  setup({
+    privateOnly: true,
+    rows: [position(first)],
+    savedOperations: [
+      { ...operation("withdrawn"), kind: "hoodRedeemAll" },
+      { ...minimumReturnRow(), from: first.destinations[0].address },
+    ],
+  });
+  await waitFor(() => expect(fetcher).toHaveBeenCalled());
+  screen.unmount();
+  expect(signal?.aborted).toBe(true);
+  finish({
+    ok: true,
+    json: async () => ({ ...exitSnapshot(Date.now()), owner: first.destinations[0].address }),
+  } as Response);
+  expect(
+    (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith("gizu:completed-exit:v1:")),
+  ).toHaveLength(0);
+});
+
+test("a locked read session can be unlocked on Withdraw and retries history without a spending approval", async () => {
+  let unlocked = false;
+  const h = setup({
+    overview: true,
+    redeemed: true,
+    privateOnly: true,
+    privateLocked: true,
+    onPrivateUnlock: () => {
+      unlocked = true;
+    },
+    rows: [position(first, 0, "redeemed"), position(second)],
+  });
+  const confirmed = { ...returnRow(), from: first.destinations[0].address };
+  h.robinhood.list.mockImplementation(async (intent: EarnIntent) =>
+    intent.intentId === first.intentId
+      ? [
+          {
+            ...confirmed,
+            ...(unlocked ? {} : { status: "awaitingSettlement", creditedAtoms: undefined }),
+          },
+        ]
+      : [operation()],
+  );
+  h.robinhood.reconcileCredit.mockImplementation(async () => {
+    if (!unlocked) throw new Error("Unlock your private balance");
+    return confirmed;
+  });
+  await userEvent.press(await screen.findByRole("button", { name: "Withdraw" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Unlock your private balance/);
+  await userEvent.press(await screen.findByRole("button", { name: "Unlock private balance" }));
+  expect(await screen.findByRole("button", { name: "Review withdrawal" })).toBeEnabled();
+  expect(h.robinhood.execute).not.toHaveBeenCalled();
+  expect(h.robinhood.plan).not.toHaveBeenCalled();
+  expect(h.robinhood.resume).not.toHaveBeenCalled();
+});
+
+test.each(["invested", "withdrawn"] as const)(
+  "an older completed return does not hide controls for a later %s operation",
+  async (status) => {
+    const h = setup({
+      rows: [position(first)],
+      savedOperations: [
+        { ...returnRow(), from: first.destinations[0].address },
+        {
+          ...operation(status),
+          operationId: "later_operation",
+          kind: status === "invested" ? "hoodDeposit" : "hoodRedeemAll",
+        },
+      ],
+    });
+    expect(
+      await screen.findByRole("button", {
+        name: status === "invested" ? "Review withdrawal" : "Review private return",
+      }),
+    ).toBeEnabled();
+    expect(screen.queryByText("Private USDC return verified.")).toBeNull();
+    expect(h.robinhood.execute).not.toHaveBeenCalled();
+  },
+);

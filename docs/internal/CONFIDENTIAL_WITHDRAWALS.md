@@ -98,9 +98,11 @@ funding/payout checks revalidate it. Older clients continue using the existing
 bounded balance-delta method. Deploy the backend before relying on the new history
 path; older backends safely ignore the capability header.
 
-Home offers a read-only wallet unlock when private balance read permission has
-expired. It refreshes the aggregate across native confidential accounts after
-authentication. Previously checked amounts stay visible with an explicit label;
+Home offers a read-only wallet unlock when the shared private-balance session is
+locked. The in-memory grant survives ordinary app switching, and ends on screen
+lock, wallet lock/sign-out or app restart. Earn and cashout reads use the same
+grant; spending approvals stay separate. It refreshes the aggregate across native
+confidential accounts after authentication. Previously checked amounts stay visible with an explicit label;
 incomplete observations remain excluded from current portfolio valuation and
 cannot authorize spending or prove settlement.
 

@@ -37,6 +37,70 @@ class EarnSponsoredJournalTest {
     EarnSponsoredJournal(file, { key }, wallet, generation)
 
   @Test
+  fun finalizedZeroShareRedeemRemainsReadyForThePrivateReturn() {
+    val saved = journal(File())
+    saved.create(
+      proposal("redeem-1").put("kind", "hoodRedeemAll").put("chainId", 4663),
+      JSONObject().put("sender", "0x" + "1".repeat(40)),
+    )
+    saved.update("redeem-1", 1) {
+      it
+        .put("status", "finalized")
+        .put("residualShares", "0")
+        .put("transactionHash", "0x" + "ab".repeat(32))
+    }
+    val ready = saved.public(saved.get("redeem-1"))
+    assertEquals("withdrawn", ready["status"])
+    assertFalse(ready.containsKey("redeemedUsdgAtoms"))
+
+    val bare = journal(File())
+    bare.create(
+      proposal("redeem-2").put("kind", "hoodRedeemAll").put("chainId", 4663),
+      JSONObject().put("sender", "0x" + "1".repeat(40)),
+    )
+    bare.update("redeem-2", 1) { it.put("status", "finalized").put("residualShares", "0") }
+    assertEquals("residualShares", bare.public(bare.get("redeem-2"))["status"])
+  }
+
+  @Test
+  fun oneWithdrawalApprovalSignsOnlyTheDeliveredUsdg() {
+    val owner = "0x" + "a".repeat(40)
+    val approval = OpenWithdrawalApproval("wallet", "generation", "redeem-1", 1000)
+    val redeem =
+      JSONObject()
+        .put("operationId", "redeem-1")
+        .put("status", "finalized")
+        .put("residualShares", "0")
+        .put("redeemedUsdgAtoms", "900")
+        .put(
+          "proposal",
+          JSONObject().put("kind", "hoodRedeemAll").put("expectedFrom", owner),
+        )
+    val proposal =
+      JSONObject()
+        .put("kind", "hoodTokenReturn")
+        .put("expectedFrom", owner)
+        .put("amountAtoms", "800")
+        .put("maximumTokenFeeAtoms", "100")
+    assertWithdrawalReturnAuthorized(approval, "wallet", "generation", redeem, proposal, 1000)
+    proposal.put("amountAtoms", "801")
+    assertThrows(IllegalStateException::class.java) {
+      assertWithdrawalReturnAuthorized(approval, "wallet", "generation", redeem, proposal, 1000)
+    }
+    proposal.put("amountAtoms", "800")
+    assertThrows(IllegalStateException::class.java) {
+      assertWithdrawalReturnAuthorized(
+        approval,
+        "wallet",
+        "generation",
+        redeem,
+        proposal,
+        1000 + 900000,
+      )
+    }
+  }
+
+  @Test
   fun delegationAloneCanBeDiscardedWithoutRevokingOrReusingSavedAuthority() {
     val file = File()
     val j = journal(file)

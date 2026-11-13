@@ -5,6 +5,18 @@ func storedEarnIntentIdentity(walletId: String, profile: String, cycleIndex: Int
   return ("gizu-earn-v2", "earn-v2:\(walletId.lowercased()):\(profile):\(cycleIndex)")
 }
 
+func storedEarnConfidentialAddress(_ record: WalletRecord) throws -> String {
+  guard let data = record.earnCycles.data(using: .utf8),
+    let cycles = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+  else { throw WalletFailure.invalid }
+  let cycle = cycles.first { ($0["cycleIndex"] as? Int) == record.earnCycleIndex }
+  if cycle?["privateAccount"] as? String == "shared" {
+    return try deriveAccountAddresses(entropy: record.entropy)[2]
+  }
+  return try deriveEarnCycleConfidentialAddress(entropy: record.entropy,
+    chainId: UInt64(record.earnChain), cycleIndex: UInt32(record.earnCycleIndex))
+}
+
 @available(iOS 18.0, *)
 extension WalletCeremony {
   func earnIntent(walletId: String) throws -> [String: Any] {
@@ -25,7 +37,8 @@ extension WalletCeremony {
       "cycleIndex": record.earnCycleIndex,
       "version": identity.version, "walletId": record.id, "profileId": profile,
       "sourceAddress": try deriveAccountAddresses(entropy: record.entropy)[0],
-      "confidentialAddress": try deriveEarnCycleConfidentialAddress(entropy: record.entropy, chainId: UInt64(record.earnChain), cycleIndex: UInt32(record.earnCycleIndex)),
+      "confidentialAddress": try storedEarnConfidentialAddress(record),
+      "returnConfidentialAddress": try deriveAccountAddresses(entropy: record.entropy)[2],
       "sourceChainId": 143, "backupCovered": true,
       "destinations": addresses.enumerated().map {
         ["role": $0.offset == 0 ? "hold" : "invest", "address": $0.element, "chainId": record.earnChain] as [String: Any]
@@ -82,8 +95,11 @@ extension WalletCeremony {
     let record=try store.load()
     defer { record.close() }
     try require(record.id==walletId && record.journalId==journal && record.earnChain==chain && record.earnCycleIndex==cycle && record.verified)
-    let address=try deriveEarnCycleConfidentialAddress(entropy:record.entropy,chainId:UInt64(chain),cycleIndex:UInt32(cycle))
-    let auth=try authenticateEarnCycleRead(entropy:record.entropy,chainId:UInt64(chain),cycleIndex:UInt32(cycle),salt:salt,random:random,startedMs:started,nowMs:UInt64(Date().timeIntervalSince1970*1000))
+    let address=try storedEarnConfidentialAddress(record)
+    let shared=try deriveAccountAddresses(entropy:record.entropy)[2]
+    let auth = address.lowercased() == shared.lowercased()
+      ? try authenticateSwapRead(entropy:record.entropy,salt:salt,random:random,startedMs:started,nowMs:UInt64(Date().timeIntervalSince1970*1000))
+      : try authenticateEarnCycleRead(entropy:record.entropy,chainId:UInt64(chain),cycleIndex:UInt32(cycle),salt:salt,random:random,startedMs:started,nowMs:UInt64(Date().timeIntervalSince1970*1000))
     record.close()
     let result=try await api.read(auth,address:address)
     try checkAuthorization()

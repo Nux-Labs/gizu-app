@@ -10,6 +10,9 @@ import uniffi.gizu_stored_signer_core.planPublicSourceAllocation
 internal class PublicFundingMinimum(val minimumAtoms: String) :
   IllegalStateException("Public funding must cover fees, reserve and a usable transfer")
 
+/** Account 1 is the only funding account. Account 0 stays visible but is not spent. */
+internal fun fundingCandidate(index: Int) = index != 0
+
 /** Fresh native state and per-owner research sponsorship caps feed the shared integer planner. */
 internal class NativeFundingPlanner(
   private val context: Context,
@@ -43,8 +46,11 @@ internal class NativeFundingPlanner(
     val known =
       (snapshot["accounts"] as List<*>)
         .map { it as Map<*, *> }
-        .filter { (it["balanceAtoms"] as String).toBigInteger() > BigInteger.ZERO }
-    val indices = publicAccountIndices(record)
+        .filter {
+          fundingCandidate((it["accountIndex"] as Number).toInt()) &&
+            (it["balanceAtoms"] as String).toBigInteger() > BigInteger.ZERO
+        }
+    val indices = publicAccountIndices(record).filter(::fundingCandidate)
     // Cached candidates reduce discovery work. All selected balances are read freshly below.
     val ordered =
       (known

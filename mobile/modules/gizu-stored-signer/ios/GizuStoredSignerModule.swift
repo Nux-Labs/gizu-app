@@ -129,6 +129,9 @@ public final class GizuStoredSignerModule: Module {
     AsyncFunction("listEarnSponsoredOperations") { (_: String, promise: Promise) in
       promise.reject("UNAVAILABLE", "Native sponsored earn execution is unavailable on iOS in this build.")
     }
+    AsyncFunction("listEarnCycleOperations") { (_: String, _: Int, _: Int, promise: Promise) in
+      promise.reject("UNAVAILABLE", "Native sponsored earn execution is unavailable on iOS in this build.")
+    }
     AsyncFunction("resumeEarnSponsoredOperation") { (_: String, _: String, _: Int, promise: Promise) in
       promise.reject("UNAVAILABLE", "Native sponsored earn execution is unavailable on iOS in this build.")
     }

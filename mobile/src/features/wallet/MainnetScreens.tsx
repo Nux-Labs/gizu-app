@@ -1,7 +1,7 @@
 import { swapDirection } from "@/domain/swap";
 import type { OwnedPortfolioAsset } from "@/domain/wallet/storedSigner";
 import { holdingAmount } from "@/domain/wallet/amounts";
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { Bell, ChevronDown, ChevronUp } from "lucide-react-native";
 import colors from "@/theme/colors.json";
@@ -19,6 +19,7 @@ import { IconButton } from "@/components/atoms/IconButton";
 import { GizuLogo } from "@/components/atoms/GizuLogo";
 import { Button } from "@/components/atoms/Button";
 import { Skeleton } from "@/components/atoms/Skeleton";
+import { Spinner } from "@/components/atoms/Spinner";
 import { Surface } from "@/components/molecules/Surface";
 import { MascotHero } from "@/components/organisms/MascotHero";
 import { ErrorNotice } from "@/components/molecules/ErrorNotice";
@@ -28,7 +29,9 @@ import { clipboardService } from "@/services/clipboard";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
 import { useSwapAssetSweep } from "@/features/swap/useSwapAssetSweep";
+import { useSharedWithdrawalState } from "@/features/earn/useVaultPosition";
 import { useMainnetWallet } from "./MainnetWalletProvider";
+import { PrivateBalanceRefresh } from "./PrivateBalanceRefresh";
 import { BalanceCard } from "./BalanceCard";
 import { PortfolioAssetRow, type PortfolioAssetAction } from "./PortfolioAssetRow";
 import { usePortfolioTokenNames, type NamedPortfolioAsset } from "./usePortfolioTokenNames";
@@ -122,9 +125,7 @@ function ReceivingAccounts() {
         <Surface key={account.address}>
           <View className="gap-2 p-5">
             <Typography variant="rowTitle">
-              {account.role === "funding"
-                ? "Swap funding"
-                : `Receiving account ${account.accountIndex}`}
+              {account.role === "funding" ? "Funding" : `Receiving account ${account.accountIndex}`}
             </Typography>
             <Typography>
               {snapshot.balanceComplete === false
@@ -160,6 +161,13 @@ function ReceivingAccounts() {
 
 const visible = (asset: OwnedPortfolioAsset) =>
   !asset.complete || BigInt(asset.balanceAtoms ?? asset.observedAtoms) > 0n;
+
+const withdrawalAttentionCopy = {
+  confirming: "Your vault withdrawal is confirming.",
+  checking: "A past private return needs verification. Open the vault to check its saved status.",
+  unfinished: "Your withdrawal is not finished. Open the vault to return the USDG to private USDC.",
+  returning: "Your private USDC return is confirming.",
+} as const;
 
 /** Largest USD value first; assets without a value follow, by symbol. */
 function byValue(a: NamedPortfolioAsset, b: NamedPortfolioAsset) {
@@ -201,14 +209,8 @@ function OwnedBalances({
   onOpenVault: (profile: EarnProfileId) => void;
   navigation: AssetNavigation;
 }) {
-  const {
-    snapshot,
-    loading,
-    refresh,
-    unlockingPrivateBalance,
-    privateBalanceError,
-    unlockPrivateBalance,
-  } = useMainnetWallet();
+  const { snapshot, loading, refresh } = useMainnetWallet();
+  const attention = useSharedWithdrawalState().attention;
   if (!snapshot?.ownedAssets && !snapshot?.positions) return null;
   const positions = snapshot.positions?.filter(visible) ?? [];
   // Only a complete read with nothing held, including no public USDC, is an empty portfolio.
@@ -221,6 +223,7 @@ function OwnedBalances({
     positions.length === 0;
   return (
     <View className="gap-5">
+      {attention && <Notice message={withdrawalAttentionCopy[attention]} />}
       {empty && (
         <View className="gap-3">
           <Typography variant="section">Assets</Typography>
@@ -287,23 +290,7 @@ function OwnedBalances({
         </View>
       )}
       <View className="gap-2">
-        {snapshot.confidentialReadState === "locked" && (
-          <>
-            <Typography variant="micro">Refresh to update your private USDC.</Typography>
-            <Button
-              label="Refresh private balance"
-              variant="quiet"
-              disabled={loading || unlockingPrivateBalance}
-              loading={unlockingPrivateBalance}
-              onPress={() => void unlockPrivateBalance()}
-            />
-          </>
-        )}
-        {privateBalanceError !== "" && (
-          <Typography accessibilityRole="alert" variant="negative">
-            {privateBalanceError}
-          </Typography>
-        )}
+        <PrivateBalanceRefresh />
         {snapshot.ownedBalanceComplete === false && !loading && (
           <Button
             label="Retry token balances and positions"
@@ -316,16 +303,42 @@ function OwnedBalances({
   );
 }
 
-function BalanceSkeleton() {
+/**
+ * Stands in for the balance card until a complete balance arrives. While a read runs the chart
+ * area shows a loader; when a read fails it offers a quiet refresh instead of an error, and the
+ * deposit and withdraw actions stay usable either way.
+ */
+function BalanceSkeleton({
+  actions,
+  paused,
+  onRefresh,
+}: {
+  actions: ReactNode;
+  paused: boolean;
+  onRefresh: () => void;
+}) {
   return (
     <Surface>
-      <View className="gap-4 p-5" accessible accessibilityLabel="Loading your balance">
-        <Skeleton className="h-3 w-24" />
-        <Skeleton className="h-10 w-2/3" />
-        <View className="flex-row gap-3">
-          <Skeleton className="h-14 flex-1 rounded-2xl" />
-          <Skeleton className="h-14 flex-1 rounded-2xl" />
-          <Skeleton className="h-14 w-14 rounded-2xl" />
+      <View className="gap-5 p-5">
+        <View
+          className="gap-2"
+          accessible
+          accessibilityLabel={paused ? "Balance not updated yet" : "Loading your balance"}
+        >
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-10 w-2/3" />
+        </View>
+        {actions}
+        <View className="h-[84px] items-center justify-center">
+          <Skeleton className="absolute inset-0 rounded-2xl" />
+          {paused ? (
+            <View className="items-center gap-1">
+              <Typography variant="micro">Your balance is taking longer than usual.</Typography>
+              <Button label="Refresh balance" variant="quiet" onPress={onRefresh} />
+            </View>
+          ) : (
+            <Spinner size="md" />
+          )}
         </View>
       </View>
     </Surface>
@@ -373,13 +386,29 @@ export function MainnetPortfolioScreen({
           />
         }
       />
-      <BalanceStatus showRefresh={false} showLoading={false} />
       {valued && ready ? (
-        <BalanceCard snapshot={valued} actions={actions} />
-      ) : wallet.loading ? (
-        <BalanceSkeleton />
+        <>
+          <BalanceCard snapshot={valued} actions={actions} />
+          {!wallet.loading && (wallet.error || valued.stale) && (
+            // A failed refresh keeps the last balance; say so quietly instead of raising an error.
+            <View className="-mt-2 flex-row items-center justify-between gap-3 px-1">
+              <Typography variant="micro" className="flex-1">
+                Showing your last known balance.
+              </Typography>
+              <Button
+                label="Refresh balance"
+                variant="quiet"
+                onPress={() => void wallet.refresh()}
+              />
+            </View>
+          )}
+        </>
       ) : (
-        actions
+        <BalanceSkeleton
+          actions={actions}
+          paused={!wallet.loading && (!!wallet.error || wallet.snapshot?.balanceComplete === false)}
+          onRefresh={() => void wallet.refresh()}
+        />
       )}
       {/* Home Earn shortcut is temporarily hidden; the Earn flow remains available. */}
       <Button

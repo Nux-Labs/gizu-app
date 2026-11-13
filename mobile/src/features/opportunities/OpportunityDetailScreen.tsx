@@ -17,6 +17,7 @@ import { useOpportunityDetail } from "./useOpportunityDetail";
 import { catalogEarnProfile } from "@/domain/earn/catalog";
 import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { portfolioVaultPosition } from "@/domain/wallet/portfolioValue";
+import { useSharedWithdrawalState } from "@/features/earn/useVaultPosition";
 
 /** Shape-matched placeholder for the summary card while the vault loads. */
 function DetailSkeleton() {
@@ -50,6 +51,7 @@ export function OpportunityDetailScreen({
 }: NativeStackScreenProps<RootStackParamList, "OpportunityDetail">) {
   const { load, history, retry } = useOpportunityDetail(route.params.id);
   const wallet = useOptionalMainnetWallet();
+  const coverage = useSharedWithdrawalState();
   const profileId = load.kind === "ready" ? catalogEarnProfile(load.opportunity) : null;
   return (
     <Screen>
@@ -71,6 +73,7 @@ export function OpportunityDetailScreen({
               history={history}
               onDeposit={() => navigation.navigate("Earn", { opportunityId: load.opportunity.id })}
               position={profileId ? portfolioVaultPosition(wallet?.snapshot, profileId) : null}
+              canWithdraw={!profileId || coverage.canWithdraw(profileId)}
               onWithdraw={() => {
                 if (profileId)
                   navigation.navigate("VaultWithdrawal", {

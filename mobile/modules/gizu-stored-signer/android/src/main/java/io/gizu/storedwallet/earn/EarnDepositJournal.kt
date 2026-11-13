@@ -473,6 +473,7 @@ private val depositPauseReasons =
     "settlementPending",
     "submissionUnknown",
     "recoveryRequired",
+    "savedDepositOpen",
     "unsupportedCapability",
     "cancelled",
   )
