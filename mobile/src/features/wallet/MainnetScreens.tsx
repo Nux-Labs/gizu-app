@@ -27,6 +27,7 @@ import { AccountAddress } from "@/features/account/AccountAddress";
 import { clipboardService } from "@/services/clipboard";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
+import { useSwapAssetSweep } from "@/features/swap/useSwapAssetSweep";
 import { useMainnetWallet } from "./MainnetWalletProvider";
 import { BalanceCard } from "./BalanceCard";
 import { PortfolioAssetRow } from "./PortfolioAssetRow";
@@ -269,6 +270,8 @@ export function MainnetPortfolioScreen({
 }: BottomTabScreenProps<MainTabParamList, "Home">) {
   const wallet = useMainnetWallet();
   const root = navigation.getParent<NativeStackNavigationProp<RootStackParamList>>();
+  // A restored wallet rediscovers stocks its earlier swaps bought; found tokens join Assets.
+  useSwapAssetSweep(!!wallet.snapshot, () => void wallet.refresh());
   const actions = (
     <PortfolioActions
       onDeposit={() => root.navigate("Transaction", { kind: "deposit" })}

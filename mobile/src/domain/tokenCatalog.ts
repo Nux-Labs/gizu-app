@@ -39,6 +39,8 @@ export interface TokenPage {
 }
 export interface TokenCatalogService {
   list(query: TokenQuery, signal: AbortSignal): Promise<TokenPage>;
+  /** Every swap-listed token address on one chain, lowercase; used by the swap asset sweep. */
+  addresses?(chainId: TokenChainId, signal: AbortSignal): Promise<string[]>;
 }
 /** Robinhood names every stock "Name • Robinhood Token"; the network mark already says where it lives. */
 export function tokenDisplayName(name: string): string {

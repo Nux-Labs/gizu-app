@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import type { CatalogToken } from "@/domain/tokenCatalog";
+import { tokenNetworks, type CatalogToken, type TokenChainId } from "@/domain/tokenCatalog";
 import type { OwnedPortfolioAsset } from "@/domain/wallet/storedSigner";
 import { TokenCatalogContext } from "@/features/swap/useTokenCatalog";
 
@@ -13,9 +13,17 @@ export type NamedPortfolioAsset = OwnedPortfolioAsset & {
   logoURI?: string | null;
 };
 
-function needsName(asset: OwnedPortfolioAsset) {
-  return asset.chainId === 4663 && ADDRESS.test(asset.token) && PLACEHOLDER.test(asset.symbol);
+function catalogChain(chainId: number): chainId is TokenChainId {
+  return tokenNetworks.some((network) => network.chainId === chainId);
 }
+
+function needsName(asset: OwnedPortfolioAsset) {
+  return catalogChain(asset.chainId) && ADDRESS.test(asset.token) && PLACEHOLDER.test(asset.symbol);
+}
+
+/** Swap ledger assets can live on any catalogue chain, so names are keyed by chain and token. */
+const nameKey = (asset: Pick<OwnedPortfolioAsset, "chainId" | "token">) =>
+  `${asset.chainId}:${asset.token.toLowerCase()}`;
 
 /** Robinhood names its tokens "Apple • Robinhood Token"; the chain is shown elsewhere. */
 function displayName(name: string) {
@@ -23,7 +31,7 @@ function displayName(name: string) {
 }
 
 /**
- * Names Robinhood Chain tokens that native portfolio only knows by address, using the public
+ * Names swap ledger tokens that native portfolio only knows by address, using the public
  * token catalog. Display only: balances and values still come from native, and a token the
  * catalog cannot name keeps its native label.
  */
@@ -32,7 +40,7 @@ export function usePortfolioTokenNames<T extends OwnedPortfolioAsset>(
 ): (T & NamedPortfolioAsset)[] {
   const service = useContext(TokenCatalogContext);
   const [names, setNames] = useState<ReadonlyMap<string, PortfolioTokenName | null>>(new Map());
-  const missing = [...new Set(assets.filter(needsName).map((asset) => asset.token.toLowerCase()))]
+  const missing = [...new Set(assets.filter(needsName).map(nameKey))]
     .filter((address) => !names.has(address))
     .sort()
     .join(",");
@@ -40,15 +48,18 @@ export function usePortfolioTokenNames<T extends OwnedPortfolioAsset>(
     if (!missing) return;
     const controller = new AbortController();
     void Promise.all(
-      missing.split(",").map(async (address) => {
+      missing.split(",").map(async (key) => {
+        const [chain, address] = key.split(":") as [string, string];
+        const chainId = Number(chain);
+        if (!catalogChain(chainId)) return null;
         try {
           const page = await service.list(
-            { chainId: 4663, category: "all", search: address, page: 0 },
+            { chainId, category: "all", search: address, page: 0 },
             controller.signal,
           );
           const token = page.list.find((row) => row.address.toLowerCase() === address);
           return [
-            address,
+            key,
             token
               ? {
                   symbol: token.symbol,
@@ -73,7 +84,7 @@ export function usePortfolioTokenNames<T extends OwnedPortfolioAsset>(
   return useMemo(
     () =>
       assets.map((asset) => {
-        const name = needsName(asset) ? names.get(asset.token.toLowerCase()) : undefined;
+        const name = needsName(asset) ? names.get(nameKey(asset)) : undefined;
         if (!name) return asset;
         return {
           ...asset,

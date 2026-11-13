@@ -35,6 +35,10 @@ internal class NativeOwnedPortfolio(
   private val selector: (String) -> String = { earnEventTopic(it).take(10) },
   private val rpcBudget: () -> PortfolioReadBudget = { PortfolioReadBudget() },
   private val discoveredOwners: (WalletRecord, Long) -> List<String> = { _, _ -> emptyList() },
+  /** Swap ledger assets as (chain, token); defaults to [targets] on Robinhood Chain. */
+  private val swapAssets: (WalletRecord) -> List<Pair<Long, String>> = { record ->
+    targets(record).map { 4663L to it }
+  },
 ) {
   constructor(
     context: Context
@@ -56,6 +60,11 @@ internal class NativeOwnedPortfolio(
     targets = { SwapPortfolioStore(context, it).targets() },
     discoveredOwners = { record, chain ->
       WalletDiscoveryRegistry(context, record).owners(chain.toInt(), false).map { it.second }
+    },
+    swapAssets = { record ->
+      SwapPortfolioStore(context, record).assets().filter { it.chainId in SWAP_CHAINS }.map {
+        it.chainId to it.token
+      }
     },
   )
 
@@ -229,12 +238,16 @@ internal class NativeOwnedPortfolio(
     }
     if (hood.isNotEmpty())
       groups.add(Group(4663, HOOD_EARN_VAULT, "USDG", null, hood, HOOD_EARN_USDG))
-    val swapTargets = targets(record).map(String::lowercase).distinct()
-    require(swapTargets.size <= 256 && swapTargets.all { it.matches(Regex("0x[0-9a-f]{40}")) })
-    for (token in swapTargets) if (
-      groups.none { it.chain == 4663L && it.token.equals(token, true) }
+    val swapTokens = swapAssets(record).map { (chain, token) -> chain to token.lowercase() }.distinct()
+    require(
+      swapTokens.all { (chain, token) -> chain in SWAP_CHAINS && token.matches(Regex("0x[0-9a-f]{40}")) } &&
+        swapTokens.groupBy { it.first }.values.all { it.size <= 256 }
     )
-      groups.add(Group(4663, token, "Token ${token.takeLast(6)}", null, public))
+    // Swap recipients derive one EVM address on every chain, so `public` owns them everywhere.
+    for ((chain, token) in swapTokens) if (
+      groups.none { it.chain == chain && it.token.equals(token, true) }
+    )
+      groups.add(Group(chain, token, "Token ${token.takeLast(6)}", null, public))
     // Independent token cursors are rotated; opening a large catalogue does not rescan every asset.
     val activeVault =
       groups.indexOfFirst { it.chain == record.earnChain.toLong() && it.underlying != null }
@@ -736,6 +749,8 @@ internal class NativeOwnedPortfolio(
   }
 
   companion object {
+    /** Chains this reader has an RPC for; swap ledger assets elsewhere are not observed here. */
+    private val SWAP_CHAINS = setOf(1L, 143L, 4663L)
     private const val TTL = 30_000L
     private const val TOKEN_GROUP_BUDGET = 6
     private const val NATIVE_READ_BUDGET = 8

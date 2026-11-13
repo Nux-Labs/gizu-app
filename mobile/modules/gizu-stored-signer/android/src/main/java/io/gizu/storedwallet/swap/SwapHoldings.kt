@@ -1,6 +1,5 @@
 package io.gizu.storedwallet.swap
 
-import io.gizu.storedwallet.NativeRpcTransport
 import io.gizu.storedwallet.WalletRecord
 import io.gizu.storedwallet.earnWithdrawalIndices
 import java.math.BigInteger
@@ -13,46 +12,35 @@ import uniffi.gizu_stored_signer_core.selectSwapHolding
 import uniffi.gizu_stored_signer_core.swapHoldingIndices
 
 /** Read-only balances at one block, across all locally allocated recipient accounts. */
-internal class SwapHoldings(private val rpc: NativeRpcTransport = NativeRpcTransport(RPC)) {
+internal class SwapHoldings(
+  private val chain: SwapChain = SwapChains.ROBINHOOD,
+  private val multicall: SwapMulticall = SwapMulticall(chain),
+) {
   suspend fun read(record: WalletRecord, targets: List<String>): Map<String, Any?> {
-    val indices =
-      swapHoldingIndices(record.roleRegistry, earnWithdrawalIndices(record).map { it.toUInt() })
-        .map { it.toInt() }
-    val head = request(listOf("eth_chainId" to JSONArray(), "eth_blockNumber" to JSONArray()))
-    check(quantity(head[0]) == BigInteger.valueOf(4663))
-    val block = head[1]
-    quantity(block)
-    val addresses =
-      indices.map { deriveAccountAddressRange(record.entropy, it.toUInt(), 1u).single() }
+    val indices = recipientIndices(record)
+    val block = multicall.head()
+    val addresses = recipientAddresses(record, indices)
+    val tokens = targets.distinct()
+    tokens.forEach { require(it.matches(Regex("0x[0-9a-f]{40}"))) }
+    // Metadata and every token × recipient balance share one pinned block and a few eth_calls.
+    val calls =
+      tokens.flatMap { target ->
+        listOf(SwapCall(target, SwapMulticall.SYMBOL), SwapCall(target, SwapMulticall.DECIMALS)) +
+          addresses.map { SwapMulticall.balanceOf(target, it) }
+      }
+    val results = multicall.call(calls, block)
+    // A tracked token that cannot answer fails the read rather than showing a guessed balance.
+    check(results.all { it.success }) { "Token balances unavailable. Retry." }
+    val perToken = 2 + addresses.size
     val holdings =
-      targets.distinct().mapNotNull { target ->
-        require(target.matches(Regex("0x[0-9a-f]{40}")))
-        val metadata =
-          request(
-            listOf(
-              "eth_call" to call(target, "0x95d89b41", block),
-              "eth_call" to call(target, "0x313ce567", block),
-            )
-          )
-        val balances =
-          addresses.chunked(40).flatMap { chunk ->
-            request(
-              chunk.map { address ->
-                "eth_call" to
-                  call(
-                    target,
-                    "0x70a08231" + address.removePrefix("0x").lowercase().padStart(64, '0'),
-                    block,
-                  )
-              }
-            )
-          }
+      tokens.mapIndexedNotNull { index, target ->
+        val rows = results.subList(index * perToken, (index + 1) * perToken).map { it.data }
         val encoded =
-          buildSwapHolding(target, indices.map { it.toUInt() }, balances, metadata[0], metadata[1])
+          buildSwapHolding(target, indices.map { it.toUInt() }, rows.drop(2), rows[0], rows[1])
         if (encoded == "null") null
         else {
           val item = JSONObject(encoded)
-          val rows = item.getJSONArray("batches")
+          val batches = item.getJSONArray("batches")
           mapOf(
             "token" to item.getString("token"),
             "chainId" to item.getLong("chainId"),
@@ -60,8 +48,8 @@ internal class SwapHoldings(private val rpc: NativeRpcTransport = NativeRpcTrans
             "decimals" to item.getInt("decimals"),
             "balanceAtoms" to item.getString("balanceAtoms"),
             "batches" to
-              (0 until rows.length()).map { i ->
-                val row = rows.getJSONObject(i)
+              (0 until batches.length()).map { i ->
+                val row = batches.getJSONObject(i)
                 mapOf("id" to row.getString("id"), "balanceAtoms" to row.getString("balanceAtoms"))
               },
           )
@@ -74,27 +62,14 @@ internal class SwapHoldings(private val rpc: NativeRpcTransport = NativeRpcTrans
     )
   }
 
-  private suspend fun request(calls: List<Pair<String, JSONArray>>): List<String> {
-    val payload =
-      JSONArray(
-        calls.mapIndexed { index, (method, params) ->
-          JSONObject()
-            .put("jsonrpc", "2.0")
-            .put("id", index)
-            .put("method", method)
-            .put("params", params)
-        }
-      )
-    val (status, body) = rpc.execute("POST", RPC, payload.toString())
-    check(status in 200..299) { "Token balances unavailable. Retry." }
-    return results(body, calls.size)
-  }
-
   companion object {
-    private const val RPC = "https://rpc.mainnet.chain.robinhood.com"
+    /** Swap recipients: allocated accounts from index 3, minus Earn withdrawal accounts. */
+    internal fun recipientIndices(record: WalletRecord): List<Int> =
+      swapHoldingIndices(record.roleRegistry, earnWithdrawalIndices(record).map { it.toUInt() })
+        .map { it.toInt() }
 
-    private fun call(target: String, data: String, block: String) =
-      JSONArray().put(JSONObject().put("to", target).put("data", data)).put(block)
+    internal fun recipientAddresses(record: WalletRecord, indices: List<Int>): List<String> =
+      indices.map { deriveAccountAddressRange(record.entropy, it.toUInt(), 1u).single() }
 
     internal fun results(body: String, count: Int): List<String> {
       val values = JSONArray(body)

@@ -68,6 +68,14 @@ available on Receive/Send. Home totals public and private USDC, owned stablecoin
 and valued vault positions in USD. This branch's Swap tab uses the native confidential-swap
 journey; the read-only Swap row above describes the earlier catalog baseline.
 
+Android keeps a swap asset ledger: every token a swap approves is recorded with its chain, and
+the ledger is part of the encrypted wallet recovery catalogue, so a restored wallet keeps its
+swapped stocks and swap history. Ledger tokens are read through Multicall3 in one pinned block.
+After the first balance read Home runs a read-only recovery sweep: native checks every
+swap-listed catalogue token (`GET /v1/token-addresses`) against the wallet's own swap recipients
+and adds held tokens to the ledger. It runs once after a restore and then at most daily; tokens
+outside the catalogue are never discovered. iOS has no recovery catalogue yet and skips the sweep.
+
 - Wallet, holdings and catalog errors use plain-language messages with read-only retry
   actions and expandable fixed diagnostic codes. Raw provider errors are not rendered.
   Sale failures direct users to Swap for status review rather than resubmitting a sale.

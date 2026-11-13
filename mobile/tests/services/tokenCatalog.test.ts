@@ -155,3 +155,29 @@ test("accepts a price, a missing price and no price field on a token", async () 
     });
   }
 });
+
+test("lists every swap-listed address on one chain for the asset sweep", async () => {
+  const addresses = ["0x" + "aa".repeat(20), "0x" + "bb".repeat(20)];
+  response({ chainId: 4663, addresses });
+  expect(await service.addresses!(4663, new AbortController().signal)).toEqual(addresses);
+  expect(fetch).toHaveBeenCalledWith("https://api.example.com/v1/token-addresses?chainId=4663", {
+    signal: expect.anything(),
+  });
+});
+test.each([
+  null,
+  { chainId: 143, addresses: [] },
+  { chainId: 4663 },
+  { chainId: 4663, addresses: ["0x" + "AA".repeat(20)] },
+  { chainId: 4663, addresses: ["0x1234"] },
+  { chainId: 4663, addresses: ["0x" + "aa".repeat(20), "0x" + "aa".repeat(20)] },
+  {
+    chainId: 4663,
+    addresses: Array.from({ length: 4097 }, (_, i) => "0x" + i.toString(16).padStart(40, "0")),
+  },
+])("rejects a malformed address list %#", async (body) => {
+  response(body);
+  await expect(service.addresses!(4663, new AbortController().signal)).rejects.toThrow(
+    "Invalid token catalog response.",
+  );
+});

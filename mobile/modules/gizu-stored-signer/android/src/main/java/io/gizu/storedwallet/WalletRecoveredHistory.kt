@@ -6,6 +6,7 @@ import javax.crypto.SecretKey
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
+import io.gizu.storedwallet.swap.SwapPortfolioStore
 import uniffi.gizu_stored_signer_core.SwapOperation
 import uniffi.gizu_stored_signer_core.confidentialWithdrawalPlan
 
@@ -13,6 +14,7 @@ private val recoveredDomains =
   mapOf(
     "gizu-stored-operations" to "gizu-operations",
     "gizu-swap" to "gizu-swap",
+    "gizu-holdings" to "gizu-holdings",
     "gizu-earn-vault" to "gizu-earn-vault",
     "gizu-earn-sponsored" to "gizu-earn-sponsored",
     "gizu-earn-payout" to "gizu-earn-payout",
@@ -425,6 +427,8 @@ internal class RecoveredHistoryImporter(
   private fun prepare(domain: String, data: String, sourceGeneration: String): Any {
     require(data.toByteArray().size <= 16 * 1024 * 1024)
     if (domain == "gizu-earn-quotes") return JSONArray(data)
+    // Version 1 ledgers predate the wallet binding inside the file; the AAD authenticates it.
+    if (domain == "gizu-holdings") return SwapPortfolioStore.recovered(JSONObject(data), walletId)
     val root = JSONObject(data)
     check(root.getInt("version") == 1)
     if (domain != "gizu-funding-reservations") check(root.getString("walletId") == walletId)
@@ -545,6 +549,7 @@ internal class RecoveredHistoryImporter(
       }
     a as JSONObject
     b as JSONObject
+    if (domain == "gizu-holdings") return SwapPortfolioStore.mergeRecovered(a, b, walletId)
     if (domain in setOf("gizu-swap", "gizu-funding-reservations")) {
       val ar = a.optLong("recoverySnapshotRevision", 0)
       val br = b.optLong("recoverySnapshotRevision", 0)
