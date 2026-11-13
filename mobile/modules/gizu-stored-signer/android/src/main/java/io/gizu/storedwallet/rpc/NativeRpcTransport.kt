@@ -202,6 +202,8 @@ internal fun safeEarnGatewayFailure(body: String): EarnGatewayFailure? {
         "An earlier private observation overlaps this saved return. Retry reconciliation; do not withdraw from the vault again."
       "EARN_MINIMUM_RETURN_UNAVAILABLE" ->
         "The saved minimum private return could not be verified yet. Retry this check; do not withdraw from the vault again."
+      "EARN_MINIMUM_RETURN_HISTORY_UNAVAILABLE" ->
+        "The past private return could not be verified. Try the status check later; do not withdraw again."
       "EARN_SETTLEMENT_HISTORY_UNAVAILABLE" ->
         "Your private balance can be checked on Home, but the exact return record could not be verified yet. Retry this check; do not withdraw from the vault again."
       else -> return null

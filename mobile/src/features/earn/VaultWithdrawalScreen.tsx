@@ -24,7 +24,8 @@ export function VaultWithdrawalScreen({
   const profile = earnProfiles[profileId];
   const portfolio = useMainnetWallet();
   const earn = useEarn();
-  const v = useVaultPosition(profileId);
+  const historyOnly = route.params.historyOnly === true;
+  const v = useVaultPosition(profileId, historyOnly);
   const refreshAfterAction = portfolio.refreshAfterAction;
   useEffect(() => {
     if (v.message) void refreshAfterAction();
@@ -46,50 +47,65 @@ export function VaultWithdrawalScreen({
             ? "Pendle USDC"
             : "Vault unavailable"}
       </Typography>
-      <Surface>
-        <View className="gap-2 p-5">
-          <Typography variant="heading">Your vault position</Typography>
-          <Typography>
-            {underlying != null
-              ? `Deposited: ${formatUsdc(underlying)} ${profile.symbol}`
-              : "Deposited amount unavailable"}
-          </Typography>
-          <Typography>
-            {position?.valueUsdcAtoms != null
-              ? `Current value: ${formatUsdc(position.valueUsdcAtoms)} USDC`
-              : "Current value unavailable"}
-          </Typography>
-          {position && (!position.complete || position.stale) && (
-            <Typography variant="caption">
-              {position.stale
-                ? "Last known position. Refresh to check current balances."
-                : "Partial position. Some saved activity is still being checked."}
+      {historyOnly && <Typography variant="heading">Past return status</Typography>}
+      {!historyOnly && (
+        <Surface>
+          <View className="gap-2 p-5">
+            <Typography variant="heading">Your vault position</Typography>
+            <Typography>
+              {underlying != null
+                ? `Deposited: ${formatUsdc(underlying)} ${profile.symbol}`
+                : "Deposited amount unavailable"}
             </Typography>
-          )}
-        </View>
-      </Surface>
+            <Typography>
+              {position?.valueUsdcAtoms != null
+                ? `Current value: ${formatUsdc(position.valueUsdcAtoms)} USDC`
+                : "Current value unavailable"}
+            </Typography>
+            {position && (!position.complete || position.stale) && (
+              <Typography variant="caption">
+                {position.stale
+                  ? "Last known position. Refresh to check current balances."
+                  : "Partial position. Some saved activity is still being checked."}
+              </Typography>
+            )}
+          </View>
+        </Surface>
+      )}
       <Typography>
-        Withdraw to your private USDC balance in Gizu. One approval covers the vault withdrawal and
-        the private return that follows it.
+        {historyOnly
+          ? "This only checks past returns. It cannot start a new withdrawal."
+          : "Withdraw to your private USDC balance in Gizu. One approval covers the vault withdrawal and the private return that follows it."}
       </Typography>
       {v.loading && (
         <Typography accessibilityLiveRegion="polite">
-          Checking saved vault withdrawal activity…
+          {historyOnly ? "Checking past returns…" : "Checking saved vault withdrawal activity…"}
         </Typography>
       )}
       {!v.loading && !v.message && !v.intent && (
         <Typography>
-          {complete
-            ? "All saved withdrawals for this vault are complete."
-            : "No saved withdrawal activity for this vault."}
+          {historyOnly
+            ? complete
+              ? "Past returns complete."
+              : "No past returns are saved for this vault."
+            : complete
+              ? "All saved withdrawals for this vault are complete."
+              : "No saved withdrawal activity for this vault."}
         </Typography>
       )}
-      {v.intent &&
+      {historyOnly && !v.loading && !v.message && v.intent && (
+        <Typography>
+          A past return still needs confirmation. This does not start another withdrawal.
+        </Typography>
+      )}
+      {!historyOnly &&
+        v.intent &&
         (profileId === "robinhood-usdg" ? (
           <RobinhoodExecutionPanel
             key={`${v.intent.intentId}:${v.intent.investmentSlot ?? "legacy"}`}
             intent={v.intent}
             service={earn.robinhood}
+            withdrawalStartsAfter={v.newWithdrawalAfter}
             presentation="withdrawal"
             onWithdrawalComplete={v.recordCompletion}
           />
@@ -102,8 +118,22 @@ export function VaultWithdrawalScreen({
           />
         ))}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
+      {historyOnly && v.canMarkReceived && (
+        <View className="gap-2">
+          <Typography variant="caption">
+            If you already received this past return, record it as done. This updates its saved
+            status only; it does not move funds or verify a credit receipt.
+          </Typography>
+          <Button
+            label="Mark this return received"
+            variant="quiet"
+            disabled={v.loading || earn.busy}
+            onPress={() => void v.markReceived()}
+          />
+        </View>
+      )}
       <PrivateBalanceRefresh showAmount onReadComplete={() => v.refresh()} />
-      {v.completed > 0 && (
+      {!historyOnly && profileId !== "robinhood-usdg" && v.completed > 0 && (
         <Button
           label="Check past withdrawals"
           variant="quiet"
@@ -112,7 +142,13 @@ export function VaultWithdrawalScreen({
         />
       )}
       <Button
-        label={v.readyToContinue ? "Continue withdrawal" : "Refresh position"}
+        label={
+          historyOnly
+            ? "Refresh return status"
+            : v.readyToContinue
+              ? "Continue withdrawal"
+              : "Refresh position"
+        }
         variant={v.readyToContinue ? "primary" : "quiet"}
         disabled={v.loading || earn.busy}
         onPress={refresh}

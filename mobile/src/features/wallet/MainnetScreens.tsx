@@ -29,6 +29,7 @@ import { clipboardService } from "@/services/clipboard";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
 import { useSwapAssetSweep } from "@/features/swap/useSwapAssetSweep";
+import { WithdrawalStatusNotice } from "@/features/earn/WithdrawalStatusNotice";
 import { useSharedWithdrawalState } from "@/features/earn/useVaultPosition";
 import { useMainnetWallet } from "./MainnetWalletProvider";
 import { PrivateBalanceRefresh } from "./PrivateBalanceRefresh";
@@ -162,13 +163,6 @@ function ReceivingAccounts() {
 const visible = (asset: OwnedPortfolioAsset) =>
   !asset.complete || BigInt(asset.balanceAtoms ?? asset.observedAtoms) > 0n;
 
-const withdrawalAttentionCopy = {
-  confirming: "Your vault withdrawal is confirming.",
-  checking: "A past private return needs verification. Open the vault to check its saved status.",
-  unfinished: "Your withdrawal is not finished. Open the vault to return the USDG to private USDC.",
-  returning: "Your private USDC return is confirming.",
-} as const;
-
 /** Largest USD value first; assets without a value follow, by symbol. */
 function byValue(a: NamedPortfolioAsset, b: NamedPortfolioAsset) {
   const left = portfolioAssetValue(a);
@@ -203,14 +197,16 @@ function assetActions(asset: NamedPortfolioAsset, go: AssetNavigation): Portfoli
 function OwnedBalances({
   assets,
   onOpenVault,
+  onCheckPastReturn,
   navigation,
 }: {
   assets: NamedPortfolioAsset[];
   onOpenVault: (profile: EarnProfileId) => void;
+  onCheckPastReturn: (profile: EarnProfileId) => void;
   navigation: AssetNavigation;
 }) {
   const { snapshot, loading, refresh } = useMainnetWallet();
-  const attention = useSharedWithdrawalState().attention;
+  const withdrawal = useSharedWithdrawalState();
   if (!snapshot?.ownedAssets && !snapshot?.positions) return null;
   const positions = snapshot.positions?.filter(visible) ?? [];
   // Only a complete read with nothing held, including no public USDC, is an empty portfolio.
@@ -223,7 +219,13 @@ function OwnedBalances({
     positions.length === 0;
   return (
     <View className="gap-5">
-      {attention && <Notice message={withdrawalAttentionCopy[attention]} />}
+      <WithdrawalStatusNotice
+        attention={withdrawal.attention}
+        canCheckPastReturn={withdrawal.historyProfile !== undefined}
+        onCheckPastReturn={() => {
+          if (withdrawal.historyProfile) onCheckPastReturn(withdrawal.historyProfile);
+        }}
+      />
       {empty && (
         <View className="gap-3">
           <Typography variant="section">Assets</Typography>
@@ -419,6 +421,9 @@ export function MainnetPortfolioScreen({
       <OwnedBalances
         assets={assets}
         onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })}
+        onCheckPastReturn={(profileId) =>
+          root.navigate("VaultWithdrawal", { profileId, historyOnly: true })
+        }
         navigation={{
           onSell: (token) =>
             navigation.navigate("Exchange", { mode: "sell", token, request: Date.now() }),

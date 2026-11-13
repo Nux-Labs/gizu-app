@@ -143,10 +143,33 @@ internal fun earnInvestmentPositions(
           last.getJSONObject("proposal").getString("kind") in
             setOf("vaultDeposit", "hoodDeposit") &&
           (settledReturnAt == null || sponsored.indexOfLast { it === last } > settledReturnAt)
+      val latestPrimaryAt = last?.let { sponsored.indexOf(it) } ?: -1
+      val currentReturns =
+        returns
+          .filter { sponsored.indexOf(it) > latestPrimaryAt }
+          .filter {
+            !it.optBoolean("cancelled") &&
+              it.optString("status") !in setOf("cancelled", "reverted", "nonceCancelled")
+          }
+      val withdrawalComplete =
+        chain == 4663 &&
+          !depositStillOpen &&
+          !(primary + returns + payouts).any(::open) &&
+          currentReturns.isNotEmpty() &&
+          currentReturns.all { op -> completedReturnLifecycle(op, record.id, record.journalId) }
+      val returnComplete =
+        withdrawalComplete &&
+          ((last?.getJSONObject("proposal")?.optString("kind") == "hoodRedeemAll" &&
+            last.optString("residualShares") == "0") ||
+            currentReturns.any {
+              ownerReportedReturnCompleted(it, record.id, record.journalId) &&
+                it.getJSONObject("returnFlowCompletion").getBoolean("vaultEmpty")
+            })
       val activity =
         when {
           (primary + returns + payouts).any(::open) -> "pending"
           depositStillOpen -> "invested"
+          returnComplete -> "returned"
           last != null &&
             (if (last.has("steps")) last.steps().last().optString("residualShares", "")
             else last.optString("residualShares", "")) != "0" -> "invested"
@@ -168,15 +191,10 @@ internal fun earnInvestmentPositions(
               it.getJSONObject("proposal").optString("kind") == "hoodRedeemAll" &&
                 it.optString("residualShares") == "0"
             } == true
-          val latestPrimaryAt = last?.let { sponsored.indexOf(it) } ?: -1
-          val currentReturns = returns.filter { sponsored.indexOf(it) > latestPrimaryAt }
           val returnFinalized = currentReturns.any(::completed)
           val returnSettled =
-            currentReturns.any { op ->
-              completed(op) &&
-                (op.optJSONObject("settlement")?.optString("status") == "credited" ||
-                  savedMinimumReturnReceipt(op, record.id, record.journalId) != null)
-            }
+            currentReturns.isNotEmpty() &&
+              currentReturns.all { op -> completedReturnLifecycle(op, record.id, record.journalId) }
           when {
             returnPending -> "returning"
             redeemPending -> "confirming"
@@ -193,6 +211,12 @@ internal fun earnInvestmentPositions(
             put("profileId", profile)
             if (slot != null) put("investmentSlot", slot)
             put("activity", activity)
+            if (withdrawalComplete) put("withdrawalComplete", true)
+            if (chain == 4663)
+              (currentReturns.lastOrNull {
+                  completed(it) && !completedReturnLifecycle(it, record.id, record.journalId)
+                } ?: currentReturns.lastOrNull(::completed))
+                ?.let { put("lastReturnOperationId", it.getString("operationId")) }
             put("recoveryRequired", record.earnRecoveryRequired || record.discoveryRecoveryRequired)
             if (attention != null) put("withdrawalAttention", attention)
           }

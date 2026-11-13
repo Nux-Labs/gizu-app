@@ -6,6 +6,52 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EarnInvestmentPositionsTest {
+  @Test
+  fun ownerConfirmedHistoricalReturnClosesOnlyThatFlowWithoutCreatingCreditEvidence() {
+    record().use { r ->
+      val redeem = operation(r, 1, 0, "hoodRedeemAll")
+      val returned =
+        operation(r, 1, 0, "hoodTokenReturn")
+          .put("signedUserOperation", "saved")
+          .put("transactionHash", "0x" + "a".repeat(64))
+          .put("stateBinding", JSONObject())
+      returned.put(
+        "returnFlowCompletion",
+        JSONObject()
+          .put("version", 1)
+          .put("source", "owner-confirmed")
+          .put("providerRouteStatus", "SUCCESS")
+          .put("vaultEmpty", false)
+          .put("recordedAtMs", 1)
+          .put("spendingAuthorized", false)
+          .put(
+            "nativeBinding",
+            JSONObject()
+              .put("walletId", r.id)
+              .put("generation", r.journalId)
+              .put("operationId", returned.getString("operationId"))
+              .put("proposal", JSONObject(returned.getJSONObject("proposal").toString()))
+              .put("stateBinding", JSONObject())
+              .put("transactionHash", returned.getString("transactionHash")),
+          ),
+      )
+      fun row(rows: List<JSONObject>) =
+        earnInvestmentPositions(r, r.id, emptyList(), rows, emptyList(), emptyList()).single()
+      assertEquals("returned", row(listOf(redeem, returned))["activity"])
+      assertNull(row(listOf(redeem, returned))["withdrawalAttention"])
+      assertFalse(returned.has("minimumReturnReceipt"))
+      assertFalse(returned.has("settlement"))
+      redeem.put("residualShares", "1")
+      assertEquals("invested", row(listOf(redeem, returned))["activity"])
+      assertEquals(true, row(listOf(redeem, returned))["withdrawalComplete"])
+      redeem.put("residualShares", "0")
+      val later =
+        operation(r, 1, 0, "hoodRedeemAll", "unknown", "later")
+          .put("signedUserOperation", "saved-later")
+      assertEquals("confirming", row(listOf(redeem, returned, later))["withdrawalAttention"])
+    }
+  }
+
   private fun record(recovery: Boolean = false) =
     WalletRecord(
       DepositFixtures.wallet,
@@ -136,6 +182,18 @@ class EarnInvestmentPositionsTest {
           )
           .single()["withdrawalAttention"]
       assertEquals("checking", attention())
+      assertEquals(
+        "hoodTokenReturn",
+        earnInvestmentPositions(
+            r,
+            r.id,
+            emptyList(),
+            listOf(redeem, returned),
+            emptyList(),
+            emptyList(),
+          )
+          .single()["lastReturnOperationId"],
+      )
       returned.put("settlement", JSONObject().put("status", "credited"))
       assertNull(attention())
     }
@@ -165,7 +223,7 @@ class EarnInvestmentPositionsTest {
   }
 
   @Test
-  fun paidReturnsStillRequireFreshExitCheckAndUnknownWorkRemainsVisible() {
+  fun completedPrivateReturnsAreTerminalAndLaterWorkRemainsVisible() {
     record().use { r ->
       val deposit = operation(r, 1, 0, "hoodDeposit")
       val redeem = operation(r, 1, 0, "hoodRedeemAll")
@@ -178,7 +236,7 @@ class EarnInvestmentPositionsTest {
         earnInvestmentPositions(r, r.id, emptyList(), sponsored, emptyList(), withdrawals)
           .single()["activity"]
       assertEquals("redeemed", inventory(listOf(deposit, redeem)))
-      assertEquals("redeemed", inventory(listOf(deposit, redeem, returned), listOf(paid)))
+      assertEquals("returned", inventory(listOf(deposit, redeem, returned), listOf(paid)))
       val unknown =
         operation(r, 1, 0, "hoodRedeemAll", "unknown")
           .put("signedUserOperation", "private signed payload")
@@ -241,7 +299,7 @@ class EarnInvestmentPositionsTest {
           emptyList(),
           listOf(paid, cancelled),
         )
-      assertEquals("redeemed", rows.single()["activity"])
+      assertEquals("returned", rows.single()["activity"])
     }
   }
 

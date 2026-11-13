@@ -269,3 +269,41 @@ test("a confirmed older return cannot finish a later redeem or reinvestment in t
     ]),
   ).toBe(false);
 });
+
+test("missing historical private confirmation alone is not an active withdrawal of an empty vault", () => {
+  expect(
+    vaultWithdrawalAvailable({
+      amountAtoms: "0",
+      positions: [
+        {
+          intentId: "old",
+          cycleIndex: 0,
+          profileId: "robinhood-usdg",
+          activity: "redeemed",
+          recoveryRequired: false,
+          withdrawalAttention: "checking",
+        },
+      ],
+      covered: {},
+      profileId: "robinhood-usdg",
+      checked: true,
+    }),
+  ).toBe(false);
+});
+
+test("active withdrawal attention takes precedence over missing historical confirmation", () => {
+  const row = {
+    intentId: "old",
+    cycleIndex: 0,
+    profileId: "robinhood-usdg" as const,
+    activity: "redeemed" as const,
+    recoveryRequired: false,
+    withdrawalAttention: "checking" as const,
+  };
+  expect(
+    openWithdrawalAttention(
+      [row, { ...row, intentId: "new", withdrawalAttention: "confirming" }],
+      {},
+    ),
+  ).toBe("confirming");
+});

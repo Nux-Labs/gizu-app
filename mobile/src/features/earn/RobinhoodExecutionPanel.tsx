@@ -22,6 +22,7 @@ export function RobinhoodExecutionPanel({
   service: EarnRobinhoodService;
   presentation?: "legacy" | "investment" | "withdrawal";
   onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
+  withdrawalStartsAfter?: string;
 }) {
   return presentation === "withdrawal" ? (
     <RobinhoodWithdrawalPanel {...props} />

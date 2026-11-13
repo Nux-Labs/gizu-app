@@ -797,6 +797,14 @@ export function getStoredEarnSponsoredSigner() {
       await checked(native, "earnSponsoredExecution");
       return settlement(walletId, id, revision);
     },
+    ...(native.markEarnSponsoredReturnReceived
+      ? {
+          async markEarnSponsoredReturnReceived(walletId: string, id: string) {
+            await checked(native, "earnSponsoredExecution");
+            return native.markEarnSponsoredReturnReceived!(walletId, id);
+          },
+        }
+      : {}),
     lock() {
       authorizationGeneration++;
       cancelNativeOperation(native);

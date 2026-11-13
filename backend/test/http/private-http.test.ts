@@ -104,9 +104,63 @@ test("private plan failures log the safe failing stage while keeping diagnostic 
 });
 
 import { GasPolicyError } from "../../src/adapters/evm/gas-errors.ts";
-test("private gas errors preserve only the safe deterministic code and retry policy",async()=>{
- const app=Fastify(implementation.privateHttpOptions);implementation.registerPrivateHttp(app);app.setErrorHandler(mapRequestError);
- app.post("/v1/swap/gas-test",async()=>{throw new GasPolicyError("GAS_APPROVAL_UNSTABLE","sensitive-provider-message");});
- try{const response=await app.inject({method:"POST",url:"/v1/swap/gas-test"});assert.equal(response.statusCode,422);assert.deepEqual(response.json(),{code:"GAS_APPROVAL_UNSTABLE",message:"The private request could not be completed.",retryable:false});}
- finally{await app.close();}
+test("private gas errors preserve only the safe deterministic code and retry policy", async () => {
+  const app = Fastify(implementation.privateHttpOptions);
+  implementation.registerPrivateHttp(app);
+  app.setErrorHandler(mapRequestError);
+  app.post("/v1/swap/gas-test", async () => {
+    throw new GasPolicyError(
+      "GAS_APPROVAL_UNSTABLE",
+      "sensitive-provider-message",
+    );
+  });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/swap/gas-test",
+    });
+    assert.equal(response.statusCode, 422);
+    assert.deepEqual(response.json(), {
+      code: "GAS_APPROVAL_UNSTABLE",
+      message: "The private request could not be completed.",
+      retryable: false,
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("silent private settlement routes still log a sanitized verification failure code", async () => {
+  const lines: string[] = [];
+  const app = Fastify({
+    ...implementation.privateHttpOptions,
+    logger: { stream: { write: (line: string) => lines.push(line) } },
+  });
+  implementation.registerPrivateHttp(app);
+  app.setErrorHandler(mapRequestError);
+  app.post("/v1/earn/native/settlement", { logLevel: "silent" }, async () => {
+    throw new InfrastructureError(
+      503,
+      "EARN_MINIMUM_RETURN_HISTORY_UNAVAILABLE",
+      "secret-provider-sentinel",
+    );
+  });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/earn/native/settlement",
+      payload: { signature: "secret-signature-sentinel" },
+    });
+    assert.equal(response.statusCode, 503);
+    const errors = lines
+      .map((line) => JSON.parse(line))
+      .filter((row) => row.event === "private.error");
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].code, "EARN_MINIMUM_RETURN_HISTORY_UNAVAILABLE");
+    assert.equal(errors[0].route, "/v1/earn/native/settlement");
+    assert.equal(typeof errors[0].reqId, "string");
+    assert.equal(lines.join("").includes("secret-"), false);
+  } finally {
+    await app.close();
+  }
 });

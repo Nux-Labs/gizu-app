@@ -8,6 +8,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WalletRecoveredHistoryTest {
+  @Test
+  fun ownerCompletionRestoresAsLifecycleMetadataWithoutCreatingMinimumCredit() {
+    val original = confirmedMinimumReturn("hoodTokenReturn")
+    original.remove("minimumReturnReceipt")
+    original.put(
+      "returnFlowCompletion",
+      ownerReceivedReturnRecord(original, wallet, old, 1, "SUCCESS", false),
+    )
+    val domain = "gizu-earn-sponsored"
+    val root =
+      JSONObject()
+        .put("version", 1)
+        .put("walletId", wallet)
+        .put("operations", JSONArray().put(original))
+    importer().import(JSONArray().put(row(domain, root)))
+    val restored = JSONObject(read(domain)).getJSONArray("operations").getJSONObject(0)
+    assertTrue(ownerReportedReturnCompleted(restored, wallet, current))
+    assertNull(savedMinimumReturnReceipt(restored, wallet, current))
+    assertEquals(
+      "owner-confirmed",
+      restored.getJSONObject("returnFlowCompletion").getString("source"),
+    )
+    assertFalse(restored.has("settlement"))
+    assertThrows(Exception::class.java) { ownerReportedReturnCompleted(restored, wallet, old) }
+  }
+
   private val wallet = "7aafcc2e-0891-4e31-a7d4-03780d7b4f12"
   private val old = "d450c45a-7d4d-4ce9-bbbd-3437c6ba6cb8"
   private val current = "2793c0c2-62a5-4539-bc25-18893b8fc8c2"
@@ -591,7 +617,10 @@ class WalletRecoveredHistoryTest {
       JSONObject()
         .put("version", 1)
         .put("tokens", JSONArray().put(intc))
-        .put("history", JSONObject().put("op1", JSONObject().put("operationId", "op1").put("phase", "COMPLETE")))
+        .put(
+          "history",
+          JSONObject().put("op1", JSONObject().put("operationId", "op1").put("phase", "COMPLETE")),
+        )
     val newer =
       JSONObject()
         .put("version", 2)
@@ -599,21 +628,33 @@ class WalletRecoveredHistoryTest {
         .put(
           "assets",
           JSONArray()
-            .put(JSONObject().put("chainId", 4663).put("token", spcx).put("source", "discovered").put("firstSeenAt", 7)),
+            .put(
+              JSONObject()
+                .put("chainId", 4663)
+                .put("token", spcx)
+                .put("source", "discovered")
+                .put("firstSeenAt", 7)
+            ),
         )
         .put("history", JSONObject())
         .put("swept", JSONObject().put("4663", 7))
-    importer().import(JSONArray().put(row("gizu-holdings", legacy)).put(row("gizu-holdings", newer)))
+    importer()
+      .import(JSONArray().put(row("gizu-holdings", legacy)).put(row("gizu-holdings", newer)))
     val restored = JSONObject(read("gizu-holdings"))
     assertEquals(2, restored.getInt("version"))
     assertEquals(wallet, restored.getString("walletId"))
     val assets = restored.getJSONArray("assets")
-    assertEquals(listOf(intc, spcx), (0 until assets.length()).map { assets.getJSONObject(it).getString("token") })
+    assertEquals(
+      listOf(intc, spcx),
+      (0 until assets.length()).map { assets.getJSONObject(it).getString("token") },
+    )
     assertTrue(restored.getJSONObject("history").has("op1"))
     // The restored wallet sweeps its chains again rather than trusting the old device's schedule.
     assertEquals(0, restored.getJSONObject("swept").length())
     val foreign = JSONObject(newer.toString()).put("walletId", "someone-else")
-    assertThrows(Exception::class.java) { importer().import(JSONArray().put(row("gizu-holdings", foreign))) }
+    assertThrows(Exception::class.java) {
+      importer().import(JSONArray().put(row("gizu-holdings", foreign)))
+    }
   }
 
   @Test

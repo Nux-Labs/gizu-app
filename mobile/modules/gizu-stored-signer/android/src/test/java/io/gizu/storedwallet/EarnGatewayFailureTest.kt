@@ -50,6 +50,19 @@ class EarnGatewayFailureTest {
   }
 
   @Test
+  fun unavailableReturnHistoryIsNotLostAsAnHttpErrorOrClaimedUnfinished() {
+    val failure =
+      safeEarnGatewayFailure(
+        """{"code":"EARN_MINIMUM_RETURN_HISTORY_UNAVAILABLE","message":"secret-provider-sentinel"}"""
+      )
+    assertNotNull(failure)
+    assertEquals("EARN_MINIMUM_RETURN_HISTORY_UNAVAILABLE", failure!!.code)
+    assertTrue(failure.message!!.contains("could not be verified"))
+    assertFalse(failure.message!!.contains("secret-provider-sentinel"))
+    assertFalse(failure.message!!.contains("not finished"))
+  }
+
+  @Test
   fun unknownMalformedAndOversizedErrorsAreNotForwarded() {
     for (body in listOf("{\"code\":\"ATTACKER\"}", "not-json", "x".repeat(4097))) assertNull(
       safeEarnGatewayFailure(body)

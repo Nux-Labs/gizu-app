@@ -11,6 +11,118 @@ import uniffi.gizu_stored_signer_core.NativeSponsoredState
 
 class EarnSponsoredReconcilerTest {
   @Test
+  fun savedOwnerReportIsTerminalButNeverBecomesPrivateCredit() = runBlocking {
+    val journal = setup("hoodTokenReturn")
+    val rpc =
+      Rpc().apply {
+        returning = true
+        found(journal)
+      }
+    reconcileEarnSponsoredOperations(journal, rpc, rpc, ::topic, { error("No nonce fallback") })
+    val original = journal.get("op")
+    journal.update("op", original.getInt("revision")) {
+      it.getJSONObject("proposal").put("confidentialAccount", recipient)
+      it.put(
+        "returnFlowCompletion",
+        ownerReceivedReturnRecord(it, journal.walletId, journal.generation, 1, "SUCCESS", false),
+      )
+      it.getJSONObject("returnFlowCompletion").put("providerRouteStatus", "SUCCESS")
+    }
+    val saved = journal.get("op")
+    assertTrue(ownerReportedReturnCompleted(saved, journal.walletId, journal.generation))
+    assertNull(savedMinimumReturnReceipt(saved, journal.walletId, journal.generation))
+    val public = journal.public(saved)
+    assertEquals("awaitingSettlement", public["status"])
+    assertFalse(public.containsKey("creditedAtoms"))
+    assertFalse(public.containsKey("verifiedMinimumAtoms"))
+    val next =
+      JSONObject()
+        .put("operationId", "next-return")
+        .put("proposal", JSONObject().put("confidentialAccount", recipient))
+    requireSequentialSourceCredit(listOf(saved), next, journal.walletId, journal.generation)
+    assertThrows(Exception::class.java) { requireSequentialSourceCredit(listOf(saved), next) }
+    val ownerOnly = JSONObject(saved.toString())
+    ownerOnly.getJSONObject("returnFlowCompletion").remove("providerRouteStatus")
+    assertThrows(Exception::class.java) {
+      requireSequentialSourceCredit(listOf(ownerOnly), next, journal.walletId, journal.generation)
+    }
+    assertThrows(Exception::class.java) {
+      ownerReceivedReturnRecord(saved, journal.walletId, journal.generation, 2, "PROCESSING", false)
+    }
+    val unavailable =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any =
+          error("No lookup after completion")
+      }
+    reconcileEarnSponsoredOperations(
+      journal,
+      unavailable,
+      unavailable,
+      ::topic,
+      { error("No state read") },
+    )
+    assertTrue(nativeJsonEqual(saved, journal.get("op")))
+    for (variant in 0..3) {
+      val altered = JSONObject(saved.toString())
+      when (variant) {
+        0 -> altered.put("walletId", "other")
+        1 -> altered.put("transactionHash", hash)
+        2 -> altered.getJSONObject("proposal").put("amountAtoms", "2000")
+        3 -> altered.put("status", "pending")
+      }
+      assertThrows(Exception::class.java) {
+        ownerReportedReturnCompleted(altered, journal.walletId, journal.generation)
+      }
+    }
+    assertThrows(Exception::class.java) {
+      ownerReportedReturnCompleted(saved, journal.walletId, "other-generation")
+    }
+    assertThrows(Exception::class.java) {
+      ownerReceivedReturnRecord(
+        JSONObject(saved.toString()).put("status", "pending"),
+        journal.walletId,
+        journal.generation,
+        2,
+        "SUCCESS",
+        false,
+      )
+    }
+    Unit
+  }
+
+  @Test
+  fun aCompletedPrivateReturnNeverReopensWhenTheProviderForgetsItsReceipt() = runBlocking {
+    val journal = setup("hoodTokenReturn")
+    val rpc =
+      Rpc().apply {
+        returning = true
+        found(journal)
+      }
+    reconcileEarnSponsoredOperations(journal, rpc, rpc, ::topic, { error("No nonce fallback") })
+    val finalized = journal.get("op")
+    assertEquals("finalized", finalized.getString("status"))
+    journal.update("op", finalized.getInt("revision")) {
+      it.put("settlement", JSONObject().put("status", "credited").put("creditedAtoms", "1000"))
+    }
+    val saved = journal.get("op").toString()
+    rpc.known = JSONObject.NULL
+    rpc.receipt = JSONObject.NULL
+    val unavailable =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any =
+          error("Completed flow must not call $method")
+      }
+    reconcileEarnSponsoredOperations(
+      journal,
+      unavailable,
+      unavailable,
+      ::topic,
+      { error("No new state read") },
+    )
+    assertEquals(saved, journal.get("op").toString())
+  }
+
+  @Test
   fun receiptWithoutOperationLookupRemainsPendingUntilFullyVerified() = runBlocking {
     val journal = setup("hoodDeposit")
     val rpc =

@@ -226,6 +226,26 @@ export function createEarnRobinhoodService(
         ),
       );
     },
+    async markReturnReceived(intent, operationId) {
+      supported(intent);
+      if (!/^[-a-zA-Z0-9_]{1,128}$/.test(operationId)) throw new Error("Invalid saved return.");
+      const signer = bridge();
+      if (!signer.markEarnSponsoredReturnReceived)
+        throw new Error("Historical status correction requires the updated native build.");
+      await action(async () => {
+        const result = (await signer.markEarnSponsoredReturnReceived!(
+          intent.walletId,
+          operationId,
+        )) as Record<string, unknown>;
+        if (
+          !result ||
+          result.operationId !== operationId ||
+          result.recorded !== true ||
+          result.spendingAuthorized !== false
+        )
+          throw new Error("The saved return status could not be updated.");
+      });
+    },
     async cancelUnsigned(intent, op) {
       validate(intent, op);
       if (op.userOperationHash || !(op.canCancelPreparation ?? op.status === "planned"))
