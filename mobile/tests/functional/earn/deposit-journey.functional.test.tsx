@@ -28,6 +28,22 @@ function ready(): DepositSnapshot {
   raw.review.expiresAtMs = Date.now() + 45000;
   return raw as DepositSnapshot;
 }
+
+test("shows the native calculated private amount and public shortfall instead of asking the user to guess", async () => {
+  const paused = {
+    ...ready(),
+    phase: "paused" as const,
+    pauseReason: "uneconomicAmount" as const,
+    review: undefined,
+    message:
+      "You can deposit 1.8 USDC from routable private balances before fees. The remaining 0.142172 USDC needs public funding, which requires at least 0.2 USDC. Change the amount to 1.8 USDC and review the fees.",
+  };
+  setup({ pending: jest.fn().mockResolvedValue(paused) });
+  expect(await screen.findByText(paused.message)).toBeVisible();
+  expect(screen.queryByText(/Lower it until/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Confirm deposit" })).toBeNull();
+});
+
 function setup(
   overrides: Partial<EarnDepositService> = {},
   id?: string,
@@ -778,7 +794,7 @@ test("private-only observed funds can be reviewed while public USDC is empty", a
   );
 });
 
-test("returning from another app preserves available USDC without fetching again", async () => {
+test("returning from another app refreshes the shared balance while keeping the amount visible", async () => {
   const { portfolio } = setup({}, undefined, "90000", "2430000");
   expect(await screen.findByText("Available: 2.52 USDC")).toBeVisible();
   const callbacks = jest
@@ -789,7 +805,7 @@ test("returning from another app preserves available USDC without fetching again
   act(() => callbacks.forEach((callback) => callback("active")));
   await act(async () => {});
   expect(screen.getByText("Available: 2.52 USDC")).toBeVisible();
-  expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(1);
+  expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("button", { name: "Retry available balance" })).toBeNull();
 });
 

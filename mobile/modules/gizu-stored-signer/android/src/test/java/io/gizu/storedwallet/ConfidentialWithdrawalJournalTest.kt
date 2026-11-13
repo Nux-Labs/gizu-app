@@ -181,8 +181,22 @@ class ConfidentialWithdrawalJournalTest {
         emptyList(),
       )
     }
-    assertThrows(Exception::class.java) {
-      assertNoPendingPrivateWork(emptyList(), listOf(JSONObject().put("phase", "paused")))
+    assertNoPendingPrivateWork(emptyList(), listOf(JSONObject().put("phase", "paused")))
+    assertNoPendingPrivateWork(emptyList(), listOf(JSONObject().put("phase", "preparing")))
+    val open =
+      assertThrows(DepositPhaseBlocked::class.java) {
+        assertNoPendingPrivateWork(
+          emptyList(),
+          listOf(
+            JSONObject()
+              .put("phase", "paused")
+              .put("children", JSONObject().put("funding", JSONArray().put("source-1")))
+          ),
+        )
+      }
+    assertEquals("paused", open.phase)
+    assertThrows(DepositPhaseBlocked::class.java) {
+      assertNoPendingPrivateWork(emptyList(), listOf(JSONObject().put("phase", "funding")))
     }
     assertNoPendingPrivateWork(
       listOf(
@@ -192,4 +206,62 @@ class ConfidentialWithdrawalJournalTest {
       listOf(JSONObject().put("phase", "invested")),
     )
   }
+
+  @Test
+  fun expiredExitAndNonceConsumedRedeemDoNotBlockTheNextDeposit() {
+    val owner = "0x1111111111111111111111111111111111111111"
+    val other = "0x2222222222222222222222222222222222222222"
+    assertNoPendingPrivateWork(
+      listOf(sponsored("hoodRedeemAll", "expired", owner, "0x1", "redeem-old")),
+      emptyList(),
+    )
+    assertNoPendingPrivateWork(
+      listOf(
+        sponsored("hoodRedeemAll", "unknown", owner, "0x4", "redeem"),
+        sponsored("hoodTokenReturn", "finalized", owner, "0x5", "return"),
+      ),
+      emptyList(),
+    )
+    assertThrows(UnfinishedPrivateWork::class.java) {
+      assertNoPendingPrivateWork(
+        listOf(sponsored("hoodRedeemAll", "unknown", owner, "0x4", "redeem")),
+        emptyList(),
+      )
+    }
+    assertThrows(UnfinishedPrivateWork::class.java) {
+      assertNoPendingPrivateWork(
+        listOf(
+          sponsored("hoodRedeemAll", "signed", owner, "0x4", "redeem"),
+          sponsored("hoodTokenReturn", "finalized", other, "0x5", "return"),
+        ),
+        emptyList(),
+      )
+    }
+    val failure =
+      assertThrows(UnfinishedPrivateWork::class.java) {
+        assertNoPendingPrivateWork(
+          listOf(
+            sponsored("hoodRedeemAll", "unknown", owner, "0x6", "redeem"),
+            sponsored("hoodTokenReturn", "finalized", owner, "0x5", "return"),
+          ),
+          emptyList(),
+        )
+      }
+    assertEquals("hoodRedeemAll", failure.kind)
+    assertEquals("unknown", failure.status)
+  }
+
+  private fun sponsored(kind: String, status: String, owner: String, nonce: String, id: String) =
+    JSONObject()
+      .put("operationId", id)
+      .put("status", status)
+      .put("signedUserOperation", "signed")
+      .put(
+        "proposal",
+        JSONObject()
+          .put("kind", kind)
+          .put("expectedFrom", owner)
+          .put("chainId", 4663)
+          .put("nonce", nonce),
+      )
 }

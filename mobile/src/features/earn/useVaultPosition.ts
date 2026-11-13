@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import type { EarnIntent, EarnProfileId } from "@/domain/earn/types";
 import type {
   EarnInvestmentPosition,
   EarnInvestmentExitProof,
 } from "@/domain/earn/investmentPositions";
+import {
+  investmentPositionKey,
+  openWithdrawalAttention,
+  vaultWithdrawalAvailable,
+} from "@/domain/earn/investmentPositions";
+import { privateReturnConfirmed, type SponsoredOperation } from "@/domain/earn/sourceFunding";
+import { portfolioVaultPosition, portfolioAssetAmount } from "@/domain/wallet/portfolioValue";
+import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { useFundingWallet } from "@/features/wallet/WalletProvider";
-import { useEarn } from "./EarnProvider";
+import { useEarn, useOptionalEarn } from "./EarnProvider";
 import { createEarnExitCompletionService } from "@/services/earn/exitCompletion";
 import { earnWithdrawalService } from "@/services/earn/withdrawal";
 import {
@@ -41,13 +50,16 @@ export function useVaultPosition(profileId: EarnProfileId) {
   const [intent, setIntent] = useState<EarnIntent | null>(null);
   const [proofs, setProofs] = useState<Record<string, number | "accepted">>({});
   const proofsRef = useRef<Record<string, number | "accepted">>({});
+  const rowsRef = useRef<EarnInvestmentPosition[]>([]);
   const currentIntent = useRef<EarnIntent | null>(null);
+  const checkingCompletion = useRef(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const selected = useRef<string | null>(null);
   const occupied = useRef(false);
   const generation = useRef(0);
   const active = useRef<AbortController | null>(null);
+  const completionRead = useRef<AbortController | null>(null);
   const recordCompletion = useCallback(
     (proof: EarnInvestmentExitProof) => {
       const current = currentIntent.current;
@@ -62,6 +74,48 @@ export function useVaultPosition(profileId: EarnProfileId) {
         return;
       const key = positionKey(proof);
       if (proofsRef.current[key] === "accepted") return;
+      if (proof.settled) {
+        const attempt = generation.current;
+        const row = rowsRef.current.find((item) => positionKey(item) === key);
+        if (!row || row.recoveryRequired || checkingCompletion.current.has(key)) return;
+        checkingCompletion.current.add(key);
+        const controller = new AbortController();
+        completionRead.current = controller;
+        // A private receipt does not prove that public shares/residuals or legacy payouts are done.
+        void (async () => {
+          try {
+            const result = await exitChecker.check(current, controller.signal);
+            if (attempt !== generation.current || controller.signal.aborted) return;
+            const payouts = await earnWithdrawalService.list(current);
+            if (
+              attempt !== generation.current ||
+              selected.current !== key ||
+              !isCompleteInvestmentExit(result, current, payouts)
+            )
+              return;
+            const revision = exitHistoryRevision(result.journalRevision, payouts);
+            if (revision) await completedExitsStore.save(current, revision);
+            if (attempt !== generation.current || selected.current !== key) return;
+            proofsRef.current = { ...proofsRef.current, [key]: "accepted" };
+            setProofs(proofsRef.current);
+            const open = rowsRef.current.some(
+              (item) =>
+                item.activity !== "returned" && proofsRef.current[positionKey(item)] !== "accepted",
+            );
+            if (!open) {
+              selected.current = null;
+              currentIntent.current = null;
+              setIntent(null);
+            }
+          } catch {
+            // Retain recovery controls; a failed fresh check cannot erase history or mark it pending.
+          } finally {
+            checkingCompletion.current.delete(key);
+            if (completionRead.current === controller) completionRead.current = null;
+          }
+        })();
+        return;
+      }
       const expires = proof.expiresAtMs;
       if (expires !== null && Number.isFinite(expires) && expires > Date.now()) {
         if (proofsRef.current[key] === expires) return;
@@ -74,7 +128,7 @@ export function useVaultPosition(profileId: EarnProfileId) {
       }
       setProofs(proofsRef.current);
     },
-    [session.walletId, profileId],
+    [session.walletId, profileId, exitChecker],
   );
   const refresh = useCallback(
     async (recheckHistory = false) => {
@@ -103,6 +157,7 @@ export function useVaultPosition(profileId: EarnProfileId) {
               a.cycleIndex - b.cycleIndex || (a.investmentSlot ?? -1) - (b.investmentSlot ?? -1),
           );
         if (attempt !== generation.current) return;
+        rowsRef.current = positions;
         setRows(positions);
         // Accepted exits stay complete during this visit while native activity is
         // still redeemed. New investment, uncertainty or recovery revokes them.
@@ -130,9 +185,22 @@ export function useVaultPosition(profileId: EarnProfileId) {
             try {
               if (await earnWithdrawalService.available()) {
                 if (recheckHistory) await completedExitsStore.forget(value);
-                const journal = await (
+                let journal = await (
                   value.profileId === "robinhood-usdg" ? robinhood : liquidity
                 ).list(value);
+                if (value.profileId === "robinhood-usdg" && !journal.some((row) => row.blocked)) {
+                  for (const returned of journal) {
+                    if (
+                      returned.kind !== "hoodTokenReturn" ||
+                      !["returnSubmitted", "awaitingSettlement"].includes(returned.status)
+                    )
+                      continue;
+                    if (attempt !== generation.current || controller.signal.aborted) return;
+                    await robinhood.reconcileCredit(value, returned as SponsoredOperation);
+                    if (attempt !== generation.current || controller.signal.aborted) return;
+                  }
+                  journal = await robinhood.list(value);
+                }
                 assertReturnCredits(journal, value);
                 const savedPayouts = await earnWithdrawalService.list(value);
                 const savedRevision = exitHistoryRevision(
@@ -218,12 +286,11 @@ export function useVaultPosition(profileId: EarnProfileId) {
     return () => {
       generation.current = attempt + 1;
       active.current?.abort();
+      completionRead.current?.abort();
     };
   }, [refresh, earnLoading]);
   const completed = rows.filter(
-    (row) =>
-      row.activity === "returned" ||
-      (row.activity === "redeemed" && proofs[positionKey(row)] === "accepted"),
+    (row) => row.activity === "returned" || proofs[positionKey(row)] === "accepted",
   ).length;
   return {
     rows,
@@ -240,5 +307,90 @@ export function useVaultPosition(profileId: EarnProfileId) {
     loading: loading || earnLoading,
     message,
     refresh,
+  };
+}
+
+/** Home and the vault entry read the same private-USDC finish decision as the withdrawal screen. */
+export function useSharedWithdrawalState() {
+  const wallet = useOptionalMainnetWallet();
+  const earn = useOptionalEarn();
+  const positionsService = earn?.investmentPositions;
+  const robinhood = earn?.robinhood;
+  const cycles = earn?.cycles;
+  const walletId = wallet?.session.walletId ?? "";
+  const address = wallet?.session.address ?? "";
+  const [positions, setPositions] = useState<EarnInvestmentPosition[]>([]);
+  const [journals, setJournals] = useState<Record<string, SponsoredOperation[]>>({});
+  const [checked, setChecked] = useState(false);
+  const covered = useMemo(() => {
+    const next: Record<string, true> = {};
+    for (const [key, journal] of Object.entries(journals)) {
+      if (privateReturnConfirmed(journal)) next[key] = true;
+    }
+    return next;
+  }, [journals]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!positionsService || !robinhood) return;
+      let alive = true;
+      void (async () => {
+        const owner = { walletId, address };
+        for (let attempt = 0; attempt < 6 && alive; attempt++) {
+          try {
+            const rows = await positionsService.list(owner);
+            if (!alive) return;
+            const next: Record<string, SponsoredOperation[]> = {};
+            let waitingForCycle = false;
+            for (const row of rows) {
+              if (row.profileId !== "robinhood-usdg" || row.recoveryRequired) continue;
+              const cycle = cycles?.find(
+                (item) => item.intentId === row.intentId && item.profileId === row.profileId,
+              );
+              if (!cycle || cycle.status !== "prepared") {
+                waitingForCycle = true;
+                continue;
+              }
+              const intent: EarnIntent =
+                row.investmentSlot === undefined
+                  ? cycle
+                  : { ...cycle, investmentSlot: row.investmentSlot };
+              next[investmentPositionKey(row)] = await robinhood.list(intent);
+              if (!alive) return;
+            }
+            if (!alive) return;
+            if (waitingForCycle) {
+              setChecked(false);
+              return;
+            }
+            const fresh = await positionsService.list(owner);
+            if (!alive) return;
+            setPositions(fresh);
+            setJournals(next);
+            setChecked(true);
+            return;
+          } catch {
+            if (!alive) return;
+            await new Promise((resolve) => setTimeout(resolve, 400));
+          }
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [positionsService, robinhood, cycles, walletId, address]),
+  );
+  return {
+    attention: checked ? openWithdrawalAttention(positions, covered) : null,
+    canWithdraw: (profileId: EarnProfileId) => {
+      if (!earn) return true;
+      const position = portfolioVaultPosition(wallet?.snapshot, profileId);
+      return vaultWithdrawalAvailable({
+        amountAtoms: position ? portfolioAssetAmount(position, true) : null,
+        positions,
+        covered,
+        profileId,
+        checked,
+      });
+    },
   };
 }

@@ -30,11 +30,6 @@ export function groupDigits(value: string): string {
   return fraction === undefined ? grouped : `${grouped}.${fraction}`;
 }
 
-/**
- * A token amount for display: at most `maxFraction` decimals, rounded down so a holding is never
- * overstated. A non-zero balance too small to show reads "<0.000001". Not for exact amounts
- * a user acts on, such as a sell's available balance.
- */
 /** Exact display of base units at `decimals`, trailing zeros trimmed and digits grouped. */
 export function holdingAmount(atoms: string, decimals: number): string {
   const digits = atoms.padStart(decimals + 1, "0");
@@ -43,6 +38,11 @@ export function holdingAmount(atoms: string, decimals: number): string {
   return groupDigits(digits.slice(0, -decimals) + (fraction ? `.${fraction}` : ""));
 }
 
+/**
+ * A token amount for display: at most `maxFraction` decimals, rounded down so a holding is never
+ * overstated. A non-zero balance too small to show reads "<0.000001". Not for exact amounts
+ * a user acts on, such as a sell's available balance.
+ */
 export function displayAmount(atoms: string, decimals: number, maxFraction = 6): string {
   const digits = atoms.padStart(decimals + 1, "0");
   const whole = decimals ? digits.slice(0, -decimals) : digits;

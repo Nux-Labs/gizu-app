@@ -13,6 +13,8 @@ final class WalletStorageTests: WalletTestCase {
     let committed = try store.load()
     defer { committed.close() }
     XCTAssertEqual(committed.earnChain, 1)
+    XCTAssertEqual(try storedEarnConfidentialAddress(committed),
+      try deriveAccountAddresses(entropy: committed.entropy)[2])
     XCTAssertFalse(committed.earnRecoveryRequired)
     XCTAssertEqual(committed.entropy, wallet.entropy)
     try store.bindEarnChain(committed, chain: 1)

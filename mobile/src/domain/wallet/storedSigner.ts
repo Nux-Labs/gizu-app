@@ -299,7 +299,15 @@ export interface StoredSignerContract {
       | import("@/domain/earn/sourceFunding").SponsoredRequest
       | import("@/domain/earn/robinhoodExecution").RobinhoodRequest,
   ): Promise<unknown>;
+  continueEarnWithdrawal?(
+    request: import("@/domain/earn/robinhoodExecution").RobinhoodRequest,
+  ): Promise<unknown>;
   listEarnSponsoredOperations?(walletId: string): Promise<unknown>;
+  listEarnCycleOperations?(
+    walletId: string,
+    cycleIndex: number,
+    investmentSlot: number,
+  ): Promise<unknown>;
   resumeEarnSponsoredOperation?(
     walletId: string,
     operationId: string,
@@ -396,5 +404,6 @@ export interface StoredSignerContract {
     operationId: string,
     revision: number,
   ): Promise<unknown>;
+  cancelWalletOperation?(): void;
   lock(): void;
 }

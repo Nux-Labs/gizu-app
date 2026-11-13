@@ -4,7 +4,12 @@ import {
   assertInvestmentSlot,
 } from "@/domain/earn/distribution";
 import { earnAtoms, earnObject, type VaultPlan } from "./vaultExecution";
-import { earnProfiles, monadConfidentialUsdcAssetId, type EarnIntent } from "./types";
+import {
+  earnProfiles,
+  earnReturnAddress,
+  monadConfidentialUsdcAssetId,
+  type EarnIntent,
+} from "./types";
 import { ceilDiv } from "./policy";
 import { parseMinimumReturn, type MinimumReturnReceipt } from "./minimumReturn";
 export type LiquidityKind = "fusionEthOrder" | "fusionUsdcApproval" | "returnUsdc" | "returnEth";
@@ -268,7 +273,7 @@ export function parseEthereumReturnPlan(
   )
     throw new Error("Return binding changed.");
   addr(q.owner, owner);
-  addr(q.confidentialAccount, intent.confidentialAddress);
+  addr(q.confidentialAccount, earnReturnAddress(intent));
   addr(q.refundOwner, owner);
   hash(q.referenceBlockHash);
   hash(q.planHash);
@@ -329,7 +334,7 @@ export function parseEthereumReturnPlan(
     revision: number(revision, 1),
     chainId: 1,
     expectedFrom: owner,
-    confidentialAccount: intent.confidentialAddress,
+    confidentialAccount: earnReturnAddress(intent),
     refundOwner: owner,
     quoteId: hash(q.quoteId),
     recipient: addr(q.recipient),
@@ -425,7 +430,13 @@ export function parseLiquidityOperations(value: unknown, intent: EarnIntent): Li
         s.assetId !== monadConfidentialUsdcAssetId
       )
         throw new Error("Unauthenticated return credit.");
-      addr(s.confidentialAddress, intent.confidentialAddress);
+      const privateAddress = addr(s.confidentialAddress);
+      if (
+        ![intent.confidentialAddress, earnReturnAddress(intent)].some(
+          (address) => address.toLowerCase() === privateAddress.toLowerCase(),
+        )
+      )
+        throw new Error("Private return account changed.");
       if (s.status === "credited") out.creditedAtoms = earnAtoms(s.creditedAtoms);
     }
     if (out.status === "credited" && (!out.creditedAtoms || out.creditedAtoms === "0"))

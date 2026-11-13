@@ -1273,6 +1273,23 @@ fn payout_plan() -> String {
 }
 
 #[test]
+fn public_funded_buy_preserves_existing_earn_private_cash() {
+    let (mut world, mut now) = (World::new(), T0);
+    let existing = U256::from(6_000_000u64);
+    world.credit = existing;
+    world.pool_credit = true;
+    let op = start(Some("2000000"));
+    review(&op, &mut world, &mut now);
+    op.approve(now).unwrap();
+    assert_eq!(drive(&op, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!(
+        world.credit,
+        existing + U256::from(19_970u64),
+        "existing cash plus execution surplus must stay private"
+    );
+}
+
+#[test]
 fn buys_from_an_existing_private_balance_without_touching_monad() {
     let (mut world, mut now) = (World::new(), T0);
     world.credit = U256::from(3_945_530u64);

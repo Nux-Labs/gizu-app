@@ -44,6 +44,7 @@ internal class WalletRecord(
       val row = rows.getJSONObject(i)
       require(row.getInt("cycleIndex") in 0..1_000_000 && seen.add(row.getInt("cycleIndex")))
       require(row.getInt("chainId") in listOf(1, 4663))
+      if (row.has("privateAccount")) require(row.getString("privateAccount") == "shared")
       if (row.has("distribution")) {
         val weights = distributionWeights(row.getJSONObject("distribution"))
         if (row.has("distributionBudgetAtoms"))
@@ -243,7 +244,13 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
         check(current.earnChain == 0 || current.earnChain == chain || current.earnRecoveryRequired)
         if (current.earnChain == chain) return@synchronized
         val rows = JSONArray(current.earnCycles)
-        if (rows.length() == 0) rows.put(cycleRow(current.id, 0, chain))
+        if (rows.length() == 0)
+          rows.put(
+            cycleRow(current.id, 0, chain).also {
+              if (current.earnChain == 0 && !current.earnRecoveryRequired)
+                it.put("privateAccount", "shared")
+            }
+          )
         else if (current.earnRecoveryRequired)
           for (i in 0 until rows.length()) if (
             rows.getJSONObject(i).getInt("cycleIndex") == current.earnCycleIndex
@@ -269,7 +276,7 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
             ?.let { Math.addExact(maxOf(it, current.discoveryHighWater), 1) }
             ?: maxOf(1, current.discoveryHighWater + 1)
         rows.put(
-          cycleRow(current.id, next, chain).also { row ->
+          cycleRow(current.id, next, chain).put("privateAccount", "shared").also { row ->
             if (budgetAtoms != null)
               row
                 .put("distribution", chooseEarnDistribution(budgetAtoms))
@@ -353,6 +360,7 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
         val id = "deposit_" + UUID.randomUUID().toString().replace("-", "")
         rows.put(
           cycleRow(current.id, next, chain)
+            .put("privateAccount", "shared")
             .put("depositJourneyId", id)
             .put("depositFinished", false)
             .also {
@@ -475,6 +483,9 @@ internal class WalletStore(private val file: WalletFile, private val keys: Walle
           else {
             // A cycle's derivation and plan are immutable, including legacy absence.
             check(existing.has("distribution") == row.has("distribution")) {
+              "RECOVERY_METADATA_CONFLICT"
+            }
+            check(existing.optString("privateAccount") == row.optString("privateAccount")) {
               "RECOVERY_METADATA_CONFLICT"
             }
             for (field in row.keys()) {
