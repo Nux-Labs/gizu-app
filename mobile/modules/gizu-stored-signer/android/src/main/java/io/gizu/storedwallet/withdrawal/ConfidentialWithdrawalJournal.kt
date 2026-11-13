@@ -239,23 +239,89 @@ internal class ConfidentialWithdrawalJournal(
 internal fun List<JSONObject>.sumAtoms(field: String) =
   fold(BigInteger.ZERO) { sum, row -> sum + row.getString(field).toBigInteger() }.toString()
 
-/** Conservative device-wide private execution exclusion, including saved unknown signatures. */
+/** Kind and status only. Never carries an address, amount, nonce or signature. */
+internal class UnfinishedPrivateWork(val kind: String, val status: String) :
+  IllegalStateException("Reconcile unfinished private spending before withdrawing from Gizu")
+
+/** Phase only. A second saved deposit is open; this is not a fee-estimate failure. */
+internal class DepositPhaseBlocked(val phase: String) :
+  IllegalStateException("Finish or cancel the saved deposit before withdrawing from Gizu")
+
+/**
+ * Conservative device-wide private execution exclusion, including saved unknown signatures. An
+ * expired exit keeps its signed bytes but can no longer be submitted. A saved operation whose
+ * sender nonce is already behind a later included operation cannot execute either.
+ */
 internal fun assertNoPendingPrivateWork(operations: List<JSONObject>, deposits: List<JSONObject>) {
-  check(
-    operations.none { row ->
-      val status = row.optString("status")
-      status !in setOf("paid", "finalized", "reverted", "nonceCancelled") &&
-        (!(row.optBoolean("cancelled") || status == "cancelled") ||
-          row.has("signedData") ||
-          row.sponsoredSpendSaved() ||
-          row.optBoolean("signingPending") ||
-          row.optBoolean("signingAuthorizationPending"))
-    }
-  ) {
-    "Reconcile unfinished private spending before withdrawing from Gizu"
+  val blocker = operations.firstOrNull { privateWorkPending(it, operations) }
+  if (blocker != null) {
+    val proposal = blocker.optJSONObject("proposal")
+    throw UnfinishedPrivateWork(
+      privateWorkToken(proposal?.optString("kind") ?: "operation"),
+      privateWorkToken(blocker.optString("status").ifEmpty { "unknown" }),
+    )
   }
-  check(deposits.none { it.optString("phase") !in setOf("draft", "invested", "cancelled") }) {
-    "Finish or cancel the saved deposit before withdrawing from Gizu"
+  val deposit = deposits.firstOrNull(::depositBlocksPrivateWork)
+  if (deposit != null)
+    throw DepositPhaseBlocked(privateWorkToken(deposit.optString("phase").ifEmpty { "unknown" }))
+}
+
+/**
+ * An unsigned paused or preparing draft has not signed spending. A deposit that has already
+ * attached work, credited funds, or moved past review can still settle and keeps the lock.
+ */
+internal fun depositBlocksPrivateWork(row: JSONObject): Boolean {
+  val phase = row.optString("phase")
+  if (phase in setOf("draft", "invested", "cancelled")) return false
+  val children = row.optJSONObject("children")
+  if (children != null && children.length() > 0) return true
+  val steps = row.optJSONArray("completedSteps")
+  if (steps != null && steps.length() > 0) return true
+  val credited = row.optString("creditedAtoms")
+  if (credited.isNotEmpty() && credited != "0") return true
+  if (
+    row.optString("pauseReason") in
+      setOf("submissionUnknown", "settlementPending", "recoveryRequired")
+  )
+    return true
+  return phase !in setOf("paused", "preparing")
+}
+
+internal fun privateWorkPending(row: JSONObject, operations: List<JSONObject>): Boolean {
+  val status = row.optString("status")
+  if (status in setOf("paid", "finalized", "reverted", "nonceCancelled", "expired")) return false
+  if (supersededByLaterInclusion(row, operations)) return false
+  val unsignedCancellation =
+    (row.optBoolean("cancelled") || status == "cancelled") &&
+      !row.has("signedData") &&
+      !row.sponsoredSpendSaved() &&
+      !row.optBoolean("signingPending") &&
+      !row.optBoolean("signingAuthorizationPending")
+  return !unsignedCancellation
+}
+
+private fun privateWorkToken(value: String) =
+  value.takeIf { Regex("[A-Za-z0-9]{1,40}").matches(it) } ?: "unknown"
+
+private fun privateWorkNonce(value: String) =
+  value.takeIf { Regex("0x(?:0|[1-9a-fA-F][0-9a-fA-F]{0,63})").matches(it) }?.let(::quantity)
+
+/** Same sender and nonce key: a later included operation has consumed every lower nonce. */
+internal fun supersededByLaterInclusion(row: JSONObject, operations: List<JSONObject>): Boolean {
+  val proposal = row.optJSONObject("proposal") ?: return false
+  val owner = proposal.optString("expectedFrom")
+  val chainId = proposal.optLong("chainId", -1)
+  val nonce = privateWorkNonce(proposal.optString("nonce")) ?: return false
+  if (!Regex("0x[0-9a-fA-F]{40}").matches(owner) || chainId <= 0) return false
+  val id = row.optString("operationId")
+  return operations.any { other ->
+    if (id.isNotEmpty() && other.optString("operationId") == id) return@any false
+    val later = other.optJSONObject("proposal") ?: return@any false
+    val laterNonce = privateWorkNonce(later.optString("nonce")) ?: return@any false
+    other.optString("status") in setOf("finalized", "reverted") &&
+      later.optLong("chainId", -1) == chainId &&
+      later.optString("expectedFrom").equals(owner, true) &&
+      laterNonce > nonce
   }
 }
 
@@ -273,4 +339,6 @@ internal fun assertCashoutInactive(
 internal fun assertPrivateExecutionAvailable(context: Context, record: WalletRecord) {
   assertCashoutInactive(context, record)
   assertNoPrivateDeposit(context, record)
+  requireNoPendingSharedCredit(context, record)
+  requireNoPendingSharedPayout(context, record)
 }

@@ -1632,7 +1632,28 @@ impl Engine {
             (Step::Balances, None) => {
                 let available = aurora::private_available(&value, &self.m.data.source_asset)?;
                 if !self.payout_only() {
-                    self.credit(available, "authenticated_balance")?;
+                    // Public-funded buys authorize only their guaranteed route credit.
+                    // Existing private cash (including Earn proceeds) stays in Account 2.
+                    let credit = if self.sell() {
+                        available
+                    } else {
+                        available.min(
+                            self.m
+                                .data
+                                .funding_quote
+                                .as_ref()
+                                .ok_or(SignerError::InvalidInput)?
+                                .min_amount_out,
+                        )
+                    };
+                    self.credit(
+                        credit,
+                        if self.sell() {
+                            "authenticated_balance"
+                        } else {
+                            "route_success_minimum"
+                        },
+                    )?;
                     return Ok(());
                 }
                 let available = available.min(U256::from(MAX_SOURCE_ATOMS));

@@ -1,7 +1,7 @@
 import * as nativeBridge from "@/services/wallet/nativeBridge";
 import { openEarnLink } from "../../support/earnNavigation";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
-import { act, render, screen, userEvent } from "@testing-library/react-native";
+import { act, render, screen, userEvent, waitFor } from "@testing-library/react-native";
 import { Linking } from "react-native";
 import { AppRoot } from "@/application/AppRoot";
 import { createStoredWalletAccess } from "@/services/wallet/storedAccess";
@@ -219,13 +219,20 @@ test("restored intent remains blocked and the profile cannot silently change", a
 
 test("shows an authenticated private balance without claiming settlement or enabling spend", async () => {
   const { privateBalance } = setup();
+  const unlock = jest.fn().mockResolvedValue({ status: "ready", walletId, accounts: [] });
+  jest.spyOn(nativeBridge, "getStoredSigner").mockReturnValue({
+    openWallet: unlock,
+  } as unknown as NonNullable<ReturnType<typeof nativeBridge.getStoredSigner>>);
   await open();
   const user = userEvent.setup();
   await user.press(screen.getByRole("button", { name: "Prepare earn wallets" }));
   await screen.findByText("Wallet 1 · Hold 10%");
-  await user.press(screen.getByRole("button", { name: "Check confidential balance" }));
-  await screen.findByText("Authenticated private balance: 1.234567 USDC");
-  expect(privateBalance.read).toHaveBeenCalledWith(intent);
+  await user.press(screen.getByRole("button", { name: "Refresh private balance" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeEnabled(),
+  );
+  expect(unlock).not.toHaveBeenCalled();
+  expect(privateBalance.read).not.toHaveBeenCalled();
   expect(screen.getByText(/does not confirm credit/)).toBeOnTheScreen();
   expect(screen.getByRole("button", { name: "Review investment" })).toBeDisabled();
 });
@@ -242,28 +249,24 @@ test("prepared earn wallets never expose or request a hosted joint routing previ
   expect(screen.queryByLabelText("USDC routing amount")).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Check vault readiness" }));
   await screen.findByText("Vault asset verified · USDC");
-  await userEvent.press(screen.getByRole("button", { name: "Check confidential balance" }));
-  await screen.findByText("Authenticated private balance: 1.234567 USDC");
+  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Check confidential balance" })).toBeNull();
   expect(preflight.check).toHaveBeenCalledWith(
     "ethereum-usdc",
     intent.destinations[1].address,
     expect.anything(),
   );
-  expect(privateBalance.read).toHaveBeenCalledWith(intent);
+  expect(privateBalance.read).not.toHaveBeenCalled();
   expect(fetchBoundary).not.toHaveBeenCalled();
 });
-test("leaving the screen cancels private authentication and ignores late results", async () => {
+test("leaving the screen does not read private USDC through the separate earn balance", async () => {
   const { privateBalance } = setup();
-  const result = deferred<unknown>();
-  privateBalance.read.mockReturnValueOnce(result.promise);
   await open();
   await userEvent.press(screen.getByRole("button", { name: "Prepare earn wallets" }));
-  await userEvent.press(await screen.findByRole("button", { name: "Check confidential balance" }));
+  expect(await screen.findByRole("button", { name: "Refresh private balance" })).toBeEnabled();
   await userEvent.press(screen.getByRole("button", { name: "Back" }));
-  expect(privateBalance.cancel).toHaveBeenCalledTimes(1);
-  await act(async () =>
-    result.resolve({ confidentialAddress: intent.confidentialAddress, available: "9999999" }),
-  );
+  expect(privateBalance.read).not.toHaveBeenCalled();
+  expect(privateBalance.cancel).not.toHaveBeenCalled();
   await openEarnLink();
   expect(screen.queryByText(/Authenticated private balance:/)).toBeNull();
 });

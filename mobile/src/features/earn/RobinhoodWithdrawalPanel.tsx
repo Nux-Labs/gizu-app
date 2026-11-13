@@ -12,9 +12,9 @@ import type {
 } from "@/domain/earn/robinhoodExecution";
 import { isVaultWithdrawalPlanError } from "@/services/earn/robinhoodExecution";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
+import { latestPrivateReturn, privateReturnConfirmed } from "@/domain/earn/sourceFunding";
 import { formatUsdc } from "@/domain/wallet/amounts";
 import { useEarnJournal } from "./useEarnJournal";
-import { ExitCompletionPanel } from "./ExitCompletionPanel";
 
 const expiredSponsoredSignature = "Saved sponsored deadline expired";
 const resignExpiredSignature =
@@ -39,11 +39,7 @@ export function RobinhoodWithdrawalPanel({
   const position = [...v.rows]
     .reverse()
     .find((row) => ["invested", "withdrawn", "residualShares"].includes(row.status));
-  const returned = [...v.rows]
-    .reverse()
-    .find(
-      (row) => row.kind === "hoodTokenReturn" && !["cancelled", "reverted"].includes(row.status),
-    );
+  const returned = latestPrivateReturn(v.rows);
   const awaitingCredit =
     returned && ["returnSubmitted", "awaitingSettlement"].includes(returned.status);
   const returnConfirmed = returned && ["credited", "minimumReceived"].includes(returned.status);
@@ -58,11 +54,7 @@ export function RobinhoodWithdrawalPanel({
     (saved.kind === "hoodRedeemAll" || saved.kind === "hoodTokenReturn");
   const disabled = v.busy || v.loading || !v.available || intent.status !== "prepared";
   const settledRedeem = v.rows.some(
-    (row) =>
-      row.kind === "hoodRedeemAll" &&
-      row.status === "withdrawn" &&
-      row.redeemedUsdgAtoms !== undefined &&
-      row.redeemedUsdgAtoms !== "0",
+    (row) => row.kind === "hoodRedeemAll" && row.status === "withdrawn",
   );
   const savedRedeemAfterSettlement = settledRedeem && saved?.kind === "hoodRedeemAll";
   const expiredSettledRedeem =
@@ -81,6 +73,19 @@ export function RobinhoodWithdrawalPanel({
     (plan.kind === "hoodRedeemAll" || plan.kind === "hoodTokenReturn");
   const withdrawn = position?.status === "withdrawn";
   const redeemable = position?.status === "invested" || position?.status === "residualShares";
+  const privateReturned = privateReturnConfirmed(v.rows);
+
+  useEffect(() => {
+    if (!privateReturned || !onWithdrawalComplete) return;
+    onWithdrawalComplete({
+      walletId: intent.walletId,
+      intentId: intent.intentId,
+      profileId: intent.profileId,
+      investmentSlot: intent.investmentSlot,
+      expiresAtMs: null,
+      settled: true,
+    });
+  }, [privateReturned, onWithdrawalComplete, intent]);
 
   useEffect(() => {
     if (!plan) return;
@@ -124,18 +129,26 @@ export function RobinhoodWithdrawalPanel({
           if (!signal.aborted) setPlan(null);
           throw error;
         }
-        if (
-          reviewed.kind === "hoodRedeemAll" &&
-          row.status === "withdrawn" &&
-          row.redeemedUsdgAtoms !== undefined &&
-          row.redeemedUsdgAtoms !== "0"
-        ) {
+        if (reviewed.kind === "hoodRedeemAll" && service.finishWithdrawal) {
+          const outcome = await service.finishWithdrawal(intent, row, signal);
+          if (outcome.signed) return { row: outcome.signed, redeem: outcome.row, next: null };
+          if (outcome.row.status === "withdrawn") {
+            setPlan(null);
+            return {
+              row: outcome.row,
+              next: await service.plan(intent, "hoodTokenReturn", signal),
+            };
+          }
+          return { row: outcome.row, next: null };
+        }
+        if (reviewed.kind === "hoodRedeemAll" && row.status === "withdrawn") {
           setPlan(null);
           return { row, next: await service.plan(intent, "hoodTokenReturn", signal) };
         }
         return { row, next: null };
       },
-      ({ row, next }) => {
+      ({ row, next, redeem }) => {
+        if (redeem) v.update(redeem);
         v.update(row);
         setPlan(next);
         setExpired(next !== null && next.expiresAtMs <= Date.now());
@@ -148,10 +161,14 @@ export function RobinhoodWithdrawalPanel({
       <View className="gap-4 p-5">
         <View className="gap-2">
           <Typography variant="eyebrow">
-            {withdrawn || returned ? "STEP 2 OF 2" : "STEP 1 OF 2"}
+            {withdrawn && !returned ? "Finish withdrawal" : "Withdrawal"}
           </Typography>
           <Typography variant="cardTitle">
-            {withdrawn || returned ? "Return to private balance" : "Withdraw from vault"}
+            {privateReturned
+              ? "Private USDC received"
+              : withdrawn || returned
+                ? "Return to private balance"
+                : "Withdraw to private USDC"}
           </Typography>
           <Typography accessibilityLiveRegion="polite">
             {v.loading
@@ -159,9 +176,11 @@ export function RobinhoodWithdrawalPanel({
               : !v.available
                 ? "Update Gizu to withdraw from this vault. Your investment is still saved."
                 : v.busy
-                  ? plan
-                    ? "Waiting for secure approval…"
-                    : "Preparing the next step…"
+                  ? plan?.kind === "hoodRedeemAll"
+                    ? "Your vault withdrawal is confirming. Private USDC follows from this approval."
+                    : plan
+                      ? "Waiting for secure approval…"
+                      : "Preparing the next step…"
                   : plan
                     ? expired
                       ? "This review has expired. Refresh it to see current fees."
@@ -169,21 +188,24 @@ export function RobinhoodWithdrawalPanel({
                     : fresh
                       ? "Your previous review was not completed. Start a fresh review with current fees. No withdrawal transaction has been submitted."
                       : awaitingCredit
-                        ? "Your return is on its way. We will confirm it before marking this withdrawal complete."
+                        ? "This saved return still needs verification. Checking its status will not withdraw again."
                         : saved
                           ? saved.kind === "hoodRedeemAll" && saved.status === "pending"
-                            ? "Your vault withdrawal is confirming. The private return opens after the USDG arrives."
-                            : savedRedeemAfterSettlement
-                              ? expiredSettledRedeem
-                                ? "Your funds have left the vault. Return them to your private USDC balance next."
-                                : "A vault signature is still saved. It is checked before the private return."
-                              : replaceExpiredSignature
-                                ? resignExpiredSignature
-                                : "Checking your saved transaction"
-                          : returned?.status === "minimumReceived"
-                            ? "Your minimum return is verified. Check the final balance to finish."
-                            : returned?.status === "credited"
-                              ? "Your return has been credited. Verify the final balance to finish."
+                            ? "Your vault withdrawal is confirming. Private USDC follows from this approval."
+                            : saved.kind === "hoodTokenReturn" &&
+                                ["pending", "unknown", "signed"].includes(saved.status)
+                              ? "Returning your USDG to private USDC."
+                              : savedRedeemAfterSettlement
+                                ? expiredSettledRedeem
+                                  ? "Your funds have left the vault. Return them to your private USDC balance next."
+                                  : "A vault signature is still saved. It is checked before the private return."
+                                : replaceExpiredSignature
+                                  ? resignExpiredSignature
+                                  : "Checking your saved transaction"
+                          : privateReturned
+                            ? "Private USDC return verified."
+                            : returnConfirmed
+                              ? "Shielding your balance."
                               : withdrawn
                                 ? "Your funds have left the vault. Return them to your private USDC balance next."
                                 : redeemable
@@ -198,7 +220,7 @@ export function RobinhoodWithdrawalPanel({
               At least {formatUsdc(returned.verifiedMinimumAtoms ?? "0")} USDC verified
             </Typography>
             <Typography variant="caption">
-              Your full private balance is checked separately and includes any surplus.
+              This is the verified minimum. Your private USDC total includes any surplus.
             </Typography>
           </>
         )}
@@ -244,7 +266,7 @@ export function RobinhoodWithdrawalPanel({
             </View>
             <Typography variant="caption">
               {plan.kind === "hoodRedeemAll"
-                ? "The vault amount can change before confirmation. This redeems all shares in this part; no minimum withdrawal amount is guaranteed. You will approve the private return separately."
+                ? "This approval withdraws every share and returns the received USDG to your private USDC balance after the vault receipt. The vault amount can change before confirmation, and no minimum withdrawal amount is guaranteed."
                 : `Your USDC stays private in Gizu.${plan.route ? ` The quoted return service fee is ${plan.route.providerFeeBps / 100}%.` : ""} A small balance may remain for network costs.`}
             </Typography>
             <Button
@@ -326,13 +348,6 @@ export function RobinhoodWithdrawalPanel({
           ))
         )}
 
-        {returnConfirmed && !saved && (
-          <ExitCompletionPanel
-            intent={intent}
-            aggregate
-            onWithdrawalComplete={onWithdrawalComplete}
-          />
-        )}
         {v.rows.length > 0 && (
           <>
             <Button

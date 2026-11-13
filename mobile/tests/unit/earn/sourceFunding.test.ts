@@ -4,7 +4,13 @@ import {
   parseSourceFeePlan,
   sourceFundingProposal,
   parseSponsoredOperations,
+  privateReturnConfirmed,
 } from "@/domain/earn/sourceFunding";
+import {
+  openWithdrawalAttention,
+  vaultWithdrawalAvailable,
+} from "@/domain/earn/investmentPositions";
+import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
 import type { EarnIntent } from "@/domain/earn/types";
 const owner = "0x" + "1".repeat(40),
   recipient = "0x" + "5".repeat(40),
@@ -179,4 +185,87 @@ test("native account selection retains separate gas and reserve budgets and reje
   expect(() => parsePublicFundingPlan({ ...selection, legs: [leg, leg] }, "1000000")).toThrow();
   expect(() => parsePublicFundingPlan({ ...selection, totalFeeAtoms: "100" }, "1000000")).toThrow();
   expect(() => parsePublicFundingPlan(selection, "999999")).toThrow();
+});
+
+test("a confirmed return stays complete after its private USDC is spent", () => {
+  const returned = {
+    operationId: "return_1",
+    walletId: "wallet",
+    revision: 1,
+    kind: "hoodTokenReturn",
+    chainId: 4663,
+    from: owner,
+    amountAtoms: "2150858",
+    nonce: "0x1",
+    blocked: false,
+    canResume: false,
+    status: "minimumReceived",
+    verifiedMinimumAtoms: "2150858",
+  } as SponsoredOperation;
+  expect(privateReturnConfirmed([returned])).toBe(true);
+  expect(privateReturnConfirmed([{ ...returned, verifiedMinimumAtoms: "0" }])).toBe(false);
+  expect(privateReturnConfirmed([{ ...returned, status: "credited", creditedAtoms: "123" }])).toBe(
+    true,
+  );
+  expect(privateReturnConfirmed([{ ...returned, status: "awaitingSettlement" }])).toBe(false);
+  expect(privateReturnConfirmed([{ ...returned, blocked: true }])).toBe(false);
+  const row = {
+    intentId: "earn",
+    cycleIndex: 0,
+    profileId: "robinhood-usdg" as const,
+    investmentSlot: 0,
+    activity: "invested" as const,
+    recoveryRequired: false,
+    withdrawalAttention: "confirming" as const,
+  };
+  expect(openWithdrawalAttention([row], { "earn:0": true })).toBeNull();
+  expect(openWithdrawalAttention([row], {})).toBe("confirming");
+  const empty = {
+    amountAtoms: "0",
+    positions: [row],
+    covered: { "earn:0": true as const },
+    profileId: "robinhood-usdg" as const,
+    checked: true,
+  };
+  expect(vaultWithdrawalAvailable(empty)).toBe(false);
+  expect(vaultWithdrawalAvailable({ ...empty, checked: false, covered: {} })).toBe(false);
+  expect(vaultWithdrawalAvailable({ ...empty, covered: {} })).toBe(true);
+  expect(
+    vaultWithdrawalAvailable({
+      ...empty,
+      positions: [{ ...row, withdrawalAttention: undefined }],
+      covered: {},
+    }),
+  ).toBe(false);
+  expect(vaultWithdrawalAvailable({ ...empty, amountAtoms: "1", covered: {} })).toBe(true);
+  expect(vaultWithdrawalAvailable({ ...empty, amountAtoms: null })).toBe(true);
+});
+
+test("a confirmed older return cannot finish a later redeem or reinvestment in the same journal", () => {
+  const returned: SponsoredOperation = {
+    operationId: "return_1",
+    walletId: "wallet",
+    revision: 1,
+    kind: "hoodTokenReturn",
+    chainId: 4663,
+    from: owner,
+    amountAtoms: "123",
+    nonce: "0x1",
+    blocked: false,
+    canResume: false,
+    status: "credited",
+    creditedAtoms: "120",
+  };
+  expect(
+    privateReturnConfirmed([
+      returned,
+      { ...returned, operationId: "redeem_2", kind: "hoodRedeemAll", status: "withdrawn" },
+    ]),
+  ).toBe(false);
+  expect(
+    privateReturnConfirmed([
+      returned,
+      { ...returned, operationId: "deposit_2", kind: "hoodDeposit", status: "invested" },
+    ]),
+  ).toBe(false);
 });

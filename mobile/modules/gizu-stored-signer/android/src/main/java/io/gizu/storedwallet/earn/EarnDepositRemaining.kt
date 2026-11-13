@@ -57,6 +57,7 @@ internal class EarnDepositRemaining(
     var offset = BigInteger.ZERO
     var minimumInvest = BigInteger.ZERO
     var paidInvest = BigInteger.ZERO
+    var investRouted = false
     var expiry = Long.MAX_VALUE
     for (previous in old.getJSONArray("sources").objects().sortedBy { it.getInt("accountIndex") }) {
       val sourceId = previous.getString("operationId")
@@ -95,10 +96,12 @@ internal class EarnDepositRemaining(
           check(child!!.getJSONObject("proposal").getString("amountAtoms") == input.toString())
           bound.put("minimumOutputAtoms", settled).put("estimatedOutputAtoms", settled)
           if (leg == "invest") paidInvest += depositAtoms(settled, true)
+          if (leg == "invest") investRouted = true
         } else if (child?.has("signedData") == true) {
           val fixed = child.getJSONObject("proposal")
           check(fixed.getString("amountAtoms") == input.toString())
           val minimum = depositAtoms(fixed.getString("minimumDestinationAtoms"), true)
+          if (leg == "invest") investRouted = true
           bound
             .put("minimumOutputAtoms", minimum.toString())
             .put(
@@ -123,14 +126,21 @@ internal class EarnDepositRemaining(
       offset += credit
       if (!updated.row.sponsoredSpendSaved()) expiry = minOf(expiry, p.getLong("deadline") * 1000)
     }
+    // The hypothetical preview assumes an empty wallet. Once the USDG payout has arrived,
+    // a failed re-quote must not block the vault deposit the user already approved.
     val preview =
-      gateway.depositPreview(
-        record,
-        id,
-        root.getInt("revision"),
-        minimumInvest.toString(),
-        paidInvest.toString(),
-      )
+      try {
+        gateway.depositPreview(
+          record,
+          id,
+          root.getInt("revision"),
+          minimumInvest.toString(),
+          paidInvest.toString(),
+        )
+      } catch (failure: EarnGatewayFailure) {
+        if (failure.code == "EARN_DEPOSIT_PREVIEW_UNAVAILABLE" && investRouted) return root
+        throw failure
+      }
     expiry = minOf(expiry, preview.getLong("expiresAtMs"))
     check(expiry > now())
     next
@@ -161,6 +171,7 @@ internal class EarnDepositRemaining(
     val sources = JSONArray()
     val minimums = MutableList(weights.size) { BigInteger.ZERO }
     val paid = MutableList(weights.size) { BigInteger.ZERO }
+    val routed = MutableList(weights.size) { false }
     var offset = BigInteger.ZERO
     var expiry = Long.MAX_VALUE
     for (previous in old.getJSONArray("sources").objects().sortedBy { it.getInt("accountIndex") }) {
@@ -206,10 +217,12 @@ internal class EarnDepositRemaining(
           check(child!!.getJSONObject("proposal").getString("amountAtoms") == input)
           bound.put("minimumOutputAtoms", settled).put("estimatedOutputAtoms", settled)
           paid[slot] += depositAtoms(settled, true)
+          routed[slot] = true
         } else if (child?.has("signedData") == true) {
           val fixed = child.getJSONObject("proposal")
           check(fixed.getString("amountAtoms") == input)
           val minimum = depositAtoms(fixed.getString("minimumDestinationAtoms"), true)
+          routed[slot] = true
           bound
             .put("minimumOutputAtoms", minimum.toString())
             .put(
@@ -245,6 +258,7 @@ internal class EarnDepositRemaining(
       depositSlots.distinct().size == depositSlots.size &&
         depositSlots.all { it in weights.indices }
     )
+    var deliveredPreviewUnavailable = false
     val deposits =
       weights.indices.map { slot ->
         val child =
@@ -269,21 +283,32 @@ internal class EarnDepositRemaining(
         if (child?.sponsoredSpendSaved() == true) JSONObject(previous.toString())
         else {
           val preview =
-            gateway.depositPreview(
-              record,
-              id,
-              root.getInt("revision"),
-              minimums[slot].toString(),
-              paid[slot].toString(),
-              slot,
-            )
-          check(preview.getString("policyVersion") == old.getString("policyVersion"))
-          expiry = minOf(expiry, preview.getLong("expiresAtMs"))
-          vaultApprovalBounds(preview)
-            .put("slot", slot)
-            .put("recipient", cycleInvestmentAddress(record, slot))
+            try {
+              gateway.depositPreview(
+                record,
+                id,
+                root.getInt("revision"),
+                minimums[slot].toString(),
+                paid[slot].toString(),
+                slot,
+              )
+            } catch (failure: EarnGatewayFailure) {
+              if (failure.code == "EARN_DEPOSIT_PREVIEW_UNAVAILABLE" && routed[slot]) {
+                deliveredPreviewUnavailable = true
+                null
+              } else throw failure
+            }
+          if (preview == null) JSONObject(previous.toString())
+          else {
+            check(preview.getString("policyVersion") == old.getString("policyVersion"))
+            expiry = minOf(expiry, preview.getLong("expiresAtMs"))
+            vaultApprovalBounds(preview)
+              .put("slot", slot)
+              .put("recipient", cycleInvestmentAddress(record, slot))
+          }
         }
       }
+    if (deliveredPreviewUnavailable) return root
     check(expiry > now())
     val next =
       JSONObject(old.toString())
@@ -300,21 +325,10 @@ internal class EarnDepositRemaining(
   }
 }
 
-/** Only the existing native empty-intents read permission may authenticate pre-review history. */
-internal fun requireDepositReadPermission(
-  record: WalletRecord,
-  wallet: String?,
-  generation: String?,
-  until: Long,
-  now: Long,
-) {
-  check(
-    record.verified &&
-      record.id == wallet &&
-      record.journalId == generation &&
-      now in (until - 120000) until until
-  ) {
-    "Unlock your wallet again to reconcile saved payouts before reviewing the remaining deposit."
+/** Shared balance-only permission; this never grants execution authority. */
+internal fun requireDepositReadPermission(record: WalletRecord, read: PrivateUsdcRead) {
+  check(record.verified && read.allows(record.id, record.journalId)) {
+    "Unlock your private balance to reconcile saved payouts before reviewing the deposit."
   }
 }
 

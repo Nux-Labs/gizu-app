@@ -362,7 +362,11 @@ internal class EarnSponsoredJournal(
             "hoodDeposit" -> "invested"
             "hoodRedeemAll" ->
               if (op.optString("residualShares", "0") != "0") "residualShares"
-              else if (redeemedUsdg(op)) "withdrawn"
+              else if (
+                redeemedUsdg(op) ||
+                  (op.has("transactionHash") && op.optString("residualShares") == "0")
+              )
+                "withdrawn"
               else "residualShares"
             "sourceFunding",
             "hoodTokenReturn" ->

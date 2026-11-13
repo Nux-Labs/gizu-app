@@ -12,6 +12,7 @@ import { earnProfiles, type EarnProfileId } from "@/domain/earn/types";
 import type { DepositPhase } from "@/domain/earn/depositJourney";
 import { formatUsdc } from "@/domain/wallet/amounts";
 import { protocolLogo } from "@/features/opportunities/protocolLogos";
+import { PrivateBalanceRefresh } from "@/features/wallet/PrivateBalanceRefresh";
 import { depositPauseCopy, useDepositJourney } from "./useDepositJourney";
 import colors from "@/theme/colors.json";
 const stages = [
@@ -110,6 +111,7 @@ export function DepositJourneyScreen({
                 {v.balanceBreakdown.publicBalance} USDC
               </Typography>
             )}
+            <PrivateBalanceRefresh />
             <Typography variant="caption">
               {row && !distribution
                 ? "Two fresh wallets are created for this investment. The 10/90 split applies to verified private credit after source fees."
@@ -349,7 +351,9 @@ export function DepositJourneyScreen({
       )}
       {paused && !v.preparing && (
         <Typography accessibilityRole="alert">
-          {depositPauseCopy[row.pauseReason ?? "recoveryRequired"]}
+          {row.pauseReason === "uneconomicAmount" && row.message
+            ? row.message
+            : depositPauseCopy[row.pauseReason ?? "recoveryRequired"]}
         </Typography>
       )}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}

@@ -42,6 +42,19 @@ const ethereum: EarnIntent = {
   })) as EarnIntent["destinations"],
 };
 
+test("historical investments accept saved legacy receipts and new shared-account receipts", () => {
+  const shared = "0x" + "8".repeat(40);
+  const intent = { ...hoodIntent, returnConfidentialAddress: shared };
+  for (const address of [hoodIntent.confidentialAddress, shared]) {
+    const row = {
+      ...minimum(),
+      minimumReturnReceipt: { ...receipt(), confidentialAddress: address },
+    };
+    const parsed = parseSponsoredOperations([row], intent)[0]!;
+    expect(assertReturnCredits([parsed], intent)).toEqual(["return_1"]);
+  }
+});
+
 test("native minimum returns preserve historical observation without becoming exact credit", () => {
   const row = parseSponsoredOperations([minimum()], hoodIntent)[0]!;
   expect(row).toMatchObject({

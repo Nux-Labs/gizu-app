@@ -119,6 +119,13 @@ internal fun sponsoredSettlementPublic(row: JSONObject): Map<String, Any> = buil
   put("operationScoped", true)
 }
 
+internal fun sponsoredSettlementRequestHeaders(operation: JSONObject?): Map<String, String> =
+  buildMap {
+    val capability = sponsoredSettlementCapability(operation)
+    put("x-gizu-settlement-proof", capability)
+    if (capability == "minimum-return-v1") put("x-gizu-return-history-recovery", "v1")
+  }
+
 internal suspend fun readNativeSponsoredSettlement(
   auth: EarnReadAuthentication,
   expected: JSONObject,
@@ -138,7 +145,7 @@ internal suspend fun readNativeSponsoredSettlement(
   val response =
     NativeRpcTransport(
         "$EARN_NATIVE_BACKEND/settlement",
-        requestHeaders = mapOf("x-gizu-settlement-proof" to capability),
+        requestHeaders = sponsoredSettlementRequestHeaders(operation),
       )
       .post(request.toString())
   return if (capability == "minimum-return-v1")
@@ -154,6 +161,7 @@ internal suspend fun readNativeSponsoredSettlement(
 internal suspend fun nativeCycleReadAuth(
   store: WalletStore,
   authority: () -> Unit,
+  address: String? = null,
 ): EarnReadAuthentication {
   authority()
   val salt = ConfidentialBalance().salt()
@@ -162,7 +170,14 @@ internal suspend fun nativeCycleReadAuth(
   authority()
   return store.load().use { record ->
     requireSponsoredWallet(record, record.id)
-    cycleReadAuth(record, salt, random, started.toULong(), System.currentTimeMillis().toULong())
+    cycleReadAuth(
+      record,
+      salt,
+      random,
+      started.toULong(),
+      System.currentTimeMillis().toULong(),
+      address ?: cycleConfidential(record),
+    )
   }
 }
 

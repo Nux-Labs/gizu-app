@@ -14,6 +14,7 @@ internal fun assertCashoutCanStart(
     "Complete wallet recovery before withdrawing"
   }
   val key = { checkNotNull(AndroidWalletKeys().existing()) }
+  requireNoPendingSharedCredit(context, record)
   fun file(name: String) =
     AndroidWalletFile(context, "gizu-earn-$name-${record.journalId}.enc", 4 * 1024 * 1024)
   assertNoPendingPrivateWork(
@@ -42,6 +43,10 @@ internal fun assertCashoutCanStart(
 internal fun assertSavedSwapPrivateWorkFinished(state: JSONObject) {
   if (state.getJSONObject("step").getString("step") == "done") return
   check(state.optBoolean("cancelled")) { "Reconcile the saved swap before withdrawing from Gizu" }
+  val data = state.getJSONObject("data")
+  check(data.isNull("signedOperation") || !data.isNull("creditBasis")) {
+    "A cancelled swap has signed funding whose private credit must be reconciled"
+  }
   val payouts = state.getJSONObject("data").getJSONArray("payouts").objects()
   check(payouts.none { !it.isNull("signed") || !it.isNull("intentHash") }) {
     "A cancelled swap retains a signed private payout; recover that payout before withdrawing from Gizu"

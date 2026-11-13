@@ -29,6 +29,18 @@ function setup() {
     owner: { walletId, address: source },
   };
 }
+test("native shared return identity survives decoding and cannot alias a public destination", async () => {
+  const { native, service, owner } = setup();
+  const shared = "0x" + "8".repeat(40);
+  native.getEarnIntent.mockResolvedValue({ ...descriptor, returnConfidentialAddress: shared });
+  expect(await service.load(owner)).toMatchObject({ returnConfidentialAddress: shared });
+  native.getEarnIntent.mockResolvedValue({
+    ...descriptor,
+    returnConfidentialAddress: descriptor.destinations[1]!.address,
+  });
+  await expect(service.load(owner)).rejects.toThrow();
+});
+
 test("native intent returns two bound public destinations without any signing call", async () => {
   const { native, service, owner } = setup();
   expect(await service.prepare(owner, "ethereum-usdc")).toEqual(descriptor);

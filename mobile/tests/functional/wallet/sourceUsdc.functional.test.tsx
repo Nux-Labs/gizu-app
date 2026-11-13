@@ -153,9 +153,7 @@ test("mainnet deposit keeps the explicit USDC receiving address", async () => {
   await screen.findByLabelText("19.990574 USD");
   await userEvent.press(screen.getByRole("button", { name: "Receive" }));
   expect(await screen.findByRole("header", { name: "Receive" })).toBeVisible();
-  expect(
-    screen.getByText("Swap funding address · Receive USDC on Monad mainnet only."),
-  ).toBeVisible();
+  expect(screen.getByText("Funding address · Receive USDC on Monad mainnet only.")).toBeVisible();
   await userEvent.press(screen.getByRole("button", { name: "Copy account address" }));
   expect(clipboard.copy).toHaveBeenCalledWith(address);
 });
@@ -169,21 +167,40 @@ test("USDC withdrawal never calls the testnet transfer signer", async () => {
   expect(transfers.history).not.toHaveBeenCalled();
 });
 
-test("failed native portfolio refresh preserves the prior balance until a fresh snapshot", async () => {
+test("a failed refresh keeps the prior balance with a quiet refresh instead of an error", async () => {
   const { portfolio } = setup();
   await open();
   await screen.findByLabelText("19.990574 USD");
   portfolio.getMainnetPortfolio.mockRejectedValueOnce(new Error("secret-sentinel provider error"));
   fireEvent(screen.UNSAFE_getByType(RefreshControl), "refresh");
-  expect(await screen.findByText(/Previously loaded balances may be stale/)).toBeVisible();
-  expect(screen.queryByText(/secret-sentinel/)).toBeNull();
-  fireEvent.press(screen.getByRole("button", { name: "Error details", expanded: false }));
-  expect(screen.getByText("Code: PORTFOLIO_READ_FAILED")).toBeVisible();
-  expect(screen.queryByText(/secret-sentinel/)).toBeNull();
+  expect(await screen.findByText("Showing your last known balance.")).toBeVisible();
+  expect(screen.queryByText("Couldn’t refresh your balance.")).toBeNull();
+  expect(screen.queryByText(/PORTFOLIO_READ_FAILED|secret-sentinel/)).toBeNull();
   expect(screen.getByLabelText("19.990574 USD")).toBeVisible();
   portfolio.getMainnetPortfolio.mockResolvedValue(mainnetPortfolio(walletId, address, "0"));
-  fireEvent.press(screen.getByRole("button", { name: "Retry balance" }));
+  fireEvent.press(screen.getByRole("button", { name: "Refresh balance" }));
   expect(await screen.findByLabelText("0 USD")).toBeVisible();
+  expect(screen.queryByText("Showing your last known balance.")).toBeNull();
+});
+
+test("a first balance read that fails shows a refreshable skeleton, not an error", async () => {
+  const { portfolio } = setup();
+  const pending = deferred<import("@/domain/wallet/storedSigner").MainnetPortfolioSnapshot>();
+  portfolio.getMainnetPortfolio.mockReturnValueOnce(pending.promise);
+  await open();
+  expect(await screen.findByLabelText("Loading your balance")).toBeVisible();
+  await act(async () => pending.reject(new Error("secret-sentinel provider error")));
+  expect(await screen.findByLabelText("Balance not updated yet")).toBeVisible();
+  expect(screen.getByRole("header", { name: "Earn" })).toBeVisible();
+  expect(screen.queryByText("Holdings tools")).toBeNull();
+  expect(readHoldings).not.toHaveBeenCalled();
+  expect(screen.getByText("Your balance is taking longer than usual.")).toBeVisible();
+  expect(screen.queryByText("Couldn’t refresh your balance.")).toBeNull();
+  expect(screen.queryByText(/PORTFOLIO_READ_FAILED|secret-sentinel/)).toBeNull();
+  portfolio.getMainnetPortfolio.mockResolvedValue(mainnetPortfolio(walletId, address));
+  fireEvent.press(screen.getByRole("button", { name: "Refresh balance" }));
+  expect(await screen.findByLabelText("19.990574 USD")).toBeVisible();
+  expect(screen.queryByLabelText("Balance not updated yet")).toBeNull();
 });
 
 test("disconnect ignores late native snapshots from the previous session", async () => {
@@ -212,7 +229,8 @@ test("a settled incomplete native cache is retryable and never exposes zero as s
     syncPending: true,
   });
   await open();
-  expect(await screen.findByRole("button", { name: "Retry balance" })).toBeVisible();
+  expect(await screen.findByLabelText("Balance not updated yet")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refresh balance" })).toBeVisible();
   expect(screen.queryByLabelText("Loading your balance")).toBeNull();
   expect(screen.queryByLabelText("0 USD")).toBeNull();
   await openEarnLink();
@@ -599,40 +617,49 @@ function boughtStock() {
   };
 }
 
-test("a stock bought with Swap shows its catalog name and logo instead of its address", async () => {
-  const list = jest.spyOn(tokenCatalogService, "list").mockResolvedValue({
-    list: [
-      {
-        chainId: 4663,
-        address: "0xc72b96e0E48ecd4DC75E1e45396e26300BC39681",
-        symbol: "INTC",
-        name: "Intel • Robinhood Token",
-        decimals: 18,
-        logoURI: "https://example.com/intc.png",
-        category: "rwa",
-        issuer: "Robinhood",
-        swapListed: true,
-        fusionStatus: "quote-required",
-      },
-    ],
-    page: 0,
-    items: 20,
-    total: 1,
-  });
-  const { portfolio } = setup();
-  portfolio.getMainnetPortfolio.mockResolvedValue(boughtStock());
-  await open();
-  const row = await screen.findByRole("button", { name: "INTC holding details" });
-  expect(screen.getByLabelText("INTC logo")).toBeVisible();
-  expect(screen.getByText("0.0025 INTC")).toBeVisible();
-  expect(screen.queryByText(/Token c39681/)).toBeNull();
-  fireEvent.press(row);
-  expect(screen.getByText("Intel")).toBeVisible();
-  expect(list).toHaveBeenCalledWith(
-    { chainId: 4663, category: "all", search: intc, page: 0 },
-    expect.anything(),
-  );
-});
+test.each([false, true])(
+  "a stock bought with Swap keeps its name and logo with private access locked=%s",
+  async (locked) => {
+    const list = jest.spyOn(tokenCatalogService, "list").mockResolvedValue({
+      list: [
+        {
+          chainId: 4663,
+          address: "0xc72b96e0E48ecd4DC75E1e45396e26300BC39681",
+          symbol: "INTC",
+          name: "Intel • Robinhood Token",
+          decimals: 18,
+          logoURI: "https://example.com/intc.png",
+          category: "rwa",
+          issuer: "Robinhood",
+          swapListed: true,
+          fusionStatus: "quote-required",
+        },
+      ],
+      page: 0,
+      items: 20,
+      total: 1,
+    });
+    const { portfolio } = setup();
+    portfolio.getMainnetPortfolio.mockResolvedValue({
+      ...boughtStock(),
+      confidentialReadState: locked ? "locked" : "ready",
+    });
+    await open();
+    const row = await screen.findByRole("button", { name: "INTC holding details" });
+    if (locked)
+      expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
+    else expect(screen.queryByRole("button", { name: "Unlock private balance" })).toBeNull();
+    expect(screen.getByLabelText("INTC logo")).toBeVisible();
+    expect(screen.getByText("0.0025 INTC")).toBeVisible();
+    expect(screen.queryByText(/Token c39681/)).toBeNull();
+    fireEvent.press(row);
+    expect(screen.getByText("Intel")).toBeVisible();
+    expect(list).toHaveBeenCalledWith(
+      { chainId: 4663, category: "all", search: intc, page: 0 },
+      expect.anything(),
+    );
+  },
+);
 
 test("a stock the catalog cannot name keeps its native label and the rest of Home", async () => {
   jest.spyOn(tokenCatalogService, "list").mockRejectedValue(new Error("offline"));
@@ -667,7 +694,7 @@ test("a locked private balance explains wallet unlock without claiming a provide
     ],
   });
   await open();
-  expect(screen.getByRole("button", { name: "Refresh private balance" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Unlock private balance" })).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "USDC (private) holding details" }));
   expect(screen.getByText("Refresh to check your private USDC.")).toBeVisible();
   expect(screen.queryByText("USDC (private) balance unavailable. Refresh to retry.")).toBeNull();

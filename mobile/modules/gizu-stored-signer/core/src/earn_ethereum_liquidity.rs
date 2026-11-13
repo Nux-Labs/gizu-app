@@ -7,7 +7,6 @@
 use crate::{NativeEarnQuoteBinding, NativeSignedEarnTransaction, SignerError, address};
 use alloy_consensus::{SignableTransaction, TxEip1559, TxLegacy};
 use alloy_primitives::{Address, B256, Signature, TxKind, U256, keccak256};
-use bip32::XPrv;
 use bip39::{Language, Mnemonic};
 use serde::Deserialize;
 use std::{
@@ -169,7 +168,11 @@ impl Authority {
                 .private_key()
                 .verifying_key(),
         );
-        let confidential = address(derive(&seed, cycle_index, 2)?.private_key().verifying_key());
+        let confidential = address(
+            crate::earn_confidential_key(&seed, 1, cycle_index, c)?
+                .private_key()
+                .verifying_key(),
+        );
         if addr(expected)? != addr(&owner)? || addr(c)? != addr(&confidential)? {
             return Err(SignerError::InvalidInput);
         }
@@ -842,9 +845,6 @@ fn nonzero_hash(s: &str) -> Result<(), SignerError> {
         return Err(SignerError::InvalidInput);
     }
     Ok(())
-}
-fn derive(seed: &[u8; 64], cycle_index: u32, role: u8) -> Result<XPrv, SignerError> {
-    crate::earn_cycle_key(seed, 1, cycle_index, role)
 }
 fn signature(
     seed: &[u8; 64],
@@ -2438,6 +2438,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn historical_investment_can_return_to_shared_account_two() {
+        let mut p = tx_proposal("returnUsdc");
+        p["confidentialAccount"] = json!(crate::derive_account_addresses(vec![0; 32]).unwrap()[2]);
+        let operation =
+            EthereumLiquidityTransactionOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        let mut q = return_proof(&p);
+        q.confidential_account = p["confidentialAccount"].as_str().unwrap().into();
+        operation
+            .prepare(7, return_state("returnUsdc"), None, Some(q))
+            .unwrap();
+        operation
+            .approve(7, operation.review_hash().unwrap())
+            .unwrap();
+        assert!(operation.sign(7, return_state("returnUsdc")).is_ok());
     }
 
     #[test]

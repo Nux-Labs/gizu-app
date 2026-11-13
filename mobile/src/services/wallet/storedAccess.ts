@@ -11,6 +11,7 @@ export type StoredWalletBridge = Pick<
   | "restoreWallet"
   | "getSwapDeposit"
   | "lock"
+  | "cancelWalletOperation"
 >;
 
 async function session(

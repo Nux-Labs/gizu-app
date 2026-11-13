@@ -24,7 +24,11 @@ export function WalletBackupAction() {
   useEffect(
     () => () => {
       attempt.current++;
-      if (running.current) getStoredSigner()?.lock();
+      if (running.current) {
+        const signer = getStoredSigner();
+        if (signer?.cancelWalletOperation) signer.cancelWalletOperation();
+        else signer?.lock();
+      }
     },
     [],
   );

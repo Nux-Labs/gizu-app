@@ -1,16 +1,38 @@
 import { investmentDestination } from "@/domain/earn/distribution";
 import { assertNotAborted } from "./abort";
-import type { EarnIntent } from "@/domain/earn/types";
+import { earnReturnAddress, type EarnIntent } from "@/domain/earn/types";
 import {
   parseRobinhoodPlan,
   robinhoodProposal,
   type EarnRobinhoodService,
+  type RobinhoodKind,
 } from "@/domain/earn/robinhoodExecution";
 import { parseSponsoredOperations, type SponsoredOperation } from "@/domain/earn/sourceFunding";
 import {
   getSignerCapabilities,
   getStoredEarnSponsoredSigner,
 } from "@/services/wallet/nativeBridge";
+
+async function listPortion(
+  signer: {
+    listEarnSponsoredOperations(walletId: string): Promise<unknown>;
+    listEarnCycleOperations?(
+      walletId: string,
+      cycleIndex: number,
+      investmentSlot: number,
+    ): Promise<unknown>;
+  },
+  intent: EarnIntent,
+) {
+  // The selected wallet is not the portion Home is checking. Read that portion directly.
+  if (signer.listEarnCycleOperations)
+    return signer.listEarnCycleOperations(
+      intent.walletId,
+      intent.cycleIndex ?? 0,
+      intent.distribution ? (intent.investmentSlot ?? 0) : -1,
+    );
+  return signer.listEarnSponsoredOperations(intent.walletId);
+}
 export function createEarnRobinhoodService(
   baseUrl: string,
   bridgeFactory = getStoredEarnSponsoredSigner,
@@ -50,81 +72,82 @@ export function createEarnRobinhoodService(
     supported(intent);
     operation(op, intent);
   }
+  async function quote(intent: EarnIntent, kind: RobinhoodKind, signal: AbortSignal) {
+    supported(intent);
+    if (!baseUrl) throw new Error("Robinhood planning is not configured.");
+    assertNotAborted(signal);
+    const operationId = `hood_${kind}_${now()}_${Math.random().toString(36).slice(2, 10)}`,
+      revision = 1,
+      controller = new AbortController(),
+      abort = () => controller.abort();
+    signal.addEventListener("abort", abort);
+    const timeout = setTimeout(abort, 60000);
+    try {
+      const response = await fetch(
+        baseUrl.replace(/\/$/, "") +
+          `/v1/earn/robinhood/${kind === "hoodDeposit" ? "deposit" : kind === "hoodRedeemAll" ? "withdrawal" : "return"}-plan`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            owner: investmentDestination(intent).address,
+            operationId,
+            revision,
+            ...(kind === "hoodTokenReturn"
+              ? {
+                  confidentialAccount: earnReturnAddress(intent),
+                  ...((await getSignerCapabilities()).earnBalanceDeltaSettlement === true
+                    ? { settlementMode: "balance-delta-v1" }
+                    : {}),
+                }
+              : {}),
+          }),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) {
+        if (response.status === 404)
+          throw new Error("Robinhood planning has not been deployed yet.");
+        if (kind === "hoodTokenReturn") {
+          let code: unknown;
+          try {
+            code = (await response.json())?.code;
+          } catch {
+            /* Keep a safe return-specific message. */
+          }
+          throw new Error(
+            code === "EARN_RETURN_QUOTE_FEE_CHANGED"
+              ? "The private return network fee changed before review. Your USDG remains in the investment wallet. Refresh the return quote; no new vault withdrawal is needed."
+              : "A fresh private USDC return quote could not be verified. Your withdrawn USDG remains in the investment wallet. Refresh before approving the return.",
+          );
+        }
+        if (kind === "hoodRedeemAll") {
+          let body: { code?: unknown; message?: unknown } = {};
+          try {
+            body = await response.json();
+          } catch {
+            /* Keep the withdrawal-plan failure distinguishable from a fee change. */
+          }
+          throw new Error(withdrawalPlanFailure(body.code, body.message));
+        }
+        throw new Error(
+          "Fresh USDG fees, shares and funding could not be verified. Refresh before authorizing.",
+        );
+      }
+      const value = await response.json();
+      assertNotAborted(controller.signal);
+      return parseRobinhoodPlan(value, intent, kind, operationId, revision, now());
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+    }
+  }
   return {
     async available() {
       return (await getSignerCapabilities()).earnSponsoredExecution === true;
     },
     async plan(intent, kind, signal) {
-      return action(async () => {
-        supported(intent);
-        if (!baseUrl) throw new Error("Robinhood planning is not configured.");
-        assertNotAborted(signal);
-        const operationId = `hood_${kind}_${now()}_${Math.random().toString(36).slice(2, 10)}`,
-          revision = 1,
-          controller = new AbortController(),
-          abort = () => controller.abort();
-        signal.addEventListener("abort", abort);
-        const timeout = setTimeout(abort, 60000);
-        try {
-          const response = await fetch(
-            baseUrl.replace(/\/$/, "") +
-              `/v1/earn/robinhood/${kind === "hoodDeposit" ? "deposit" : kind === "hoodRedeemAll" ? "withdrawal" : "return"}-plan`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                owner: investmentDestination(intent).address,
-                operationId,
-                revision,
-                ...(kind === "hoodTokenReturn"
-                  ? {
-                      confidentialAccount: intent.confidentialAddress,
-                      ...((await getSignerCapabilities()).earnBalanceDeltaSettlement === true
-                        ? { settlementMode: "balance-delta-v1" }
-                        : {}),
-                    }
-                  : {}),
-              }),
-              signal: controller.signal,
-            },
-          );
-          if (!response.ok) {
-            if (response.status === 404)
-              throw new Error("Robinhood planning has not been deployed yet.");
-            if (kind === "hoodTokenReturn") {
-              let code: unknown;
-              try {
-                code = (await response.json())?.code;
-              } catch {
-                /* Keep a safe return-specific message. */
-              }
-              throw new Error(
-                code === "EARN_RETURN_QUOTE_FEE_CHANGED"
-                  ? "The private return network fee changed before review. Your USDG remains in the investment wallet. Refresh the return quote; no new vault withdrawal is needed."
-                  : "A fresh private USDC return quote could not be verified. Your withdrawn USDG remains in the investment wallet. Refresh before approving the return.",
-              );
-            }
-            if (kind === "hoodRedeemAll") {
-              let body: { code?: unknown; message?: unknown } = {};
-              try {
-                body = await response.json();
-              } catch {
-                /* Keep the withdrawal-plan failure distinguishable from a fee change. */
-              }
-              throw new Error(withdrawalPlanFailure(body.code, body.message));
-            }
-            throw new Error(
-              "Fresh USDG fees, shares and funding could not be verified. Refresh before authorizing.",
-            );
-          }
-          const value = await response.json();
-          assertNotAborted(controller.signal);
-          return parseRobinhoodPlan(value, intent, kind, operationId, revision, now());
-        } finally {
-          clearTimeout(timeout);
-          signal.removeEventListener("abort", abort);
-        }
-      });
+      return action(() => quote(intent, kind, signal));
     },
     async execute(intent, plan) {
       supported(intent);
@@ -140,13 +163,45 @@ export function createEarnRobinhoodService(
         return op;
       });
     },
+    async finishWithdrawal(intent, redeem, signal) {
+      supported(intent);
+      if (redeem.kind !== "hoodRedeemAll")
+        throw new Error("Only the vault withdrawal can continue into the private return.");
+      return action(async () => {
+        const started = now();
+        let row = redeem;
+        const signer = bridge();
+        while (
+          row.status !== "withdrawn" &&
+          row.status !== "reverted" &&
+          row.status !== "residualShares"
+        ) {
+          if (now() - started > 840000) return { row, signed: null };
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          assertNotAborted(signal);
+          const saved = parseSponsoredOperations(await listPortion(signer, intent), intent).find(
+            (op) => op.operationId === redeem.operationId,
+          );
+          if (saved) row = saved;
+        }
+        if (row.status !== "withdrawn" || typeof signer.continueEarnWithdrawal !== "function")
+          return { row, signed: null };
+        const next = await quote(intent, "hoodTokenReturn", signal);
+        const signed = operation(
+          await signer.continueEarnWithdrawal(robinhoodProposal(next, intent, now())),
+          intent,
+        );
+        if (signed.kind !== "hoodTokenReturn")
+          throw new Error("Native Robinhood approval binding changed. Check saved progress.");
+        return { row, signed };
+      });
+    },
     async list(intent) {
       supported(intent);
       return action(async () =>
-        parseSponsoredOperations(
-          await bridge().listEarnSponsoredOperations(intent.walletId),
-          intent,
-        ).filter((op) => op.kind !== "sourceFunding"),
+        parseSponsoredOperations(await listPortion(bridge(), intent), intent).filter(
+          (op) => op.kind !== "sourceFunding",
+        ),
       );
     },
     async resume(intent, op) {

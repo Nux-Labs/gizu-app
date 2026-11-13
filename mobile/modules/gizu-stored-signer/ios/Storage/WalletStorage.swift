@@ -106,11 +106,18 @@ internal final class WalletStorage {
       && current.journalId == expected.journalId && current.entropy == expected.entropy)
     try require(current.earnChain == 0 || current.earnChain == chain || current.earnRecoveryRequired)
     if current.earnChain == chain { return }
+    var cycles = current.earnCycles
+    if current.earnChain == 0 && !current.earnRecoveryRequired && cycles == "[]" {
+      let profile = chain == 1 ? "ethereum-usdc" : "robinhood-usdg"
+      let rows: [[String: Any]] = [["cycleIndex": 0, "chainId": chain,
+        "privateAccount": "shared", "intentId": "earn-v1:\(current.id.lowercased()):\(profile)"]]
+      cycles = String(decoding: try JSONSerialization.data(withJSONObject: rows), as: UTF8.self)
+    }
     let updated = try WalletRecord(
       id: current.id, credential: current.credential, entropy: Data(current.entropy),
       verified: true, journalId: current.journalId, roleRegistry: current.roleRegistry,
       earnChain: chain, earnRecoveryRequired: current.earnRecoveryRequired,
-      earnCycleIndex: current.earnCycleIndex, earnCycles: current.earnCycles)
+      earnCycleIndex: current.earnCycleIndex, earnCycles: cycles)
     defer { updated.close() }
     try save(updated)
   }

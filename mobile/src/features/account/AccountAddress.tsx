@@ -76,7 +76,7 @@ export function AccountAddress({ leading, heading, compact = false }: Props) {
       {/* Functional safety note: which asset the address may receive. */}
       <Typography variant="micro" className="!text-fg-35">
         {session?.kind === "mainnet"
-          ? "Swap funding address · Receive USDC on Monad mainnet only."
+          ? "Funding address · Receive USDC on Monad mainnet only."
           : native
             ? "Receive Monad testnet MON only."
             : "This address cannot receive funds."}

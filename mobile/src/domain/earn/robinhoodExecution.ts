@@ -1,6 +1,6 @@
 import { investmentDestination, investmentSlotField } from "@/domain/earn/distribution";
 import { parseEarnFeeProof, type EarnFeeProof } from "./policy";
-import { earnProfiles, type EarnIntent } from "./types";
+import { earnProfiles, earnReturnAddress, type EarnIntent } from "./types";
 import { ceilDiv } from "./policy";
 import { earnAtoms, earnObject } from "./vaultExecution";
 import {
@@ -74,6 +74,11 @@ export interface EarnRobinhoodService {
   available(): Promise<boolean>;
   plan(intent: EarnIntent, kind: RobinhoodKind, signal: AbortSignal): Promise<RobinhoodPlan>;
   execute(intent: EarnIntent, plan: RobinhoodPlan): Promise<SponsoredOperation>;
+  finishWithdrawal?(
+    intent: EarnIntent,
+    redeem: SponsoredOperation,
+    signal: AbortSignal,
+  ): Promise<{ row: SponsoredOperation; signed: SponsoredOperation | null }>;
   list(intent: EarnIntent): Promise<SponsoredOperation[]>;
   resume(intent: EarnIntent, op: SponsoredOperation): Promise<SponsoredOperation>;
   reconcileCredit(intent: EarnIntent, op: SponsoredOperation): Promise<SponsoredOperation>;
@@ -345,10 +350,10 @@ export function parseRobinhoodPlan(
         q.chainId !== 4663 ||
         !same(q.token, profile.token) ||
         q.amountAtoms !== amount ||
-        !same(q.confidentialAccount, intent.confidentialAddress) ||
+        !same(q.confidentialAccount, earnReturnAddress(intent)) ||
         !same(q.refundOwner, expected) ||
         same(recipient, expected) ||
-        same(recipient, intent.confidentialAddress) ||
+        same(recipient, earnReturnAddress(intent)) ||
         !Number.isSafeInteger(q.providerFeeBps) ||
         Number(q.providerFeeBps) < 0 ||
         Number(q.providerFeeBps) > 100 ||
@@ -362,7 +367,7 @@ export function parseRobinhoodPlan(
       route = {
         quoteId: q.quoteId as string,
         recipient,
-        confidentialAccount: intent.confidentialAddress,
+        confidentialAccount: earnReturnAddress(intent),
         refundOwner: expected,
         expiresAt: expiry,
         minimumCreditAtoms: minimum,

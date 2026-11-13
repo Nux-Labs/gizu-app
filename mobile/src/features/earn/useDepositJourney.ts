@@ -18,7 +18,8 @@ export const depositPauseCopy: Record<DepositPauseCode, string> = {
   sponsorshipUnavailable:
     "Gas sponsorship is unavailable. Saved transactions remain tracked; review the remaining steps to retry.",
   insufficientFunds: "Your available USDC does not cover this budget and gas.",
-  uneconomicAmount: "This amount is too small to cover routing, gas and the withdrawal reserve.",
+  uneconomicAmount:
+    "This amount cannot be routed. Review the deposit again to check the usable private amount and route minimums.",
   termsChanged:
     "The live terms changed. Saved transactions remain tracked; review the remaining limits before continuing.",
   approvalExpired: "Approval ended. Review the remaining steps to continue.",
@@ -26,6 +27,8 @@ export const depositPauseCopy: Record<DepositPauseCode, string> = {
   submissionUnknown:
     "A submitted transaction needs verification. Check saved progress before retrying.",
   recoveryRequired: "Saved activity needs recovery before another deposit can be approved.",
+  savedDepositOpen:
+    "Another saved deposit is still open. Finish or discard it before approving new spending.",
   unsupportedCapability: "This build does not support this deposit. Update the native app.",
   cancelled: "Approval stopped. Submitted transactions remain tracked.",
 };
@@ -342,6 +345,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
             "quoteUnavailable",
             "insufficientFunds",
             "uneconomicAmount",
+            "savedDepositOpen",
           ].includes(snapshot.pauseReason ?? "") ||
             (!snapshot.review &&
               ["cancelled", "approvalExpired"].includes(snapshot.pauseReason ?? "")))));
@@ -368,6 +372,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     editable,
     canChangeAmount:
       editable &&
+      snapshot?.pauseReason !== "savedDepositOpen" &&
       !!snapshot?.distribution &&
       !!service.discardDraft &&
       snapshot.completedSteps.length === 0 &&

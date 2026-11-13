@@ -7,7 +7,7 @@ import org.junit.Test
 
 class EarnDepositRemainingTest {
   @Test
-  fun failedVaultFeePreviewAfterDeliveryKeepsItsStageAndAllSavedChildren() = runBlocking {
+  fun deliveredUsdgKeepsApprovedVaultBoundsWhenFeePreviewIsUnavailable() = runBlocking {
     DepositFixtures.record().use { record ->
       val journal = testDepositJournal()
       val root = journal.loadOrCreate(record, 4663, null)
@@ -55,19 +55,19 @@ class EarnDepositRemainingTest {
           { error("No vault operation has been prepared") },
           { 100000 },
         )
-      try {
-        remaining.refresh(record, id, journal.get(id).getInt("revision"))
-        fail("Expected fee preview error")
-      } catch (failure: EarnGatewayFailure) {
-        assertEquals("EARN_DEPOSIT_PREVIEW_UNAVAILABLE", failure.code)
-      }
+      val next = remaining.refresh(record, id, journal.get(id).getInt("revision"))
       val saved = journal.get(id)
-      assertEquals("previewUnavailable", saved.getString("pauseReason"))
+      assertEquals("providerUnavailable", saved.getString("pauseReason"))
       assertEquals(
         "paid_invest",
         saved.getJSONObject("children").getJSONArray("invest").getString(0),
       )
-      assertTrue(nativeJsonEqual(review, saved.getJSONObject("review")))
+      assertTrue(
+        nativeJsonEqual(
+          review.getJSONObject("deposit"),
+          next.getJSONObject("review").getJSONObject("deposit"),
+        )
+      )
     }
   }
 

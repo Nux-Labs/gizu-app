@@ -25,6 +25,7 @@ export type DepositPauseCode =
   | "settlementPending"
   | "submissionUnknown"
   | "recoveryRequired"
+  | "savedDepositOpen"
   | "unsupportedCapability"
   | "cancelled";
 export type DepositLegReview = {
@@ -163,6 +164,7 @@ const pauses: DepositPauseCode[] = [
   "settlementPending",
   "submissionUnknown",
   "recoveryRequired",
+  "savedDepositOpen",
   "unsupportedCapability",
   "cancelled",
 ];

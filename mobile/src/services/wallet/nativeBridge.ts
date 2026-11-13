@@ -47,7 +47,8 @@ function nativeModule(): StoredSignerContract | null {
       const value = Reflect.get(target, property);
       if (typeof value !== "function" || typeof property !== "string") return value;
       if (property === "getCapabilities") return value.bind(target);
-      if (property === "lock") return () => calls.lock(() => value.call(target));
+      if (property === "lock" || property === "cancelWalletOperation")
+        return () => calls.lock(() => value.call(target));
       return (...args: unknown[]) => {
         const work = () => value.apply(target, args);
         if (
@@ -189,6 +190,11 @@ export function getStoredWalletRecoverySigner(): StoredWalletRecoveryBridge | nu
     cancelWalletDiscovery: (id) => invoke("cancelWalletDiscovery", id),
   };
 }
+/** Cancel operation authority without ending the balance-only session. Older builds lock safely. */
+function cancelNativeOperation(native: StoredSignerContract) {
+  if (typeof native.cancelWalletOperation === "function") native.cancelWalletOperation();
+  else native.lock();
+}
 export function getStoredSigner(): StoredWalletBridge | null {
   const native = nativeModule();
   if (!native) return null;
@@ -218,6 +224,10 @@ export function getStoredSigner(): StoredWalletBridge | null {
     async restoreWallet() {
       await checked(native, "backup");
       return native.restoreWallet();
+    },
+    cancelWalletOperation: () => {
+      authorizationGeneration++;
+      cancelNativeOperation(native);
     },
     lock: () => {
       authorizationGeneration++;
@@ -260,7 +270,7 @@ export function getStoredTransferSigner(): StoredTransferBridge | null {
     },
     lock: () => {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }
@@ -358,7 +368,7 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
     },
     lock: () => {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }
@@ -401,7 +411,7 @@ export function getStoredEarnPayoutSigner() {
     },
     lock() {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }
@@ -459,7 +469,7 @@ export function getStoredEarnLiquiditySigner() {
     },
     lock() {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }
@@ -495,7 +505,7 @@ export function getStoredEarnVaultSigner() {
     },
     lock() {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }
@@ -569,7 +579,7 @@ export function getStoredEarnSigner() {
     },
     lock() {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }
@@ -584,7 +594,7 @@ export function getStoredEarnBalanceSigner() {
     },
     lock() {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }
@@ -736,10 +746,34 @@ export function getStoredEarnSponsoredSigner() {
       await checked(native, "earnSponsoredExecution");
       return execute(request);
     },
+    ...(native.continueEarnWithdrawal
+      ? {
+          async continueEarnWithdrawal(
+            request: import("@/domain/earn/robinhoodExecution").RobinhoodRequest,
+          ) {
+            await checked(native, "earnSponsoredExecution");
+            return native.continueEarnWithdrawal!(request);
+          },
+        }
+      : {}),
     async listEarnSponsoredOperations(walletId: string) {
       await checked(native, "earnSponsoredExecution");
       return readNative(() => list(walletId));
     },
+    ...(native.listEarnCycleOperations
+      ? {
+          async listEarnCycleOperations(
+            walletId: string,
+            cycleIndex: number,
+            investmentSlot: number,
+          ) {
+            await checked(native, "earnSponsoredExecution");
+            return readNative(() =>
+              native.listEarnCycleOperations!(walletId, cycleIndex, investmentSlot),
+            );
+          },
+        }
+      : {}),
     async resumeEarnSponsoredOperation(walletId: string, id: string, revision: number) {
       await checked(native, "earnSponsoredExecution");
       return resume(walletId, id, revision);
@@ -754,7 +788,7 @@ export function getStoredEarnSponsoredSigner() {
     },
     lock() {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }
@@ -792,7 +826,7 @@ export function getStoredEarnWithdrawalSigner() {
     },
     lock() {
       authorizationGeneration++;
-      native.lock();
+      cancelNativeOperation(native);
     },
   };
 }

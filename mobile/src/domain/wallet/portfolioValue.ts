@@ -89,6 +89,17 @@ export function portfolioPublicUsdcAtoms(snapshot: MainnetPortfolioSnapshot): st
     : snapshot.totalAtoms;
 }
 
+/** The private USDC figure already shown. A missing observation is not zero. */
+export function portfolioPrivateUsdcAtoms(
+  snapshot: MainnetPortfolioSnapshot | null | undefined,
+): string | null {
+  const asset = snapshot?.ownedAssets?.find(
+    (row) => row.chainId === 143 && row.token.toLowerCase() === "confidential:monad-usdc",
+  );
+  const amount = asset ? portfolioAssetAmount(asset) : null;
+  return typeof amount === "string" && /^(0|[1-9]\d*)$/.test(amount) ? amount : null;
+}
+
 export function portfolioUsdcBalance(snapshot: MainnetPortfolioSnapshot) {
   const privateCash = canonicalRows(snapshot.ownedAssets ?? []).find(
     (row) => row.chainId === 143 && row.token.toLowerCase() === "confidential:monad-usdc",

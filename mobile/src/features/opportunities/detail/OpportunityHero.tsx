@@ -20,12 +20,14 @@ export function OpportunityHero({
   history,
   onDeposit,
   onWithdraw,
+  canWithdraw = true,
   position,
 }: {
   opportunity: OpportunityDetail;
   history: TvlLoad;
   onDeposit: () => void;
   onWithdraw: () => void;
+  canWithdraw?: boolean;
   position?: OwnedPortfolioPosition | null;
 }) {
   // Remeasure native text after Dynamic Type changes.
@@ -121,7 +123,7 @@ export function OpportunityHero({
               <Button
                 label="Withdraw"
                 variant="secondary"
-                disabled={!depositAvailable}
+                disabled={!depositAvailable || !canWithdraw}
                 onPress={onWithdraw}
               />
             </View>
