@@ -386,7 +386,12 @@ internal class EarnSponsoredJournal(
               else "residualShares"
             "sourceFunding",
             "hoodTokenReturn" ->
-              if (minimum != null) "minimumReceived"
+              if (
+                p.getString("kind") == "hoodTokenReturn" &&
+                  refundedSponsoredReturn(op, walletId, generation)
+              )
+                "refunded"
+              else if (minimum != null) "minimumReceived"
               else if (op.optJSONObject("settlement")?.optString("status") == "credited") "credited"
               else "awaitingSettlement"
             else -> error("Unsupported sponsored action")
@@ -398,6 +403,19 @@ internal class EarnSponsoredJournal(
       if (minimum != null) {
         put("minimumReturnReceipt", minimumReturnPublic(minimum))
         put("verifiedMinimumAtoms", minimum.getString("verifiedMinimumAtoms"))
+      }
+      if (op.optBoolean("returnRouteReadUnavailable")) put("routeReadUnavailable", true)
+      if (p.optString("kind") == "hoodTokenReturn")
+        op
+          .optJSONObject("stateBinding")
+          ?.optJSONObject("routeProof")
+          ?.optString("minimumCreditAtoms")
+          ?.takeIf { it.isNotEmpty() }
+          ?.let { put("minimumExpectedCreditAtoms", it) }
+      op.optJSONObject("returnRouteProgress")?.let {
+        put("providerRouteStatus", it.getString("providerRouteStatus"))
+        put("routeCheckedAt", it.getLong("observedAtMs"))
+        put("returnPublicUsdgAtoms", it.getString("publicUsdgAtoms"))
       }
       if (op.has("residualShares")) put("residualShares", op.getString("residualShares"))
       if (redeemedUsdg(op)) put("redeemedUsdgAtoms", op.getString("redeemedUsdgAtoms"))

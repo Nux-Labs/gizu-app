@@ -99,7 +99,8 @@ export type SponsoredOperation = {
     | "residualShares"
     | "awaitingSettlement"
     | "minimumReceived"
-    | "credited";
+    | "credited"
+    | "refunded";
   userOperationHash?: string;
   signatureExpired?: boolean;
   transactionHash?: string;
@@ -109,6 +110,18 @@ export type SponsoredOperation = {
   minimumReturnReceipt?: MinimumReturnReceipt;
   residualShares?: string;
   redeemedUsdgAtoms?: string;
+  providerRouteStatus?:
+    | "PENDING_DEPOSIT"
+    | "KNOWN_DEPOSIT_TX"
+    | "INCOMPLETE_DEPOSIT"
+    | "PROCESSING"
+    | "SUCCESS"
+    | "REFUNDED"
+    | "FAILED";
+  routeCheckedAt?: number;
+  routeReadUnavailable?: boolean;
+  minimumExpectedCreditAtoms?: string;
+  returnPublicUsdgAtoms?: string;
 };
 
 function decimalAtoms(value: string | null | undefined): string | null {
@@ -410,6 +423,7 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
         "awaitingSettlement",
         "minimumReceived",
         "credited",
+        "refunded",
       ].includes(String(r.status))
     )
       throw new Error("Native sponsorship journal changed.");
@@ -487,6 +501,38 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
         optional[key] = atoms;
       }
     }
+    if (r.routeReadUnavailable !== undefined) {
+      if (r.routeReadUnavailable !== true) throw new Error("Invalid native route read state.");
+      optional.routeReadUnavailable = true;
+    }
+    if (r.minimumExpectedCreditAtoms !== undefined)
+      optional.minimumExpectedCreditAtoms = earnAtoms(r.minimumExpectedCreditAtoms);
+    if (r.providerRouteStatus !== undefined) {
+      if (
+        ![
+          "PENDING_DEPOSIT",
+          "KNOWN_DEPOSIT_TX",
+          "INCOMPLETE_DEPOSIT",
+          "PROCESSING",
+          "SUCCESS",
+          "REFUNDED",
+          "FAILED",
+        ].includes(String(r.providerRouteStatus)) ||
+        !Number.isSafeInteger(r.routeCheckedAt) ||
+        (r.routeCheckedAt as number) <= 0 ||
+        kind !== "hoodTokenReturn"
+      )
+        throw new Error("Invalid native return progress.");
+      optional.providerRouteStatus =
+        r.providerRouteStatus as SponsoredOperation["providerRouteStatus"];
+      optional.routeCheckedAt = r.routeCheckedAt as number;
+      optional.returnPublicUsdgAtoms = earnAtoms(r.returnPublicUsdgAtoms);
+    }
+    if (
+      r.status === "refunded" &&
+      (optional.providerRouteStatus !== "REFUNDED" || !optional.transactionHash)
+    )
+      throw new Error("Missing native refund outcome.");
     if (r.withdrawAllShares !== undefined) {
       if (r.withdrawAllShares !== true) throw new Error("Invalid native Max mode.");
       optional.withdrawAllShares = true;

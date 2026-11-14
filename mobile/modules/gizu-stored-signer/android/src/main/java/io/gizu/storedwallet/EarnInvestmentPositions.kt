@@ -149,6 +149,7 @@ internal fun earnInvestmentPositions(
           .filter { sponsored.indexOf(it) > latestPrimaryAt }
           .filter {
             !it.optBoolean("cancelled") &&
+              !refundedSponsoredReturn(it, record.id, record.journalId) &&
               it.optString("status") !in setOf("cancelled", "reverted", "nonceCancelled")
           }
       val withdrawalComplete =
@@ -195,10 +196,34 @@ internal fun earnInvestmentPositions(
           val returnSettled =
             currentReturns.isNotEmpty() &&
               currentReturns.all { op -> completedReturnLifecycle(op, record.id, record.journalId) }
+          val lastReturn =
+            returns.lastOrNull {
+              sponsored.indexOf(it) > latestPrimaryAt &&
+                !it.optBoolean("cancelled") &&
+                it.optString("status") !in
+                  setOf("cancelled", "reverted", "nonceCancelled", "expired")
+            }
           when {
             returnPending -> "returning"
             redeemPending -> "confirming"
-            returnFinalized && !returnSettled -> "checking"
+            lastReturn != null &&
+              refundedSponsoredReturn(lastReturn, record.id, record.journalId) -> "refunded"
+            returnFinalized && !returnSettled ->
+              if (
+                last?.getJSONObject("proposal")?.has("withdrawalRequestId") == true ||
+                  lastReturn
+                    ?.optJSONObject("returnRouteProgress")
+                    ?.optString("providerRouteStatus") in
+                    setOf(
+                      "PENDING_DEPOSIT",
+                      "KNOWN_DEPOSIT_TX",
+                      "INCOMPLETE_DEPOSIT",
+                      "PROCESSING",
+                      "FAILED",
+                    )
+              )
+                "returning"
+              else "checking"
             redeemSettled && !returnSettled -> "unfinished"
             else -> null
           }
@@ -226,7 +251,8 @@ internal fun earnInvestmentPositions(
                         source.getString("operationId") &&
                         it.optString("status") !in
                           setOf("cancelled", "reverted", "nonceCancelled", "expired") &&
-                        !it.optBoolean("cancelled")
+                        !it.optBoolean("cancelled") &&
+                        !refundedSponsoredReturn(it, record.id, record.journalId)
                     }
                   if (
                     related.isNotEmpty() &&

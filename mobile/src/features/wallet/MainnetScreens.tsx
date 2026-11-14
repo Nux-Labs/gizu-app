@@ -198,11 +198,13 @@ function OwnedBalances({
   assets,
   onOpenVault,
   onCheckPastReturn,
+  onOpenWithdrawal,
   navigation,
 }: {
   assets: NamedPortfolioAsset[];
   onOpenVault: (profile: EarnProfileId) => void;
   onCheckPastReturn: (profile: EarnProfileId) => void;
+  onOpenWithdrawal: (profile: EarnProfileId) => void;
   navigation: AssetNavigation;
 }) {
   const { snapshot, loading, refresh } = useMainnetWallet();
@@ -221,6 +223,9 @@ function OwnedBalances({
     <View className="gap-5">
       <WithdrawalStatusNotice
         attention={withdrawal.attention}
+        onOpenWithdrawal={
+          withdrawal.activeProfile ? () => onOpenWithdrawal(withdrawal.activeProfile!) : undefined
+        }
         canCheckPastReturn={withdrawal.historyProfile !== undefined}
         onCheckPastReturn={() => {
           if (withdrawal.historyProfile) onCheckPastReturn(withdrawal.historyProfile);
@@ -421,6 +426,7 @@ export function MainnetPortfolioScreen({
       <OwnedBalances
         assets={assets}
         onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })}
+        onOpenWithdrawal={(profileId) => root.navigate("VaultWithdrawal", { profileId })}
         onCheckPastReturn={(profileId) =>
           root.navigate("VaultWithdrawal", { profileId, historyOnly: true })
         }

@@ -15,6 +15,8 @@ import { isVaultWithdrawalPlanError } from "@/services/earn/robinhoodExecution";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
 import { latestPrivateReturn, privateReturnConfirmed } from "@/domain/earn/sourceFunding";
 import { formatUsdc } from "@/domain/wallet/amounts";
+import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
+import { WithdrawalLadder } from "./WithdrawalLadder";
 import { useEarnJournal } from "./useEarnJournal";
 
 const expiredSponsoredSignature = "Saved sponsored deadline expired";
@@ -40,6 +42,7 @@ export function RobinhoodWithdrawalPanel({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const v = useEarnJournal(intent, service);
+  const refreshAfterAction = useOptionalMainnetWallet()?.refreshAfterAction;
   const [plan, setPlan] = useState<RobinhoodPlan | null>(initialPlan ?? null);
   const [expired, setExpired] = useState(false);
   const [details, setDetails] = useState(false);
@@ -74,6 +77,8 @@ export function RobinhoodWithdrawalPanel({
   const returned = latestPrivateReturn(flowRows);
   const awaitingCredit =
     returned && ["returnSubmitted", "awaitingSettlement"].includes(returned.status);
+  const refunded = returned?.status === "refunded";
+  const providerFailed = returned?.providerRouteStatus === "FAILED";
   const returnConfirmed = returned && ["credited", "minimumReceived"].includes(returned.status);
   // A still-valid signature is resumed. Only an already expired exit signature can
   // open a new review, and native code must prove it was never submitted.
@@ -116,6 +121,7 @@ export function RobinhoodWithdrawalPanel({
 
   useEffect(() => {
     if (!privateReturned || !onWithdrawalComplete) return;
+    void refreshAfterAction?.();
     onWithdrawalComplete({
       walletId: intent.walletId,
       intentId: intent.intentId,
@@ -124,13 +130,43 @@ export function RobinhoodWithdrawalPanel({
       expiresAtMs: null,
       settled: returned?.status === "minimumReceived",
     });
-  }, [privateReturned, onWithdrawalComplete, intent, returned?.status]);
+  }, [privateReturned, onWithdrawalComplete, intent, returned?.status, refreshAfterAction]);
 
   useEffect(() => {
     if (!plan) return;
     const timer = setTimeout(() => setExpired(true), Math.max(0, plan.expiresAtMs - Date.now()));
     return () => clearTimeout(timer);
   }, [plan]);
+  useEffect(() => {
+    const watched = awaitingCredit
+      ? returned
+      : saved &&
+          (["pending", "unknown"].includes(saved.status) ||
+            (saved.status === "signed" && saved.userOperationHash && !saved.signatureExpired))
+        ? saved
+        : null;
+    if (!watched || v.loading || v.busy) return;
+    const timer = setTimeout(() => {
+      void v.perform(
+        async (signal) => {
+          const rows = await service.list(intent);
+          if (signal.aborted) throw new Error("Status check stopped.");
+          const next = rows.find((row) => row.operationId === watched.operationId) ?? watched;
+          if (
+            next.kind === "hoodTokenReturn" &&
+            next.providerRouteStatus === "SUCCESS" &&
+            ["returnSubmitted", "awaitingSettlement"].includes(next.status)
+          )
+            return service.reconcileCredit(intent, next);
+          return next;
+        },
+        v.update,
+        false,
+      );
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [awaitingCredit, returned, saved, v, service, intent]);
+
   const review = (kind: RobinhoodKind, previous?: SponsoredOperation) => {
     setPlan(null);
     setExpired(false);
@@ -257,44 +293,104 @@ export function RobinhoodWithdrawalPanel({
               : !v.available
                 ? "Update Gizu to withdraw from this vault. Your investment is still saved."
                 : v.busy
-                  ? plan?.kind === "hoodRedeemAll"
-                    ? "Your vault withdrawal is confirming. Private USDC follows from this approval."
-                    : plan
-                      ? "Waiting for secure approval…"
-                      : "Preparing the next step…"
+                  ? awaitingCredit
+                    ? "Your funds are being sent to your confidential wallet. Waiting for private USDC receipt."
+                    : plan?.kind === "hoodRedeemAll"
+                      ? "Your vault withdrawal is confirming. Private USDC follows from this approval."
+                      : plan
+                        ? "Waiting for secure approval…"
+                        : "Checking withdrawal progress…"
                   : plan
                     ? expired
                       ? "This review has expired. Refresh it to see current fees."
                       : "Check the amounts below, then continue to the secure approval screen."
                     : fresh
                       ? "Your previous review was not completed. Start a fresh review with current fees. No withdrawal transaction has been submitted."
-                      : awaitingCredit
-                        ? "This saved return still needs verification. Checking its status will not withdraw again."
-                        : saved
-                          ? saved.kind === "hoodRedeemAll" && saved.status === "pending"
-                            ? "Your vault withdrawal is confirming. Private USDC follows from this approval."
-                            : saved.kind === "hoodTokenReturn" &&
-                                ["pending", "unknown", "signed"].includes(saved.status)
-                              ? "Returning your USDG to private USDC."
-                              : savedRedeemAfterSettlement
-                                ? expiredSettledRedeem
-                                  ? "Your funds have left the vault. Return them to your private USDC balance next."
-                                  : "A vault signature is still saved. It is checked before the private return."
-                                : replaceExpiredSignature
-                                  ? resignExpiredSignature
-                                  : "Checking your saved transaction"
-                          : privateReturned
-                            ? "Private USDC return verified."
-                            : returnConfirmed
-                              ? "Shielding your balance."
-                              : withdrawn
-                                ? "Your funds have left the vault. Return them to your private USDC balance next."
-                                : redeemable
-                                  ? "Your investment is ready to withdraw."
-                                  : "Check your saved activity to find the next withdrawal step."}
+                      : refunded
+                        ? "Aurora returned your funds. You can try again."
+                        : providerFailed
+                          ? "Aurora could not complete the private return. Your saved transfer is being checked."
+                          : awaitingCredit
+                            ? "Your funds are being sent to your confidential wallet. Waiting for private USDC receipt."
+                            : saved
+                              ? saved.kind === "hoodRedeemAll" && saved.status === "pending"
+                                ? "Your vault withdrawal is confirming. Private USDC follows from this approval."
+                                : saved.kind === "hoodTokenReturn" &&
+                                    ["pending", "unknown", "signed"].includes(saved.status)
+                                  ? "Returning your USDG to private USDC."
+                                  : savedRedeemAfterSettlement
+                                    ? expiredSettledRedeem
+                                      ? "Your funds have left the vault. Return them to your private USDC balance next."
+                                      : "A vault signature is still saved. It is checked before the private return."
+                                    : replaceExpiredSignature
+                                      ? resignExpiredSignature
+                                      : "Checking your saved transaction"
+                              : privateReturned
+                                ? "Private USDC return verified."
+                                : returnConfirmed
+                                  ? "Shielding your balance."
+                                  : withdrawn
+                                    ? "Your funds have left the vault. Return them to your private USDC balance next."
+                                    : redeemable
+                                      ? "Your investment is ready to withdraw."
+                                      : "Check your saved activity to find the next withdrawal step."}
           </Typography>
         </View>
 
+        <WithdrawalLadder
+          withdrawn={withdrawn || Boolean(returned)}
+          quoteReady={plan?.kind === "hoodTokenReturn" || Boolean(returned)}
+          sent={Boolean(
+            !(refunded && plan?.kind === "hoodTokenReturn") &&
+            returned &&
+            [
+              "awaitingSettlement",
+              "returnSubmitted",
+              "minimumReceived",
+              "credited",
+              "refunded",
+            ].includes(returned.status),
+          )}
+          received={privateReturned}
+          paused={
+            ((refunded || providerFailed) && plan?.kind !== "hoodTokenReturn") ||
+            Boolean(v.message) ||
+            Boolean(returned?.routeReadUnavailable)
+          }
+          started={
+            v.busy ||
+            (plan?.kind !== "hoodTokenReturn" && Boolean(returned)) ||
+            Boolean(saved?.userOperationHash) ||
+            (withdrawn && !returned && plan?.kind !== "hoodTokenReturn")
+          }
+        />
+        {returned && (
+          <Typography variant="caption">
+            Sent for confidential conversion: {formatUsdc(returned.amountAtoms)} USDG
+          </Typography>
+        )}
+        {awaitingCredit && returned?.minimumExpectedCreditAtoms && (
+          <Typography>
+            Expected at least {formatUsdc(returned.minimumExpectedCreditAtoms)} private USDC
+          </Typography>
+        )}
+        {returned?.returnPublicUsdgAtoms !== undefined && (
+          <Typography>
+            Available in this investment wallet: {formatUsdc(returned.returnPublicUsdgAtoms)} USDG
+          </Typography>
+        )}
+        {awaitingCredit && returned?.routeReadUnavailable && (
+          <Typography accessibilityRole="alert">
+            Aurora’s latest status is unavailable. Your saved transfer is retained; checking again
+            will not send funds again.
+          </Typography>
+        )}
+        {refunded && (
+          <Typography variant="caption">
+            Your funds are public USDG again. Trying again requests a fresh private-return quote and
+            approval; it does not withdraw from the vault again.
+          </Typography>
+        )}
         {returned?.status === "minimumReceived" && (
           <>
             <Typography>
@@ -377,7 +473,14 @@ export function RobinhoodWithdrawalPanel({
         ) : (
           !v.loading &&
           v.available &&
-          (awaitingCredit ? (
+          (refunded ? (
+            <Button
+              label="Try private return again"
+              disabled={disabled}
+              loading={v.busy}
+              onPress={() => review("hoodTokenReturn")}
+            />
+          ) : awaitingCredit ? (
             <Button
               label="Check private return"
               disabled={disabled}

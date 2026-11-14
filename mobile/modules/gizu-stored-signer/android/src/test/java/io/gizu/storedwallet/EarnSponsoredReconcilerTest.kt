@@ -91,6 +91,44 @@ class EarnSponsoredReconcilerTest {
   }
 
   @Test
+  fun aNativeBoundRefundKeepsItsConfirmedOriginWhenTheProviderForgetsTheReceipt() = runBlocking {
+    val j = setup("hoodTokenReturn")
+    val rpc =
+      Rpc().apply {
+        returning = true
+        found(j)
+      }
+    reconcileEarnSponsoredOperations(j, rpc, rpc, ::topic, { error("Canonical receipt only") })
+    val saved = j.get("op")
+    j.update("op", saved.getInt("revision")) {
+      it.put(
+        "returnRouteProgress",
+        JSONObject()
+          .put("version", 1)
+          .put("providerRouteStatus", "REFUNDED")
+          .put("observedAtMs", 1)
+          .put("publicUsdgAtoms", "1502133")
+          .put("spendingAuthorized", false)
+          .put("nativeBinding", returnCompletionBinding(saved, j.walletId, j.generation)),
+      )
+    }
+    val unavailable =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any =
+          error("A terminal public refund must not reopen its origin")
+      }
+    reconcileEarnSponsoredOperations(
+      j,
+      unavailable,
+      unavailable,
+      ::topic,
+      { error("No state read") },
+    )
+    assertEquals("refunded", j.public(j.get("op"))["status"])
+    assertFalse(completedReturnLifecycle(j.get("op"), j.walletId, j.generation))
+  }
+
+  @Test
   fun aCompletedPrivateReturnNeverReopensWhenTheProviderForgetsItsReceipt() = runBlocking {
     val journal = setup("hoodTokenReturn")
     val rpc =

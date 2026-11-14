@@ -42,7 +42,7 @@ export function createEarnInvestmentPositionsService(
             (typeof row.lastReturnOperationId !== "string" ||
               !/^[-a-zA-Z0-9_]{1,128}$/.test(row.lastReturnOperationId))) ||
           (row.withdrawalAttention !== undefined &&
-            !["confirming", "unfinished", "returning", "checking"].includes(
+            !["confirming", "unfinished", "returning", "checking", "refunded"].includes(
               String(row.withdrawalAttention),
             ))
         )
@@ -82,7 +82,8 @@ export function createEarnInvestmentPositionsService(
           ...(row.withdrawalAttention === "confirming" ||
           row.withdrawalAttention === "unfinished" ||
           row.withdrawalAttention === "returning" ||
-          row.withdrawalAttention === "checking"
+          row.withdrawalAttention === "checking" ||
+          row.withdrawalAttention === "refunded"
             ? { withdrawalAttention: row.withdrawalAttention }
             : {}),
         };

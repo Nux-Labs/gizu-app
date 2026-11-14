@@ -54,8 +54,8 @@ Files: domain/services Robinhood contracts, native bridge, vault screen/controll
 
 - [x] Review affected consumers, run full app/backend/Rust/Kotlin suites, and record all baseline failures.
 - [x] Obtain focused independent review of proposal/source bindings and lifecycle/amount recovery; address concrete findings.
-- [ ] Build release with native hosted mode and api.gizu.io, install preserving data and verify amount UI plus existing balances without signing a live withdrawal.
-- [ ] Commit/push on the current feat branch without co-author; report backend deployment requirement and actual validation limits.
+- [x] Build release with native hosted mode and api.gizu.io, install preserving data and verify amount UI plus existing balances without signing a live withdrawal.
+- [x] Commit/push on the current feat branch without co-author; report backend deployment requirement and actual validation limits.
 
 ## Review corrections
 
@@ -71,6 +71,8 @@ Independent native/UI/backend review found and corrected protected-expiry source
 - Real disposable Robinhood fork: passed at block 113744529, including full and partial redemptions plus source-bounded returns preserving shares. The test uses an explicitly verified fork-only token-balance fixture and a test-only 30-second RPC timeout; production never overrides real balances. Official checksum-verified Anvil v1.8.3 is isolated in /tmp. No live financial transaction was sent.
 - Native expiry regressions first reproduced failed same-source retry, duplicate-source admission and skipped late canonical receipt. Same-nonce replacement and canonical nonce-consumption closure now prevent duplicate credit/outflow and false pending state. A noncanonical expired receipt retains its retired status. Replaced/expired attempts exit automatic polling, reload saved progress, and require fresh review of the winning source; approval is never transferred to a different redemption ID. The final functional/service rerun passed 87 tests.
 
-## Delivery pending
+## Delivery
 
-Release APK built successfully with DEBUG=false, native hosted mode and https://api.gizu.io in the JavaScript bundle. Its certificate matches the existing app. APK SHA-256: `5a390ba5aa88d2216dd4fe1d4c119a0dd027aef2e4ffc3877fcc7c9d73e6926e`. Preserving-data device installation and read-only UI inspection remain pending. ADB currently reports no connected phone; the owner has been asked to reconnect it. Backend changes need owner deployment from this branch before the new amount-capacity endpoint is available on api.gizu.io. No AWS deployment or live financial approval is authorized for this task.
+Commit `35db242` was pushed without a co-author. The release was installed preserving app data on 2026-11-14, the owner deployed its backend, and the production capacity endpoint returned HTTP 200. Normal wallet login, live amount selection, available balance and Max were inspected on device. No withdrawal was signed by the agent.
+
+A subsequent owner-initiated full withdrawal revealed incomplete active-return/refund presentation. Its correction and validation are tracked in [withdrawal progress and refunds](2026-11-14-withdrawal-progress-refunds.md), reusing the existing deposit ladder as requested.

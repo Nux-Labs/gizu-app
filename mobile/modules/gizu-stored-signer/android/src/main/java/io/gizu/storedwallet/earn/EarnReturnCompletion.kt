@@ -22,7 +22,7 @@ internal suspend fun readReturnVaultEmpty(expected: JSONObject, rpc: TransferRpc
  * Lifecycle metadata only. Never use an owner's report as authenticated credit or spending
  * authority.
  */
-private fun returnCompletionBinding(
+internal fun returnCompletionBinding(
   op: JSONObject,
   walletId: String,
   generation: String,

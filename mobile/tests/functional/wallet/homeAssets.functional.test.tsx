@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, userEvent } from "@testing-library/react-native";
+import { fireEvent, render, screen, userEvent, within } from "@testing-library/react-native";
 import { Linking, Platform, RefreshControl } from "react-native";
 import { requireOptionalNativeModule } from "expo";
 import { AppRoot } from "@/application/AppRoot";
@@ -303,4 +303,15 @@ test("a failed refresh preserves the priced stock total with main's quiet recove
   expect(screen.getByText("0.15 USD")).toBeVisible();
   expect(screen.getByRole("button", { name: "Refresh balance" })).toBeEnabled();
   expect(screen.queryByText(/PORTFOLIO_READ_FAILED|private-provider-sentinel/)).toBeNull();
+});
+
+test("public USDG stays identifiable without expanding the holding", async () => {
+  const snapshot = mainnetPortfolio(walletId, address);
+  snapshot.ownedAssets = [
+    { ...stable(usdg, "USDG", "1502133"), valueUsdcAtoms: "1502133", valuationUnavailable: false },
+  ];
+  setup(snapshot);
+  await userEvent.press(await screen.findByRole("button", { name: "Unlock wallet" }));
+  const row = await screen.findByRole("button", { name: "USDG holding details" });
+  expect(within(row).getByText("1.502133 USDG")).toBeOnTheScreen();
 });
