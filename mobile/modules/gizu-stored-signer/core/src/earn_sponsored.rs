@@ -331,18 +331,17 @@ impl SponsoredEarnOperation {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
         };
-        if let Some(id) = &p.withdrawal_request_id {
-            if p.kind != "hoodRedeemAll" || !valid_id(id) {
-                return Err(SignerError::InvalidInput);
-            }
+        if let Some(id) = &p.withdrawal_request_id
+            && (p.kind != "hoodRedeemAll" || !valid_id(id))
+        {
+            return Err(SignerError::InvalidInput);
         }
-        if let Some(requested) = &p.requested_withdrawal_atoms {
-            if p.kind != "hoodRedeemAll"
+        if let Some(requested) = &p.requested_withdrawal_atoms
+            && (p.kind != "hoodRedeemAll"
                 || p.withdrawal_request_id.is_none()
-                || dec(requested)? == U256::ZERO
-            {
-                return Err(SignerError::InvalidInput);
-            }
+                || dec(requested)? == U256::ZERO)
+        {
+            return Err(SignerError::InvalidInput);
         }
         match (&p.withdrawal_operation_id, &p.return_budget_atoms) {
             (None, None) => {}
@@ -459,10 +458,10 @@ impl SponsoredEarnOperation {
         {
             return Err(SignerError::InvalidInput);
         }
-        if let Some(budget) = &s.p.return_budget_atoms {
-            if amount.checked_add(cap).ok_or(SignerError::InvalidInput)? > dec(budget)? {
-                return Err(SignerError::InvalidInput);
-            }
+        if let Some(budget) = &s.p.return_budget_atoms
+            && amount.checked_add(cap).ok_or(SignerError::InvalidInput)? > dec(budget)?
+        {
+            return Err(SignerError::InvalidInput);
         }
         let decoded = decode_calls(&bytes(&op.call_data, 16384)?)?;
         let mut expected = Vec::new();

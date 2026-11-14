@@ -90,10 +90,10 @@ fn source_key(seed: &[u8; 64], source: &Source) -> Result<bip32::XPrv, SignerErr
 }
 // Quote providers may append fee metadata, but this route permits no app fee.
 fn no_application_fees(v: &Value) -> Result<(), SignerError> {
-    if let Some(fees) = v.get("appFees") {
-        if fees.as_array().is_none_or(|fees| !fees.is_empty()) {
-            return invalid();
-        }
+    if let Some(fees) = v.get("appFees")
+        && fees.as_array().is_none_or(|fees| !fees.is_empty())
+    {
+        return invalid();
     }
     for field in [
         "integratorFeeBps",
@@ -102,10 +102,11 @@ fn no_application_fees(v: &Value) -> Result<(), SignerError> {
         "integratorFee",
         "integratorFeeShare",
     ] {
-        if let Some(fee) = v.get(field) {
-            if fee != &json!(0) && fee != &json!("0") {
-                return invalid();
-            }
+        if let Some(fee) = v.get(field)
+            && fee != &json!(0)
+            && fee != &json!("0")
+        {
+            return invalid();
         }
     }
     Ok(())
@@ -148,10 +149,10 @@ fn private_route_fees(prepared: &Value) -> Result<String, SignerError> {
         return invalid();
     }
     for row in rows {
-        if let Some(fees) = row.get("appFees") {
-            if sorted(fees)? != expected {
-                return invalid();
-            }
+        if let Some(fees) = row.get("appFees")
+            && sorted(fees)? != expected
+        {
+            return invalid();
         }
         if row.get("feeBps").is_some_and(|v| v != &json!(total)) {
             return invalid();

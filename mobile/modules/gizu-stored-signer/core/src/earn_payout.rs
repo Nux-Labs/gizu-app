@@ -797,6 +797,46 @@ pub struct ConfidentialEarnWithdrawalOperation {
     inner: Arc<EarnPayoutOperation>,
 }
 #[uniffi::export]
+
+/// Shared strict single-token parser for the separate generic cashout signer.
+pub(crate) fn strict_private_transfer(
+    payload: &str,
+    signer: &str,
+    receiver: &str,
+    token: &str,
+    amount: &str,
+    expires: u64,
+    now: u64,
+) -> Result<String, SignerError> {
+    let m: Payload = parse(payload)?;
+    let nonce = STANDARD
+        .decode(&m.nonce)
+        .map_err(|_| SignerError::InvalidInput)?;
+    let deadline = DateTime::parse_from_rfc3339(&m.deadline)
+        .map_err(|_| SignerError::InvalidInput)?
+        .timestamp_millis();
+    if addr(&m.signer_id)? != addr(signer)?
+        || m.verifying_contract != "intents.far"
+        || nonce.len() != 32
+        || nonce.iter().all(|b| *b == 0)
+        || STANDARD.encode(&nonce) != m.nonce
+        || deadline <= now as i64
+        || deadline > expires as i64
+        || expires > now + 60000
+        || m.intents.len() != 1
+    {
+        return Err(SignerError::InvalidInput);
+    }
+    let t = &m.intents[0];
+    if t.intent != "transfer"
+        || t.receiver_id != receiver
+        || t.tokens.id != token
+        || t.tokens.amount != amount
+    {
+        return Err(SignerError::InvalidInput);
+    }
+    Ok(m.nonce)
+}
 impl ConfidentialEarnWithdrawalOperation {
     #[uniffi::constructor]
     pub fn new(
@@ -1533,44 +1573,4 @@ mod tests {
         op.approve(7, op.review_hash().unwrap()).unwrap();
         assert_eq!(op.sign(7, journal).unwrap().leg, "withdrawal");
     }
-}
-
-/// Shared strict single-token parser for the separate generic cashout signer.
-pub(crate) fn strict_private_transfer(
-    payload: &str,
-    signer: &str,
-    receiver: &str,
-    token: &str,
-    amount: &str,
-    expires: u64,
-    now: u64,
-) -> Result<String, SignerError> {
-    let m: Payload = parse(payload)?;
-    let nonce = STANDARD
-        .decode(&m.nonce)
-        .map_err(|_| SignerError::InvalidInput)?;
-    let deadline = DateTime::parse_from_rfc3339(&m.deadline)
-        .map_err(|_| SignerError::InvalidInput)?
-        .timestamp_millis();
-    if addr(&m.signer_id)? != addr(signer)?
-        || m.verifying_contract != "intents.far"
-        || nonce.len() != 32
-        || nonce.iter().all(|b| *b == 0)
-        || STANDARD.encode(&nonce) != m.nonce
-        || deadline <= now as i64
-        || deadline > expires as i64
-        || expires > now + 60000
-        || m.intents.len() != 1
-    {
-        return Err(SignerError::InvalidInput);
-    }
-    let t = &m.intents[0];
-    if t.intent != "transfer"
-        || t.receiver_id != receiver
-        || t.tokens.id != token
-        || t.tokens.amount != amount
-    {
-        return Err(SignerError::InvalidInput);
-    }
-    Ok(m.nonce)
 }
