@@ -80,6 +80,7 @@ test("native access opens existing Home and Account with live units and no fixtu
   expect(screen.queryByText(/registration is not connected/)).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Back" }));
   await userEvent.press(screen.getByRole("button", { name: "Transaction signing" }));
+  await userEvent.press(await screen.findByRole("button", { name: "Signing approval details" }));
   expect(await screen.findByText(/Signing requires a separate passkey unlock/)).toBeVisible();
   await userEvent.press(screen.getByRole("button", { name: "Back" }));
   await userEvent.press(screen.getByRole("button", { name: "Push alerts" }));

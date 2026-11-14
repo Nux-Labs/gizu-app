@@ -5,6 +5,9 @@ import XCTest
 final class SwapHoldingsTests: WalletTestCase {
   private let token = "0x" + String(repeating: "1", count: 40)
   private let other = "0x" + String(repeating: "2", count: 40)
+  // Curated buy targets from core/src/swap/pins.rs. Arbitrary tokens remain in sell/recovery tests.
+  private let buyToken = "0x12f190a9f9d7d37a250758b26824b97ce941bf54"
+  private let otherBuyToken = "0xaf3d76f1834a1d425780943c99ea8a608f8a93f9"
   private let gateway = "https://api.gizu.io"
   private func allocated(_ store: WalletStorage) throws -> WalletRecord {
     let initial = try record(verified: true)
@@ -37,17 +40,17 @@ final class SwapHoldingsTests: WalletTestCase {
     defer { record.close() }
     let saved = StoredSwapFile(store: store, record: record)
     var engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
-    try engine.start(record: record, target: token, amountAtoms: "1000000")
+    try engine.start(record: record, target: buyToken, amountAtoms: "1000000")
     try engine.cancel()
     let first = try engine.view()["operationId"] as! String
     engine.close()
     let fresh = try store.load()
     defer { fresh.close() }
     engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
-    try engine.start(record: fresh, target: other, amountAtoms: "1000000")
+    try engine.start(record: fresh, target: otherBuyToken, amountAtoms: "1000000")
     engine.close()
     let reloaded = SwapPortfolioStore(store: store, record: fresh)
-    XCTAssertEqual(Set(try reloaded.targets()), Set([token, other]))
+    XCTAssertEqual(Set(try reloaded.targets()), Set([buyToken, otherBuyToken]))
     XCTAssertEqual(try reloaded.history().first?["operationId"] as? String, first)
     XCTAssertEqual(try reloaded.history().first?["phase"] as? String, "CANCELLED")
   }
@@ -174,7 +177,7 @@ final class SwapHoldingsTests: WalletTestCase {
     defer { record.close() }
     let saved = StoredSwapFile(store: store, record: record)
     let buy = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
-    try buy.start(record: record, target: token, amountAtoms: "1000000")
+    try buy.start(record: record, target: buyToken, amountAtoms: "1000000")
     buy.close()
     let root = try saved.load()!
     var state = try swapObject(root["state"] as! String)
@@ -262,13 +265,14 @@ final class SwapHoldingsTests: WalletTestCase {
     let saved = StoredSwapFile(store: store, record: record)
     let engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
     files.fail = true
-    XCTAssertThrowsError(try engine.start(record: record, target: token, amountAtoms: "1000000"))
+    XCTAssertThrowsError(try engine.start(record: record, target: buyToken, amountAtoms: "1000000"))
     engine.close()
-    let before = try saved.load()!["state"] as! String
+    let persisted = try XCTUnwrap(saved.load(), "The operation must be saved before portfolio persistence fails")
+    let before = try XCTUnwrap(persisted["state"] as? String)
     XCTAssertEqual(try saved.portfolio.targets(), [])
     files.fail = false
     try saved.portfolio.rememberActive(saved, gateway: gateway)
-    XCTAssertEqual(try saved.portfolio.targets(), [token])
+    XCTAssertEqual(try saved.portfolio.targets(), [buyToken])
     XCTAssertEqual(try saved.load()!["state"] as? String, before)
     let resumed = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
     try resumed.restore()
@@ -282,7 +286,7 @@ final class SwapHoldingsTests: WalletTestCase {
     defer { record.close() }
     let saved = StoredSwapFile(store: store, record: record)
     let engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
-    try engine.start(record: record, target: token, amountAtoms: "1000000")
+    try engine.start(record: record, target: buyToken, amountAtoms: "1000000")
     engine.close()
     let root = try saved.load()!
     var state = try swapObject(root["state"] as! String)
@@ -306,7 +310,7 @@ final class SwapHoldingsTests: WalletTestCase {
     defer { record.close() }
     let saved = StoredSwapFile(store: store, record: record)
     let engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
-    try engine.start(record: record, target: token, amountAtoms: "1000000")
+    try engine.start(record: record, target: buyToken, amountAtoms: "1000000")
     let before = try saved.load()!["state"] as! String
     let task = Task {
       try await engine.advance { _ in withUnsafeCurrentTask { $0?.cancel() } }
@@ -325,7 +329,7 @@ final class SwapHoldingsTests: WalletTestCase {
     defer { record.close() }
     let saved = StoredSwapFile(store: store, record: record)
     let engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
-    try engine.start(record: record, target: token, amountAtoms: nil, payout: true)
+    try engine.start(record: record, target: buyToken, amountAtoms: nil, payout: true)
     let plan = try swapObject(saved.load()!["state"] as! String)["plan"] as! [String: Any]
     XCTAssertEqual(plan["kind"] as? String, "confidentialPayout")
     XCTAssertTrue(plan["amountAtoms"] is NSNull)

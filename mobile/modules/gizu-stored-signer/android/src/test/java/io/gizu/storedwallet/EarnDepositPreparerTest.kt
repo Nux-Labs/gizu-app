@@ -352,6 +352,18 @@ class EarnDepositPreparerTest {
     )
   }
 
+  // Keep both legacy 10/90 payout legs above the 0.17 USDC bridge floor.
+  private fun routableSourceDraft(r: WalletRecord): DepositSourceDraft {
+    val draft = sourceDraft(r)
+    draft.rows
+      .single()
+      .getJSONObject("proposal")
+      .put("amountAtoms", "1990000")
+      .put("budgetAtoms", "2010000")
+    draft.reservation.getJSONArray("legs").getJSONObject(0).put("budgetAtoms", "2010000")
+    return draft.copy(minimumCredits = mapOf("source0" to "1990000"))
+  }
+
   private fun previewResponse(
     path: String,
     b: JSONObject,
@@ -483,8 +495,14 @@ class EarnDepositPreparerTest {
           feeValidator = { 0 },
         )
       val result =
-        EarnDepositPreparer(testDepositJournal(), gateway, { _, _ -> sourceDraft(r) }, {}, { 1000 })
-          .prepare(r, 4663, "1010000", null)
+        EarnDepositPreparer(
+            testDepositJournal(),
+            gateway,
+            { _, _ -> routableSourceDraft(r) },
+            {},
+            { 1000 },
+          )
+          .prepare(r, 4663, "2010000", null)
       assertEquals("review", result.getString("phase"))
       assertEquals(2, started.size)
     }
@@ -521,15 +539,15 @@ class EarnDepositPreparerTest {
           feeValidator = { 0 },
         )
       val result =
-        EarnDepositPreparer(journal, gateway, { _, _ -> sourceDraft(r) }, {}, { clock })
-          .prepare(r, 4663, "1010000", null)
+        EarnDepositPreparer(journal, gateway, { _, _ -> routableSourceDraft(r) }, {}, { clock })
+          .prepare(r, 4663, "2010000", null)
       assertEquals("review", result.getString("phase"))
-      assertEquals(listOf("891000", "841000"), expected)
+      assertEquals(listOf("1791000", "1741000"), expected)
       assertEquals(4, payouts)
       assertEquals(51000, result.getJSONObject("review").getLong("quotedAtMs"))
       assertEquals(96000, result.getJSONObject("review").getLong("expiresAtMs"))
       assertEquals(
-        "814750", // 820000 less 25% of the 21000 fee and reserve gas.
+        "1714750", // 1720000 less 25% of the 21000 fee and reserve gas.
         result.getJSONObject("review").getJSONObject("deposit").getString("minimumAssetsAtoms"),
       )
       assertEquals(0, result.getJSONObject("children").length())
@@ -553,8 +571,14 @@ class EarnDepositPreparerTest {
           feeValidator = { 0 },
         )
       val result =
-        EarnDepositPreparer(journal, gateway, { _, _ -> sourceDraft(r) }, { releases++ }, { 1000 })
-          .prepare(r, 4663, "1010000", null)
+        EarnDepositPreparer(
+            journal,
+            gateway,
+            { _, _ -> routableSourceDraft(r) },
+            { releases++ },
+            { 1000 },
+          )
+          .prepare(r, 4663, "2010000", null)
       assertEquals("paused", result.getString("phase"))
       assertEquals("cancelled", result.getString("pauseReason"))
       assertFalse(result.has("review"))
@@ -589,8 +613,8 @@ class EarnDepositPreparerTest {
           feeValidator = { 0 },
         )
       val result =
-        EarnDepositPreparer(journal, gateway, { _, _ -> sourceDraft(r) }, {}, { clock })
-          .prepare(r, 4663, "1010000", null)
+        EarnDepositPreparer(journal, gateway, { _, _ -> routableSourceDraft(r) }, {}, { clock })
+          .prepare(r, 4663, "2010000", null)
       assertEquals(3, vaults)
       assertEquals("paused", result.getString("phase"))
       assertFalse(result.has("review"))
@@ -637,8 +661,8 @@ class EarnDepositPreparerTest {
                     assertFalse(partial.has("review"))
                     val public = JSONObject(j.publicSnapshot(partial.getString("journeyId")))
                     val indicative = public.getJSONObject("indicativeReview")
-                    assertEquals("99000", indicative.getString("holdEstimatedAtoms"))
-                    assertEquals("891000", indicative.getString("investEstimatedAtoms"))
+                    assertEquals("199000", indicative.getString("holdEstimatedAtoms"))
+                    assertEquals("1791000", indicative.getString("investEstimatedAtoms"))
                     assertFalse(indicative.has("fundingRows"))
                   }
                   .put("kind", "preview")
@@ -656,11 +680,11 @@ class EarnDepositPreparerTest {
                   .put("quotedAtMs", 1000)
                   .put("expiresAtMs", 45000)
                   .put("policyVersion", "robinhood-v1")
-                  .put("depositAmount", "870000")
+                  .put("depositAmount", "1770000")
                   .put("depositFeeBudget", "10000")
                   .put("withdrawalReserve", "11000")
                   .put("shareDecimals", 18)
-                  .put("previewShares", "870000")
+                  .put("previewShares", "1770000")
                   .put("maxSharePrice", "1000000000000000000000000000")
                   .toString()
               else -> error("Preparation attempted an execution/auth endpoint")
@@ -678,19 +702,14 @@ class EarnDepositPreparerTest {
           gateway,
           { record, budget ->
             selections++
-            check(record.id == r.id && budget == "1010000")
-            val review = DepositFixtures.review(r)
-            DepositSourceDraft(
-              review.getJSONArray("fundingRows").objects(),
-              review.getJSONObject("reservation"),
-              mapOf("source0" to "990000"),
-            )
+            check(record.id == r.id && budget == "2010000")
+            routableSourceDraft(r)
           },
           { releases++ },
           { 1000 },
         )
-      val first = preparer.prepare(r, 4663, "1010000", null)
-      val next = preparer.prepare(r, 4663, "1010000", first.getString("journeyId"))
+      val first = preparer.prepare(r, 4663, "2010000", null)
+      val next = preparer.prepare(r, 4663, "2010000", first.getString("journeyId"))
       assertEquals(first.getString("journeyId"), next.getString("journeyId"))
       assertEquals(
         first.getJSONArray("destinations").toString(),
@@ -702,7 +721,7 @@ class EarnDepositPreparerTest {
       assertTrue(requests.all { !it.has("accounts") && !it.has("signedData") })
       assertEquals(45000, next.getJSONObject("review").getInt("expiresAtMs"))
       assertEquals(
-        "864750", // Scaled with the gas-tolerant minimum assets.
+        "1764750", // Scaled with the gas-tolerant minimum assets.
         next.getJSONObject("review").getJSONObject("deposit").getString("minimumSharesAtoms"),
       )
       assertEquals(0, next.getJSONObject("children").length())
@@ -717,18 +736,11 @@ class EarnDepositPreparerTest {
         EarnDepositPreparer(
           j,
           EarnDepositGateway({ _, _ -> error("HTTP 404") }, { 1000 }),
-          { _, _ ->
-            val review = DepositFixtures.review(r)
-            DepositSourceDraft(
-              review.getJSONArray("fundingRows").objects(),
-              review.getJSONObject("reservation"),
-              mapOf("source0" to "990000"),
-            )
-          },
+          { _, _ -> routableSourceDraft(r) },
           {},
           { 1000 },
         )
-      val result = preparer.prepare(r, 4663, "1010000", null)
+      val result = preparer.prepare(r, 4663, "2010000", null)
       assertEquals("paused", result.getString("phase"))
       assertEquals("previewUnavailable", result.getString("pauseReason"))
       assertFalse(result.has("review"))
@@ -754,7 +766,7 @@ class EarnDepositPreparerTest {
             diagnostics.add(listOf(stage, code, location))
           },
         )
-      val result = preparer.prepare(r, 4663, "1010000", null)
+      val result = preparer.prepare(r, 4663, "2010000", null)
       assertEquals("previewUnavailable", result.getString("pauseReason"))
       assertEquals(0, result.getJSONObject("children").length())
       assertEquals(1, diagnostics.size)
@@ -775,26 +787,19 @@ class EarnDepositPreparerTest {
         EarnDepositPreparer(
           j,
           EarnDepositGateway({ _, _ -> throw RpcFailure(RpcFailureCode.HTTP) }, { 1000 }),
-          { _, _ ->
-            val review = DepositFixtures.review(r)
-            DepositSourceDraft(
-              review.getJSONArray("fundingRows").objects(),
-              review.getJSONObject("reservation"),
-              mapOf("source0" to "990000"),
-            )
-          },
+          { _, _ -> routableSourceDraft(r) },
           {},
           { 1000 },
           reportFailure = { stage, code, location ->
             diagnostics.add(listOf(stage, code, location))
           },
         )
-      val result = preparer.prepare(r, 4663, "1010000", null)
+      val result = preparer.prepare(r, 4663, "2010000", null)
       assertEquals("previewUnavailable", result.getString("pauseReason"))
       assertFalse(result.has("review"))
       assertEquals("hold-preview", diagnostics.single()[0])
       assertEquals("HTTP", diagnostics.single()[1])
-      assertFalse(diagnostics.toString().contains("990000"))
+      assertFalse(diagnostics.toString().contains("1990000"))
       assertFalse(diagnostics.toString().contains(cycleConfidential(r)))
     }
   }

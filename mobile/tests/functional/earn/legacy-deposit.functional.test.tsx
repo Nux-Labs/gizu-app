@@ -196,6 +196,7 @@ function setup(enabled = true, savedIntent: EarnIntent = intent, resumeSaved = f
 test("Ethereum reuses funding, payout, liquidity and vault services in order and stops invested", async () => {
   const { source, payout, liquidity, vault } = setup();
   const user = userEvent.setup();
+  await user.press(await screen.findByRole("button", { name: "Ethereum deposit details" }));
   expect(await screen.findByText(/separate native approvals/)).toBeVisible();
   await user.type(screen.getByLabelText("USDC deposit amount"), "3");
   await user.press(screen.getByRole("button", { name: "Review USDC funding" }));
