@@ -21,159 +21,124 @@ install: mobile-install backend-install frontend-install landing-install
 # Common checks: mobile types/lint/format, backend types/tests and web builds.
 check: mobile-check-fast backend-check frontend-build landing-build
 
-# --- Mobile setup and development ---
-
-# Install mobile dependencies.
-mobile-install:
-    npm --prefix mobile ci
-
-# Start Metro for the native development app; keep this terminal open.
-mobile-start:
-    npm --prefix mobile start
-
-# Restart Metro with its cache cleared.
-mobile-start-clean:
-    npm --prefix mobile start -- --clear
-
-# List connected Android devices and their authorization state.
-mobile-devices:
-    adb devices -l
-
-# Start Metro over USB without shared Wi-Fi; connect one authorized phone.
+# Mobile commands live in mobile/justfile, e.g. just mobile ios adhoc.
 [unix]
-mobile-usb:
-    adb reverse tcp:8081 tcp:8081
-    env REACT_NATIVE_PACKAGER_HOSTNAME=127.0.0.1 npm --prefix mobile start -- --host lan
+[positional-arguments]
+mobile *args:
+    @just --justfile mobile/justfile "$@"
 
-# Start Metro over USB on Windows; connect one authorized phone.
 [windows]
+mobile *args:
+    @just --justfile mobile/justfile {{args}}
+
+# Hidden compatibility shortcuts for existing documentation and scripts.
+[private]
+mobile-install:
+    @just --justfile mobile/justfile install
+
+[private]
+mobile-start *args:
+    @just --justfile mobile/justfile start {{args}}
+
+[private]
+mobile-start-clean:
+    @just --justfile mobile/justfile start-clean
+
+[private]
+mobile-devices:
+    @just --justfile mobile/justfile devices
+
+[private]
 mobile-usb:
-    adb reverse tcp:8081 tcp:8081
-    set "REACT_NATIVE_PACKAGER_HOSTNAME=127.0.0.1" && npm --prefix mobile start -- --host lan
+    @just --justfile mobile/justfile usb
 
-# Build native bindings, then install on an Android phone; run mobile-usb separately.
-[unix]
-mobile-android: mobile-native-android
-    npm --prefix mobile run android -- --device --no-bundler
+[private]
+mobile-android:
+    @just --justfile mobile/justfile dev-android
 
-# Build native bindings, then launch the iOS simulator; run mobile-start separately.
-[macos]
-mobile-ios: mobile-native-ios
-    npm --prefix mobile run ios -- --no-bundler
+[private]
+mobile-ios:
+    @just --justfile mobile/justfile dev-ios
 
-# --- Mobile checks ---
+[private]
+mobile-check-fast:
+    @just --justfile mobile/justfile check-fast
 
-# Run TypeScript, lint and formatting checks without changing files.
-mobile-check-fast: mobile-typecheck mobile-lint mobile-format-check
-
-# Full check: types, formatting, lint, Expo Doctor and tests with coverage.
+[private]
 mobile-check:
-    npm --prefix mobile run check
+    @just --justfile mobile/justfile check
 
-# Check mobile TypeScript.
+[private]
 mobile-typecheck:
-    npm --prefix mobile run typecheck
+    @just --justfile mobile/justfile typecheck
 
-# Check mobile lint rules.
+[private]
 mobile-lint:
-    npm --prefix mobile run lint
+    @just --justfile mobile/justfile lint
 
-# Check mobile formatting without rewriting files.
+[private]
 mobile-format-check:
-    npm --prefix mobile run format:check
+    @just --justfile mobile/justfile format-check
 
-# Format mobile files; rewrites files in mobile/.
+[private]
 mobile-format:
-    npm --prefix mobile run format
+    @just --justfile mobile/justfile format
 
-# Run functional tests with mocked services.
+[private]
 mobile-test:
-    npm --prefix mobile run test:functional
+    @just --justfile mobile/justfile test
 
-# Run all mobile JavaScript tests.
+[private]
 mobile-test-all:
-    npm --prefix mobile test
+    @just --justfile mobile/justfile test-all
 
-# Run all mobile JavaScript tests with coverage.
+[private]
 mobile-coverage:
-    npm --prefix mobile run test:coverage
+    @just --justfile mobile/justfile coverage
 
-# Check Expo dependency compatibility and configuration.
+[private]
 mobile-doctor:
-    npm --prefix mobile run doctor
+    @just --justfile mobile/justfile doctor
 
-# Verify that both platforms' JavaScript bundles export successfully.
+[private]
 mobile-export:
-    npm --prefix mobile run export
+    @just --justfile mobile/justfile export
 
-# --- Native wallet ---
-
-# Generate Rust/Kotlin bindings and Android native signer libraries (macOS/Linux).
-[unix]
+[private]
 mobile-native-android:
-    npm --prefix mobile run stored-signer:build -- android
+    @just --justfile mobile/justfile native-android
 
-# Generate Rust/Swift bindings and iOS device/simulator libraries (macOS).
-[macos]
+[private]
 mobile-native-ios:
-    npm --prefix mobile run stored-signer:build:ios
+    @just --justfile mobile/justfile native-ios
 
-# Run shared Rust wallet tests.
+[private]
 mobile-native-test:
-    npm --prefix mobile run stored-signer:test
+    @just --justfile mobile/justfile native-test
 
-# Run Swift wallet tests on an available iPhone simulator (macOS).
-[macos]
+[private]
 mobile-native-test-ios:
-    npm --prefix mobile run stored-signer:test:ios
+    @just --justfile mobile/justfile native-test-ios
 
-# Check Kotlin formatting without rewriting files.
+[private]
 mobile-kotlin-check:
-    npm --prefix mobile run format:kotlin:check
+    @just --justfile mobile/justfile kotlin-check
 
-# --- Signed local distribution builds; these do not upload or submit ---
+[private]
+mobile-build *args:
+    @just --justfile mobile/justfile build {{args}}
 
-# Android Play Console AAB -> mobile/.expo/releases/gizu.aab (macOS/Linux).
-[unix]
-[working-directory("mobile")]
+[private]
 mobile-build-android:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ "$(uname -s)" == Darwin ]]; then
-        if [[ -z "${JAVA_HOME:-}" ]]; then
-            JAVA_HOME=$(/usr/libexec/java_home -v 17 2>/dev/null || true)
-            if [[ -z "$JAVA_HOME" ]] && command -v brew >/dev/null; then
-                jdk_prefix=$(brew --prefix openjdk@17)
-                JAVA_HOME="$jdk_prefix/libexec/openjdk.jdk/Contents/Home"
-            fi
-            export JAVA_HOME
-        fi
-        default_sdk="$HOME/Library/Android/sdk"
-    else
-        default_sdk="$HOME/Android/Sdk"
-    fi
-    export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$default_sdk}}"
-    export ANDROID_SDK_ROOT="$ANDROID_HOME"
-    if [[ -n "${JAVA_HOME:-}" ]]; then export PATH="$JAVA_HOME/bin:$PATH"; fi
-    java -version
-    [[ -d "$ANDROID_HOME/platform-tools" ]] || { echo "Android SDK missing at $ANDROID_HOME; set ANDROID_HOME to your SDK directory." >&2; exit 1; }
-    mkdir -p .expo/releases
-    export EXPO_NO_DOTENV=1
-    npm exec --yes --package=npm@11.12.1 --package=eas-cli@24.13.0 -- env -u npm_config_package eas build --platform android --profile production --local --output ./.expo/releases/gizu.aab
+    @just --justfile mobile/justfile build-android
 
-# iOS App Store/TestFlight IPA -> mobile/.expo/releases/gizu.ipa (macOS).
-[macos]
-[working-directory("mobile")]
+[private]
 mobile-build-ios:
-    mkdir -p .expo/releases
-    env EXPO_NO_DOTENV=1 npx eas-cli build --platform ios --profile production --local --output ./.expo/releases/gizu.ipa
+    @just --justfile mobile/justfile build-ios
 
-# iOS Ad Hoc IPA for registered tester devices -> mobile/.expo/releases/gizu-adhoc.ipa.
-[macos]
-[working-directory("mobile")]
+[private]
 mobile-build-ios-adhoc:
-    mkdir -p .expo/releases
-    env EXPO_NO_DOTENV=1 npx eas-cli build --platform ios --profile preview --local --output ./.expo/releases/gizu-adhoc.ipa
+    @just --justfile mobile/justfile build-ios-adhoc
 
 # --- Backend ---
 

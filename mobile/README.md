@@ -40,6 +40,38 @@ Request access route still uses a mock service and creates no waitlist entry.
   tools and CocoaPods. Physical devices require Apple signing setup.
 - Use a development build, not Expo Go, for native validation.
 
+## Build profiles and shortcuts
+
+`eas.json` defines three build profiles:
+
+| Profile       | Purpose                                                |
+| ------------- | ------------------------------------------------------ |
+| `development` | Internal development client that connects to Metro     |
+| `adhoc`       | Standalone tester build: Android APK or iOS Ad Hoc IPA |
+| `production`  | Store build: Android AAB or iOS App Store IPA          |
+
+From the repository root (or omit `mobile` when running inside `mobile/`):
+
+```sh
+just mobile start                 # Metro
+just mobile start --clear         # Metro with a cleared cache
+just mobile android         # Store AAB
+just mobile ios             # Store/TestFlight IPA
+just mobile android adhoc # Tester APK
+just mobile ios adhoc     # Ad Hoc IPA for registered devices
+```
+
+Local builds require macOS/Linux (iOS requires macOS), use the hosted API from
+`eas.json`, ignore `mobile/.env`, and do not upload or submit anything. Outputs
+are in `mobile/.expo/releases/`: `gizu.aab`, `gizu.ipa`, `gizu-adhoc.apk`, and
+`gizu-adhoc.ipa`. A new build replaces the same output. Both platforms use pinned
+EAS CLI 24.13.0 and npm 11.12.1. Existing `mobile-build-android`,
+`mobile-build-ios`, `mobile-build-ios-adhoc`, and `mobile-start-clean` commands
+remain available but are hidden from `just --list`. Mobile recipes live in
+`mobile/justfile`; the root `mobile` command forwards arguments to it. Use
+`just mobile` to list them, `just mobile dev-ios` / `just mobile dev-android`
+for local development installs, and `just mobile check` for the full check.
+
 ## Install and run
 
 From the repository root:
@@ -58,7 +90,7 @@ These commands generate ignored native projects and build/install a development
 client. After that, start Metro with `npm --prefix mobile start` and open the
 installed development app. Rebuild after native dependency/config changes.
 `just mobile-install`, `just mobile-android`, `just mobile-ios` and
-`just mobile-start` are equivalent shortcuts.
+`just mobile start` are equivalent shortcuts.
 
 App identity: **Gizu**, iOS `io.gizo.ios`, Android `io.gizu.android`,
 URL scheme `gizu`. The Android package is retained for installation and wallet
@@ -297,10 +329,11 @@ behavior; no simulator authentication bypass is included.
 The `production` EAS profile builds **Gizu** with the production EAS environment
 and `https://api.gizu.io` backend. iOS uses bundle ID `io.gizo.ios`,
 Apple team `588X2UZY3L` and App Store Connect app `6815255408`.
-`testflight` remains a compatibility alias of `production`, not a separate app.
-`preview` inherits the same configuration for internal distribution.
-All profiles use the Gizu name and `gizu` URL scheme. Development builds can still
-use diagnostic screens; release configuration rejects those entry points.
+Use `production` for both App Store and TestFlight builds/submissions.
+`adhoc` and `development` inherit its backend, environment, identity and wallet configuration.
+All profiles use the Gizu name and `gizu` URL scheme. EAS development builds include developer tools and require Metro, but use the same
+app features and live backend. All EAS profiles reject diagnostic screens; local
+diagnostic commands remain separate.
 
 `GizuWalletEnabled` is embedded in the signed iOS release binary. It enables
 wallet access without changing native transaction policy. Mainnet UI and flows
@@ -410,8 +443,8 @@ Whitespace is trimmed; invalid keys, malformed hosts, URL credentials, paths,
 queries and fragments disable capture. Never use a personal API key (`phx_...`).
 
 Leave the key empty for ordinary local development. For analytics verification,
-use a dedicated test project in local builds. The EAS `preview` profile inherits
-the production environment; `testflight` is also an alias of `production`. Configure
+use a dedicated test project in local builds. The EAS `adhoc` profile inherits
+the production environment, as does `development`. Configure
 the selected EAS environment deliberately before each diagnostic or distribution build. Values in EAS-managed environments can enable analytics
 without appearing in `eas.json`; verify the selected environment before building.
 Public Expo variables are bundled at build time: rebuild after changing them.

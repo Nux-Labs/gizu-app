@@ -1,0 +1,147 @@
+# Mobile commands. Run `just` here or `just mobile` from the repository root.
+set shell := ["sh", "-cu"]
+set windows-shell := ["cmd.exe", "/D", "/C"]
+
+default:
+    @just --list --unsorted
+
+# Signed iOS build: production (App Store/TestFlight) or adhoc (registered devices).
+[macos]
+ios profile="production": (build "ios" profile)
+
+# Signed Android build: production (AAB) or adhoc (APK).
+[unix]
+android profile="production": (build "android" profile)
+
+# --- Mobile setup and development ---
+
+# Install mobile dependencies.
+install:
+    npm ci
+
+# Start Metro for the native development app; keep this terminal open.
+[positional-arguments]
+start *args:
+    npm start -- "$@"
+
+# Restart Metro with its cache cleared.
+[private]
+start-clean: (start "--clear")
+
+# List connected Android devices and their authorization state.
+devices:
+    adb devices -l
+
+# Start Metro over USB without shared Wi-Fi; connect one authorized phone.
+[unix]
+usb:
+    adb reverse tcp:8081 tcp:8081
+    env REACT_NATIVE_PACKAGER_HOSTNAME=127.0.0.1 npm start -- --host lan
+
+# Start Metro over USB on Windows; connect one authorized phone.
+[windows]
+usb:
+    adb reverse tcp:8081 tcp:8081
+    set "REACT_NATIVE_PACKAGER_HOSTNAME=127.0.0.1" && npm start -- --host lan
+
+# Build native bindings, then install on an Android phone; run usb separately.
+[unix]
+dev-android: native-android
+    npm run android -- --device --no-bundler
+
+# Build native bindings, then launch the iOS simulator; run start separately.
+[macos]
+dev-ios: native-ios
+    npm run ios -- --no-bundler
+
+# --- Mobile checks ---
+
+# Run TypeScript, lint and formatting checks without changing files.
+check-fast: typecheck lint format-check
+
+# Full check: types, formatting, lint, Expo Doctor and tests with coverage.
+check:
+    npm run check
+
+# Check mobile TypeScript.
+typecheck:
+    npm run typecheck
+
+# Check mobile lint rules.
+lint:
+    npm run lint
+
+# Check mobile formatting without rewriting files.
+format-check:
+    npm run format:check
+
+# Format mobile files; rewrites files in mobile/.
+format:
+    npm run format
+
+# Run functional tests with mocked services.
+test:
+    npm run test:functional
+
+# Run all mobile JavaScript tests.
+test-all:
+    npm test
+
+# Run all mobile JavaScript tests with coverage.
+coverage:
+    npm run test:coverage
+
+# Check Expo dependency compatibility and configuration.
+doctor:
+    npm run doctor
+
+# Verify that both platforms' JavaScript bundles export successfully.
+export:
+    npm run export
+
+# --- Native wallet ---
+
+# Generate Rust/Kotlin bindings and Android native signer libraries (macOS/Linux).
+[unix]
+native-android:
+    npm run stored-signer:build -- android
+
+# Generate Rust/Swift bindings and iOS device/simulator libraries (macOS).
+[macos]
+native-ios:
+    npm run stored-signer:build:ios
+
+# Run shared Rust wallet tests.
+native-test:
+    npm run stored-signer:test
+
+# Run Swift wallet tests on an available iPhone simulator (macOS).
+[macos]
+native-test-ios:
+    npm run stored-signer:test:ios
+
+# Check Kotlin formatting without rewriting files.
+kotlin-check:
+    npm run format:kotlin:check
+
+# --- Signed local distribution builds; these do not upload or submit ---
+
+# Signed local build: ios/android; production for stores, adhoc for testers.
+[unix]
+[positional-arguments]
+build platform profile="production":
+    bash scripts/build-local.sh "$1" "$2"
+
+# Compatibility shortcuts; prefer build above.
+[private]
+[unix]
+build-android: (build "android" "production")
+
+[private]
+[macos]
+build-ios: (build "ios" "production")
+
+[private]
+[macos]
+build-ios-adhoc: (build "ios" "adhoc")
+

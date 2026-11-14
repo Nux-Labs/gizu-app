@@ -20,7 +20,7 @@ test("the production Android association authorizes every configured signing cer
   );
 });
 
-test.each(["production", "preview", "testflight"])(
+test.each(["development", "production", "adhoc", "preview", "testflight"])(
   "%s enables release configuration on both platforms",
   (profile) => {
     for (const platform of ["ios", "android"]) {
@@ -76,6 +76,10 @@ test("release profiles use the AWS API and production environment", () => {
   const config = JSON.parse(readFileSync(resolve(__dirname, "../../eas.json"), "utf8"));
   expect(config.build.production.env.EXPO_PUBLIC_API_URL).toBe("https://api.gizu.io");
   expect(config.build.production.environment).toBe("production");
-  expect(config.build.preview.extends).toBe("production");
-  expect(config.build.testflight.extends).toBe("production");
+  expect(config.build.adhoc.extends).toBe("production");
+  expect(config.build.development.extends).toBe("production");
+  expect(Object.keys(config.build).sort()).toEqual(["adhoc", "development", "production"]);
+  expect(config.build.development.developmentClient).toBe(true);
+  expect(config.build.development.ios.buildConfiguration).toBe("Debug");
+  expect(config.build.adhoc.distribution).toBe("internal");
 });

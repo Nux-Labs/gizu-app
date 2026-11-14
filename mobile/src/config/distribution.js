@@ -5,8 +5,9 @@ const { isIP } = require("node:net");
 /** @param {Record<string, string | undefined>} env */
 function distributionConfig(env) {
   const release =
-    ["production", "preview", "testflight"].includes(env.EAS_BUILD_PROFILE ?? "") ||
-    ["production", "testflight"].includes(env.GIZU_BUILD_VARIANT ?? "");
+    ["development", "production", "adhoc", "preview", "testflight"].includes(
+      env.EAS_BUILD_PROFILE ?? "",
+    ) || ["production", "testflight"].includes(env.GIZU_BUILD_VARIANT ?? "");
   if (release && env.EXPO_PUBLIC_DEBUG_SCREEN) {
     throw new Error("Release builds cannot select diagnostic screens.");
   }

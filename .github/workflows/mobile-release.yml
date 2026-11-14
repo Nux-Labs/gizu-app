@@ -127,14 +127,14 @@ jobs:
       - run: npx expo prebuild --platform ios
         working-directory: mobile
         env:
-          EAS_BUILD_PROFILE: testflight
+          EAS_BUILD_PROFILE: production
           EXPO_NO_DOTENV: "1"
       - run: npm run stored-signer:check:ios
         working-directory: mobile
       - run: xcodebuild -workspace ios/Gizu.xcworkspace -scheme Gizu -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO -resultBundlePath "${{ runner.temp }}/gizu-app-build.xcresult" build
         working-directory: mobile
         env:
-          EAS_BUILD_PROFILE: testflight
+          EAS_BUILD_PROFILE: production
           EXPO_NO_DOTENV: "1"
           EXPO_PUBLIC_API_URL: ""
       - name: Upload iOS build and test reports

@@ -9,23 +9,16 @@
         "ascAppId": "6815255408",
         "appleTeamId": "588X2UZY3L"
       }
-    },
-    "testflight": {
-      "extends": "production"
     }
   },
   "build": {
     "development": {
+      "extends": "production",
       "developmentClient": true,
       "distribution": "internal",
-      "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.gizu.io",
-        "EXPO_PUBLIC_PASSKEY_MODE": "native"
+      "ios": {
+        "buildConfiguration": "Debug"
       }
-    },
-    "preview": {
-      "extends": "production",
-      "distribution": "internal"
     },
     "production": {
       "distribution": "store",
@@ -43,8 +36,9 @@
       },
       "node": "24.15.0"
     },
-    "testflight": {
-      "extends": "production"
+    "adhoc": {
+      "extends": "production",
+      "distribution": "internal"
     }
   }
 }
