@@ -38,10 +38,7 @@ class SwapMulticallTest {
   @Test
   fun tryAggregateResultDecodesSuccessAndFailureLikeViem() {
     val encoded =
-      "0x" +
-        words("20", "2", "40", "c0") +
-        words("1", "40", "20", "2a") +
-        words("0", "40", "0")
+      "0x" + words("20", "2", "40", "c0") + words("1", "40", "20", "2a") + words("0", "40", "0")
     assertEquals(
       listOf(SwapCallResult(true, "0x" + "2a".padStart(64, '0')), SwapCallResult(false, "0x")),
       SwapMulticall.decodeTryAggregate(encoded),
@@ -97,17 +94,23 @@ class SwapMulticallTest {
                   (0 until count).joinToString("") { words("1", "40", "20", "1") }
               }
             }
-          responses.put(JSONObject().put("jsonrpc", "2.0").put("id", request.getInt("id")).put("result", result))
+          responses.put(
+            JSONObject().put("jsonrpc", "2.0").put("id", request.getInt("id")).put("result", result)
+          )
         }
         200 to responses.toString()
       }
     val block = multicall.head()
     assertEquals("0x99", block)
-    val calls = (0 until SwapMulticall.CALLS_PER_MULTICALL * 3 + 7).map { SwapMulticall.balanceOf(intc, holder) }
+    val calls =
+      (0 until SwapMulticall.CALLS_PER_MULTICALL * 3 + 7).map {
+        SwapMulticall.balanceOf(intc, holder)
+      }
     val results = multicall.call(calls, block)
     assertEquals(calls.size, results.size)
     assertTrue(results.all { it.success && SwapAssetSweep.positive(it.data) })
-    val callRequests = bodies.drop(1).flatMap { batch -> (0 until batch.length()).map { batch.getJSONObject(it) } }
+    val callRequests =
+      bodies.drop(1).flatMap { batch -> (0 until batch.length()).map { batch.getJSONObject(it) } }
     assertEquals(4, callRequests.size)
     assertTrue(callRequests.all { it.getJSONArray("params").getString(1) == "0x99" })
     assertTrue(

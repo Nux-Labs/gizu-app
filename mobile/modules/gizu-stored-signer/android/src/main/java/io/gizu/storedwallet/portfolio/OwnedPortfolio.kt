@@ -62,9 +62,10 @@ internal class NativeOwnedPortfolio(
       WalletDiscoveryRegistry(context, record).owners(chain.toInt(), false).map { it.second }
     },
     swapAssets = { record ->
-      SwapPortfolioStore(context, record).assets().filter { it.chainId in SWAP_CHAINS }.map {
-        it.chainId to it.token
-      }
+      SwapPortfolioStore(context, record)
+        .assets()
+        .filter { it.chainId in SWAP_CHAINS }
+        .map { it.chainId to it.token }
     },
   )
 
@@ -238,10 +239,12 @@ internal class NativeOwnedPortfolio(
     }
     if (hood.isNotEmpty())
       groups.add(Group(4663, HOOD_EARN_VAULT, "USDG", null, hood, HOOD_EARN_USDG))
-    val swapTokens = swapAssets(record).map { (chain, token) -> chain to token.lowercase() }.distinct()
+    val swapTokens =
+      swapAssets(record).map { (chain, token) -> chain to token.lowercase() }.distinct()
     require(
-      swapTokens.all { (chain, token) -> chain in SWAP_CHAINS && token.matches(Regex("0x[0-9a-f]{40}")) } &&
-        swapTokens.groupBy { it.first }.values.all { it.size <= 256 }
+      swapTokens.all { (chain, token) ->
+        chain in SWAP_CHAINS && token.matches(Regex("0x[0-9a-f]{40}"))
+      } && swapTokens.groupBy { it.first }.values.all { it.size <= 256 }
     )
     // Swap recipients derive one EVM address on every chain, so `public` owns them everywhere.
     for ((chain, token) in swapTokens) if (

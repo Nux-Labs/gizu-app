@@ -478,14 +478,18 @@ class EarnSponsoredEngineTest {
     val open = signedExit(1)
     val rpc = Rpc()
     val incoming =
-      JSONObject().put("kind", "hoodTokenReturn").put("expectedFrom", owner).put("operationId", "return-1")
+      JSONObject()
+        .put("kind", "hoodTokenReturn")
+        .put("expectedFrom", owner)
+        .put("operationId", "return-1")
     retireSettledRedeemBeforeReturn(open, rpc, { state() }, incoming, now)
     assertEquals("signed", open.get("hood-1").getString("status"))
     val journal = signedExit(1)
     journal.update("hood-1", 4) { it.put("status", "finalized").put("redeemedUsdgAtoms", "900") }
-    val prior = JSONObject(journal.get("hood-1").getJSONObject("proposal").toString())
-      .put("operationId", "hood-2")
-      .put("deadline", 1)
+    val prior =
+      JSONObject(journal.get("hood-1").getJSONObject("proposal").toString())
+        .put("operationId", "hood-2")
+        .put("deadline", 1)
     journal.create(
       prior,
       JSONObject().put("sender", owner).put("nonce", "0x0").put("signature", "0x"),
@@ -507,7 +511,10 @@ class EarnSponsoredEngineTest {
   }
 
   private fun replacement() =
-    JSONObject().put("kind", "hoodRedeemAll").put("expectedFrom", owner).put("operationId", "hood-2")
+    JSONObject()
+      .put("kind", "hoodRedeemAll")
+      .put("expectedFrom", owner)
+      .put("operationId", "hood-2")
 
   private fun signedExit(deadline: Long): EarnSponsoredJournal {
     val journal = setup()

@@ -525,9 +525,7 @@ internal class EarnDepositEngineAdapter(
     journal.saveGroup(group, children, proof)
   }
 
-  /**
-   * Reconciles saved children using the shared balance-only session, never a spending grant.
-   */
+  /** Reconciles saved children using the shared balance-only session, never a spending grant. */
   private var remainingGroupReconciled = false
 
   suspend fun reconcileBeforeRemaining(

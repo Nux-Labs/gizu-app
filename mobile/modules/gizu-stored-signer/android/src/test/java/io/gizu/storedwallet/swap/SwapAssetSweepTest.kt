@@ -26,7 +26,8 @@ class SwapAssetSweepTest {
             "eth_chainId" -> "0x1237"
             "eth_blockNumber" -> "0x10"
             else -> {
-              val data = request.getJSONArray("params").getJSONObject(0).getString("data").substring(10)
+              val data =
+                request.getJSONArray("params").getJSONObject(0).getString("data").substring(10)
               val count = SwapHoldings.quantity("0x" + data.substring(128, 192)).toInt()
               val tuples =
                 (0 until count).map { index ->
@@ -40,7 +41,9 @@ class SwapAssetSweepTest {
                 }
               var offset = 32 * count
               val offsets =
-                tuples.joinToString("") { tuple -> words(offset.toString(16)).also { offset += tuple.length / 2 } }
+                tuples.joinToString("") { tuple ->
+                  words(offset.toString(16)).also { offset += tuple.length / 2 }
+                }
               "0x" + words("20", count.toString(16)) + offsets + tuples.joinToString("")
             }
           }
@@ -63,21 +66,34 @@ class SwapAssetSweepTest {
           seen,
         ),
       )
-    assertEquals(listOf(held), sweep.held(listOf(held, empty, broken, held.uppercase().replace("0X", "0x")), holders))
+    assertEquals(
+      listOf(held),
+      sweep.held(listOf(held, empty, broken, held.uppercase().replace("0X", "0x")), holders),
+    )
     assertEquals(setOf(held, empty, broken), seen.toSet())
   }
 
   @Test
   fun nothingToCheckMakesNoRequests() = runBlocking {
-    val sweep = SwapAssetSweep(SwapChains.ROBINHOOD, SwapMulticall(SwapChains.ROBINHOOD) { error("no request") })
+    val sweep =
+      SwapAssetSweep(
+        SwapChains.ROBINHOOD,
+        SwapMulticall(SwapChains.ROBINHOOD) { error("no request") },
+      )
     assertTrue(sweep.held(emptyList(), holders).isEmpty())
     assertTrue(sweep.held(listOf(held), emptyList()).isEmpty())
   }
 
   @Test
   fun malformedOrOversizedInputIsRejected() {
-    val sweep = SwapAssetSweep(SwapChains.ROBINHOOD, SwapMulticall(SwapChains.ROBINHOOD) { error("no request") })
-    assertThrows(IllegalArgumentException::class.java) { runBlocking { sweep.held(listOf("0x12"), holders) } }
+    val sweep =
+      SwapAssetSweep(
+        SwapChains.ROBINHOOD,
+        SwapMulticall(SwapChains.ROBINHOOD) { error("no request") },
+      )
+    assertThrows(IllegalArgumentException::class.java) {
+      runBlocking { sweep.held(listOf("0x12"), holders) }
+    }
     val many = (0..SwapAssetSweep.MAX_TOKENS).map { "0x" + it.toString(16).padStart(40, '0') }
     assertThrows(IllegalArgumentException::class.java) { runBlocking { sweep.held(many, holders) } }
   }

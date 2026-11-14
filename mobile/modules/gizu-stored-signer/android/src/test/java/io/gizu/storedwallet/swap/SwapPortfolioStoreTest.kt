@@ -89,7 +89,10 @@ class SwapPortfolioStoreTest {
     assertTrue(store().sweepDue(143))
     val assets = store().assets()
     assertEquals("swap", assets.single { it.token == intc }.source)
-    assertEquals(SwapLedgerAsset(4663, spcx, "discovered", 2_000L), assets.single { it.token == spcx })
+    assertEquals(
+      SwapLedgerAsset(4663, spcx, "discovered", 2_000L),
+      assets.single { it.token == spcx },
+    )
     now = 2_000L + SwapPortfolioStore.SWEEP_INTERVAL_MS
     assertTrue(store().sweepDue(4663))
     // A clock moved backwards is not trusted to postpone the next sweep.
@@ -108,7 +111,8 @@ class SwapPortfolioStoreTest {
 
   @Test
   fun eachChainIsBoundedSoTheOwnedPortfolioStaysReadable() {
-    val tokens = (0 until SwapPortfolioStore.CHAIN_LIMIT + 5).map { "0x" + it.toString(16).padStart(40, '0') }
+    val tokens =
+      (0 until SwapPortfolioStore.CHAIN_LIMIT + 5).map { "0x" + it.toString(16).padStart(40, '0') }
     store().recordSweep(4663, tokens)
     assertEquals(SwapPortfolioStore.CHAIN_LIMIT, store().targets().size)
     store().watch(intc, chainId = 143)
@@ -141,7 +145,10 @@ class SwapPortfolioStoreTest {
       SwapPortfolioStore.assets(merged).map { it.chainId to it.token },
     )
     assertEquals(10L, SwapPortfolioStore.assets(merged).first().firstSeenAt)
-    assertEquals("COMPLETE", merged.getJSONObject("history").getJSONObject("op1").getString("phase"))
+    assertEquals(
+      "COMPLETE",
+      merged.getJSONObject("history").getJSONObject("op1").getString("phase"),
+    )
     assertTrue(merged.getJSONObject("history").has("op2"))
     assertEquals(0, merged.getJSONObject("swept").length())
   }
@@ -151,9 +158,15 @@ class SwapPortfolioStoreTest {
     val other = SwapPortfolioStore.empty("someone-else")
     assertThrows(IllegalStateException::class.java) { SwapPortfolioStore.normalize(other, wallet) }
     val bad = SwapPortfolioStore.empty(wallet)
-    bad.getJSONArray("assets").put(
-      JSONObject().put("chainId", 4663).put("token", "0x1234").put("source", "swap").put("firstSeenAt", 0)
-    )
+    bad
+      .getJSONArray("assets")
+      .put(
+        JSONObject()
+          .put("chainId", 4663)
+          .put("token", "0x1234")
+          .put("source", "swap")
+          .put("firstSeenAt", 0)
+      )
     assertThrows(IllegalArgumentException::class.java) { SwapPortfolioStore.normalize(bad, wallet) }
     assertThrows(IllegalStateException::class.java) {
       SwapPortfolioStore.normalize(JSONObject().put("version", 9), wallet)

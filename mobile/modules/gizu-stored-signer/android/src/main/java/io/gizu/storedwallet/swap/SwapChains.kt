@@ -38,8 +38,7 @@ internal class SwapMulticall(
 ) {
   /** Head of the chain, checked against [SwapChain.chainId] so a wrong RPC cannot answer. */
   suspend fun head(): String {
-    val results =
-      request(listOf("eth_chainId" to JSONArray(), "eth_blockNumber" to JSONArray()))
+    val results = request(listOf("eth_chainId" to JSONArray(), "eth_blockNumber" to JSONArray()))
     check(quantity(results[0]) == BigInteger.valueOf(chain.chainId))
     quantity(results[1])
     return results[1]
@@ -135,7 +134,8 @@ internal class SwapMulticall(
       val size = bytes.length / 2
       fun at(position: Long): Long {
         require(position >= 0 && position + 32 <= size)
-        val value = BigInteger(bytes.substring((position * 2).toInt(), ((position + 32) * 2).toInt()), 16)
+        val value =
+          BigInteger(bytes.substring((position * 2).toInt(), ((position + 32) * 2).toInt()), 16)
         require(value.bitLength() < 32)
         return value.toLong()
       }

@@ -237,7 +237,9 @@ internal object SwapScreens {
       "fusionAfter" -> "Confirming the balances"
       "done" -> "Finishing up"
       else ->
-        step.replace(Regex("([a-z])([A-Z])"), "$1 $2").lowercase().replaceFirstChar { it.uppercase() }
+        step.replace(Regex("([a-z])([A-Z])"), "$1 $2").lowercase().replaceFirstChar {
+          it.uppercase()
+        }
     }
 
   fun progress(context: Context, view: Map<String, Any?>, approved: Boolean): View {
@@ -275,29 +277,24 @@ internal object SwapScreens {
     stepRow.gravity = Gravity.CENTER_VERTICAL
     stepRow.addView(spinner(context), LinearLayout.LayoutParams(dp(context, 18), dp(context, 18)))
     stepRow.addView(
-      text(
-        context,
-        stepText(view["step"] as? String ?: "", symbol),
-        15f,
-        NativeStyle.primaryText,
-      ),
+      text(context, stepText(view["step"] as? String ?: "", symbol), 15f, NativeStyle.primaryText),
       LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(context, 10) },
     )
     column.addView(stepRow, params(context, 10))
 
     // Stages
     val stages = card(context)
-    for ((i, stage) in stages(view).withIndex())
-      stages.addView(stageRow(context, stage), params(context, if (i == 0) 0 else 14))
+    for ((i, stage) in stages(view).withIndex()) stages.addView(
+      stageRow(context, stage),
+      params(context, if (i == 0) 0 else 14),
+    )
     column.addView(stages, params(context, 20))
 
     // Counters
     val paidLabel = if (sell) "USDC payouts sent" else "Wallets paid"
     val filledLabel = if (sell) "Sales filled" else "Stock orders filled"
     val counters = card(context)
-    counters.addView(
-      counter(context, paidLabel, number(view, "payoutsSubmitted"), legs)
-    )
+    counters.addView(counter(context, paidLabel, number(view, "payoutsSubmitted"), legs))
     counters.addView(
       counter(context, filledLabel, number(view, "ordersComplete"), if (sell) sales else legs),
       params(context, 14),
@@ -308,8 +305,7 @@ internal object SwapScreens {
     note.addView(
       text(
         context,
-        if (approved)
-          "Keep this screen open until it finishes."
+        if (approved) "Keep this screen open until it finishes."
         else "Nothing is signed yet. Leaving now cancels this preparation.",
         13f,
       )
@@ -340,26 +336,29 @@ internal object SwapScreens {
           stage.done -> {
             text = "✓"
             setTextColor(NativeStyle.ctaText)
-            background = GradientDrawable().apply {
-              shape = GradientDrawable.OVAL
-              setColor(NativeStyle.neon)
-            }
+            background =
+              GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(NativeStyle.neon)
+              }
           }
           stage.current -> {
             text = "•"
             setTextColor(NativeStyle.neon)
-            background = GradientDrawable().apply {
-              shape = GradientDrawable.OVAL
-              setColor(neonFill)
-              setStroke(dp(context, 2), NativeStyle.neon)
-            }
+            background =
+              GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(neonFill)
+                setStroke(dp(context, 2), NativeStyle.neon)
+              }
           }
           else -> {
-            background = GradientDrawable().apply {
-              shape = GradientDrawable.OVAL
-              setColor(Color.TRANSPARENT)
-              setStroke(dp(context, 1), NativeStyle.cardEdge)
-            }
+            background =
+              GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.TRANSPARENT)
+                setStroke(dp(context, 1), NativeStyle.cardEdge)
+              }
           }
         }
       }
@@ -384,7 +383,10 @@ internal object SwapScreens {
   private fun counter(context: Context, label: String, done: Int, total: Int): View {
     val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     val head = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-    head.addView(text(context, label, 14f, NativeStyle.primaryText), LinearLayout.LayoutParams(0, -2, 1f))
+    head.addView(
+      text(context, label, 14f, NativeStyle.primaryText),
+      LinearLayout.LayoutParams(0, -2, 1f),
+    )
     head.addView(text(context, "$done / $total", 14f, NativeStyle.secondary, true))
     column.addView(head)
     val bar =
@@ -394,7 +396,10 @@ internal object SwapScreens {
         progressTintList = ColorStateList.valueOf(NativeStyle.neon)
         progressBackgroundTintList = ColorStateList.valueOf(NativeStyle.well)
       }
-    column.addView(bar, LinearLayout.LayoutParams(-1, dp(context, 8)).apply { topMargin = dp(context, 8) })
+    column.addView(
+      bar,
+      LinearLayout.LayoutParams(-1, dp(context, 8)).apply { topMargin = dp(context, 8) },
+    )
     return column
   }
 
@@ -441,13 +446,9 @@ internal object SwapScreens {
     val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     box.addView(NativeStyle.label(context, lines.first().trim(), NativeStyle.neon))
     lines.getOrNull(1)?.let {
-      box.addView(
-        text(context, it.trim(), 19f, NativeStyle.primaryText, true),
-        params(context, 14),
-      )
+      box.addView(text(context, it.trim(), 19f, NativeStyle.primaryText, true), params(context, 14))
     }
-    for (rest in lines.drop(2))
-      box.addView(text(context, rest.trim(), 14f), params(context, 6))
+    for (rest in lines.drop(2)) box.addView(text(context, rest.trim(), 14f), params(context, 6))
     return box
   }
 
@@ -470,7 +471,8 @@ internal object SwapScreens {
     val card = card(context)
     val heading =
       lines.size > 1 &&
-        Regex("^(Payout|Leg|Wallet|Target|Selling|Funding)\\b").containsMatchIn(lines.first().trim())
+        Regex("^(Payout|Leg|Wallet|Target|Selling|Funding)\\b")
+          .containsMatchIn(lines.first().trim())
     for ((i, line) in lines.withIndex()) {
       val first = i == 0 && heading
       card.addView(

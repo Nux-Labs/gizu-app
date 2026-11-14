@@ -135,8 +135,7 @@ internal object NativeStyle {
           )
           addState(
             intArrayOf(android.R.attr.state_pressed),
-            if (primary) primaryFill(context, 217)
-            else rounded(context, glassPressed, 24, cardEdge),
+            if (primary) primaryFill(context, 217) else rounded(context, glassPressed, 24, cardEdge),
           )
           addState(
             intArrayOf(),

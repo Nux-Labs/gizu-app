@@ -52,10 +52,7 @@ internal fun fundingReservations(context: Context, record: WalletRecord): Fundin
         val data = state.getJSONObject("data")
         if (p.getString("kind") == "confidentialSwap" && !data.isNull("signedOperation")) {
           val operation =
-            uniffi.gizu_stored_signer_core.SwapOperation.restore(
-              raw,
-              "https://api.gizu.io",
-            )
+            uniffi.gizu_stored_signer_core.SwapOperation.restore(raw, "https://api.gizu.io")
           val complete =
             operation.use { JSONObject(it.publicStatus()).getString("phase") == "COMPLETE" }
           if (complete) ledger.complete(state.getString("id"))

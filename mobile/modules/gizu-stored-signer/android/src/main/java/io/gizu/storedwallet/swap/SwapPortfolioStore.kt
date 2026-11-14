@@ -153,7 +153,13 @@ internal class SwapPortfolioStore(
       when (root.getInt("version")) {
         1 -> {
           val tokens = root.getJSONArray("tokens")
-          for (i in 0 until tokens.length()) add(result, ROBINHOOD, tokens.getString(i), SOURCE_SWAP, 0)
+          for (i in 0 until tokens.length()) add(
+            result,
+            ROBINHOOD,
+            tokens.getString(i),
+            SOURCE_SWAP,
+            0,
+          )
         }
         VERSION -> {
           check(root.getString("walletId") == walletId)
@@ -162,7 +168,13 @@ internal class SwapPortfolioStore(
             val item = assets.getJSONObject(i)
             val source = item.getString("source")
             require(source in SOURCES)
-            add(result, item.getLong("chainId"), item.getString("token"), source, item.getLong("firstSeenAt"))
+            add(
+              result,
+              item.getLong("chainId"),
+              item.getString("token"),
+              source,
+              item.getLong("firstSeenAt"),
+            )
           }
           val swept = root.optJSONObject("swept") ?: JSONObject()
           for (chain in swept.keys()) {
@@ -187,7 +199,13 @@ internal class SwapPortfolioStore(
     internal fun mergeRecovered(a: JSONObject, b: JSONObject, walletId: String): JSONObject {
       val result = recovered(a, walletId)
       val other = recovered(b, walletId)
-      for (asset in assets(other)) add(result, asset.chainId, asset.token, asset.source, asset.firstSeenAt)
+      for (asset in assets(other)) add(
+        result,
+        asset.chainId,
+        asset.token,
+        asset.source,
+        asset.firstSeenAt,
+      )
       val history = result.getJSONObject("history")
       val incoming = other.getJSONObject("history")
       for (id in incoming.keys()) archive(history, incoming.getJSONObject(id))
@@ -227,11 +245,18 @@ internal class SwapPortfolioStore(
         val item = assets.getJSONObject(i)
         if (item.getLong("chainId") != chainId || item.getString("token") != normalized) continue
         if (source == SOURCE_SWAP) item.put("source", SOURCE_SWAP)
-        if (firstSeenAt > 0 && (item.getLong("firstSeenAt") == 0L || firstSeenAt < item.getLong("firstSeenAt")))
+        if (
+          firstSeenAt > 0 &&
+            (item.getLong("firstSeenAt") == 0L || firstSeenAt < item.getLong("firstSeenAt"))
+        )
           item.put("firstSeenAt", firstSeenAt)
         return false
       }
-      if ((0 until assets.length()).count { assets.getJSONObject(it).getLong("chainId") == chainId } >= CHAIN_LIMIT)
+      if (
+        (0 until assets.length()).count {
+          assets.getJSONObject(it).getLong("chainId") == chainId
+        } >= CHAIN_LIMIT
+      )
         return false
       assets.put(
         JSONObject()
