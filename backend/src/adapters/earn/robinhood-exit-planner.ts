@@ -4,6 +4,7 @@ import {
   encodeFunctionData,
   erc20Abi,
   getAddress,
+  formatUnits,
   keccak256,
   parseAbi,
   stringToHex,
@@ -32,6 +33,7 @@ import {
   ROBINHOOD_PROFILE,
   robinhoodChain,
   robinhoodCalls,
+  robinhoodVaultAbi,
 } from "./robinhood-vault.ts";
 import { createRobinhoodPaymaster } from "./robinhood-paymaster.ts";
 import type {
@@ -59,7 +61,12 @@ export interface RobinhoodExitProviders {
     calls: ExactCall[],
     fees: RobinhoodFeePrice,
   ) => Promise<RobinhoodPrepared>;
-  withdrawalCalls: (state: RobinhoodState) => Promise<ExactCall[]>;
+  withdrawalCalls: (
+    state: RobinhoodState,
+    shares?: bigint,
+  ) => Promise<ExactCall[]>;
+  withdrawalShares?: (state: RobinhoodState, assets: bigint) => Promise<bigint>;
+  withdrawalAssets?: (state: RobinhoodState) => Promise<bigint>;
   simulate: (
     state: RobinhoodState,
     calls: ExactCall[],
@@ -159,7 +166,8 @@ export async function simulateRobinhoodExit(
         ),
         remainingToken = await balance(client, ROBINHOOD_PROFILE.token, owner);
       if (
-        remainingShares !== 0n ||
+        remainingShares !==
+          (kind === "withdrawal" ? state.shares - amount : state.shares) ||
         (kind === "return" && remainingToken !== state.token - amount) ||
         (kind === "withdrawal" && remainingToken <= state.token)
       )
@@ -262,17 +270,38 @@ function runtime(
       owner = address;
       return readRobinhoodState(client, address, now);
     },
-    returnProbeRecipient: (state) => robinhoodReturnProbeRecipient(client, state),
+    returnProbeRecipient: (state) =>
+      robinhoodReturnProbeRecipient(client, state),
     market: async () => (await requirePaymaster()).market(),
     prepare: async (calls, fees) =>
       (await requirePaymaster()).prepare(calls, fees),
-    withdrawalCalls: async (s) =>
+    withdrawalShares: (s, assets) =>
+      client.readContract({
+        address: ROBINHOOD_PROFILE.vault,
+        abi: parseAbi([
+          "function previewWithdraw(uint256) view returns(uint256)",
+        ]),
+        functionName: "previewWithdraw",
+        args: [assets],
+        blockNumber: s.block.number,
+      }),
+    withdrawalAssets: (s) =>
+      client.readContract({
+        address: ROBINHOOD_PROFILE.vault,
+        abi: parseAbi([
+          "function previewRedeem(uint256) view returns(uint256)",
+        ]),
+        functionName: "previewRedeem",
+        args: [s.shares],
+        blockNumber: s.block.number,
+      }),
+    withdrawalCalls: async (s, shares = s.shares) =>
       (
         await robinhoodCalls(
           client,
           getAddress(s.owner),
           "withdraw",
-          s.shares,
+          shares,
           s.block.timestamp + 600n,
         )
       ).calls,
@@ -447,7 +476,24 @@ function base(
     planHash: "",
   };
 }
+export type RobinhoodWithdrawalRequest = RobinhoodPlanRequest & {
+  requestedWithdrawalAtoms?: string;
+  withdrawAllShares?: boolean;
+  withdrawalRequestId?: string;
+  confidentialAccount?: string;
+};
+export type RobinhoodReturnRequest = RobinhoodPlanRequest & {
+  confidentialAccount: string;
+  settlementMode?: "balance-delta-v1";
+  withdrawalOperationId?: string;
+  returnBudgetAtoms?: string;
+  minimumRetainedUsdgAtoms?: string;
+};
 export type RobinhoodWithdrawalPlan = ReturnType<typeof base> & {
+  requestedWithdrawalAtoms?: string;
+  withdrawAllShares?: boolean;
+  withdrawalRequestId?: string;
+  remainingShares?: string;
   kind: "hoodRedeemAll";
   amountAtoms: string;
   deadline: string;
@@ -462,12 +508,95 @@ export class RobinhoodWithdrawalPlanner {
     private config: RobinhoodExitConfig,
     private providers?: RobinhoodExitProviders,
     private now: () => number = Date.now,
+    private gateway?: Pick<NativeEarnGateway, "returnQuote">,
   ) {}
-  async plan(request: RobinhoodPlanRequest): Promise<RobinhoodWithdrawalPlan> {
+  async balances(owners: string[]) {
+    if (
+      !Array.isArray(owners) ||
+      owners.length < 1 ||
+      owners.length > 256 ||
+      new Set(owners.map((o) => o.toLowerCase())).size !== owners.length ||
+      owners.some((o) => !/^0x[0-9a-f]{40}$/i.test(o))
+    )
+      throw new InfrastructureError(
+        400,
+        "INVALID_EARN_EXIT_REQUEST",
+        "Unique investment owners are required.",
+      );
+    if (!this.providers) {
+      // Capacity is public display/planning data; do not load paymaster, nonce or token state.
+      const client = createPublicClient({
+        chain: robinhoodChain,
+        transport: evmReadTransport(this.config.rpcUrl),
+        cacheTime: 0,
+      });
+      const block = await client.getBlock();
+      const positions = [];
+      for (let offset = 0; offset < owners.length; offset += 4) {
+        const batch = await Promise.all(
+          owners.slice(offset, offset + 4).map(async (owner) => {
+            const address = getAddress(owner);
+            const shares = await client.readContract({
+              address: ROBINHOOD_PROFILE.vault,
+              abi: erc20Abi,
+              functionName: "balanceOf",
+              args: [address],
+              blockNumber: block.number,
+            });
+            const assets =
+              shares === 0n
+                ? 0n
+                : await client.readContract({
+                    address: ROBINHOOD_PROFILE.vault,
+                    abi: robinhoodVaultAbi,
+                    functionName: "previewRedeem",
+                    args: [shares],
+                    blockNumber: block.number,
+                  });
+            return {
+              owner: address,
+              shares: shares.toString(),
+              assetsAtoms: assets.toString(),
+              checkedAt: this.now(),
+            };
+          }),
+        );
+        positions.push(...batch);
+      }
+      if (
+        this.now() - Number(block.timestamp) * 1000 > 60000 ||
+        Number(block.timestamp) * 1000 > this.now() + 5000
+      )
+        throw new InfrastructureError(
+          409,
+          "EARN_WITHDRAWAL_REFERENCE_STALE",
+          "Withdrawal balances expired. Refresh the vault.",
+        );
+      return { positions };
+    }
+    const rows = [];
+    for (const address of owners) {
+      const providers =
+        this.providers ?? runtime(this.config, this.gateway, this.now);
+      const s = await providers.readState(getAddress(address));
+      stateValid(s, getAddress(address), this.now());
+      const assets = await providers.withdrawalAssets!(s);
+      rows.push({
+        owner: getAddress(address),
+        shares: s.shares.toString(),
+        assetsAtoms: assets.toString(),
+        checkedAt: this.now(),
+      });
+    }
+    return { positions: rows };
+  }
+  async plan(
+    request: RobinhoodWithdrawalRequest,
+  ): Promise<RobinhoodWithdrawalPlan> {
     validate(request);
     try {
       const providers =
-          this.providers ?? runtime(this.config, undefined, this.now),
+          this.providers ?? runtime(this.config, this.gateway, this.now),
         owner = getAddress(request.owner),
         s = await providers.readState(owner);
       stateValid(s, owner, this.now());
@@ -477,8 +606,45 @@ export class RobinhoodWithdrawalPlanner {
           "EARN_WITHDRAWAL_SHARES_ABSENT",
           "The vault has no shares left to withdraw. No transaction was sent.",
         );
+      if (
+        request.withdrawalRequestId !== undefined &&
+        (!/^[-a-zA-Z0-9_]{1,128}$/.test(request.withdrawalRequestId) ||
+          !request.confidentialAccount ||
+          !/^0x[0-9a-f]{40}$/i.test(request.confidentialAccount))
+      )
+        throw new InfrastructureError(
+          400,
+          "INVALID_EARN_EXIT_REQUEST",
+          "A withdrawal request and private return account are required.",
+        );
+      let shares = s.shares;
+      if (request.requestedWithdrawalAtoms !== undefined) {
+        if (
+          !request.withdrawalRequestId ||
+          !/^[1-9][0-9]{0,77}$/.test(request.requestedWithdrawalAtoms) ||
+          BigInt(request.requestedWithdrawalAtoms) >= 1n << 256n
+        )
+          throw new InfrastructureError(
+            400,
+            "INVALID_EARN_EXIT_REQUEST",
+            "A positive requested withdrawal amount is required.",
+          );
+        shares =
+          request.withdrawAllShares === true
+            ? s.shares
+            : await providers.withdrawalShares!(
+                s,
+                BigInt(request.requestedWithdrawalAtoms),
+              );
+        if (shares <= 0n || shares > s.shares)
+          throw new InfrastructureError(
+            409,
+            "EARN_WITHDRAWAL_AMOUNT_UNAVAILABLE",
+            "The requested amount exceeds this investment's current withdrawable balance. Refresh the amount before approving.",
+          );
+      }
       const fees = buffered(await providers.market()),
-        calls = await providers.withdrawalCalls(s),
+        calls = await providers.withdrawalCalls(s, shares),
         initial = await providers.prepare(calls, fees);
       preparedValid(initial, s, fees, this.now());
       const budget = mulDiv(initial.feeCap, 105n, 100n, "ceil");
@@ -500,15 +666,29 @@ export class RobinhoodWithdrawalPlanner {
         s,
         robinhoodPreparedCalls(final),
         "withdrawal",
-        s.shares,
+        shares,
       );
       if (
-        simulation.remainingShares !== 0n ||
+        simulation.remainingShares !== s.shares - shares ||
         simulation.receivedToken <= 0n ||
         !simulation.rows.length ||
         simulation.rows.length > 4
       )
         throw new Error("Full withdrawal simulation failed");
+      if (request.requestedWithdrawalAtoms) {
+        const requested = BigInt(request.requestedWithdrawalAtoms),
+          tolerance = mulDiv(requested, 10n, 10000n, "ceil");
+        if (
+          simulation.receivedToken + 1n < requested ||
+          simulation.receivedToken >
+            requested + (tolerance > 1n ? tolerance : 1n)
+        )
+          throw new InfrastructureError(
+            409,
+            "EARN_WITHDRAWAL_AMOUNT_UNAVAILABLE",
+            "The selected portion changed. Refresh the withdrawal amount before approving.",
+          );
+      }
       try {
         await providers.assertFresh(s, fees);
       } catch (error) {
@@ -519,10 +699,59 @@ export class RobinhoodWithdrawalPlanner {
           "Vault shares, the USDG balance, or the network fee changed. Refresh before authorizing. No transaction was sent.",
         );
       }
+      if (request.withdrawalRequestId) {
+        // Whole-request UI preflight calls every portion before any approval. Reuse the
+        // existing 2.6x next-withdrawal reserve plus a conservative return-fee envelope.
+        const returnAmount =
+          simulation.receivedToken -
+          mulDiv(
+            budget,
+            simulation.remainingShares > 0n ? 400n : 260n,
+            100n,
+            "ceil",
+          );
+        if (returnAmount <= 0n)
+          throw new InfrastructureError(
+            409,
+            "EARN_WITHDRAWAL_TOO_SMALL",
+            "This withdrawal portion is too small to cover withdrawal and private-return fees.",
+          );
+        try {
+          await providers.quote({
+            operationId: request.operationId,
+            revision: request.revision,
+            profileChainId: 4663,
+            sourceOwner: owner,
+            confidentialAccount: getAddress(request.confidentialAccount!),
+            amountAtoms: returnAmount.toString(),
+            settlementMode: "balance-delta-v1",
+          });
+        } catch {
+          throw new InfrastructureError(
+            409,
+            "EARN_WITHDRAWAL_RETURN_PREFLIGHT_UNAVAILABLE",
+            `The ${formatUnits(simulation.receivedToken, 6)} USDG portion cannot currently be quoted for private USDC after fees and reserves. Change the amount or retry. No shares were withdrawn.`,
+          );
+        }
+      }
       const plan: RobinhoodWithdrawalPlan = {
         ...base(request, s, final, fees, budget, this.now()),
         kind: "hoodRedeemAll",
-        amountAtoms: s.shares.toString(),
+        amountAtoms: shares.toString(),
+        ...(request.withdrawalRequestId
+          ? {
+              withdrawalRequestId: request.withdrawalRequestId,
+              remainingShares: (s.shares - shares).toString(),
+            }
+          : {}),
+        ...(request.requestedWithdrawalAtoms
+          ? {
+              requestedWithdrawalAtoms: request.requestedWithdrawalAtoms,
+              ...(request.withdrawAllShares === true
+                ? { withdrawAllShares: true }
+                : {}),
+            }
+          : {}),
         deadline: (s.block.timestamp + 600n).toString(),
         previewRedeemedUsdg: simulation.receivedToken.toString(),
         simulation: simulation.rows.map((row) => ({
@@ -532,7 +761,7 @@ export class RobinhoodWithdrawalPlanner {
         returnsQuoted: false,
         minimumAssetsGuard: false,
         exclusions: [
-          "No Aurora return cost is reserved by this fresh withdrawal; return quotes follow confirmed zero shares.",
+          "No Aurora return cost is reserved by this fresh withdrawal; return quotes follow the confirmed redemption receipt.",
           "Fork executes exact calls but does not charge the paymaster token fee; live execution requires fresh final sponsorship and separate native authorization.",
         ],
       };
@@ -550,6 +779,9 @@ export class RobinhoodWithdrawalPlanner {
 }
 export type RobinhoodReturnPlan = ReturnType<typeof base> & {
   kind: "hoodTokenReturn";
+  withdrawalOperationId?: string;
+  returnBudgetAtoms?: string;
+  withdrawalReserveAtoms?: string;
   amountAtoms: string;
   confidentialAccount: Address;
   recipient: Address;
@@ -574,9 +806,7 @@ export class RobinhoodReturnPlanner {
     private providers?: RobinhoodExitProviders,
     private now: () => number = Date.now,
   ) {}
-  async plan(
-    request: RobinhoodPlanRequest & { confidentialAccount: string; settlementMode?: "balance-delta-v1" },
-  ): Promise<RobinhoodReturnPlan> {
+  async plan(request: RobinhoodReturnRequest): Promise<RobinhoodReturnPlan> {
     validate(request);
     if (
       !/^0x[0-9a-f]{40}$/i.test(request.confidentialAccount) ||
@@ -594,8 +824,51 @@ export class RobinhoodReturnPlanner {
         owner = getAddress(request.owner),
         s = await providers.readState(owner);
       stateValid(s, owner, this.now());
-      if (s.shares !== 0n || s.token <= 1n)
-        throw new Error("Return requires confirmed zero shares and real USDG");
+      const sourced =
+        request.withdrawalOperationId !== undefined ||
+        request.returnBudgetAtoms !== undefined;
+      if (
+        sourced &&
+        (!/^[-a-zA-Z0-9_]{1,128}$/.test(request.withdrawalOperationId ?? "") ||
+          !/^[1-9][0-9]{0,77}$/.test(request.returnBudgetAtoms ?? "") ||
+          BigInt(request.returnBudgetAtoms!) >= 1n << 256n)
+      )
+        throw new InfrastructureError(
+          400,
+          "INVALID_EARN_EXIT_REQUEST",
+          "An exact withdrawal source and proceeds budget are required.",
+        );
+      if ((!sourced && s.shares !== 0n) || s.token <= 1n)
+        throw new Error(
+          "Return requires its withdrawal proceeds and real USDG",
+        );
+      let retainedReserve = 0n;
+      if (
+        sourced &&
+        (s.shares > 0n || request.minimumRetainedUsdgAtoms !== undefined)
+      ) {
+        if (
+          !/^[1-9][0-9]{0,77}$/.test(request.minimumRetainedUsdgAtoms ?? "") ||
+          BigInt(request.minimumRetainedUsdgAtoms!) >= 1n << 256n
+        )
+          throw new InfrastructureError(
+            400,
+            "INVALID_EARN_EXIT_REQUEST",
+            "The remaining investment requires its next-withdrawal reserve.",
+          );
+        retainedReserve = BigInt(request.minimumRetainedUsdgAtoms!);
+      }
+      const spendable = s.token - retainedReserve;
+      if (spendable <= 1n)
+        throw new InfrastructureError(
+          409,
+          "EARN_RETURN_RESERVE_INSUFFICIENT",
+          "This portion cannot cover its return fees and retain the next-withdrawal reserve. Your proceeds remain in the investment wallet.",
+        );
+      const available =
+        sourced && BigInt(request.returnBudgetAtoms!) < spendable
+          ? BigInt(request.returnBudgetAtoms!)
+          : spendable;
       const fees = buffered(await providers.market()),
         price = await providers.price();
       if (
@@ -616,7 +889,7 @@ export class RobinhoodReturnPlanner {
         }),
       });
       const probeRecipient = await providers.returnProbeRecipient(s);
-      let amount = s.token / 2n,
+      let amount = available / 2n,
         budget = 0n,
         stable = false;
       for (let attempt = 0; attempt < 8; attempt++) {
@@ -626,14 +899,12 @@ export class RobinhoodReturnPlanner {
         )
           throw new Error("Insufficient or stale return balance");
         const probe = await providers.prepare(
-          [
-            transfer(probeRecipient, amount),
-          ],
+          [transfer(probeRecipient, amount)],
           fees,
         );
         preparedValid(probe, s, fees, this.now());
         budget = feeEnvelope(budget, probe.feeCap, 105n, 100n);
-        const next = s.token - budget;
+        const next = available - budget;
         if (next <= 0n) throw new Error("USDG return reserve insufficient");
         if (next !== amount) {
           amount = next;
@@ -644,7 +915,7 @@ export class RobinhoodReturnPlanner {
       }
       if (!stable) throw new Error("Return fee did not converge");
       const residualValue = ceilDiv(
-        (s.token - amount) * price.tokenPriceMicroUsdc,
+        (available - amount) * price.tokenPriceMicroUsdc,
         1000000n,
       );
       if (residualValue >= 500000n)
@@ -672,7 +943,9 @@ export class RobinhoodReturnPlanner {
         !same(route.confidentialAccount, request.confidentialAccount) ||
         route.amountAtoms !== amount.toString() ||
         route.originAsset !== robinhoodUsdgAssetId ||
-        (!Number.isSafeInteger(route.providerFeeBps) || route.providerFeeBps < 0 || route.providerFeeBps > 100) ||
+        !Number.isSafeInteger(route.providerFeeBps) ||
+        route.providerFeeBps < 0 ||
+        route.providerFeeBps > 100 ||
         !/^0x[0-9a-f]{64}$/i.test(route.quoteId) ||
         !/^0x[0-9a-f]{64}$/i.test(route.authenticatedBodyHash) ||
         !/^[1-9][0-9]{0,77}$/.test(route.minimumCreditAtoms) ||
@@ -702,7 +975,7 @@ export class RobinhoodReturnPlanner {
         amount,
       );
       if (
-        simulation.remainingShares !== 0n ||
+        simulation.remainingShares !== s.shares ||
         simulation.remainingToken !== s.token - amount ||
         simulation.receivedToken !== amount ||
         !simulation.rows.length ||
@@ -715,7 +988,16 @@ export class RobinhoodReturnPlanner {
       const plan: RobinhoodReturnPlan = {
         ...base(request, s, final, fees, budget, this.now()),
         kind: "hoodTokenReturn",
+        ...(sourced
+          ? {
+              withdrawalOperationId: request.withdrawalOperationId!,
+              returnBudgetAtoms: available.toString(),
+            }
+          : {}),
         amountAtoms: amount.toString(),
+        ...(sourced
+          ? { withdrawalReserveAtoms: retainedReserve.toString() }
+          : {}),
         confidentialAccount: getAddress(request.confidentialAccount),
         recipient: route.recipient,
         route,
@@ -739,7 +1021,9 @@ export class RobinhoodReturnPlanner {
         completionRequires: [
           "Finalized exact USDG transfer and actual paymaster charge",
           "Authenticated operation-specific confidential credit",
-          "Fresh USDG/native/wrapped balances and zero vault shares; combined remainder strictly below 0.50 USDC",
+          sourced
+            ? "The requested redemption is complete; remaining shares stay invested and the next-withdrawal reserve is retained"
+            : "Fresh USDG/native/wrapped balances and zero vault shares; combined remainder strictly below 0.50 USDC",
         ],
       };
       plan.expiresAtMs = Math.min(plan.expiresAtMs, route.expiresAt * 1000);
@@ -752,7 +1036,7 @@ export class RobinhoodReturnPlanner {
       throw new InfrastructureError(
         502,
         "EARN_ROBINHOOD_RETURN_UNAVAILABLE",
-        "Could not verify zero shares, fresh USDG valuation, exact return quote and token gas budget. No transaction was sent.",
+        "Could not verify withdrawal proceeds, fresh USDG valuation, exact return quote and token gas budget. No transaction was sent.",
       );
     }
   }

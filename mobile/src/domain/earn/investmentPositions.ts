@@ -11,6 +11,8 @@ export type EarnInvestmentPosition = {
   lastReturnOperationId?: string;
   /** Completed withdrawal lifecycle; the investment may still hold a remainder. */
   withdrawalComplete?: boolean;
+  lastWithdrawalRequestId?: string;
+  completedWithdrawalRequestIds?: string[];
   withdrawalAttention?: "confirming" | "unfinished" | "returning" | "checking";
 };
 export interface EarnInvestmentPositionsService {

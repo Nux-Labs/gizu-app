@@ -24,6 +24,12 @@ export type RobinhoodRoute = {
   feePolicy?: EarnFeeProof;
 };
 export type RobinhoodPlan = {
+  requestedWithdrawalAtoms?: string;
+  withdrawAllShares?: true;
+  withdrawalRequestId?: string;
+  remainingShares?: string;
+  withdrawalOperationId?: string;
+  returnBudgetAtoms?: string;
   kind: RobinhoodKind;
   operationId: string;
   revision: number;
@@ -45,6 +51,11 @@ export type RobinhoodPlan = {
 export type RobinhoodRequest = {
   walletId: string;
   proposal: {
+    requestedWithdrawalAtoms?: string;
+    withdrawAllShares?: true;
+    withdrawalRequestId?: string;
+    withdrawalOperationId?: string;
+    returnBudgetAtoms?: string;
     cycleIndex?: number;
     investmentSlot?: number;
     kind: RobinhoodKind;
@@ -72,7 +83,16 @@ export type RobinhoodRequest = {
 };
 export interface EarnRobinhoodService {
   available(): Promise<boolean>;
-  plan(intent: EarnIntent, kind: RobinhoodKind, signal: AbortSignal): Promise<RobinhoodPlan>;
+  withdrawalBalances?(
+    intents: EarnIntent[],
+    signal: AbortSignal,
+  ): Promise<{ owner: string; shares: string; assetsAtoms: string; checkedAt: number }[]>;
+  plan(
+    intent: EarnIntent,
+    kind: RobinhoodKind,
+    signal: AbortSignal,
+    options?: RobinhoodPlanOptions,
+  ): Promise<RobinhoodPlan>;
   execute(intent: EarnIntent, plan: RobinhoodPlan): Promise<SponsoredOperation>;
   finishWithdrawal?(
     intent: EarnIntent,
@@ -86,6 +106,14 @@ export interface EarnRobinhoodService {
   cancelUnsigned(intent: EarnIntent, op: SponsoredOperation): Promise<SponsoredOperation>;
   cancel(): void;
 }
+export type RobinhoodPlanOptions = Pick<
+  RobinhoodPlan,
+  | "requestedWithdrawalAtoms"
+  | "withdrawAllShares"
+  | "withdrawalRequestId"
+  | "withdrawalOperationId"
+  | "returnBudgetAtoms"
+> & { minimumRetainedUsdgAtoms?: string };
 function same(v: unknown, expected: string): v is string {
   return typeof v === "string" && v.toLowerCase() === expected.toLowerCase();
 }
@@ -315,17 +343,53 @@ export function parseRobinhoodPlan(
     )
       throw new Error("Robinhood exit budget changed.");
     if (kind === "hoodRedeemAll") {
-      if (amount !== shares || r.returnsQuoted !== false || r.minimumAssetsGuard !== false)
-        throw new Error("Withdrawal must redeem all current shares.");
+      if (r.requestedWithdrawalAtoms !== undefined) {
+        if (
+          !r.withdrawalRequestId ||
+          BigInt(earnAtoms(r.requestedWithdrawalAtoms)) === 0n ||
+          BigInt(amount) > BigInt(shares)
+        )
+          throw new Error("Requested withdrawal shares changed.");
+        if (
+          r.withdrawAllShares !== undefined &&
+          (r.withdrawAllShares !== true || amount !== shares)
+        )
+          throw new Error("Max withdrawal shares changed.");
+      } else if (amount !== shares) throw new Error("Withdrawal must redeem all current shares.");
+      if (
+        r.withdrawalRequestId !== undefined &&
+        (typeof r.withdrawalRequestId !== "string" ||
+          id(r.withdrawalRequestId) !== r.withdrawalRequestId ||
+          earnAtoms(r.remainingShares) !== (BigInt(shares) - BigInt(amount)).toString())
+      )
+        throw new Error("Withdrawal portion changed.");
+      if (r.returnsQuoted !== false || r.minimumAssetsGuard !== false)
+        throw new Error("Withdrawal policy changed.");
       redeemed = earnAtoms(r.previewRedeemedUsdg);
     } else {
       if (
-        shares !== "0" ||
+        (r.withdrawalOperationId === undefined && shares !== "0") ||
         BigInt(amount) + BigInt(maximum) > BigInt(budget) ||
         r.quotePolicy !== "one-immutable-quote-after-fee-probe" ||
         r.residualTargetMet !== true
       )
         throw new Error("Return requires zero shares and an exact fee budget.");
+      let residualBudget = retained;
+      reserve = earnAtoms(r.withdrawalReserveAtoms ?? "0");
+      if (BigInt(amount) + BigInt(maximum) + BigInt(reserve) > BigInt(budget))
+        throw new Error("The remaining investment reserve is not funded.");
+      if (r.withdrawalOperationId !== undefined || r.returnBudgetAtoms !== undefined) {
+        if (typeof r.withdrawalOperationId !== "string")
+          throw new Error("Missing withdrawal source.");
+        id(r.withdrawalOperationId);
+        const sourceBudget = earnAtoms(r.returnBudgetAtoms);
+        if (
+          BigInt(sourceBudget) > BigInt(budget) ||
+          BigInt(amount) + BigInt(maximum) > BigInt(sourceBudget)
+        )
+          throw new Error("Return exceeds withdrawal proceeds.");
+        residualBudget = (BigInt(sourceBudget) - BigInt(amount)).toString();
+      }
       const p = earnObject(r.price),
         price = BigInt(earnAtoms(p.tokenPriceMicroUsdc)),
         observed = integer(p.observedAtMs);
@@ -335,7 +399,7 @@ export function parseRobinhoodPlan(
         observed > now + 60000 ||
         now - observed > 300000 ||
         price === 0n ||
-        BigInt(residual) !== ceilDiv(BigInt(retained) * price, 1000000n) ||
+        BigInt(residual) !== ceilDiv(BigInt(residualBudget) * price, 1000000n) ||
         BigInt(residual) >= 500000n
       )
         throw new Error("Return residual valuation changed or expired.");
@@ -397,6 +461,24 @@ export function parseRobinhoodPlan(
     ...(route ? { route } : {}),
     ...(residual ? { maximumResidualUsdcAtoms: residual } : {}),
     ...(redeemed ? { previewRedeemedUsdg: redeemed } : {}),
+    ...(r.requestedWithdrawalAtoms !== undefined
+      ? {
+          requestedWithdrawalAtoms: earnAtoms(r.requestedWithdrawalAtoms),
+          ...(r.withdrawAllShares === true ? { withdrawAllShares: true as const } : {}),
+        }
+      : {}),
+    ...(r.withdrawalRequestId !== undefined
+      ? {
+          withdrawalRequestId: id(String(r.withdrawalRequestId)),
+          remainingShares: earnAtoms(r.remainingShares),
+        }
+      : {}),
+    ...(r.withdrawalOperationId !== undefined
+      ? {
+          withdrawalOperationId: id(String(r.withdrawalOperationId)),
+          returnBudgetAtoms: earnAtoms(r.returnBudgetAtoms),
+        }
+      : {}),
   };
 }
 export function robinhoodProposal(
@@ -427,6 +509,19 @@ export function robinhoodProposal(
       vault: earnProfiles["robinhood-usdg"].vault,
       router: hoodRouter,
       amountAtoms: plan.amountAtoms,
+      ...(plan.requestedWithdrawalAtoms
+        ? {
+            requestedWithdrawalAtoms: plan.requestedWithdrawalAtoms,
+            ...(plan.withdrawAllShares ? { withdrawAllShares: true as const } : {}),
+          }
+        : {}),
+      ...(plan.withdrawalRequestId ? { withdrawalRequestId: plan.withdrawalRequestId } : {}),
+      ...(plan.withdrawalOperationId
+        ? {
+            withdrawalOperationId: plan.withdrawalOperationId,
+            returnBudgetAtoms: plan.returnBudgetAtoms,
+          }
+        : {}),
       nonce: op.nonce!,
       deadline: plan.deadline,
       maximumTokenFeeAtoms: plan.maximumTokenFeeAtoms,

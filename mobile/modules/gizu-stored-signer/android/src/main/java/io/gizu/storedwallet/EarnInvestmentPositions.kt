@@ -189,7 +189,7 @@ internal fun earnInvestmentPositions(
           val redeemSettled =
             last?.let {
               it.getJSONObject("proposal").optString("kind") == "hoodRedeemAll" &&
-                it.optString("residualShares") == "0"
+                (it.optString("residualShares") == "0" || withdrawnRequestedPortion(it))
             } == true
           val returnFinalized = currentReturns.any(::completed)
           val returnSettled =
@@ -212,6 +212,37 @@ internal fun earnInvestmentPositions(
             if (slot != null) put("investmentSlot", slot)
             put("activity", activity)
             if (withdrawalComplete) put("withdrawalComplete", true)
+            val completedRequests =
+              primary
+                .filter(::completed)
+                .mapNotNull { source ->
+                  val request =
+                    source.getJSONObject("proposal").optString("withdrawalRequestId").takeIf {
+                      it.isNotEmpty()
+                    } ?: return@mapNotNull null
+                  val related =
+                    returns.filter {
+                      it.getJSONObject("proposal").optString("withdrawalOperationId") ==
+                        source.getString("operationId") &&
+                        it.optString("status") !in
+                          setOf("cancelled", "reverted", "nonceCancelled", "expired") &&
+                        !it.optBoolean("cancelled")
+                    }
+                  if (
+                    related.isNotEmpty() &&
+                      related.all { completedReturnLifecycle(it, record.id, record.journalId) }
+                  )
+                    request
+                  else null
+                }
+                .distinct()
+            if (completedRequests.isNotEmpty())
+              put("completedWithdrawalRequestIds", completedRequests)
+            last
+              ?.getJSONObject("proposal")
+              ?.optString("withdrawalRequestId")
+              ?.takeIf { it.isNotEmpty() }
+              ?.let { put("lastWithdrawalRequestId", it) }
             if (chain == 4663)
               (currentReturns.lastOrNull {
                   completed(it) && !completedReturnLifecycle(it, record.id, record.journalId)

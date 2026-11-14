@@ -66,5 +66,29 @@ test("withdrawal and return previews are distinct requested actions with strict 
     400,
   );
   assert.equal(calls.length, 2);
+  const portion = await app.inject({
+    method: "POST",
+    url: "/v1/earn/robinhood/withdrawal-plan",
+    payload: {
+      ...input,
+      requestedWithdrawalAtoms: "500000",
+      withdrawalRequestId: "request_1",
+      confidentialAccount: "0x2000000000000000000000000000000000000002",
+    },
+  });
+  assert.equal(portion.statusCode, 200);
+  assert.equal((calls.at(-1) as any).requestedWithdrawalAtoms, "500000");
+  const sourced = await app.inject({
+    method: "POST",
+    url: "/v1/earn/robinhood/return-plan",
+    payload: {
+      ...input,
+      confidentialAccount: "0x2000000000000000000000000000000000000002",
+      withdrawalOperationId: "redeem_1",
+      returnBudgetAtoms: "500000",
+    },
+  });
+  assert.equal(sourced.statusCode, 200);
+  assert.equal((calls.at(-1) as any).withdrawalOperationId, "redeem_1");
   await app.close();
 });

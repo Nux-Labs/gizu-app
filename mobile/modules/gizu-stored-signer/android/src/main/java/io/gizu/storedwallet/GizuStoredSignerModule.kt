@@ -462,6 +462,7 @@ class GizuStoredSignerModule : Module() {
           "earnDepositDistribution" to eligible(appContext.currentActivity),
           "earnDepositPrivateFunding" to eligible(appContext.currentActivity),
           "earnBalanceDeltaSettlement" to eligible(appContext.currentActivity),
+          "earnPartialWithdrawals" to eligible(appContext.currentActivity),
         )
       )
     }

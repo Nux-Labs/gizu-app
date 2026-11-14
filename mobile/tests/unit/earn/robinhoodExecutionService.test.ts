@@ -8,6 +8,36 @@ jest.mock("@/services/wallet/nativeBridge", () => ({
   getSignerCapabilities: jest.fn().mockResolvedValue({ earnSponsoredExecution: true }),
 }));
 const now = 1000000;
+test("requested withdrawal options reach planning and stay bound to the response", async () => {
+  jest.mocked(getSignerCapabilities).mockResolvedValueOnce({
+    ...(await getSignerCapabilities()),
+    earnSponsoredExecution: true,
+    earnPartialWithdrawals: true,
+  });
+  const options = { withdrawalRequestId: "request_1", requestedWithdrawalAtoms: "400000" };
+  const fetcher = jest.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ ...options, confidentialAccount: hoodIntent.confidentialAddress });
+    return {
+      ok: true,
+      json: async () => ({
+        ...hoodRaw("hoodRedeemAll", now, body.operationId),
+        ...options,
+        amountAtoms: "400000000000000000",
+        remainingShares: "400000000000000000",
+        previewRedeemedUsdg: "400000",
+      }),
+    } as Response;
+  });
+  const plan = await createEarnRobinhoodService("https://backend.test", native, () => now).plan(
+    hoodIntent,
+    "hoodRedeemAll",
+    new AbortController().signal,
+    options,
+  );
+  expect(plan).toMatchObject(options);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
 const row: SponsoredOperation = {
   operationId: "hood_1",
   revision: 1,
@@ -260,4 +290,21 @@ test("duplicate authorization is rejected and closed late results require native
   await expect(first).rejects.toThrow(/closed/);
   expect(b.lock).toHaveBeenCalledTimes(1);
   expect(await service.list(hoodIntent)).toEqual([row]);
+});
+
+test("a nonce-cancelled redemption exits polling and requires saved-progress recovery without reusing approval", async () => {
+  const b = native();
+  const clock = jest.fn().mockReturnValueOnce(0).mockReturnValue(840001);
+  const service = createEarnRobinhoodService("https://backend.test", () => b, clock);
+  const fetcher = jest.spyOn(globalThis, "fetch");
+  await expect(
+    service.finishWithdrawal!(
+      hoodIntent,
+      { ...row, kind: "hoodRedeemAll", status: "nonceCancelled" },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow(/saved progress/i);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(b.executeEarnSponsored).not.toHaveBeenCalled();
+  expect(b.listEarnSponsoredOperations).not.toHaveBeenCalled();
 });

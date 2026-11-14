@@ -1,6 +1,40 @@
 import { parseRobinhoodPlan, robinhoodProposal } from "@/domain/earn/robinhoodExecution";
 import { hoodIntent, hoodRaw } from "../../support/robinhoodEarn";
 const now = 1000000;
+test("requested shares and source-bounded returns preserve the withdrawal portion bindings", () => {
+  const raw = hoodRaw("hoodRedeemAll", now);
+  const plan = parseRobinhoodPlan(
+    {
+      ...raw,
+      amountAtoms: "400000000000000000",
+      remainingShares: "400000000000000000",
+      previewRedeemedUsdg: "400000",
+      requestedWithdrawalAtoms: "400000",
+      withdrawalRequestId: "withdraw_1",
+    },
+    hoodIntent,
+    "hoodRedeemAll",
+    "hood_1",
+    1,
+    now,
+  );
+  expect(robinhoodProposal(plan, hoodIntent, now).proposal).toMatchObject({
+    amountAtoms: "400000000000000000",
+    requestedWithdrawalAtoms: "400000",
+    withdrawalRequestId: "withdraw_1",
+  });
+  const ret = hoodRaw("hoodTokenReturn", now) as any;
+  ret.startingBalances.shares = "1000000000000000000";
+  ret.withdrawalOperationId = "redeem_1";
+  ret.returnBudgetAtoms = "1000000";
+  expect(
+    robinhoodProposal(
+      parseRobinhoodPlan(ret, hoodIntent, "hoodTokenReturn", "hood_1", 1, now),
+      hoodIntent,
+      now,
+    ).proposal,
+  ).toMatchObject({ withdrawalOperationId: "redeem_1", returnBudgetAtoms: "1000000" });
+});
 test("new returns from historical investments target shared private cash", () => {
   const shared = "0x" + "9".repeat(40);
   const intent = { ...hoodIntent, returnConfidentialAddress: shared };

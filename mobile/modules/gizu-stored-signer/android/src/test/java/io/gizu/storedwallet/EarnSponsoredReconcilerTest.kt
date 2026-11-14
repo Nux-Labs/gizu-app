@@ -628,6 +628,87 @@ class EarnSponsoredReconcilerTest {
   }
 
   @Test
+  fun aLateCanonicalRequestedReceiptIsRecoveredWithoutRevivingAbsentExpiredBytes() = runBlocking {
+    val j = setup("hoodRedeemAll")
+    j.update("op", j.get("op").getInt("revision")) {
+      it.put("status", "expired")
+      it
+        .getJSONObject("proposal")
+        .put("requestedWithdrawalAtoms", "900")
+        .put("withdrawalRequestId", "request")
+    }
+    val rpc =
+      Rpc().apply {
+        redeem = true
+        shares = 700
+      }
+    reconcileEarnSponsoredOperations(
+      j,
+      rpc,
+      rpc,
+      ::topic,
+      { error("Expired bytes must never become sendable") },
+    )
+    assertEquals("expired", j.get("op").getString("status"))
+    rpc.found(j)
+    rpc.canonical = hash
+    reconcileEarnSponsoredOperations(j, rpc, rpc, ::topic, { error("Canonical receipt only") })
+    assertEquals("expired", j.get("op").getString("status"))
+    rpc.canonical = block
+    reconcileEarnSponsoredOperations(j, rpc, rpc, ::topic, { error("Canonical receipt only") })
+    assertEquals("withdrawn", j.public(j.get("op"))["status"])
+    assertEquals("700", j.get("op").getString("residualShares"))
+  }
+
+  @Test
+  fun canonicalNonceConsumptionClosesOnlyTheCompetingRequestedSignature() = runBlocking {
+    val j = setup("hoodRedeemAll")
+    j.update("op", j.get("op").getInt("revision")) {
+      it.put("status", "expired")
+      it
+        .getJSONObject("proposal")
+        .put("requestedWithdrawalAtoms", "900")
+        .put("withdrawalRequestId", "request")
+    }
+    val old = j.get("op")
+    val p = JSONObject(old.getJSONObject("proposal").toString()).put("operationId", "winner")
+    j.create(p, old.getJSONObject("unsignedUserOperation"))
+    j.update("winner", 1) {
+      it
+        .put("status", "finalized")
+        .put("signedUserOperation", "saved")
+        .put("transactionHash", transaction)
+      it.getJSONObject("proposal").put("nonce", "0x1")
+    }
+    // Another nonce is no proof that the old signature cannot still execute.
+    reconcileEarnSponsoredOperations(
+      j,
+      Rpc().apply { redeem = true },
+      Rpc(),
+      ::topic,
+      { error("No state") },
+      operationIds = emptySet(),
+    )
+    assertEquals("expired", j.get("op").getString("status"))
+    j.update("winner", j.get("winner").getInt("revision")) {
+      it.getJSONObject("proposal").put("nonce", "0x0")
+    }
+    reconcileEarnSponsoredOperations(
+      j,
+      Rpc(),
+      Rpc(),
+      ::topic,
+      { error("No state") },
+      operationIds = emptySet(),
+    )
+    val retired = j.get("op")
+    assertEquals("nonceCancelled", retired.getString("status"))
+    assertTrue(retired.has("signedUserOperation"))
+    assertFalse(retired.sponsoredBlocked())
+    assertEquals(false, j.public(retired)["canResume"])
+  }
+
+  @Test
   fun absentUserOpRemainsLockedAndConflictingNonceCannotResume() = runBlocking {
     val j = setup()
     val rpc = Rpc()
