@@ -15,13 +15,17 @@
 - [x] Add backend regressions for a longer Robinhood provider settlement deadline with the existing local quote expiry; leave other routes and UserOp/passkey lifetimes unchanged.
 - [x] Extract the exact deposit ladder markup into a shared presentation component. Reuse it in deposit and withdrawal. Cover vault pending, quote ready, origin sent, private receipt, processing, read failure and refunded views.
 - [x] Add read-only polling and a current-withdrawal Home action, including when shares are zero. Keep historical correction separate. Show USDG identity and amount in its asset row.
-- [ ] Run affected then full app/backend/native regressions; review source/refund admission and lifecycle consumers; build api.gizu.io release, install preserving data, inspect the existing refund without sending a live transaction. Push the correction on the current branch; backend deployment remains owner-operated.
+- [x] Run affected then full app/backend/native regressions; review source/refund admission and lifecycle consumers; build api.gizu.io release, install preserving data, inspect the existing refund without sending a live transaction. Push the correction on the current branch; backend deployment remains owner-operated.
 
 ## Review corrections and validation
 
 The shared ladder and automatic read-only received transition pass functional regressions. Native tests cover refund/source binding, fresh approval for linked and legacy returns (including cancelled drafts), authenticated encrypted restore validating/rebinding terminal refund metadata while discarding nonterminal observations, successful retry followed by a later partial withdrawal, and routing-terminal origin preservation without creating private credit.
 
-Full app final suite: 1,104 tests / 112 suites passed. The signed-observation regression failed before the fix and passed afterward. Full backend suite: 498 tests, 486 passed, 12 optional skips, no failures (rerun with the local server/child-process permissions those tests require). Typechecks pass. Full native suite: 584 tests, 577 passed, the same seven existing deposit-preparer fixture failures. Production release built and certificate verified. Backend owner deployment and device inspection remain pending. No live financial transaction has been sent by the agent.
+Full app final suite: 1,104 tests / 112 suites passed. The signed-observation regression failed before the fix and passed afterward. Full backend suite: 498 tests, 486 passed, 12 optional skips, no failures (rerun with the local server/child-process permissions those tests require). Typechecks pass. Full native suite: 584 tests, 577 passed, the same seven existing deposit-preparer fixture failures. Production release built and certificate verified. No live financial transaction has been sent by the agent.
+
+## Delivery and device verification
+
+Correction commit `4803364` was pushed on `feat/return-status-consistency`; the owner confirmed backend deployment. The api.gizu.io release was installed on the connected phone preserving app data. After normal login, Home showed the current Aurora refund notice and public USDG quantity. The withdrawal view reused the existing ladder, with the first three stages complete and the missing private receipt requiring attention. A fresh read-only private-return quote loaded successfully and required a separate confirmation. The quote was dismissed using Android Back; the phone was left on Home showing the refund notice. No retry was approved or submitted. Completion after a new live return remains covered by regressions rather than a live financial test.
 
 The unchanged native fixture failures are in EarnDepositPreparerTest:
 
