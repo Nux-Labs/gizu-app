@@ -42,7 +42,7 @@ Instructions for running the delivered feature belong in
 | Document                                                         | Role                                                            |
 | ---------------------------------------------------------------- | --------------------------------------------------------------- |
 | [Shared iOS/Android portfolio](GIZU-1_IOS_MONAD_PORTFOLIO.md)    | GIZU-1 technical plan, implementation outcome and verification. |
-| [Confidential Earn plan](2026-09-30-confidential-earn-mobile.md) | Detailed mobile integration plan.                               |
+| [Confidential Earn integration](../internal/CONFIDENTIAL_EARN.md) | Current integration behavior and verification boundaries.       |
 | [Product capabilities and parity](PARITY.md)                     | Supporting capability reference; not a future-work backlog.     |
 
 Moving a document here does not reopen completed work or approve a proposal.

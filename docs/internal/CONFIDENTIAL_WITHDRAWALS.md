@@ -33,6 +33,103 @@ USDC in the existing confidential Intents environment, rather than a native NEAR
 balance. Public payouts use chain 143 and USDC
 `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`.
 
+## Requested Robinhood vault withdrawals
+
+The amount selector accepts a vault-level USDG amount before fees, with **Max**
+for a full withdrawal. Fresh per-wallet shares and `previewRedeem` observations
+provide capacity. Allocation follows existing cycle/slot order: full earlier
+wallets and, if needed, a partial final wallet. Unselected shares stay invested;
+there is no full redemption followed by redeposit. Integer base units and
+ERC-4626 rounding apply throughout.
+
+The optional proposal fields `requestedWithdrawalAtoms`, `withdrawalRequestId`
+and `withdrawAllShares` bind the requested portion. `amountAtoms` remains the exact
+selected shares; absent portion fields preserve legacy full-withdrawal rules.
+Ordinary amounts use `previewWithdraw`; Max selects every held share directly.
+Native preparation and signing independently verify held shares and
+`previewRedeem(selected shares)`, with assets bounded from requested minus one
+base unit through requested plus the greater of one base unit or 10 bps. The
+native review displays shares, asset preview, tolerance and fees. UI observations
+cannot authorize spending.
+
+Each private return binds `withdrawalOperationId` and `returnBudgetAtoms` to the
+canonical redemption receipt in the same wallet/cycle/slot. The actual Withdraw
+event establishes its gross proceeds. Only those proceeds fund the return;
+unrelated public reserves remain outside its budget. With shares remaining, the
+planner retains the next-withdrawal reserve of 2.6 times the source redemption's
+approved fee cap. Native admission rechecks that reserve, available funds,
+source identity and non-reuse by another signed return. The return credits
+private USDC in Account 2 under the existing quote and minimum-credit checks.
+
+A wallet/profile-scoped saved UI request records the request ID, total and
+allocated portions without signing authority. Pending native work is recovered
+before another amount can be entered; missing UI cache falls back to native
+recovery without widening the amount. A completed request stays complete across
+later partial withdrawals. The remaining position stays invested, and another
+withdrawal requires a new amount and approval. Existing signed retries preserve
+their EntryPoint nonce; only one canonical winner can advance. Expired attempts
+recover receipts without becoming sendable again.
+
+Whole-request preflight checks every portion's simulated redemption and route
+feasibility before approval, so a predictably unroutable small portion does not
+strand earlier portions. Its conservative fee envelope is four times the
+redemption cap with shares remaining, or 2.6 times for a full exit. The final
+private-USDC minimum still comes from a fresh quote after canonical redemption.
+Capability negotiation rejects unsupported native clients; older strict backend
+schemas fail visibly rather than falling back to a full redemption.
+
+### Progress, refunds and completion
+
+Withdrawal reuses the deposit's `ProgressLadder` presentation with four stages:
+
+1. Withdraw funds from vault.
+2. Quote ready for confidential transaction.
+3. Funds sent to confidential wallet.
+4. Funds received.
+
+Read-only polling reconciles signed origin receipts and supported Aurora route
+status while the screen remains open. Provider SUCCESS alone never completes
+**Funds received**; the native minimum-credit receipt does. Polling cannot plan,
+execute or resume a financial action. Completion is saved once in the encrypted
+native journal and remains terminal after the private USDC is spent.
+
+REFUNDED means the route returned public USDG, not that private USDC was received.
+Home and the withdrawal view show **Aurora returned your funds. You can try
+again.** and the available public USDG. **Try private return again** requests a
+fresh quote against the original redemption proceeds; it never redeems the vault
+again. Confirmation and fresh spending approval remain mandatory, including for
+legacy returns that had a cached grant. A validated refund releases only that
+failed incoming-credit/source reservation. A later successful private-return
+receipt is still required to complete the withdrawal.
+
+Native refund observations bind wallet, generation, full proposal, state binding
+and origin transaction. A bound refund is terminal for origin reconciliation
+but is not private-credit evidence. Authenticated encrypted recovery validates
+the terminal record under its source generation before rebinding to the current
+generation; nonterminal observations and read errors are discarded. Neither
+refund restore nor lifecycle correction creates a credit receipt or approval.
+
+Robinhood private-return provider deadlines allow 30 minutes for settlement;
+local quote/signing expiry remains at most ten minutes. Other routes and native
+approval lifetimes are unchanged. Earn uses ordinary route status and its saved
+minimum-credit evidence, without the invite-only account-history endpoint. A
+read failure is shown as unavailable, not completed, refunded or permission to
+send again. Historical owner-confirmed correction is described in the
+[Earn integration reference](CONFIDENTIAL_EARN.md#user-actions).
+
+### Recorded verification
+
+On 14 November 2026, the withdrawal correction at `4803364` passed 1,104 mobile
+tests in 112 suites and the backend suite (486 passed, 12 optional skips, no
+failures). Native results were 577 passed out of 584, with seven pre-existing
+`EarnDepositPreparerTest` fixture failures using 0.099 USDC below the established
+0.17 routing minimum. Typechecks and the production Android release build passed.
+The api.gizu.io build was installed preserving data after owner-confirmed backend
+deployment. Device inspection verified the existing refund ladder, Home's USDG
+quantity and a fresh read-only retry quote; the quote was dismissed without
+approval. A new live private return was not submitted. These are dated results,
+not a claim that cleanup reruns native or live financial acceptance.
+
 ## Native authority and recovery
 
 Native code derives sources and receivers, authenticates fresh source balances,
@@ -67,8 +164,9 @@ or newly credited receiving wallets from retaining a fresh cached zero.
 
 The pinned Robinhood USDG vault uses Morpho Vault V2, whose `maxRedeem` view
 [always returns zero](https://docs.morpho.org/developers/contracts/morpho-vaults-v2/).
-Native sponsored withdrawal and retry validation bind the full canonical share
-balance rather than treating this view as a liquidity limit. The planner still
+Native sponsored withdrawal and retry validation bind the exact selected shares
+(the full canonical balance for Max/legacy full exits), rather than treating this
+view as a liquidity limit. The planner still
 simulates the exact redemption, and native code retains its exact router calldata,
 owner, nonce, deadline and fee checks. Actual execution can revert if vault gates
 or liquidity change before inclusion; a quote is not a guaranteed withdrawal.
@@ -84,7 +182,7 @@ execution does not prove private credit: the return remains awaiting settlement
 until its saved route reports success and authenticated private balance evidence
 meets the bound credit amount. A zero share balance alone cannot complete it.
 
-Aurora's quoted `amountOut` is an expected output, rather than a maximum execution
+For the separate swap settlement path, Aurora's quoted `amountOut` is an expected output, rather than a maximum execution
 amount. The historical `maximumCreditAtoms` field remains the bound for ordinary
 balance-delta evidence. If the authenticated credit exceeds that estimate, an
 updated client requests `operation-history-v1` using the

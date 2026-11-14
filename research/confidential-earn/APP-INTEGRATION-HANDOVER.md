@@ -2,7 +2,7 @@
 
 Prepared 30 September 2026. Mainnet evidence below is from 29 September 2026 UTC. This document describes the accepted design, observed implementation, and remaining production work. **It does not authorize another mainnet transaction.**
 
-Start implementation with [APP-INTEGRATION-TASK.md](APP-INTEGRATION-TASK.md). Use this document for product/fee policy and [MAINNET-TEST.md](MAINNET-TEST.md) for historical execution evidence. Earlier Circle experiments, 20/80 splits, unfilled Fusion attempts, and incomplete-cycle reports in other documents are historical; they do not supersede the completed results below. Code references describe the research runner at handover time, not a production-ready mobile integration.
+Use the [app integration reference](../../docs/internal/CONFIDENTIAL_EARN.md) for delivered app behavior, this document for product/fee policy, and [MAINNET-TEST.md](MAINNET-TEST.md) for historical execution evidence. Earlier Circle experiments, 20/80 splits, unfilled Fusion attempts, and incomplete-cycle reports in other documents are historical; they do not supersede the completed results below. Code references describe the research runner at handover time, not a production-ready mobile integration.
 
 ## 1. Objective and non-negotiable decisions
 
