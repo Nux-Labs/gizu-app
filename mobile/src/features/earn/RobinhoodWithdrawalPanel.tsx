@@ -9,6 +9,7 @@ import type {
   EarnRobinhoodService,
   RobinhoodKind,
   RobinhoodPlan,
+  RobinhoodPlanOptions,
 } from "@/domain/earn/robinhoodExecution";
 import { isVaultWithdrawalPlanError } from "@/services/earn/robinhoodExecution";
 import type { SponsoredOperation } from "@/domain/earn/sourceFunding";
@@ -26,22 +27,47 @@ export function RobinhoodWithdrawalPanel({
   service,
   onWithdrawalComplete,
   withdrawalStartsAfter,
+  withdrawalOptions,
+  initialPlan,
+  onBusyChange,
 }: {
   intent: EarnIntent;
   service: EarnRobinhoodService;
   onWithdrawalComplete?: (proof: EarnInvestmentExitProof) => void;
   withdrawalStartsAfter?: string;
+  withdrawalOptions?: RobinhoodPlanOptions;
+  initialPlan?: RobinhoodPlan;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const v = useEarnJournal(intent, service);
-  const [plan, setPlan] = useState<RobinhoodPlan | null>(null);
+  const [plan, setPlan] = useState<RobinhoodPlan | null>(initialPlan ?? null);
   const [expired, setExpired] = useState(false);
   const [details, setDetails] = useState(false);
   const completedAt = withdrawalStartsAfter
     ? v.rows.findIndex((row) => row.operationId === withdrawalStartsAfter)
     : -1;
-  const flowRows = completedAt >= 0 ? v.rows.slice(completedAt + 1) : v.rows;
+  const currentRows = completedAt >= 0 ? v.rows.slice(completedAt + 1) : v.rows;
+  const requestId = withdrawalOptions?.withdrawalRequestId;
+  const redeemIds = new Set(
+    currentRows
+      .filter((row) => row.withdrawalRequestId === requestId)
+      .map((row) => row.operationId),
+  );
+  const flowRows = requestId
+    ? currentRows.filter(
+        (row) =>
+          row.kind === "hoodDeposit" ||
+          row.withdrawalRequestId === requestId ||
+          (row.withdrawalOperationId && redeemIds.has(row.withdrawalOperationId)),
+      )
+    : currentRows;
   const blocking = flowRows.filter((row) => row.blocked);
   const saved = blocking[0];
+  const retiredRequestedRedeem = [...flowRows]
+    .reverse()
+    .find(
+      (row) => row.kind === "hoodRedeemAll" && row.status === "expired" && row.withdrawalRequestId,
+    );
   const position = [...flowRows]
     .reverse()
     .find((row) => ["invested", "withdrawn", "residualShares"].includes(row.status));
@@ -81,8 +107,12 @@ export function RobinhoodWithdrawalPanel({
   const redeemable =
     position?.status === "invested" ||
     position?.status === "residualShares" ||
-    Boolean(withdrawalStartsAfter && !position);
+    Boolean((withdrawalStartsAfter || withdrawalOptions || retiredRequestedRedeem) && !position);
   const privateReturned = privateReturnConfirmed(flowRows);
+  useEffect(() => {
+    onBusyChange?.(v.busy);
+    return () => onBusyChange?.(false);
+  }, [onBusyChange, v.busy]);
 
   useEffect(() => {
     if (!privateReturned || !onWithdrawalComplete) return;
@@ -112,7 +142,38 @@ export function RobinhoodWithdrawalPanel({
           throw new Error(
             "The previous review could not be cleared. Check its status before continuing.",
           );
-        const next = await service.plan(intent, kind, signal);
+        const sourceOptions =
+          kind === "hoodTokenReturn" && position?.withdrawalRequestId && position.redeemedUsdgAtoms
+            ? {
+                withdrawalOperationId: position.operationId,
+                returnBudgetAtoms: position.redeemedUsdgAtoms,
+                minimumRetainedUsdgAtoms: position.minimumRetainedUsdgAtoms,
+              }
+            : undefined;
+        const restored = previous ?? saved ?? retiredRequestedRedeem;
+        const savedOptions =
+          restored?.kind === "hoodRedeemAll" && restored.withdrawalRequestId
+            ? {
+                withdrawalRequestId: restored.withdrawalRequestId,
+                requestedWithdrawalAtoms: restored.requestedWithdrawalAtoms,
+                withdrawAllShares: restored.withdrawAllShares,
+              }
+            : undefined;
+        const planOptions =
+          plan?.kind === "hoodRedeemAll" && plan.withdrawalRequestId
+            ? {
+                withdrawalRequestId: plan.withdrawalRequestId,
+                requestedWithdrawalAtoms: plan.requestedWithdrawalAtoms,
+                withdrawAllShares: plan.withdrawAllShares,
+              }
+            : undefined;
+        const options =
+          kind === "hoodRedeemAll"
+            ? (withdrawalOptions ?? planOptions ?? savedOptions)
+            : sourceOptions;
+        const next = options
+          ? await service.plan(intent, kind, signal, options)
+          : await service.plan(intent, kind, signal);
         return { next, cancelled };
       },
       ({ next, cancelled }) => {
@@ -122,6 +183,14 @@ export function RobinhoodWithdrawalPanel({
       },
     );
   };
+  const quotePrivateReturn = (row: SponsoredOperation, signal: AbortSignal) =>
+    row.withdrawalRequestId
+      ? service.plan(intent, "hoodTokenReturn", signal, {
+          withdrawalOperationId: row.operationId,
+          returnBudgetAtoms: row.redeemedUsdgAtoms,
+          minimumRetainedUsdgAtoms: row.minimumRetainedUsdgAtoms,
+        })
+      : service.plan(intent, "hoodTokenReturn", signal);
   const execute = () => {
     if (!plan) return;
     if (expired || plan.expiresAtMs <= Date.now()) {
@@ -139,20 +208,23 @@ export function RobinhoodWithdrawalPanel({
           throw error;
         }
         if (reviewed.kind === "hoodRedeemAll" && service.finishWithdrawal) {
-          const outcome = await service.finishWithdrawal(intent, row, signal);
+          const outcome = await service.finishWithdrawal(intent, row, signal).catch((error) => {
+            if (!signal.aborted) setPlan(null);
+            throw error;
+          });
           if (outcome.signed) return { row: outcome.signed, redeem: outcome.row, next: null };
           if (outcome.row.status === "withdrawn") {
             setPlan(null);
             return {
               row: outcome.row,
-              next: await service.plan(intent, "hoodTokenReturn", signal),
+              next: await quotePrivateReturn(outcome.row, signal),
             };
           }
           return { row: outcome.row, next: null };
         }
         if (reviewed.kind === "hoodRedeemAll" && row.status === "withdrawn") {
           setPlan(null);
-          return { row, next: await service.plan(intent, "hoodTokenReturn", signal) };
+          return { row, next: await quotePrivateReturn(row, signal) };
         }
         return { row, next: null };
       },
@@ -272,10 +344,17 @@ export function RobinhoodWithdrawalPanel({
               <Typography variant="caption">
                 Network fee up to {formatUsdc(plan.maximumTokenFeeAtoms)} USDG
               </Typography>
+              {plan.kind === "hoodTokenReturn" && plan.withdrawalReserveAtoms !== "0" && (
+                <Typography variant="caption">
+                  Retained for the next withdrawal: {formatUsdc(plan.withdrawalReserveAtoms)} USDG
+                </Typography>
+              )}
             </View>
             <Typography variant="caption">
               {plan.kind === "hoodRedeemAll"
-                ? "This approval withdraws every share and returns the received USDG to your private USDC balance after the vault receipt. The vault amount can change before confirmation, and no minimum withdrawal amount is guaranteed."
+                ? plan.requestedWithdrawalAtoms
+                  ? "This approval withdraws only the reviewed portion and returns its proceeds to private USDC. Your remaining shares stay invested. The amount is approximate because the share price can change before confirmation."
+                  : "This approval withdraws every share and returns the received USDG to your private USDC balance after the vault receipt. The vault amount can change before confirmation, and no minimum withdrawal amount is guaranteed."
                 : `Your USDC stays private in Gizu.${plan.route ? ` The quoted return service fee is ${plan.route.providerFeeBps / 100}%.` : ""} A small balance may remain for network costs.`}
             </Typography>
             <Button

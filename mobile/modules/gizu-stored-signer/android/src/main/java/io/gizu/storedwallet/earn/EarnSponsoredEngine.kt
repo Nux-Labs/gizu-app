@@ -45,6 +45,11 @@ private val sponsoredOptionalFields =
     "sourceAccountIndex",
     "fundingBatchId",
     "fundingBatchSize",
+    "requestedWithdrawalAtoms",
+    "withdrawAllShares",
+    "withdrawalRequestId",
+    "withdrawalOperationId",
+    "returnBudgetAtoms",
   )
 
 internal fun sponsoredPublicProposal(
@@ -305,6 +310,21 @@ internal class EarnSponsoredEngine(
       }
       retireExpiredUnsentExits(journal, bundler, stateReader, p)
       retireSettledRedeemBeforeReturn(journal, bundler, stateReader, p)
+      if (p.optString("kind") == "hoodTokenReturn" && p.has("withdrawalOperationId")) {
+        val source = journal.get(p.getString("withdrawalOperationId"))
+        requireWithdrawalReturnSource(
+          journal.all(),
+          JSONObject().put("operationId", p.getString("operationId")).put("proposal", p),
+          journal.walletId,
+          source.getString("residualShares"),
+        )
+      }
+      requireRequestedWithdrawalAdmission(
+        journal.all(),
+        JSONObject().put("operationId", p.getString("operationId")).put("proposal", p),
+        journal.walletId,
+        journal.generation,
+      )
       journal.create(p, op).also {
         if (p.optInt("fundingBatchSize", 0) == 1)
           reservations?.commitBatch(p.getString("fundingBatchId"))
@@ -360,7 +380,8 @@ internal class EarnSponsoredEngine(
     check(journal.public(op)["canResume"] == true)
     reservations?.assertActive(id)
     val state = stateReader(p)
-    if (p.getString("kind") == "hoodTokenReturn") check(state.shares == "0")
+    requireRequestedWithdrawalAdmission(journal.all(), op, journal.walletId, journal.generation)
+    requireWithdrawalReturnSource(journal.all(), op, journal.walletId, state.shares)
     val coreRevision = p.getLong("revision").toULong()
     if (op.has("signedUserOperation")) {
       check(op.getString("status") == "signed" && !op.optBoolean("conflict"))
@@ -393,7 +414,9 @@ internal class EarnSponsoredEngine(
           EarnDelegationOperation(delegationProposal(p, state).toString(), record.entropy)
         }
       val core = checkNotNull(delegation)
-      val text = core.prepare(coreRevision, state)
+      val text =
+        core.prepare(coreRevision, state) +
+          requestedWithdrawalReview(p, state.previewDepositShares, state.shares)
       val hash = core.reviewHash()
       return SponsoredReview(id, op.getInt("revision"), coreRevision, hash, text, "delegation")
         .also { displayed = it }
@@ -502,7 +525,8 @@ internal class EarnSponsoredEngine(
     val state = stateReader(p)
     requireSponsoredFunds(p, state)
     stateGuard(state)
-    if (p.getString("kind") == "hoodTokenReturn") check(state.shares == "0")
+    requireRequestedWithdrawalAdmission(journal.all(), op, journal.walletId, journal.generation)
+    requireWithdrawalReturnSource(journal.all(), op, journal.walletId, state.shares)
     authority()
     currentCoroutineContext().ensureActive()
     check(journal.get(review.id).getInt("revision") == review.revision)
@@ -702,7 +726,9 @@ internal fun assertWithdrawalReturnAuthorized(
       redeem.getString("status") == "finalized"
   )
   val saved = redeem.getJSONObject("proposal")
-  check(saved.getString("kind") == "hoodRedeemAll" && redeem.optString("residualShares") == "0")
+  check(saved.getString("kind") == "hoodRedeemAll")
+  if (proposal.has("withdrawalOperationId")) requireWithdrawalSourceScope(redeem, proposal)
+  else check(redeem.optString("residualShares") == "0" && !saved.has("requestedWithdrawalAtoms"))
   check(redeemedUsdg(redeem))
   check(proposal.getString("kind") == "hoodTokenReturn")
   check(proposal.getString("expectedFrom").equals(saved.getString("expectedFrom"), true))
@@ -758,7 +784,7 @@ internal suspend fun retireExpiredUnsentExits(
       val proposal = op.getJSONObject("proposal")
       proposal.getString("kind") == kind &&
         proposal.getString("expectedFrom").equals(owner, true) &&
-        op.getString("status") != "expired" &&
+        op.getString("status") !in setOf("expired", "nonceCancelled") &&
         op.getString("status") !in terminalSteps &&
         op.sponsoredSpendSaved()
     }
@@ -827,8 +853,13 @@ internal fun checkSponsoredRetry(op: JSONObject, state: NativeSponsoredState) {
   if (p.getString("kind") == "hoodRedeemAll")
   // Morpho Vault V2's maxRedeem view always returns zero. Retry only the
   // originally signed full share balance, with every binding above unchanged.
-  check(state.shares == p.getString("amountAtoms"))
-  if (p.getString("kind") == "hoodTokenReturn") check(state.shares == "0")
+  check(
+      if (p.has("requestedWithdrawalAtoms"))
+        state.shares.toBigInteger() >= p.getString("amountAtoms").toBigInteger()
+      else state.shares == p.getString("amountAtoms")
+    )
+  if (p.getString("kind") == "hoodTokenReturn" && !p.has("withdrawalOperationId"))
+    check(state.shares == "0")
 }
 
 internal fun nativeJsonEqual(a: Any?, b: Any?): Boolean =
@@ -865,7 +896,10 @@ internal fun requireSequentialSourceCredit(
     if (!proposal.optString("confidentialAccount").equals(owner, true)) continue
     if (
       other.sponsoredSpendSaved() &&
-        other.getString("status") !in setOf("reverted", "nonceCancelled")
+        other.getString("status") !in setOf("reverted", "nonceCancelled") &&
+        !(walletId != null &&
+          generation != null &&
+          expiredWithdrawalReturnReplacement(other, current, walletId))
     )
       check(
         other.getString("status") == "finalized" &&

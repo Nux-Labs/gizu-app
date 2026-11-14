@@ -26,6 +26,8 @@ export const ROBINHOOD_PROFILE = {
 export const robinhoodVaultAbi = parseAbi([
   "function asset() view returns(address)",
   "function previewDeposit(uint256) view returns(uint256)",
+  "function previewWithdraw(uint256) view returns(uint256)",
+  "function previewRedeem(uint256) view returns(uint256)",
 ]);
 export async function robinhoodCalls(
   client: PublicClient,

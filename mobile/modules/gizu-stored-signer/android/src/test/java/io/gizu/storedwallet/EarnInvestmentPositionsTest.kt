@@ -7,6 +7,63 @@ import org.junit.Test
 
 class EarnInvestmentPositionsTest {
   @Test
+  fun requestedCompletionRemainsKnownAcrossALaterPartialWithdrawal() {
+    record().use { r ->
+      val redeemed =
+        operation(r, 1, 0, "hoodRedeemAll", "finalized", "redeem_1")
+          .put("residualShares", "700")
+          .put("redeemedUsdgAtoms", "500")
+          .put("stateBinding", JSONObject().put("shares", "1000"))
+      redeemed
+        .getJSONObject("proposal")
+        .put("amountAtoms", "300")
+        .put("requestedWithdrawalAtoms", "500")
+        .put("withdrawalRequestId", "request_1")
+      val returned =
+        operation(r, 1, 0, "hoodTokenReturn", "finalized", "return_1")
+          .put("settlement", JSONObject().put("status", "credited"))
+      returned.getJSONObject("proposal").put("withdrawalOperationId", "redeem_1")
+      val retired =
+        operation(r, 1, 0, "hoodTokenReturn", "nonceCancelled", "expired_return")
+          .put("signedUserOperation", "saved")
+      retired.getJSONObject("proposal").put("withdrawalOperationId", "redeem_1")
+      val first =
+        earnInvestmentPositions(
+            r,
+            r.id,
+            emptyList(),
+            listOf(redeemed, retired, returned),
+            emptyList(),
+            emptyList(),
+          )
+          .single()
+      assertEquals("invested", first["activity"])
+      assertEquals(true, first["withdrawalComplete"])
+      assertEquals(listOf("request_1"), first["completedWithdrawalRequestIds"])
+      val later =
+        operation(r, 1, 0, "hoodRedeemAll", "unknown", "redeem_2")
+          .put("signedUserOperation", "saved")
+      later
+        .getJSONObject("proposal")
+        .put("requestedWithdrawalAtoms", "200")
+        .put("withdrawalRequestId", "request_2")
+      val pending =
+        earnInvestmentPositions(
+            r,
+            r.id,
+            emptyList(),
+            listOf(redeemed, returned, later),
+            emptyList(),
+            emptyList(),
+          )
+          .single()
+      assertEquals("pending", pending["activity"])
+      assertEquals("confirming", pending["withdrawalAttention"])
+      assertEquals(listOf("request_1"), pending["completedWithdrawalRequestIds"])
+    }
+  }
+
+  @Test
   fun ownerConfirmedHistoricalReturnClosesOnlyThatFlowWithoutCreatingCreditEvidence() {
     record().use { r ->
       val redeem = operation(r, 1, 0, "hoodRedeemAll")

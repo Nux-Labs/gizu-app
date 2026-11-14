@@ -63,6 +63,33 @@ class EarnSponsoredJournalTest {
   }
 
   @Test
+  fun aRequestedRedemptionCompletesItsPortionWithSharesStillInvested() {
+    val j = journal(File())
+    j.create(
+      proposal("partial")
+        .put("kind", "hoodRedeemAll")
+        .put("chainId", 4663)
+        .put("amountAtoms", "500")
+        .put("maximumTokenFeeAtoms", "100")
+        .put("requestedWithdrawalAtoms", "500")
+        .put("withdrawalRequestId", "request_1"),
+      JSONObject().put("sender", "0x" + "1".repeat(40)),
+    )
+    j.update("partial", 1) {
+      it
+        .put("status", "finalized")
+        .put("residualShares", "123")
+        .put("redeemedUsdgAtoms", "500")
+        .put("stateBinding", JSONObject().put("shares", "623"))
+        .put("transactionHash", "0x" + "ab".repeat(32))
+    }
+    val row = j.public(j.get("partial"))
+    assertEquals("withdrawn", row["status"])
+    assertEquals("123", row["residualShares"])
+    assertEquals("request_1", row["withdrawalRequestId"])
+  }
+
+  @Test
   fun oneWithdrawalApprovalSignsOnlyTheDeliveredUsdg() {
     val owner = "0x" + "a".repeat(40)
     val approval = OpenWithdrawalApproval("wallet", "generation", "redeem-1", 1000)
@@ -72,16 +99,25 @@ class EarnSponsoredJournalTest {
         .put("status", "finalized")
         .put("residualShares", "0")
         .put("redeemedUsdgAtoms", "900")
-        .put(
-          "proposal",
-          JSONObject().put("kind", "hoodRedeemAll").put("expectedFrom", owner),
-        )
+        .put("proposal", JSONObject().put("kind", "hoodRedeemAll").put("expectedFrom", owner))
     val proposal =
       JSONObject()
         .put("kind", "hoodTokenReturn")
         .put("expectedFrom", owner)
         .put("amountAtoms", "800")
         .put("maximumTokenFeeAtoms", "100")
+    assertWithdrawalReturnAuthorized(approval, "wallet", "generation", redeem, proposal, 1000)
+    redeem.put("residualShares", "123").put("stateBinding", JSONObject().put("shares", "1023"))
+    redeem
+      .getJSONObject("proposal")
+      .put("amountAtoms", "900")
+      .put("requestedWithdrawalAtoms", "900")
+      .put("withdrawalRequestId", "request_1")
+      .put("maximumTokenFeeAtoms", "100")
+    proposal
+      .put("withdrawalOperationId", "redeem-1")
+      .put("returnBudgetAtoms", "900")
+      .put("withdrawalReserveAtoms", "260")
     assertWithdrawalReturnAuthorized(approval, "wallet", "generation", redeem, proposal, 1000)
     proposal.put("amountAtoms", "801")
     assertThrows(IllegalStateException::class.java) {

@@ -65,6 +65,17 @@ export function createEarnInvestmentPositionsService(
           activity: row.activity as EarnInvestmentPosition["activity"],
           recoveryRequired: row.recoveryRequired,
           ...(row.withdrawalComplete === true ? { withdrawalComplete: true } : {}),
+          ...(Array.isArray(row.completedWithdrawalRequestIds) &&
+          row.completedWithdrawalRequestIds.length <= 256 &&
+          row.completedWithdrawalRequestIds.every(
+            (id: unknown) => typeof id === "string" && /^[-a-zA-Z0-9_]{1,128}$/.test(id),
+          )
+            ? { completedWithdrawalRequestIds: row.completedWithdrawalRequestIds as string[] }
+            : {}),
+          ...(typeof row.lastWithdrawalRequestId === "string" &&
+          /^[-a-zA-Z0-9_]{1,128}$/.test(row.lastWithdrawalRequestId)
+            ? { lastWithdrawalRequestId: row.lastWithdrawalRequestId }
+            : {}),
           ...(typeof row.lastReturnOperationId === "string"
             ? { lastReturnOperationId: row.lastReturnOperationId }
             : {}),

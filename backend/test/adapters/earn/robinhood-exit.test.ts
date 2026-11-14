@@ -16,7 +16,10 @@ import {
 } from "../../../src/adapters/earn/robinhood-exit-planner.ts";
 import { InfrastructureError } from "../../../src/domain/errors/infrastructure-error.ts";
 import type { RobinhoodExitProviders } from "../../../src/adapters/earn/robinhood-exit-planner.ts";
-import { ROBINHOOD_PROFILE } from "../../../src/adapters/earn/robinhood-vault.ts";
+import {
+  ROBINHOOD_PROFILE,
+  robinhoodCalls,
+} from "../../../src/adapters/earn/robinhood-vault.ts";
 import type { RobinhoodState } from "../../../src/adapters/earn/robinhood-deposit-planner.ts";
 const now = Date.parse("2026-09-30T10:00:00Z"),
   owner = getAddress("0x1000000000000000000000000000000000000001"),
@@ -41,6 +44,140 @@ const state: RobinhoodState = {
   shareDecimals: 18,
 };
 const request = { owner, operationId: "exit_1", revision: 1 };
+test("public withdrawal capacities are scoped to unique requested investment owners", async () => {
+  const f = setup({ withdrawalAssets: async () => 500000n });
+  const planner = new RobinhoodWithdrawalPlanner(
+    { rpcUrl: "test" },
+    f.providers,
+    () => now,
+  );
+  assert.deepEqual(await planner.balances([owner]), {
+    positions: [
+      { owner, shares: "12345", assetsAtoms: "500000", checkedAt: now },
+    ],
+  });
+  await assert.rejects(() => planner.balances([owner, owner]), /Unique/);
+});
+
+test("requested withdrawal redeems only its previewed shares and keeps the remainder invested", async () => {
+  let selected = 0n;
+  const f = setup({
+    withdrawalShares: async (_s: RobinhoodState, assets: bigint) => {
+      assert.equal(assets, 200000n);
+      return 4938n;
+    },
+    withdrawalCalls: async (s: RobinhoodState, shares = s.shares) => {
+      selected = shares;
+      return (
+        await robinhoodCalls(
+          {} as never,
+          owner,
+          "withdraw",
+          shares,
+          s.block.timestamp + 600n,
+        )
+      ).calls;
+    },
+    simulate: async (s, calls, _kind, amount) => ({
+      rows: calls.map((c) => ({
+        to: c.to,
+        data: c.data,
+        estimatedGas: 100000n,
+        actualGas: 90000n,
+      })),
+      remainingShares: s.shares - amount,
+      remainingToken: s.token + 200000n,
+      receivedToken: 200000n,
+    }),
+  } as Partial<RobinhoodExitProviders>);
+  const p = await new RobinhoodWithdrawalPlanner(
+    { rpcUrl: "test" },
+    f.providers,
+    () => now,
+  ).plan({
+    ...request,
+    requestedWithdrawalAtoms: "200000",
+    withdrawalRequestId: "withdraw_part",
+    confidentialAccount: C,
+  } as any);
+  assert.equal(selected, 4938n);
+  assert.equal(p.amountAtoms, "4938");
+  assert.equal((p as any).remainingShares, "7407");
+  assert.equal((p as any).requestedWithdrawalAtoms, "200000");
+  assert.equal((p as any).withdrawalRequestId, "withdraw_part");
+  const encoded = decodeFunctionData({
+    abi,
+    data: p.operation.callData as Hex,
+  });
+  assert.equal(
+    decodeFunctionData({ abi: erc20Abi, data: encoded.args[0][0]!.data })
+      .args?.[1],
+    4938n,
+  );
+});
+
+test("a sourced private return preserves invested shares and unrelated public USDG", async () => {
+  const f = setup({}, { ...state, shares: 7407n, token: 1500000n });
+  const p = await new RobinhoodReturnPlanner(
+    { rpcUrl: "test" },
+    undefined,
+    f.providers,
+    () => now,
+  ).plan({
+    ...request,
+    confidentialAccount: C,
+    withdrawalOperationId: "exit_source",
+    returnBudgetAtoms: "500000",
+    minimumRetainedUsdgAtoms: "27300",
+  } as any);
+  assert.equal(p.amountAtoms, "489500");
+  assert.equal((p as any).withdrawalOperationId, "exit_source");
+  assert.equal((p as any).returnBudgetAtoms, "500000");
+  assert.equal(p.maximumResidualUsdcAtoms, "10500");
+});
+test("repeated partial returns replenish the next-withdrawal reserve from their proceeds", async () => {
+  let reserve = 27300n;
+  for (let part = 0; part < 4; part++) {
+    const afterWithdrawal = reserve - 10000n + 500000n;
+    const f = setup({}, { ...state, shares: 7407n, token: afterWithdrawal });
+    const p = await new RobinhoodReturnPlanner(
+      { rpcUrl: "test" },
+      undefined,
+      f.providers,
+      () => now,
+    ).plan({
+      ...request,
+      confidentialAccount: C,
+      withdrawalOperationId: `source_${part}`,
+      returnBudgetAtoms: "500000",
+      minimumRetainedUsdgAtoms: "27300",
+    } as any);
+    reserve = afterWithdrawal - BigInt(p.amountAtoms) - 10000n;
+    assert.ok(reserve >= 27300n);
+    assert.equal((p as any).withdrawalReserveAtoms, "27300");
+    assert.ok(
+      BigInt(p.amountAtoms) + BigInt(p.maximumTokenFeeAtoms) <= 500000n,
+    );
+  }
+});
+test("a supplied native reserve floor remains valid when later holdings have changed to zero", async () => {
+  const f = setup({}, { ...state, shares: 0n, token: 517300n });
+  const p = await new RobinhoodReturnPlanner(
+    { rpcUrl: "test" },
+    undefined,
+    f.providers,
+    () => now,
+  ).plan({
+    ...request,
+    confidentialAccount: C,
+    withdrawalOperationId: "source_1",
+    returnBudgetAtoms: "500000",
+    minimumRetainedUsdgAtoms: "27300",
+  });
+  assert.equal(p.withdrawalReserveAtoms, "27300");
+  assert.equal(p.returnBudgetAtoms, "490000");
+  assert.equal(p.amountAtoms, "479500");
+});
 const abi = parseAbi([
   "function executeBatch((address target,uint256 value,bytes data)[] calls)",
 ]);
@@ -178,11 +315,14 @@ test("an empty vault and a changed withdrawal fee stay distinct from a generic p
   const empty = setup({}, { ...state, shares: 0n });
   await assert.rejects(
     () =>
-      new RobinhoodWithdrawalPlanner({ rpcUrl: "test" }, empty.providers, () => now).plan(
-        request,
-      ),
+      new RobinhoodWithdrawalPlanner(
+        { rpcUrl: "test" },
+        empty.providers,
+        () => now,
+      ).plan(request),
     (error: unknown) =>
-      error instanceof InfrastructureError && error.code === "EARN_WITHDRAWAL_SHARES_ABSENT",
+      error instanceof InfrastructureError &&
+      error.code === "EARN_WITHDRAWAL_SHARES_ABSENT",
   );
   let prepares = 0;
   const f = setup();
@@ -195,11 +335,14 @@ test("an empty vault and a changed withdrawal fee stay distinct from a generic p
   });
   await assert.rejects(
     () =>
-      new RobinhoodWithdrawalPlanner({ rpcUrl: "test" }, rising.providers, () => now).plan(
-        request,
-      ),
+      new RobinhoodWithdrawalPlanner(
+        { rpcUrl: "test" },
+        rising.providers,
+        () => now,
+      ).plan(request),
     (error: unknown) =>
-      error instanceof InfrastructureError && error.code === "EARN_WITHDRAWAL_FEE_CHANGED",
+      error instanceof InfrastructureError &&
+      error.code === "EARN_WITHDRAWAL_FEE_CHANGED",
   );
 });
 test("withdrawal insufficient current reserve, zero shares and unresolved native assets reject", async () => {
@@ -460,12 +603,12 @@ test("return rejects unsafe state but accepts a feasible monotone fee envelope",
     { ...state, shares: 0n },
   );
   const envelopePlan = await new RobinhoodReturnPlanner(
-      { rpcUrl: "test" },
-      undefined,
-      f.providers,
-      () => now,
-    ).plan({ ...request, confidentialAccount: C });
-  assert.equal(envelopePlan.maximumTokenFeeAtoms,"11550");
+    { rpcUrl: "test" },
+    undefined,
+    f.providers,
+    () => now,
+  ).plan({ ...request, confidentialAccount: C });
+  assert.equal(envelopePlan.maximumTokenFeeAtoms, "11550");
   assert.equal(f.quoted, 1);
 });
 import { robinhoodExitPrice } from "../../../src/adapters/earn/robinhood-exit-planner.ts";
@@ -519,10 +662,25 @@ test("fresh relative USDG/USDC pricing rounds upward and rejects stale, duplicat
 });
 
 test("return fee convergence keeps a feasible envelope when exact cap falls again", async () => {
- const f=setup({prepare:async(calls,fees)=>{
-  const amount=BigInt("0x"+calls[0]!.data.slice(-64));
-  return {...(await setup().providers.prepare(calls,fees)),feeCap:amount===989500n?10001n:10000n};
- }},{...state,shares:0n});
- const p=await new RobinhoodReturnPlanner({rpcUrl:"test"},undefined,f.providers,()=>now).plan({...request,confidentialAccount:C});
- assert.equal(p.maximumTokenFeeAtoms,"10502");assert.equal(p.amountAtoms,"989498");assert.equal(f.quoted,1);
+  const f = setup(
+    {
+      prepare: async (calls, fees) => {
+        const amount = BigInt("0x" + calls[0]!.data.slice(-64));
+        return {
+          ...(await setup().providers.prepare(calls, fees)),
+          feeCap: amount === 989500n ? 10001n : 10000n,
+        };
+      },
+    },
+    { ...state, shares: 0n },
+  );
+  const p = await new RobinhoodReturnPlanner(
+    { rpcUrl: "test" },
+    undefined,
+    f.providers,
+    () => now,
+  ).plan({ ...request, confidentialAccount: C });
+  assert.equal(p.maximumTokenFeeAtoms, "10502");
+  assert.equal(p.amountAtoms, "989498");
+  assert.equal(f.quoted, 1);
 });

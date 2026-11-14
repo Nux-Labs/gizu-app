@@ -19,6 +19,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { completedExitsStore } from "@/storage/completedExits";
 import { createEarnRobinhoodService } from "@/services/earn/robinhoodExecution";
 import type { EarnRobinhoodService } from "@/domain/earn/robinhoodExecution";
+import { withdrawalSelectionStore } from "@/storage/withdrawalSelection";
 jest.mock("@/services/wallet/nativeBridge", () => ({
   ...jest.requireActual("@/services/wallet/nativeBridge"),
   getStoredEarnWithdrawalSigner: jest.fn(),
@@ -31,6 +32,396 @@ beforeEach(async () => {
   await AsyncStorage.clear();
 });
 afterEach(() => jest.restoreAllMocks());
+
+test("choosing a vault amount preflights every selected portion before any spending approval", async () => {
+  const service = {
+    available: jest.fn().mockResolvedValue(true),
+    withdrawalBalances: jest.fn().mockImplementation(async (intents: EarnIntent[]) =>
+      intents.map((intent, index) => ({
+        owner: intent.destinations[intent.investmentSlot ?? 0]!.address.toLowerCase(),
+        shares: "800000000000000000",
+        assetsAtoms: index === 0 ? "600000" : "800000",
+        checkedAt: Date.now(),
+      })),
+    ),
+    list: jest.fn().mockResolvedValue([operation()]),
+    plan: jest
+      .fn()
+      .mockResolvedValueOnce({})
+      .mockRejectedValue(new Error("The last selected portion is too small to route privately.")),
+    execute: jest.fn(),
+    resume: jest.fn(),
+    reconcileCredit: jest.fn(),
+    cancelUnsigned: jest.fn(),
+    cancel: jest.fn(),
+  } satisfies EarnRobinhoodService;
+  setup({ rows: [position(first), position(first, 1)], robinhoodService: service });
+  const amount = await screen.findByLabelText("USDG withdrawal amount");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Review withdrawal amount" })).toBeEnabled(),
+  );
+  await userEvent.type(amount, "1");
+  await userEvent.press(screen.getByRole("button", { name: "Review withdrawal amount" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/too small to route/);
+  expect(service.plan).toHaveBeenCalledWith(
+    expect.objectContaining({ investmentSlot: 0 }),
+    "hoodRedeemAll",
+    expect.any(AbortSignal),
+    expect.objectContaining({ withdrawalRequestId: expect.any(String) }),
+  );
+  expect(service.execute).not.toHaveBeenCalled();
+  expect(service.plan).toHaveBeenCalledTimes(2);
+  expect(service.plan).toHaveBeenLastCalledWith(
+    expect.objectContaining({ investmentSlot: 1 }),
+    "hoodRedeemAll",
+    expect.any(AbortSignal),
+    expect.objectContaining({ requestedWithdrawalAtoms: "400000" }),
+  );
+});
+
+test("a requested portion returns privately and completes while its remaining investment stays available", async () => {
+  let requestId = "";
+  let h: ReturnType<typeof setup>;
+  const from = first.destinations[0].address;
+  const service: EarnRobinhoodService = {
+    available: jest.fn().mockResolvedValue(true),
+    withdrawalBalances: jest
+      .fn()
+      .mockResolvedValue([
+        { owner: from, shares: "800000000000000000", assetsAtoms: "800000", checkedAt: Date.now() },
+      ]),
+    list: jest.fn().mockResolvedValue([{ ...operation(), from }]),
+    plan: jest.fn().mockImplementation(async (intent, _kind, _signal, options) => {
+      requestId = options.withdrawalRequestId;
+      const raw = hoodRaw("hoodRedeemAll", Date.now(), "requested_redeem") as any;
+      return parseRobinhoodPlan(
+        {
+          ...raw,
+          ...options,
+          owner: from,
+          operation: { ...raw.operation, sender: from },
+          amountAtoms: "400000000000000000",
+          remainingShares: "400000000000000000",
+          previewRedeemedUsdg: "400000",
+        },
+        intent,
+        "hoodRedeemAll",
+        "requested_redeem",
+        1,
+        Date.now(),
+      );
+    }),
+    execute: jest.fn().mockImplementation(async () => ({
+      ...operation("withdrawn"),
+      kind: "hoodRedeemAll",
+      operationId: "requested_redeem",
+      from,
+      withdrawalRequestId: requestId,
+      requestedWithdrawalAtoms: "400000",
+      redeemedUsdgAtoms: "400000",
+      residualShares: "400000000000000000",
+    })),
+    finishWithdrawal: jest.fn().mockImplementation(async (_intent, row) => {
+      h.setRows([
+        {
+          ...position(first),
+          withdrawalComplete: true,
+          lastWithdrawalRequestId: requestId,
+          completedWithdrawalRequestIds: [requestId],
+          lastReturnOperationId: "return_done",
+        },
+      ]);
+      return {
+        row,
+        signed: {
+          ...minimumReturnRow(),
+          operationId: "return_done",
+          from,
+          withdrawalOperationId: row.operationId,
+          verifiedMinimumAtoms: "380000",
+        },
+      };
+    }),
+    resume: jest.fn(),
+    reconcileCredit: jest.fn(),
+    cancelUnsigned: jest.fn(),
+    cancel: jest.fn(),
+  };
+  h = setup({ rows: [position(first)], robinhoodService: service });
+  const input = await screen.findByLabelText("USDG withdrawal amount");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Review withdrawal amount" })).toBeEnabled(),
+  );
+  await userEvent.type(input, "0,4");
+  await userEvent.press(screen.getByRole("button", { name: "Review withdrawal amount" }));
+  const confirm = await screen.findByRole("button", { name: "Confirm withdrawal" });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  expect(service.execute).not.toHaveBeenCalled();
+  await userEvent.press(confirm);
+  expect(await screen.findByText("Requested withdrawal complete.")).toBeOnTheScreen();
+  expect(screen.getByText(/remaining investment stays in the vault/)).toBeOnTheScreen();
+  expect(service.execute).toHaveBeenCalledTimes(1);
+  expect(service.finishWithdrawal).toHaveBeenCalledTimes(1);
+  expect(
+    (await AsyncStorage.getAllKeys()).some((key) => key.startsWith("gizu:completed-exit:")),
+  ).toBe(false);
+  screen.unmount();
+  setup({
+    rows: [
+      {
+        ...position(first),
+        withdrawalComplete: true,
+        lastWithdrawalRequestId: requestId,
+        completedWithdrawalRequestIds: [requestId],
+        lastReturnOperationId: "return_done",
+      },
+    ],
+    robinhoodService: service,
+  });
+  expect(await screen.findByLabelText("USDG withdrawal amount")).toBeOnTheScreen();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Review withdrawal amount" })).toBeEnabled(),
+  );
+  expect(service.execute).toHaveBeenCalledTimes(1);
+});
+
+test("reopening a saved multi-wallet request resumes its pending portion without repeating a completed one", async () => {
+  await withdrawalSelectionStore.save({
+    version: 1,
+    walletId: first.walletId,
+    profileId: "robinhood-usdg",
+    requestId: "saved_request",
+    amountAtoms: "1000000",
+    portions: [
+      {
+        intentId: first.intentId,
+        cycleIndex: 0,
+        investmentSlot: 0,
+        assetsAtoms: "600000",
+        amountAtoms: "600000",
+        allShares: true,
+      },
+      {
+        intentId: first.intentId,
+        cycleIndex: 0,
+        investmentSlot: 1,
+        assetsAtoms: "800000",
+        amountAtoms: "400000",
+        allShares: false,
+      },
+    ],
+  });
+  const service: EarnRobinhoodService = {
+    available: jest.fn().mockResolvedValue(true),
+    withdrawalBalances: jest.fn(),
+    list: jest.fn().mockResolvedValue([
+      {
+        ...operation("pending"),
+        kind: "hoodRedeemAll",
+        operationId: "pending_redeem",
+        from: first.destinations[1]!.address,
+        withdrawalRequestId: "saved_request",
+        requestedWithdrawalAtoms: "400000",
+        blocked: true,
+        canResume: false,
+      },
+    ]),
+    plan: jest.fn(),
+    execute: jest.fn(),
+    resume: jest.fn(),
+    reconcileCredit: jest.fn(),
+    cancelUnsigned: jest.fn(),
+    cancel: jest.fn(),
+  };
+  const h = setup({
+    rows: [
+      {
+        ...position(first),
+        withdrawalComplete: true,
+        lastWithdrawalRequestId: "saved_request",
+        completedWithdrawalRequestIds: ["saved_request"],
+      },
+      { ...position(first, 1, "pending"), withdrawalAttention: "confirming" },
+    ],
+    robinhoodService: service,
+  });
+  expect(await screen.findByText(/1 of 2 portions complete/)).toBeOnTheScreen();
+  await waitFor(() =>
+    expect(h.selectInvestmentSlot).toHaveBeenLastCalledWith(expect.anything(), first.intentId, 1),
+  );
+  expect(screen.queryByLabelText("USDG withdrawal amount")).toBeNull();
+  expect(service.plan).not.toHaveBeenCalled();
+  expect(service.execute).not.toHaveBeenCalled();
+});
+
+test("native finalized proceeds awaiting return take priority over an unrelated cached amount", async () => {
+  await withdrawalSelectionStore.save({
+    version: 1,
+    walletId: first.walletId,
+    profileId: "robinhood-usdg",
+    requestId: "unrelated_request",
+    amountAtoms: "400000",
+    portions: [
+      {
+        intentId: first.intentId,
+        cycleIndex: 0,
+        investmentSlot: 0,
+        assetsAtoms: "800000",
+        amountAtoms: "400000",
+        allShares: false,
+      },
+    ],
+  });
+  const redeemed: SponsoredOperation = {
+    ...operation("withdrawn"),
+    kind: "hoodRedeemAll",
+    operationId: "native_redeem",
+    withdrawalRequestId: "native_request",
+    requestedWithdrawalAtoms: "200000",
+    residualShares: "700",
+    redeemedUsdgAtoms: "200000",
+    userOperationHash: "0x" + "a".repeat(64),
+  };
+  const service: EarnRobinhoodService = {
+    available: jest.fn().mockResolvedValue(true),
+    withdrawalBalances: jest.fn(),
+    list: jest.fn().mockResolvedValue([operation(), redeemed]),
+    plan: jest.fn().mockRejectedValue(new Error("Review captured")),
+    execute: jest.fn(),
+    resume: jest.fn(),
+    reconcileCredit: jest.fn(),
+    cancelUnsigned: jest.fn(),
+    cancel: jest.fn(),
+  };
+  setup({
+    rows: [
+      {
+        ...position(first),
+        lastWithdrawalRequestId: "native_request",
+        withdrawalAttention: "unfinished",
+      },
+    ],
+    robinhoodService: service,
+  });
+  await userEvent.press(await screen.findByRole("button", { name: "Review private return" }));
+  await waitFor(() =>
+    expect(service.plan).toHaveBeenCalledWith(
+      expect.anything(),
+      "hoodTokenReturn",
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        withdrawalOperationId: "native_redeem",
+        returnBudgetAtoms: "200000",
+      }),
+    ),
+  );
+  expect(screen.queryByText(/Requested: 0.4 USDG/)).toBeNull();
+  expect(service.execute).not.toHaveBeenCalled();
+});
+
+test("a canceled balance read cannot suppress a replacement withdrawal load", async () => {
+  let resolve!: (
+    rows: { owner: string; shares: string; assetsAtoms: string; checkedAt: number }[],
+  ) => void;
+  const firstService: EarnRobinhoodService = {
+    available: jest.fn().mockResolvedValue(true),
+    withdrawalBalances: jest.fn().mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    ),
+    list: jest.fn().mockResolvedValue([operation()]),
+    plan: jest.fn(),
+    execute: jest.fn(),
+    resume: jest.fn(),
+    reconcileCredit: jest.fn(),
+    cancelUnsigned: jest.fn(),
+    cancel: jest.fn(),
+  };
+  const secondService = {
+    ...firstService,
+    withdrawalBalances: jest.fn().mockResolvedValue([
+      {
+        owner: first.destinations[0].address,
+        shares: "1",
+        assetsAtoms: "900000",
+        checkedAt: Date.now(),
+      },
+    ]),
+  };
+  const h = setup({ rows: [position(first)], robinhoodService: firstService });
+  await waitFor(() => expect(firstService.withdrawalBalances).toHaveBeenCalled());
+  h.rerenderService(secondService);
+  resolve([
+    {
+      owner: first.destinations[0].address,
+      shares: "1",
+      assetsAtoms: "800000",
+      checkedAt: Date.now(),
+    },
+  ]);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Review withdrawal amount" })).toBeEnabled(),
+  );
+  expect(screen.getByText("Available: 0.9 USDG")).toBeOnTheScreen();
+  expect(firstService.execute).not.toHaveBeenCalled();
+});
+
+test.each(["authorizationSaved", "expired"] as const)(
+  "native recovery without UI storage preserves a %s requested amount",
+  async (status) => {
+    const from = first.destinations[0].address;
+    const saved = {
+      ...operation(status),
+      kind: "hoodRedeemAll" as const,
+      from,
+      operationId: "saved_partial",
+      blocked: status !== "expired",
+      canResume: status !== "expired",
+      canCancelPreparation: true,
+      withdrawalRequestId: "restored_request",
+      requestedWithdrawalAtoms: "400000",
+    };
+    const service: EarnRobinhoodService = {
+      available: jest.fn().mockResolvedValue(true),
+      withdrawalBalances: jest.fn(),
+      list: jest.fn().mockResolvedValue([operation(), saved]),
+      plan: jest.fn().mockRejectedValue(new Error("Review captured")),
+      execute: jest.fn(),
+      resume: jest.fn(),
+      reconcileCredit: jest.fn(),
+      cancelUnsigned: jest
+        .fn()
+        .mockResolvedValue({ ...saved, status: "cancelled", blocked: false, canResume: false }),
+      cancel: jest.fn(),
+    };
+    if (status === "expired")
+      await AsyncStorage.setItem(
+        `gizu:withdrawal-selection:v1:${encodeURIComponent(first.walletId)}:robinhood-usdg`,
+        '{"invalid":true}',
+      );
+    setup({ rows: [position(first, 0, "pending")], robinhoodService: service });
+    await userEvent.press(
+      await screen.findByRole("button", {
+        name: status === "expired" ? "Review withdrawal" : "Start a fresh review",
+      }),
+    );
+    await waitFor(() =>
+      expect(service.plan).toHaveBeenCalledWith(
+        expect.anything(),
+        "hoodRedeemAll",
+        expect.any(AbortSignal),
+        expect.objectContaining({
+          withdrawalRequestId: "restored_request",
+          requestedWithdrawalAtoms: "400000",
+        }),
+      ),
+    );
+    expect(service.withdrawalBalances).not.toHaveBeenCalled();
+    expect(service.execute).not.toHaveBeenCalled();
+  },
+);
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const first: EarnIntent = {
   ...hoodIntent,
@@ -247,7 +638,7 @@ function setup(
       valuationUnavailable: false,
     },
   ];
-  render(
+  const view = (robinhoodService = options.robinhoodService ?? robinhood) => (
     <MainnetWalletProvider
       session={{
         kind: "mainnet",
@@ -274,7 +665,7 @@ function setup(
         investmentPositions={createEarnInvestmentPositionsService(() => ({
           listEarnInvestmentPositions: listPositions,
         }))}
-        robinhood={options.robinhoodService ?? robinhood}
+        robinhood={robinhoodService}
       >
         <NavigationContainer>
           <Stack.Navigator
@@ -293,9 +684,11 @@ function setup(
           </Stack.Navigator>
         </NavigationContainer>
       </EarnProvider>
-    </MainnetWalletProvider>,
+    </MainnetWalletProvider>
   );
+  const rendered = render(view());
   return {
+    rerenderService: (service: EarnRobinhoodService) => rendered.rerender(view(service)),
     robinhood,
     prepare,
     select,
@@ -340,7 +733,7 @@ test("a distributed saved withdrawal can be replaced with a fresh review through
     } as Response;
   });
   setup({
-    rows: [position(second, 1)],
+    rows: [position(second, 1, "pending")],
     robinhoodService: createEarnRobinhoodService("https://backend.test", () => native),
   });
   await userEvent.press(await screen.findByRole("button", { name: "Start a fresh review" }));

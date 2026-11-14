@@ -16,8 +16,24 @@ import { useEarn } from "./EarnProvider";
 import { useVaultPosition } from "./useVaultPosition";
 import { RobinhoodExecutionPanel } from "./RobinhoodExecutionPanel";
 import { VaultExecutionPanel } from "./VaultExecutionPanel";
+import { RequestedVaultWithdrawalScreen } from "./RequestedVaultWithdrawalScreen";
 
-export function VaultWithdrawalScreen({
+export function VaultWithdrawalScreen(
+  props: NativeStackScreenProps<RootStackParamList, "VaultWithdrawal">,
+) {
+  const earn = useEarn();
+  return props.route.params.profileId === "robinhood-usdg" &&
+    !props.route.params.historyOnly &&
+    earn.robinhood.withdrawalBalances ? (
+    <RequestedVaultWithdrawalScreen
+      {...props}
+      renderSavedWithdrawal={() => <SavedVaultWithdrawalScreen {...props} />}
+    />
+  ) : (
+    <SavedVaultWithdrawalScreen {...props} />
+  );
+}
+function SavedVaultWithdrawalScreen({
   route,
 }: NativeStackScreenProps<RootStackParamList, "VaultWithdrawal">) {
   const profileId = route.params.profileId;

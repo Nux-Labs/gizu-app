@@ -11,7 +11,7 @@ internal fun JSONObject.sponsoredSpendSaved() =
 internal fun JSONObject.sponsoredBlocked(): Boolean =
   when {
     // An expired exit keeps its signed bytes, but they can no longer block a replacement.
-    getString("status") == "expired" -> false
+    getString("status") in setOf("expired", "nonceCancelled") -> false
     sponsoredSpendSaved() -> getString("status") !in terminalSteps
     optBoolean("signingPending") -> true
     else -> !optBoolean("cancelled") // Discarded preparation never submits its retained delegation.
@@ -330,6 +330,21 @@ internal class EarnSponsoredJournal(
       put("walletId", walletId)
       put("revision", op.getInt("revision"))
       put("kind", p.getString("kind"))
+      if (p.optBoolean("withdrawAllShares")) put("withdrawAllShares", true)
+      if (
+        p.optString("kind") == "hoodRedeemAll" &&
+          p.has("requestedWithdrawalAtoms") &&
+          op.has("residualShares") &&
+          op.getString("residualShares").toBigInteger().signum() > 0
+      )
+        put("minimumRetainedUsdgAtoms", nextWithdrawalReserve(p).toString())
+      for (field in
+        listOf(
+          "requestedWithdrawalAtoms",
+          "withdrawalRequestId",
+          "withdrawalOperationId",
+          "returnBudgetAtoms",
+        )) if (p.has(field)) put(field, p.getString(field))
       put("cycleIndex", p.optInt("cycleIndex", 0))
       if (p.has("investmentSlot")) put("investmentSlot", p.getInt("investmentSlot"))
       if (p.has("sourceAccountIndex")) put("sourceAccountIndex", p.getInt("sourceAccountIndex"))
@@ -361,7 +376,8 @@ internal class EarnSponsoredJournal(
           when (p.getString("kind")) {
             "hoodDeposit" -> "invested"
             "hoodRedeemAll" ->
-              if (op.optString("residualShares", "0") != "0") "residualShares"
+              if (op.optString("residualShares", "0") != "0" && !withdrawnRequestedPortion(op))
+                "residualShares"
               else if (
                 redeemedUsdg(op) ||
                   (op.has("transactionHash") && op.optString("residualShares") == "0")

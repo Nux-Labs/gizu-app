@@ -68,6 +68,7 @@ internal suspend fun reconcileEarnSponsoredOperations(
   chainFilter: Int? = null,
   operationIds: Set<String>? = null,
 ) {
+  closeCompetingRequestedWithdrawals(journal)
   val rows = journal.all()
   val completedReturns =
     rows.withIndex().filter { (_, op) ->
@@ -78,7 +79,9 @@ internal suspend fun reconcileEarnSponsoredOperations(
   for ((index, op) in rows.withIndex()) {
     if (operationIds != null && op.getString("operationId") !in operationIds) continue
     // A later read must not turn a replaced expired signature back into a sendable one.
-    if (op.optString("status") == "expired") continue
+    if (op.optString("status") == "nonceCancelled") continue
+    val retired = op.optString("status") == "expired"
+    if (retired && !requestedWithdrawal(op.getJSONObject("proposal"))) continue
     if (
       !op.has("signedUserOperation") ||
         chainFilter != null && op.getJSONObject("proposal").getInt("chainId") != chainFilter
@@ -107,6 +110,8 @@ internal suspend fun reconcileEarnSponsoredOperations(
     val before = op.toString()
     val reported = bundler.call("eth_getUserOperationReceipt", JSONArray().put(hash))
     val known = bundler.call("eth_getUserOperationByHash", JSONArray().put(hash))
+    // Expired bytes may only recover a canonical receipt, never become sendable again.
+    if (retired && (reported !is JSONObject || known !is JSONObject)) continue
     op.put("conflict", false)
     if (known is JSONObject) {
       check(known.getString("entryPoint").equals(EARN_ENTRY_POINT, true))
@@ -249,7 +254,11 @@ internal suspend fun reconcileEarnSponsoredOperations(
                 .put(stateBlock),
             ) as String
           val shares = earnAbiWord(observed)
-          if (p.getString("kind") == "hoodRedeemAll") op.put("residualShares", shares.toString())
+          if (p.getString("kind") == "hoodRedeemAll") {
+            op.put("residualShares", shares.toString())
+            if (p.has("requestedWithdrawalAtoms"))
+              check(withdrawnRequestedPortion(JSONObject(op.toString()).put("status", "finalized")))
+          }
           if (p.getString("kind") == "hoodDeposit")
             check(
               shares >=
@@ -292,6 +301,7 @@ internal suspend fun reconcileEarnSponsoredOperations(
           )
       }
     }
+    if (retired && op.optString("status") !in terminalSteps) continue
     if (before != op.toString())
       journal.update(op.getString("operationId"), op.getInt("revision")) { target ->
         for (field in
@@ -306,6 +316,7 @@ internal suspend fun reconcileEarnSponsoredOperations(
           )) if (op.has(field)) target.put(field, op.get(field))
       }
   }
+  closeCompetingRequestedWithdrawals(journal)
 }
 
 internal fun requireSponsoredReceiptSemantics(

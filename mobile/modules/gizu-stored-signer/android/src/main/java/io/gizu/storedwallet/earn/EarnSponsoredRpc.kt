@@ -369,7 +369,11 @@ internal class EarnSponsoredStateLoader(
     var routerHash = vaultHash
     if (chain == 4663L) {
       shares = uint(HOOD_EARN_VAULT, "0x70a08231$word")
-      preview = uint(HOOD_EARN_VAULT, "0xef8b30f7${earnNumberWord(p.getString("amountAtoms"))}")
+      preview =
+        uint(
+          HOOD_EARN_VAULT,
+          "${if (p.has("requestedWithdrawalAtoms")) "0x4cdad506" else "0xef8b30f7"}${earnNumberWord(p.getString("amountAtoms"))}",
+        )
       maxRedeem = uint(HOOD_EARN_VAULT, "0xd905777e$word")
       val value = call(HOOD_EARN_VAULT, "0x38d52e0f")
       earnAbiWord(value)

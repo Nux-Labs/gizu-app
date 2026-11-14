@@ -20,7 +20,8 @@ export function registerEarnPlanningRoutes(
   source?: Pick<MonadFundingPlanner, "prepare">,
   withdrawal?: Pick<EthereumWithdrawalPlanner, "plan">,
   hood?: Pick<RobinhoodDepositPlanner, "plan">,
-  hoodWithdrawal?: Pick<RobinhoodWithdrawalPlanner, "plan">,
+  hoodWithdrawal?: Pick<RobinhoodWithdrawalPlanner, "plan"> &
+    Partial<Pick<RobinhoodWithdrawalPlanner, "balances">>,
   hoodReturn?: Pick<RobinhoodReturnPlanner, "plan">,
 ) {
   if (deposit)
@@ -49,32 +50,30 @@ export function registerEarnPlanningRoutes(
           .send(await deposit.plan(request.body)),
     );
   if (source)
-    app
-      .withTypeProvider<ZodTypeProvider>()
-      .post(
-        "/v1/earn/monad/funding-plan",
-        {
-          schema: {
-            body: z
-              .object({
-                owner: address,
-                recipient: address,
-                amount,
-                budget: amount,
-              })
-              .strict(),
-          },
-          bodyLimit: 1024,
+    app.withTypeProvider<ZodTypeProvider>().post(
+      "/v1/earn/monad/funding-plan",
+      {
+        schema: {
+          body: z
+            .object({
+              owner: address,
+              recipient: address,
+              amount,
+              budget: amount,
+            })
+            .strict(),
         },
-        async (request, reply) =>
-          reply
-            .header("Cache-Control", "no-store")
-            .send(
-              await source.prepare(
-                request.body as Parameters<MonadFundingPlanner["prepare"]>[0],
-              ),
+        bodyLimit: 1024,
+      },
+      async (request, reply) =>
+        reply
+          .header("Cache-Control", "no-store")
+          .send(
+            await source.prepare(
+              request.body as Parameters<MonadFundingPlanner["prepare"]>[0],
             ),
-      );
+          ),
+    );
   if (withdrawal)
     app.withTypeProvider<ZodTypeProvider>().post(
       "/v1/earn/ethereum/withdrawal-plan",
@@ -123,6 +122,20 @@ export function registerEarnPlanningRoutes(
           .header("Cache-Control", "no-store")
           .send(await hood.plan(request.body)),
     );
+  if (hoodWithdrawal?.balances)
+    app.withTypeProvider<ZodTypeProvider>().post(
+      "/v1/earn/robinhood/withdrawal-balances",
+      {
+        bodyLimit: 16384,
+        schema: {
+          body: z.object({ owners: z.array(address).min(1).max(256) }).strict(),
+        },
+      },
+      async (request, reply) =>
+        reply
+          .header("Cache-Control", "no-store")
+          .send(await hoodWithdrawal.balances!(request.body.owners)),
+    );
   if (hoodWithdrawal)
     app.withTypeProvider<ZodTypeProvider>().post(
       "/v1/earn/robinhood/withdrawal-plan",
@@ -131,6 +144,13 @@ export function registerEarnPlanningRoutes(
           body: z
             .object({
               owner: address,
+              requestedWithdrawalAtoms: amount.optional(),
+              withdrawAllShares: z.literal(true).optional(),
+              withdrawalRequestId: z
+                .string()
+                .regex(/^[-a-zA-Z0-9_]{1,128}$/)
+                .optional(),
+              confidentialAccount: address.optional(),
               operationId: z
                 .string()
                 .min(1)
@@ -156,6 +176,12 @@ export function registerEarnPlanningRoutes(
             .object({
               owner: address,
               confidentialAccount: address,
+              withdrawalOperationId: z
+                .string()
+                .regex(/^[-a-zA-Z0-9_]{1,128}$/)
+                .optional(),
+              returnBudgetAtoms: amount.optional(),
+              minimumRetainedUsdgAtoms: amount.optional(),
               settlementMode: z.literal("balance-delta-v1").optional(),
               operationId: z
                 .string()

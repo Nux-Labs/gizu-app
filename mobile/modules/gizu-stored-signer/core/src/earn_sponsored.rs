@@ -108,6 +108,11 @@ struct SponsoredProposal {
     expected_from: String,
     token: String,
     amount_atoms: String,
+    requested_withdrawal_atoms: Option<String>,
+    withdraw_all_shares: Option<bool>,
+    withdrawal_request_id: Option<String>,
+    withdrawal_operation_id: Option<String>,
+    return_budget_atoms: Option<String>,
     nonce: String,
     deadline: u64,
     maximum_token_fee_atoms: String,
@@ -314,6 +319,37 @@ impl SponsoredEarnOperation {
             _ => return Err(SignerError::InvalidInput),
         }
 
+        if p.withdraw_all_shares.is_some()
+            && (p.withdraw_all_shares != Some(true) || p.requested_withdrawal_atoms.is_none())
+        {
+            return Err(SignerError::InvalidInput);
+        }
+        let valid_id = |id: &str| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        };
+        if let Some(id) = &p.withdrawal_request_id {
+            if p.kind != "hoodRedeemAll" || !valid_id(id) {
+                return Err(SignerError::InvalidInput);
+            }
+        }
+        if let Some(requested) = &p.requested_withdrawal_atoms {
+            if p.kind != "hoodRedeemAll"
+                || p.withdrawal_request_id.is_none()
+                || dec(requested)? == U256::ZERO
+            {
+                return Err(SignerError::InvalidInput);
+            }
+        }
+        match (&p.withdrawal_operation_id, &p.return_budget_atoms) {
+            (None, None) => {}
+            (Some(id), Some(budget))
+                if p.kind == "hoodTokenReturn" && valid_id(id) && dec(budget)? > U256::ZERO => {}
+            _ => return Err(SignerError::InvalidInput),
+        }
         let source = p.kind == "sourceFunding";
         if !(source && p.chain_id == 143
             || ["hoodDeposit", "hoodRedeemAll", "hoodTokenReturn"].contains(&p.kind.as_str())
@@ -423,6 +459,11 @@ impl SponsoredEarnOperation {
         {
             return Err(SignerError::InvalidInput);
         }
+        if let Some(budget) = &s.p.return_budget_atoms {
+            if amount.checked_add(cap).ok_or(SignerError::InvalidInput)? > dec(budget)? {
+                return Err(SignerError::InvalidInput);
+            }
+        }
         let decoded = decode_calls(&bytes(&op.call_data, 16384)?)?;
         let mut expected = Vec::new();
         if dec(&current.paymaster_allowance_atoms)? < cap {
@@ -456,8 +497,12 @@ impl SponsoredEarnOperation {
             // The pinned Morpho Vault V2 intentionally returns zero from
             // maxRedeem. It is not a liquidity limit. Bind the complete live
             // share balance; the exact router call enforces redemption onchain.
-            if s.p.kind == "hoodRedeemAll" && dec(&current.shares)? != amount {
-                return Err(SignerError::InvalidInput);
+            if s.p.kind == "hoodRedeemAll" {
+                if let Some(requested) = &s.p.requested_withdrawal_atoms {
+                    validate_requested_redemption(amount, dec(requested)?, &current)?;
+                } else if dec(&current.shares)? != amount {
+                    return Err(SignerError::InvalidInput);
+                }
             }
             let price = if s.p.kind == "hoodDeposit" {
                 // The vault accrues interest every block, so the planner's share price cannot match
@@ -525,6 +570,18 @@ impl SponsoredEarnOperation {
             hash,
             authorization.is_some()
         );
+        let review = if let Some(requested) = &s.p.requested_withdrawal_atoms {
+            format!(
+                "{review}\nRequested withdrawal: {} USDG\nNative preview: {} USDG\nExact approved shares: {}\nThe requested amount is approximate: maximum 0.10% upward price drift and one base unit of rounding. The remaining shares stay invested.",
+                usdg_display(requested)?,
+                usdg_display(&current.preview_deposit_shares)?,
+                s.p.amount_atoms
+            )
+        } else if s.p.withdrawal_request_id.is_some() {
+            format!("{review}\nWithdraw all current shares for this portion.")
+        } else {
+            review
+        };
         let review = if let Some(q) = &quote {
             format!(
                 "{review}\n{}",
@@ -587,7 +644,11 @@ impl SponsoredEarnOperation {
                 return Err(SignerError::InvalidInput);
             }
             check_sponsored(&s.a, &s.p, &p.op, &current, p.auth.as_ref())?;
-            continuity(&p.baseline, &current)?;
+            continuity(
+                &p.baseline,
+                &current,
+                s.p.requested_withdrawal_atoms.is_some(),
+            )?;
             if fee_cap(&p.op, &s.p.token)? != p.cap {
                 return Err(SignerError::InvalidInput);
             }
@@ -727,6 +788,7 @@ impl EarnDelegationOperation {
             continuity(
                 s.baseline.as_ref().ok_or(SignerError::InvalidInput)?,
                 &current,
+                false,
             )
         })();
         if let Err(e) = check {
@@ -909,6 +971,43 @@ fn check_delegation(
     }
     Ok(())
 }
+fn usdg_display(atoms: &str) -> Result<String, SignerError> {
+    let n = dec(atoms)?;
+    Ok(format!(
+        "{}.{:06}",
+        n / U256::from(1000000),
+        n % U256::from(1000000)
+    ))
+}
+fn validate_requested_redemption(
+    amount: U256,
+    requested: U256,
+    state: &NativeSponsoredState,
+) -> Result<(), SignerError> {
+    let assets = dec(&state.preview_deposit_shares)?; // Native previewRedeem(selected shares) for this kind.
+    let tolerance = ceil(
+        requested
+            .checked_mul(U256::from(10))
+            .ok_or(SignerError::InvalidInput)?,
+        U256::from(10000),
+    )?
+    .max(U256::from(1));
+    if assets == U256::ZERO
+        || amount == U256::ZERO
+        || amount > dec(&state.shares)?
+        || assets
+            .checked_add(U256::from(1))
+            .ok_or(SignerError::InvalidInput)?
+            < requested
+        || assets
+            > requested
+                .checked_add(tolerance)
+                .ok_or(SignerError::InvalidInput)?
+    {
+        return Err(SignerError::InvalidInput);
+    }
+    Ok(())
+}
 fn check_sponsored(
     a: &Authority,
     p: &SponsoredProposal,
@@ -917,6 +1016,12 @@ fn check_sponsored(
     auth: Option<&NativeSignedEarnAuthorization>,
 ) -> Result<(), SignerError> {
     common_state(a, s)?;
+    if let Some(requested) = &p.requested_withdrawal_atoms {
+        validate_requested_redemption(dec(&p.amount_atoms)?, dec(requested)?, s)?;
+        if p.withdraw_all_shares == Some(true) && dec(&p.amount_atoms)? != dec(&s.shares)? {
+            return Err(SignerError::InvalidInput);
+        }
+    }
     if addr(&op.sender)? != addr(&a.owner)?
         || hexnum(&op.nonce)? != hexnum(&p.nonce)?
         || hexnum(&s.entry_point_nonce)? != hexnum(&p.nonce)?
@@ -1016,7 +1121,11 @@ fn authorization_hash(chain: u64, nonce: u64) -> Result<B256, SignerError> {
     }
     .signature_hash())
 }
-fn continuity(b: &NativeSponsoredState, s: &NativeSponsoredState) -> Result<(), SignerError> {
+fn continuity(
+    b: &NativeSponsoredState,
+    s: &NativeSponsoredState,
+    allow_preview_change: bool,
+) -> Result<(), SignerError> {
     if b.owner != s.owner
         || b.entry_point_nonce != s.entry_point_nonce
         || b.transaction_nonce != s.transaction_nonce
@@ -1024,7 +1133,7 @@ fn continuity(b: &NativeSponsoredState, s: &NativeSponsoredState) -> Result<(), 
         || b.token_balance_atoms != s.token_balance_atoms
         || b.paymaster_allowance_atoms != s.paymaster_allowance_atoms
         || b.shares != s.shares
-        || b.preview_deposit_shares != s.preview_deposit_shares
+        || !allow_preview_change && b.preview_deposit_shares != s.preview_deposit_shares
         || b.max_redeem_shares != s.max_redeem_shares
         || b.token_code_hash != s.token_code_hash
         || b.paymaster_code_hash != s.paymaster_code_hash
@@ -1747,6 +1856,47 @@ mod tests {
         assert!(prepare("998000").is_err());
     }
     #[test]
+    fn requested_redemption_binds_selected_shares_and_leaves_other_shares_owned() {
+        let mut p = hood_proposal("hoodRedeemAll");
+        p["requestedWithdrawalAtoms"] = json!("500000");
+        p["withdrawalRequestId"] = json!("withdraw_request_1");
+        p["amountAtoms"] = json!("1000000");
+        let mut current = state(4663);
+        current.preview_deposit_shares = "500000".into();
+        let operation = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        operation
+            .prepare(7, hood_op(&p).to_string(), current.clone(), None, None)
+            .unwrap();
+        operation
+            .approve(7, operation.review_hash().unwrap())
+            .unwrap();
+        assert!(
+            !operation
+                .sign(7, current.clone())
+                .unwrap()
+                .signature
+                .is_empty()
+        );
+        for shares in ["499998", "500501"] {
+            let operation = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+            let mut changed = current.clone();
+            changed.preview_deposit_shares = shares.into();
+            assert!(
+                operation
+                    .prepare(7, hood_op(&p).to_string(), changed, None, None)
+                    .is_err()
+            );
+        }
+        let operation = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        let mut insufficient = current.clone();
+        insufficient.shares = "999999".into();
+        assert!(
+            operation
+                .prepare(7, hood_op(&p).to_string(), insufficient, None, None)
+                .is_err()
+        );
+    }
+    #[test]
     fn hood_v2_full_redemption_accepts_zero_max_redeem_and_still_binds_all_shares() {
         let p = hood_proposal("hoodRedeemAll");
         let rpc = hood_op(&p);
@@ -1765,6 +1915,54 @@ mod tests {
             changed.shares = changed_shares.into();
             assert!(o.prepare(7, rpc.to_string(), changed, None, None).is_err());
         }
+    }
+    #[test]
+    fn requested_redemption_rechecks_valuation_bounds_at_signing_and_max_binds_every_share() {
+        let mut p = hood_proposal("hoodRedeemAll");
+        p["requestedWithdrawalAtoms"] = json!("500000");
+        p["withdrawalRequestId"] = json!("request_1");
+        p["amountAtoms"] = json!("1000000");
+        let mut before = state(4663);
+        before.preview_deposit_shares = "500000".into();
+        for (assets, accepted) in [
+            ("500001", true),
+            ("500500", true),
+            ("500501", false),
+            ("499998", false),
+            ("0", false),
+        ] {
+            let operation = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+            let review = operation
+                .prepare(7, hood_op(&p).to_string(), before.clone(), None, None)
+                .unwrap();
+            assert!(review.contains("0.10%"));
+            operation
+                .approve(7, operation.review_hash().unwrap())
+                .unwrap();
+            let mut current = before.clone();
+            current.preview_deposit_shares = assets.into();
+            assert_eq!(
+                operation.sign(7, current).is_ok(),
+                accepted,
+                "assets {assets}"
+            );
+        }
+        p["withdrawAllShares"] = json!(true);
+        let operation = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        assert!(
+            operation
+                .prepare(7, hood_op(&p).to_string(), before.clone(), None, None)
+                .is_err()
+        );
+        before.shares = "1000000".into();
+        let operation = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+        operation
+            .prepare(7, hood_op(&p).to_string(), before.clone(), None, None)
+            .unwrap();
+        operation
+            .approve(7, operation.review_hash().unwrap())
+            .unwrap();
+        operation.sign(7, before).unwrap();
     }
     #[test]
     fn hood_deposit_full_redemption_and_canonical_sdk_router_are_pinned() {

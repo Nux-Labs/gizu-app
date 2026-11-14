@@ -59,6 +59,12 @@ export type SponsoredRequest = {
   userOperation: Record<string, string>;
 };
 export type SponsoredOperation = {
+  requestedWithdrawalAtoms?: string;
+  withdrawAllShares?: true;
+  minimumRetainedUsdgAtoms?: string;
+  withdrawalRequestId?: string;
+  withdrawalOperationId?: string;
+  returnBudgetAtoms?: string;
   investmentSlot?: number;
   fundingBatchId?: string;
   fundingBatchSize?: number;
@@ -82,6 +88,7 @@ export type SponsoredOperation = {
     | "unknown"
     | "signed"
     | "expired"
+    | "nonceCancelled"
     | "pending"
     | "cancelled"
     | "reverted"
@@ -113,7 +120,7 @@ export function latestPrivateReturn(
   rows: readonly SponsoredOperation[],
 ): SponsoredOperation | undefined {
   for (const row of [...rows].reverse()) {
-    if (["cancelled", "reverted", "expired"].includes(row.status)) continue;
+    if (["cancelled", "reverted", "expired", "nonceCancelled"].includes(row.status)) continue;
     if (row.kind === "hoodDeposit" || row.kind === "hoodRedeemAll") return undefined;
     if (row.kind === "hoodTokenReturn") return row;
   }
@@ -391,6 +398,7 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
         "unknown",
         "signed",
         "expired",
+        "nonceCancelled",
         "pending",
         "cancelled",
         "reverted",
@@ -466,6 +474,25 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
     for (const key of ["actualTokenFeeAtoms", "creditedAtoms", "residualShares"] as const) {
       if (r[key] !== undefined) optional[key] = earnAtoms(r[key]);
     }
+    for (const key of ["withdrawalRequestId", "withdrawalOperationId"] as const) {
+      if (r[key] !== undefined) {
+        if (!operationId(r[key])) throw new Error("Invalid native withdrawal reference.");
+        optional[key] = r[key];
+      }
+    }
+    for (const key of ["requestedWithdrawalAtoms", "returnBudgetAtoms"] as const) {
+      if (r[key] !== undefined) {
+        const atoms = earnAtoms(r[key]);
+        if (atoms === "0") throw new Error("Invalid native withdrawal amount.");
+        optional[key] = atoms;
+      }
+    }
+    if (r.withdrawAllShares !== undefined) {
+      if (r.withdrawAllShares !== true) throw new Error("Invalid native Max mode.");
+      optional.withdrawAllShares = true;
+    }
+    if (r.minimumRetainedUsdgAtoms !== undefined)
+      optional.minimumRetainedUsdgAtoms = earnAtoms(r.minimumRetainedUsdgAtoms);
     if (r.redeemedUsdgAtoms !== undefined) {
       const redeemed = earnAtoms(r.redeemedUsdgAtoms);
       if (redeemed === "0") throw new Error("Invalid redeemed USDG amount.");

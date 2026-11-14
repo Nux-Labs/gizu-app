@@ -6,6 +6,7 @@ import {
   robinhoodProposal,
   type EarnRobinhoodService,
   type RobinhoodKind,
+  type RobinhoodPlanOptions,
 } from "@/domain/earn/robinhoodExecution";
 import { parseSponsoredOperations, type SponsoredOperation } from "@/domain/earn/sourceFunding";
 import {
@@ -72,9 +73,16 @@ export function createEarnRobinhoodService(
     supported(intent);
     operation(op, intent);
   }
-  async function quote(intent: EarnIntent, kind: RobinhoodKind, signal: AbortSignal) {
+  async function quote(
+    intent: EarnIntent,
+    kind: RobinhoodKind,
+    signal: AbortSignal,
+    options?: RobinhoodPlanOptions,
+  ) {
     supported(intent);
     if (!baseUrl) throw new Error("Robinhood planning is not configured.");
+    if (options && (await getSignerCapabilities()).earnPartialWithdrawals !== true)
+      throw new Error("Update Gizu to choose a withdrawal amount.");
     assertNotAborted(signal);
     const operationId = `hood_${kind}_${now()}_${Math.random().toString(36).slice(2, 10)}`,
       revision = 1,
@@ -93,6 +101,10 @@ export function createEarnRobinhoodService(
             owner: investmentDestination(intent).address,
             operationId,
             revision,
+            ...options,
+            ...(options?.withdrawalRequestId
+              ? { confidentialAccount: earnReturnAddress(intent) }
+              : {}),
             ...(kind === "hoodTokenReturn"
               ? {
                   confidentialAccount: earnReturnAddress(intent),
@@ -136,7 +148,24 @@ export function createEarnRobinhoodService(
       }
       const value = await response.json();
       assertNotAborted(controller.signal);
-      return parseRobinhoodPlan(value, intent, kind, operationId, revision, now());
+      const plan = parseRobinhoodPlan(value, intent, kind, operationId, revision, now());
+      if (
+        options &&
+        (plan.withdrawAllShares !== options.withdrawAllShares ||
+          plan.withdrawalRequestId !== options.withdrawalRequestId ||
+          plan.requestedWithdrawalAtoms !== options.requestedWithdrawalAtoms ||
+          plan.withdrawalOperationId !== options.withdrawalOperationId ||
+          (options.returnBudgetAtoms !== undefined &&
+            (!plan.returnBudgetAtoms ||
+              BigInt(plan.returnBudgetAtoms) > BigInt(options.returnBudgetAtoms))))
+      )
+        throw new Error("Requested withdrawal binding changed. Refresh before authorizing.");
+      if (
+        options?.minimumRetainedUsdgAtoms &&
+        BigInt(plan.withdrawalReserveAtoms) < BigInt(options.minimumRetainedUsdgAtoms)
+      )
+        throw new Error("The remaining investment reserve changed. Refresh before authorizing.");
+      return plan;
     } finally {
       clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
@@ -146,8 +175,73 @@ export function createEarnRobinhoodService(
     async available() {
       return (await getSignerCapabilities()).earnSponsoredExecution === true;
     },
-    async plan(intent, kind, signal) {
-      return action(() => quote(intent, kind, signal));
+    async withdrawalBalances(intents, signal) {
+      if ((await getSignerCapabilities()).earnPartialWithdrawals !== true)
+        throw new Error("Update Gizu to choose a withdrawal amount.");
+      for (const intent of intents) supported(intent);
+      const owners = intents.map((intent) => investmentDestination(intent).address);
+      if (
+        owners.length < 1 ||
+        owners.length > 256 ||
+        new Set(owners.map((owner) => owner.toLowerCase())).size !== owners.length
+      )
+        throw new Error("Investment wallet selection changed. Refresh the vault.");
+      return action(async () => {
+        const controller = new AbortController(),
+          abort = () => controller.abort();
+        signal.addEventListener("abort", abort);
+        const timeout = setTimeout(abort, 60000);
+        try {
+          assertNotAborted(signal);
+          const response = await fetch(
+            baseUrl.replace(/\/$/, "") + "/v1/earn/robinhood/withdrawal-balances",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ owners }),
+              signal: controller.signal,
+            },
+          );
+          if (!response.ok)
+            throw new Error(
+              "Amount-based withdrawals require the updated backend deployment. Your investment is unchanged.",
+            );
+          const body = await response.json();
+          if (!Array.isArray(body.positions) || body.positions.length !== owners.length)
+            throw new Error("Incomplete withdrawal balances. Refresh the vault.");
+          const seen = new Set<string>();
+          return body.positions.map((row: Record<string, unknown>) => {
+            const owner = String(row.owner).toLowerCase();
+            if (
+              !owners.some((value) => value.toLowerCase() === owner) ||
+              seen.has(owner) ||
+              typeof row.shares !== "string" ||
+              !/^(0|[1-9][0-9]{0,77})$/.test(row.shares) ||
+              typeof row.assetsAtoms !== "string" ||
+              !/^(0|[1-9][0-9]{0,77})$/.test(row.assetsAtoms) ||
+              BigInt(row.shares) >= 1n << 256n ||
+              BigInt(row.assetsAtoms) >= 1n << 256n ||
+              !Number.isSafeInteger(row.checkedAt) ||
+              now() - Number(row.checkedAt) > 60000 ||
+              Number(row.checkedAt) > now() + 5000
+            )
+              throw new Error("Withdrawal balance binding changed. Refresh the vault.");
+            seen.add(owner);
+            return {
+              owner,
+              shares: row.shares,
+              assetsAtoms: row.assetsAtoms,
+              checkedAt: Number(row.checkedAt),
+            };
+          });
+        } finally {
+          clearTimeout(timeout);
+          signal.removeEventListener("abort", abort);
+        }
+      });
+    },
+    async plan(intent, kind, signal, options) {
+      return action(() => quote(intent, kind, signal, options));
     },
     async execute(intent, plan) {
       supported(intent);
@@ -174,7 +268,9 @@ export function createEarnRobinhoodService(
         while (
           row.status !== "withdrawn" &&
           row.status !== "reverted" &&
-          row.status !== "residualShares"
+          row.status !== "residualShares" &&
+          row.status !== "nonceCancelled" &&
+          row.status !== "expired"
         ) {
           if (now() - started > 840000) return { row, signed: null };
           await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -184,9 +280,24 @@ export function createEarnRobinhoodService(
           );
           if (saved) row = saved;
         }
+        if (row.status === "nonceCancelled" || row.status === "expired")
+          throw new Error(
+            "This withdrawal attempt ended. Refresh withdrawal to recover saved progress before continuing.",
+          );
         if (row.status !== "withdrawn" || typeof signer.continueEarnWithdrawal !== "function")
           return { row, signed: null };
-        const next = await quote(intent, "hoodTokenReturn", signal);
+        const next = await quote(
+          intent,
+          "hoodTokenReturn",
+          signal,
+          row.withdrawalRequestId
+            ? {
+                withdrawalOperationId: row.operationId,
+                returnBudgetAtoms: row.redeemedUsdgAtoms,
+                minimumRetainedUsdgAtoms: row.minimumRetainedUsdgAtoms,
+              }
+            : undefined,
+        );
         const signed = operation(
           await signer.continueEarnWithdrawal(robinhoodProposal(next, intent, now())),
           intent,

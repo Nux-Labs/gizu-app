@@ -36,6 +36,7 @@ export type StoredSignerCapabilities = {
   confidentialWithdrawals?: boolean;
   confidentialSaleProceeds?: boolean;
   earnBalanceDeltaSettlement?: boolean;
+  earnPartialWithdrawals?: boolean;
   reason?: "notImplemented" | "unsupportedPlatform" | "unsupportedProvider";
 };
 export type StoredTransferProposal = {
