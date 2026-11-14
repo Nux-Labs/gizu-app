@@ -13,48 +13,34 @@ preserve earlier implementation stages.
 
 **Earn ends at an invested vault position.** The initial fee calculation simulates a future full redemption in a disposable server-side fork only to estimate the withdrawal reserve. It never withdraws the live position. The user must click Withdraw later, review fresh fees, and authorize redemption separately. Aurora return quotes and operations follow that requested exit; their future executable costs are excluded from the initial deposit estimate.
 
-When selecting withdrawal activity, a native `redeemed` inventory row is not proof
-of an unfinished private return. Selection reuses the existing exit verifier:
-authenticated saved operation credit (including minimum-return evidence), fresh
-zero shares and residual valuation, and no unresolved legacy public payout. A
-completed old exit is skipped before the next investment is shown. Reopening the
-screen re-reads the native journals. A previously verified full exit is retained
-as wallet/profile/intent/slot-scoped presentation history, matched against every
-native operation and legacy payout revision/status. It does not need new prices
-or the current private balance, which may already have been spent or redeposited.
-Unrecorded or changed activity still requires fresh public state and the existing
-completion checks. Pending and recovery activity cannot use recorded history.
-
-These non-secret observations never authorize spending or remove assets from
-portfolio reads. **Check past withdrawals** explicitly discards the observation
-before checking current balances/prices, keeping later external funds or residuals
-in an old investment wallet reachable. Failed checks show status unavailability;
-the position overview never invokes this flow.
-
 Opening Withdraw counts no investment inventory as a withdrawal in progress.
-Native-confirmed private returns remain confirmed after the USDC is spent or
-reinvested. Full exit completion still requires the existing public residual,
-zero-share and legacy payout checks. Home distinguishes a finalized return whose
-private proof needs checking from a pending onchain return.
+A native `redeemed` row alone is not an unfinished private return. Once the saved
+redemption, public USDG return transfer and expected minimum private-USDC receipt
+are complete, native storage retains terminal completion. Spending or reinvesting
+that USDC does not reopen the withdrawal or require new balances, prices, route
+checks or provider history. A completed requested portion does not mark an
+invested remainder as fully exited. Legacy public payouts and genuinely pending
+work retain their original recovery checks.
 
-Withdraw can reconcile a saved Robinhood return using the shared read-only wallet
-session. This signs only the fixed empty-intents authentication, checks the grant
-again before saving the result, and cannot execute or resume a financial action.
-If no durable minimum receipt was captured before a later debit, updated clients
-send `x-gizu-return-history-recovery: v1` alongside the existing
-`x-gizu-settlement-proof: minimum-return-v1`. The backend can then verify the
-authenticated provider history against the saved quote, recipient, owner, asset,
-input amount and origin transaction. It persists only a bound minimum receipt
-through the existing durable sequence/route store. Route SUCCESS alone and the
-current private balance never substitute for that historical proof.
+Earn does not use Aurora's invite-only account history for return completion or
+historical recovery. A missing old receipt is not fabricated from the current
+private balance or provider SUCCESS. The separate historical correction requires
+an explicit owner report and native-observed SUCCESS for the bound saved route,
+with wallet/generation/proposal/origin checks, current public shares, an active
+private-read session and an atomic journal revision check. It records a terminal
+lifecycle decision with `spendingAuthorized: false`, never a private-credit
+receipt or payout source. Later pending work blocks correction. Home and vault
+details project the same saved lifecycle decision while retaining any investment
+and its deliberate next-withdrawal action.
 
-Deploy the updated backend for consumed-return history recovery. No schema
-migration or new environment variable is introduced; the provider credential must
-allow authenticated account history. Old servers safely ignore the additional
-header and retain their prior minimum-verification behavior. Missing history or a
-failed verification remains unavailable, never proof of another withdrawal or
-permission to repeat one. Previously saved receipts replay without requiring
-current holdings or another provider history read.
+New Earn cycles mark Account 2 as their shared private-USDC identity. Existing
+private USDC funds new investments; a public-USDC shortfall first uses the
+confidential funding path into that same identity. Newly prepared returns from
+new or historical investments credit Account 2. Legacy derivations and already
+saved returns keep their original identity and strict bindings. No separate
+per-investment private account is needed for new Earn cycles. See
+[requested withdrawal and refund behavior](CONFIDENTIAL_WITHDRAWALS.md#requested-robinhood-vault-withdrawals)
+and the [shared read-only session](NATIVE_SIGNER_STORAGE.md#android-shared-private-read-session).
 
 Parsed native operations retain their validated `investmentSlot` across journal
 reads, UI state and later resume/cancel/settlement validation. Robinhood sponsored

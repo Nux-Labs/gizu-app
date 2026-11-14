@@ -3,6 +3,7 @@ dist
 .vite
 *.local
 .DS_Store
+.idea/workspace.xml
 tsconfig.tsbuildinfo
 .env
 .env.*

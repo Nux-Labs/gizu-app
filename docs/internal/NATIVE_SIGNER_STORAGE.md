@@ -11,6 +11,28 @@ The current [TypeScript contract](../../mobile/src/domain/wallet/storedSigner.ts
 declares backup version 2. Consult current native codecs before making format or
 compatibility assumptions; the historical details below are not a v2 specification.
 
+## Android shared private-read session
+
+The in-memory `PrivateUsdcRead` grant is shared by Home, Earn private-balance
+reads, payout reconciliation and cashout preparation. Normal wallet login
+establishes read access. Ordinary app switching retains the grant; screen lock,
+explicit wallet lock/sign-out, wallet identity or journal-generation changes,
+and process restart revoke it. Screen-off and device-lock checks enforce that
+boundary. The grant is never persisted across restarts.
+
+Backgrounding still cancels network work and spending approvals. Feature-level
+cancellation cancels operation authority without explicitly locking the wallet;
+older native clients may fall back to full lock. Foregrounding refreshes through
+the shared read grant without starting another passkey ceremony while it remains
+valid. When locked, the UI offers **Unlock private balance**; a normal refresh
+must not imply that every balance read needs authentication.
+
+Spending remains separately reviewed and authorized per operation. The shared
+read grant does not extend quote freshness, short-lived empty-intents RPC
+authentication or financial approval lifetimes. This behavior applies to the
+Android private-balance implementation; it does not imply equivalent iOS private
+portfolio or Earn execution capabilities.
+
 ## iOS storage and authorization
 
 The replacement includes a Swift Expo module backed by the stored-wallet Rust core.

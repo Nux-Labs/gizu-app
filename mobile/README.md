@@ -515,7 +515,7 @@ legacy v1 intent, while later cycles use v2 identities.
 
 The batch approval uses the existing 15-minute signing session and ends when its
 native screen/session closes or reviewed terms change. Transaction deadlines and
-fresh native fee checks still apply. See the [multi-account implementation plan](../research/confidential-earn/MULTI-ACCOUNT-MVP-PLAN.md).
+fresh native fee checks still apply. See the [multi-account integration reference](../docs/internal/CONFIDENTIAL_EARN.md#october-1-multi-account-refresh-and-approval).
 
 Native token and vault-position rows display token amounts independently from the
 public Monad USDC total. A USDC valuation appears only when native data supplies it;

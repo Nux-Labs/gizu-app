@@ -2,9 +2,9 @@ Current mainnet result: [Mainnet verification](MAINNET-TEST.md). **Both routes c
 
 # Confidential routing into Morpho Earn
 
-**Next step — app integration:** [APP-INTEGRATION-HANDOVER.md](APP-INTEGRATION-HANDOVER.md) consolidates fee formulas, user-facing reviews and warnings, completed mainnet accounting, privacy constraints, recovery and production gaps. [APP-INTEGRATION-TASK.md](APP-INTEGRATION-TASK.md) is the ready-to-use implementation brief and acceptance checklist. These distinguish the current design from the historical Circle flow below.
+**App integration:** [APP-INTEGRATION-HANDOVER.md](APP-INTEGRATION-HANDOVER.md) consolidates fee formulas, user-facing reviews and warnings, completed mainnet accounting, privacy constraints, recovery and production gaps. The [app integration reference](../../docs/internal/CONFIDENTIAL_EARN.md) records delivered behavior and verification limits. These distinguish the app implementation from the historical Circle flow below.
 
-**Device-owned multi-account MVP:** [MULTI-ACCOUNT-MVP-PLAN.md](MULTI-ACCOUNT-MVP-PLAN.md) records shared Swap/Earn source selection, one passkey approval per funding batch, encrypted reservations, bounded portfolio refresh and fresh investment/withdrawal addresses. Implementation and verification limits are recorded in the [mobile integration notes](../../docs/internal/CONFIDENTIAL_EARN.md#october-1-multi-account-refresh-and-approval).
+**Device-owned multi-account MVP:** Shared Swap/Earn source selection, one passkey approval per funding batch, encrypted reservations, bounded portfolio refresh and investment/withdrawal address allocation are recorded in the [mobile integration notes](../../docs/internal/CONFIDENTIAL_EARN.md#october-1-multi-account-refresh-and-approval). Later shared-private-account behavior is described in the same integration reference.
 
 **Current two-route commands:** [TWO-ROUTES.md](TWO-ROUTES.md) documents Monad → Ethereum USDC (Fusion/native ETH) and Monad → Robinhood USDG (token paymaster), both with separate 10/90 payouts and wallet-2-only vault deposits. Both chains use the same DEST1/DEST2 addresses. Run `allocate` once after recovery to reserve 70% of the Monad USDC balance for Ethereum and 30% for Robinhood. Use these profiles for the new tests. The Circle records below are historical.
 

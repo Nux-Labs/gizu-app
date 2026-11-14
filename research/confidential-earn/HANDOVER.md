@@ -4,7 +4,7 @@
 
 # Confidential routing / earn handover — 29 September 2026
 
-**App implementation handover — 30 September:** use [APP-INTEGRATION-HANDOVER.md](APP-INTEGRATION-HANDOVER.md) for current fee policy, product disclosure, exact completed-cycle accounting, privacy and production requirements. Start the next implementation with [APP-INTEGRATION-TASK.md](APP-INTEGRATION-TASK.md). The remaining sections here retain the research chronology.
+**App implementation handover — 30 September:** use [APP-INTEGRATION-HANDOVER.md](APP-INTEGRATION-HANDOVER.md) for the research fee policy, product disclosure, exact completed-cycle accounting, privacy and production requirements. Delivered app behavior is recorded in the [integration reference](../../docs/internal/CONFIDENTIAL_EARN.md). The remaining sections here retain the research chronology.
 
 **Latest recovery/configuration update:** [RECOVERY.md](RECOVERY.md) records the user-authorized liquid-asset recovery to Monad: 2.928620 USDC received, zero liquid ETH/USDC left in wallet 2, old vault shares unchanged. The two recovery funding transactions were sent on mainnet; no new earn test was funded.
 
