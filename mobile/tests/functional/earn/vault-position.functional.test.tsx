@@ -428,18 +428,16 @@ test.each(["awaitingSettlement", "signed"] as const)(
     const service: EarnRobinhoodService = {
       available: jest.fn().mockResolvedValue(true),
       withdrawalBalances: jest.fn(),
-      list: jest
-        .fn()
-        .mockImplementation(async () => [
-          operation(),
-          redeemed,
-          {
-            ...returned,
-            status: originConfirmed ? "awaitingSettlement" : initialStatus,
-            blocked: !originConfirmed,
-            providerRouteStatus: providerReady ? "SUCCESS" : "PROCESSING",
-          },
-        ]),
+      list: jest.fn().mockImplementation(async () => [
+        operation(),
+        redeemed,
+        {
+          ...returned,
+          status: originConfirmed ? "awaitingSettlement" : initialStatus,
+          blocked: !originConfirmed,
+          providerRouteStatus: providerReady ? "SUCCESS" : "PROCESSING",
+        },
+      ]),
       plan: jest.fn(),
       execute: jest.fn(),
       resume: jest.fn(),
