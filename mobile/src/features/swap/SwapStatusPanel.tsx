@@ -1,5 +1,14 @@
 import { View } from "react-native";
-import { Bell, CircleCheck, CircleX } from "lucide-react-native";
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  Bell,
+  CircleCheck,
+  CircleX,
+  Pause,
+} from "lucide-react-native";
+import { ParticleOrb } from "@/components/molecules/ParticleOrb";
+import { Spinner } from "@/components/atoms/Spinner";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { Typography } from "@/components/atoms/Typography";
 import { HoldingDetails } from "@/components/molecules/HoldingDetails";
@@ -47,16 +56,65 @@ function Facts({ status, fullRows }: { status: StoredSwapView; fullRows: boolean
 /** An unfinished swap needs the user's attention, so it keeps the prominent card. */
 export function ActiveSwapCard({ status }: { status: StoredSwapView }) {
   const gasMessage = swapGasMessage(status.pausedCode);
+  const paused = status.phase === "PAUSED";
+  const Icon = status.direction === "sell" ? ArrowUpRight : ArrowDownLeft;
+  const orders =
+    status.legs && status.legs > 0
+      ? `${status.ordersComplete} / ${status.legs}`
+      : String(status.ordersComplete);
   return (
     <Surface>
-      <View className="gap-2 px-5 py-5">
-        <Typography variant="cardTitle">
-          {status.phase === "PAUSED" ? "Swap paused" : "Swap in progress"}
-        </Typography>
-        <Typography variant="caption">
-          {swapDirection(status.direction, status.targetSymbol)}
-        </Typography>
-        {gasMessage ? <Typography variant="caption">{gasMessage}</Typography> : null}
+      <View className="gap-4 px-5 py-4">
+        <View className="flex-row items-center justify-between gap-3">
+          <View className="h-11 w-11 items-center justify-center rounded-2xl bg-neon/10">
+            <Icon size={22} color={colors.accent} />
+          </View>
+          <View
+            className={`flex-row items-center gap-2 rounded-full border px-3 py-1.5 ${paused ? "border-violet/30 bg-violet/10" : "border-neon/20 bg-neon/10"}`}
+          >
+            {paused ? <Pause size={12} color={colors.violet.soft} /> : <Spinner size="sm" />}
+            <Typography variant="micro" className={paused ? "!text-violet-soft" : "!text-neon"}>
+              {paused ? "Paused" : "In progress"}
+            </Typography>
+          </View>
+        </View>
+        <View className="items-center gap-2">
+          <View className="items-center justify-center">
+            <ParticleOrb
+              size={120}
+              distance={4.4}
+              dotScale={1.8}
+              count={240}
+              paused={paused}
+              color={paused ? colors.violet.soft : colors.accent}
+            />
+            {paused && (
+              <View className="absolute inset-0 items-center justify-center">
+                <Pause size={30} color={colors.violet.soft} />
+              </View>
+            )}
+          </View>
+          <Typography variant="heading">{paused ? "Swap paused" : "Swap in progress"}</Typography>
+          <Typography variant="rowTitle" className="!text-fg-70">
+            {swapDirection(status.direction, status.targetSymbol)}
+          </Typography>
+          <Typography variant="caption" className="text-center">
+            {gasMessage ??
+              (paused
+                ? "Your progress is saved. Resume when you’re ready."
+                : "Keep Gizu open while your swap continues.")}
+          </Typography>
+        </View>
+        <View className="flex-row rounded-2xl border border-cardEdge bg-well p-4">
+          <View className="flex-1 gap-1">
+            <Typography variant="label11">Orders filled</Typography>
+            <Typography variant="value">{orders}</Typography>
+          </View>
+          <View className="flex-1 gap-1 border-l border-cardEdge pl-4">
+            <Typography variant="label11">Payouts sent</Typography>
+            <Typography variant="value">{status.payoutsSubmitted}</Typography>
+          </View>
+        </View>
         <HoldingDetails label="Swap details" accessibilityLabel="Swap details">
           <Facts status={status} fullRows />
         </HoldingDetails>

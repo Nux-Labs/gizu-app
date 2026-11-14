@@ -302,7 +302,9 @@ test("Activity displays completed sale proceeds and no testnet transfer journal"
 test("Home opens the separate confidential cashout route without starting a transfer", async () => {
   const { transfers } = await open();
   fireEvent.press(screen.getByRole("button", { name: "Withdraw from Gizu" }));
-  expect(await screen.findByText("Confidential cash")).toBeVisible();
+  await screen.findByRole("button", { name: "About public withdrawals" });
+  expect(screen.queryByText(/Incoming and existing public USDC are not used/)).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "About public withdrawals" }));
   expect(
     screen.getByText(
       "Incoming and existing public USDC are not used. Native review verifies fresh private balances and any reserved funds.",

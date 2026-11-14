@@ -266,6 +266,8 @@ test.each([1, 2, 5])(
     const { service } = setup({ prepare: jest.fn().mockResolvedValue(distributed) });
     const user = await review();
     expect(await screen.findByText(`Investment wallets: ${count}`)).toBeVisible();
+    expect(screen.queryByText(distributed.destinations[0]!.address)).toBeNull();
+    await user.press(screen.getByRole("button", { name: "Details" }));
     for (const destination of distributed.destinations)
       expect(screen.getByText(destination.address)).toBeVisible();
     expect(screen.queryByText(/USDG held/)).toBeNull();
@@ -438,11 +440,11 @@ test("live credit waiting continues through progress without asking for another 
     await user.press(screen.getByRole("button", { name: "Confirm deposit" }));
     expect(await screen.findByText("Deposit in progress")).toBeVisible();
     expect(await screen.findByText("Verifying confidential credit")).toBeVisible();
-    expect(
-      screen.getByText(/Your deposit continues automatically within your approval limits/),
-    ).toBeVisible();
+    expect(screen.getByText(/Continues automatically within your approval limits/)).toBeVisible();
     expect(screen.queryByText("Deposit paused")).toBeNull();
     expect(screen.queryByRole("button", { name: "Review remaining steps" })).toBeNull();
+    expect(screen.queryByLabelText("Verify confidential credit: In progress")).toBeNull();
+    await user.press(screen.getByRole("button", { name: "Details" }));
     expect(screen.getByLabelText("Verify confidential credit: In progress")).toBeVisible();
     expect(screen.getByRole("progressbar", { name: "Verified deposit steps" })).toHaveProp(
       "accessibilityValue",

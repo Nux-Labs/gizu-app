@@ -449,9 +449,9 @@ export function RobinhoodWithdrawalPanel({
             <Typography variant="caption">
               {plan.kind === "hoodRedeemAll"
                 ? plan.requestedWithdrawalAtoms
-                  ? "This approval withdraws only the reviewed portion and returns its proceeds to private USDC. Your remaining shares stay invested. The amount is approximate because the share price can change before confirmation."
-                  : "This approval withdraws every share and returns the received USDG to your private USDC balance after the vault receipt. The vault amount can change before confirmation, and no minimum withdrawal amount is guaranteed."
-                : `Your USDC stays private in Gizu.${plan.route ? ` The quoted return service fee is ${plan.route.providerFeeBps / 100}%.` : ""} A small balance may remain for network costs.`}
+                  ? "Withdraws this portion to private USDC. Remaining shares stay invested. Final amounts may change."
+                  : "Withdraws all shares to private USDC. Final amounts may change; no minimum is guaranteed."
+                : `Returns to private USDC.${plan.route ? ` Service fee: ${plan.route.providerFeeBps / 100}%.` : ""} A small network reserve may remain.`}
             </Typography>
             <Button
               label={

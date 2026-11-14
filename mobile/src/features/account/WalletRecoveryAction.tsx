@@ -4,6 +4,9 @@ import { Surface } from "@/components/molecules/Surface";
 import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
 import { useWalletRecovery } from "./useWalletRecovery";
+import { HoldingDetails } from "@/components/molecules/HoldingDetails";
+import { ShieldCheck } from "lucide-react-native";
+import colors from "@/theme/colors.json";
 
 export function WalletRecoveryAction({
   walletId,
@@ -19,13 +22,19 @@ export function WalletRecoveryAction({
   return (
     <Surface>
       <View className="gap-4 p-5">
-        <Typography variant="section" accessibilityRole="header">
-          Wallet discovery and recovery
-        </Typography>
-        <Typography>
-          Keep your encrypted backup file and original passkey. Synced recovery metadata helps
-          restore wallets created after that file was saved.
-        </Typography>
+        <View className="flex-row items-center gap-3">
+          <View className="h-11 w-11 items-center justify-center rounded-2xl bg-neon/10">
+            <ShieldCheck size={22} color={colors.accent} />
+          </View>
+          <View className="flex-1 gap-1">
+            <Typography variant="cardTitle" accessibilityRole="header">
+              Wallet recovery
+            </Typography>
+            <Typography variant="micro">
+              Keep your encrypted backup file and original passkey.
+            </Typography>
+          </View>
+        </View>
         {v.loading ? (
           <Typography>Checking wallet recovery…</Typography>
         ) : (
@@ -36,7 +45,9 @@ export function WalletRecoveryAction({
               </Typography>
             )}
             {row?.synced && (
-              <Typography>Recovery metadata synced · revision {row.revision}</Typography>
+              <Typography variant="micro">
+                Recovery metadata synced · revision {row.revision}
+              </Typography>
             )}
             {row && !row.synced && <Typography>Recovery metadata needs syncing.</Typography>}
             {row?.recoveryRequired && (
@@ -52,50 +63,57 @@ export function WalletRecoveryAction({
             )}
             {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
             <Button
-              label="Sync encrypted recovery"
-              disabled={disabled}
-              onPress={() => void v.sync()}
-            />
-            <Button
               label="Restore saved wallet catalogue"
-              variant="secondary"
               disabled={disabled}
               onPress={() => void v.restore()}
             />
-            <Typography variant="row">Read-only wallet discovery</Typography>
-            <Typography variant="caption">
-              Choose the last deposit cycle to check, including that cycle. Reaching this bound does
-              not prove that no later wallets exist. Empty wallets do not prove an unused index.
-            </Typography>
-            <TextInput
-              accessibilityLabel="Last deposit cycle to scan"
-              keyboardType="number-pad"
-              value={v.bound}
-              onChangeText={v.setBound}
-              editable={!v.running && !v.cancelling}
-              className="min-h-14 rounded-xl bg-well px-4 py-3 text-text"
-            />
-            {row && row.scanTargetCycle >= 0 && (
-              <Typography>
-                Scanned through cycle {row.scannedThroughCycle} of {row.scanTargetCycle} ·{" "}
-                {row.discoveredWallets} wallets with activity
-              </Typography>
-            )}
-            {!v.capabilities.discovery && v.capabilities.recovery && (
-              <Typography>This native build does not support wallet discovery.</Typography>
-            )}
             <Button
-              label="Scan for wallets"
-              disabled={
-                disabled ||
-                !v.capabilities.discovery ||
-                bound === null ||
-                (row !== null && bound !== null && bound < row.scannedThroughCycle)
-              }
-              onPress={() => {
-                if (bound !== null) void v.discover(bound);
-              }}
+              label="Sync encrypted recovery"
+              variant="secondary"
+              disabled={disabled}
+              onPress={() => void v.sync()}
             />
+            <HoldingDetails
+              label="Find missing wallets"
+              accessibilityLabel="Wallet discovery options"
+            >
+              <Typography variant="caption">
+                Read-only discovery · Last deposit cycle to check
+              </Typography>
+              <TextInput
+                accessibilityLabel="Last deposit cycle to scan"
+                keyboardType="number-pad"
+                value={v.bound}
+                onChangeText={v.setBound}
+                editable={!v.running && !v.cancelling}
+                className="min-h-14 rounded-xl bg-well px-4 py-3 text-text"
+              />
+              {row && row.scanTargetCycle >= 0 && (
+                <Typography>
+                  Scanned through cycle {row.scannedThroughCycle} of {row.scanTargetCycle} ·{" "}
+                  {row.discoveredWallets} wallets with activity
+                </Typography>
+              )}
+              {!v.capabilities.discovery && v.capabilities.recovery && (
+                <Typography>This native build does not support wallet discovery.</Typography>
+              )}
+              <Button
+                label="Scan for wallets"
+                disabled={
+                  disabled ||
+                  !v.capabilities.discovery ||
+                  bound === null ||
+                  (row !== null && bound !== null && bound < row.scannedThroughCycle)
+                }
+                onPress={() => {
+                  if (bound !== null) void v.discover(bound);
+                }}
+              />
+              <Typography variant="micro">
+                Reaching this bound does not prove that no later wallets exist. Empty wallets do not
+                prove an unused index.
+              </Typography>
+            </HoldingDetails>
             {v.scanRunning && (
               <Button
                 label="Pause wallet discovery"

@@ -159,7 +159,7 @@ test("a requested portion returns privately and completes while its remaining in
   expect(service.execute).not.toHaveBeenCalled();
   await userEvent.press(confirm);
   expect(await screen.findByText("Requested withdrawal complete.")).toBeOnTheScreen();
-  expect(screen.getByText(/remaining investment stays in the vault/)).toBeOnTheScreen();
+  expect(screen.getByText(/Remaining shares stay invested/)).toBeOnTheScreen();
   expect(service.execute).toHaveBeenCalledTimes(1);
   expect(service.finishWithdrawal).toHaveBeenCalledTimes(1);
   expect(
@@ -1788,7 +1788,7 @@ test("one withdrawal approval signs the private return without a second confirma
   h.robinhood.execute.mockResolvedValueOnce(withdrawn);
   h.robinhood.finishWithdrawal.mockResolvedValueOnce({ row: withdrawn, signed: returning });
   await userEvent.press(await screen.findByRole("button", { name: "Review withdrawal" }));
-  expect(screen.getByText(/returns the received USDG to your private USDC balance/)).toBeVisible();
+  expect(screen.getByText(/Withdraws all shares to private USDC/)).toBeVisible();
   await userEvent.press(screen.getByRole("button", { name: "Confirm withdrawal" }));
   expect(await screen.findByText("Returning your USDG to private USDC.")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Confirm private return" })).toBeNull();
@@ -1832,7 +1832,7 @@ test("the guided withdrawal signs the return after the vault receipt and verifie
   expect(await screen.findByText("0.98 USDC")).toBeVisible();
   expect(
     screen.getByText(
-      "Your USDC stays private in Gizu. The quoted return service fee is 0.45%. A small balance may remain for network costs.",
+      "Returns to private USDC. Service fee: 0.45%. A small network reserve may remain.",
     ),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Review private return" })).toBeNull();

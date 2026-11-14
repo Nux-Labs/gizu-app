@@ -58,6 +58,8 @@ test("restoring a newer catalogue explains that uncertain transactions need reco
 test("scanning uses an explicit bound, displays progress and preserves a cancelled cursor", async () => {
   const api = service();
   render(<WalletRecoveryAction walletId="wallet" service={api} />);
+  expect(screen.queryByLabelText("Last deposit cycle to scan")).toBeNull();
+  await userEvent.press(await screen.findByRole("button", { name: "Wallet discovery options" }));
   const scan = await screen.findByRole("button", { name: "Scan for wallets" });
   fireEvent.changeText(screen.getByLabelText("Last deposit cycle to scan"), "2.5");
   expect(scan).toBeDisabled();
@@ -76,6 +78,7 @@ test("pausing can interrupt a pending discovery and its late result cannot repla
     pending = deferred<WalletRecoveryStatus>();
   api.discover.mockReturnValueOnce(pending.promise);
   render(<WalletRecoveryAction walletId="wallet" service={api} />);
+  await userEvent.press(await screen.findByRole("button", { name: "Wallet discovery options" }));
   await userEvent.press(await screen.findByRole("button", { name: "Scan for wallets" }));
   await userEvent.press(await screen.findByRole("button", { name: "Pause wallet discovery" }));
   await screen.findByText("Scanned through cycle 10 of 256 · 2 wallets with activity");
@@ -137,6 +140,7 @@ test("bounded native batches continue to the chosen scan limit without repeated 
       messageCode: "scanIncomplete",
     });
   render(<WalletRecoveryAction walletId="wallet" service={api} />);
+  await userEvent.press(await screen.findByRole("button", { name: "Wallet discovery options" }));
   await screen.findByRole("button", { name: "Scan for wallets" });
   fireEvent.changeText(screen.getByLabelText("Last deposit cycle to scan"), "2");
   await userEvent.press(screen.getByRole("button", { name: "Scan for wallets" }));

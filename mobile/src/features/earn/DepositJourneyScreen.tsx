@@ -89,7 +89,7 @@ export function DepositJourneyScreen({
       {unsigned && (
         <Surface>
           <View className="gap-3 p-5">
-            <Typography variant="row">Amount in USDC</Typography>
+            <Typography variant="label11">Amount in USDC</Typography>
             <TextInput
               accessibilityLabel="USDC deposit amount"
               value={v.amount}
@@ -98,7 +98,7 @@ export function DepositJourneyScreen({
               keyboardType="decimal-pad"
               placeholder="0.00"
               placeholderTextColor={colors.fg[45]}
-              className="min-h-16 rounded-2xl bg-well px-4 py-3 font-sans text-[28px] text-text"
+              className="min-h-20 rounded-2xl bg-well px-4 py-3 font-sans text-[36px] text-text"
               maxLength={38}
             />
             <Typography variant="caption">
@@ -113,11 +113,6 @@ export function DepositJourneyScreen({
               </Typography>
             )}
             <PrivateBalanceRefresh />
-            <Typography variant="caption">
-              {row && !distribution
-                ? "Two fresh wallets are created for this investment. The 10/90 split applies to verified private credit after source fees."
-                : "Your amount determines a distribution across fresh investment wallets. Every selected wallet invests in this vault after routing fees, gas and its withdrawal reserve."}
-            </Typography>
           </View>
         </Surface>
       )}
@@ -127,7 +122,9 @@ export function DepositJourneyScreen({
             <Typography variant="heading">
               {paused ? "Remaining deposit limits" : "Review deposit"}
             </Typography>
-            <Typography>Source budget: {formatUsdc(review.sourceBudgetAtoms)} USDC</Typography>
+            <Typography variant="value">
+              Source budget: {formatUsdc(review.sourceBudgetAtoms)} USDC
+            </Typography>
             {!distribution && <Typography>At least {formatUsdc(holdMinimum)} USDG held</Typography>}
             {distribution && (
               <Typography>Investment wallets: {distribution.weightsBps.length}</Typography>
@@ -141,36 +138,32 @@ export function DepositJourneyScreen({
             <Typography variant="caption">
               Withdrawal reserve: {formatUsdc(review.deposit.withdrawalReserveAtoms)} USDG
             </Typography>
-            <Typography variant="caption">
-              {distribution
-                ? "Each wallet retains its own withdrawal reserve. It is not an already-paid fee."
-                : "The reserve stays liquid in wallet 2. It is not an already-paid fee."}
-            </Typography>
-            <Typography variant="caption">
-              Minimum shares:{" "}
-              {shareAmount(review.deposit.minimumSharesAtoms, review.deposit.shareDecimals)}
-            </Typography>
-            {review.deposits?.map((deposit) => (
-              <View key={deposit.slot} className="gap-1 rounded-xl bg-well p-3">
-                <Typography variant="row">
-                  Wallet {deposit.slot + 1} · {distribution!.weightsBps[deposit.slot]! / 100}%
-                </Typography>
-                <Typography selectable variant="caption">
-                  {deposit.recipient}
-                </Typography>
-                <Typography>
-                  At least {formatUsdc(deposit.minimumAssetsAtoms)} USDG invested
-                </Typography>
-                <Typography variant="caption">
-                  Gas cap: {formatUsdc(deposit.maximumFeeAtoms)} USDG · withdrawal reserve:{" "}
-                  {formatUsdc(deposit.withdrawalReserveAtoms)} USDG
-                </Typography>
-              </View>
-            ))}
-            <Typography variant="caption">
-              {paused
-                ? "These are saved approval limits. Native review checks the remaining operations before signing."
-                : "Estimates require fresh live terms. One device approval authorizes this deposit within the displayed limits for up to 15 minutes while the app stays open."}
+            {v.details && (
+              <Typography variant="caption">
+                Minimum shares:{" "}
+                {shareAmount(review.deposit.minimumSharesAtoms, review.deposit.shareDecimals)}
+              </Typography>
+            )}
+            {v.details &&
+              review.deposits?.map((deposit) => (
+                <View key={deposit.slot} className="gap-1 rounded-xl bg-well p-3">
+                  <Typography variant="row">
+                    Wallet {deposit.slot + 1} · {distribution!.weightsBps[deposit.slot]! / 100}%
+                  </Typography>
+                  <Typography selectable variant="caption">
+                    {deposit.recipient}
+                  </Typography>
+                  <Typography>
+                    At least {formatUsdc(deposit.minimumAssetsAtoms)} USDG invested
+                  </Typography>
+                  <Typography variant="caption">
+                    Gas cap: {formatUsdc(deposit.maximumFeeAtoms)} USDG · withdrawal reserve:{" "}
+                    {formatUsdc(deposit.withdrawalReserveAtoms)} USDG
+                  </Typography>
+                </View>
+              ))}
+            <Typography variant="micro">
+              Review and approve on your device · Fees and limits included
             </Typography>
           </View>
         </Surface>
@@ -195,30 +188,29 @@ export function DepositJourneyScreen({
                 ? "Calculating vault fees and the withdrawal reserve…"
                 : "Review again for current vault fees and the withdrawal reserve."}
             </Typography>
-            <Typography variant="caption">
-              These amounts are indicative. No funds move before the final review and your device
-              approval.
-            </Typography>
+            <Typography variant="micro">Estimate only · Final review before approval</Typography>
           </View>
         </Surface>
       )}
       {row && !unsigned && (
         <Surface>
           <View className="gap-4 p-5">
-            <View className="flex-row flex-wrap items-center gap-2">
-              <View className="rounded-full bg-neon-deep px-3 py-1.5">
-                <Typography variant="eyebrow" className="text-accent">
-                  {invested ? "INVESTED" : paused ? "NEEDS ATTENTION" : "INVESTING"}
-                </Typography>
+            {v.details && (
+              <View className="flex-row flex-wrap items-center gap-2">
+                <View className="rounded-full bg-neon-deep px-3 py-1.5">
+                  <Typography variant="eyebrow" className="text-accent">
+                    {invested ? "INVESTED" : paused ? "NEEDS ATTENTION" : "INVESTING"}
+                  </Typography>
+                </View>
+                <View className="rounded-full border border-cardEdge bg-well px-3 py-1.5">
+                  <Typography variant="eyebrow">
+                    {distribution
+                      ? `USDG · ${distribution.weightsBps.length} investment wallets`
+                      : "USDG · 10 / 90"}
+                  </Typography>
+                </View>
               </View>
-              <View className="rounded-full border border-cardEdge bg-well px-3 py-1.5">
-                <Typography variant="eyebrow">
-                  {distribution
-                    ? `USDG · ${distribution.weightsBps.length} investment wallets`
-                    : "USDG · 10 / 90"}
-                </Typography>
-              </View>
-            </View>
+            )}
             <Typography variant="heading" accessibilityLiveRegion="polite">
               {v.authorizing
                 ? "Approve deposit on your device"
@@ -236,55 +228,52 @@ export function DepositJourneyScreen({
                 </Typography>
               </View>
             )}
-            {row.phase === "settlingCredit" && (
-              <Typography variant="caption" accessibilityLiveRegion="polite">
-                Waiting for confidential credit. Your deposit continues automatically within your
-                approval limits. Keep this page open.
-              </Typography>
+            {v.details && (
+              <ProgressLadder
+                steps={stages.map(([stage, legacyLabel]) => {
+                  const label =
+                    distribution && stage === "payouts"
+                      ? "Route funds to investment wallets"
+                      : distribution && stage === "deposit"
+                        ? "Deposit every wallet into the vault"
+                        : legacyLabel;
+                  const done = row.completedSteps.includes(stage);
+                  const active = !v.authorizing && !done && currentStage[row.phase] === stage;
+                  return {
+                    id: stage,
+                    label,
+                    state: done ? "complete" : active ? "active" : "pending",
+                  };
+                })}
+              />
             )}
-            <ProgressLadder
-              steps={stages.map(([stage, legacyLabel]) => {
-                const label =
-                  distribution && stage === "payouts"
-                    ? "Route funds to investment wallets"
-                    : distribution && stage === "deposit"
-                      ? "Deposit every wallet into the vault"
-                      : legacyLabel;
-                const done = row.completedSteps.includes(stage);
-                const active = !v.authorizing && !done && currentStage[row.phase] === stage;
-                return {
-                  id: stage,
-                  label,
-                  state: done ? "complete" : active ? "active" : "pending",
-                };
-              })}
-            />
-            {row.investments?.map((investment) => (
-              <View key={investment.slot} className="gap-1">
-                <Typography>
-                  Wallet {investment.slot + 1}:{" "}
-                  {investment.status === "invested"
-                    ? "Invested"
-                    : investment.status === "received"
-                      ? "Funding verified"
-                      : investment.status === "depositing"
-                        ? "Depositing"
-                        : investment.status === "paused"
-                          ? "Needs attention"
-                          : "Pending"}
-                </Typography>
-                {investment.status === "invested" && (
-                  <Typography variant="caption">
-                    {formatUsdc(investment.depositedAtoms)} USDG invested
+            {v.details &&
+              row.investments?.map((investment) => (
+                <View key={investment.slot} className="gap-1">
+                  <Typography>
+                    Wallet {investment.slot + 1}:{" "}
+                    {investment.status === "invested"
+                      ? "Invested"
+                      : investment.status === "received"
+                        ? "Funding verified"
+                        : investment.status === "depositing"
+                          ? "Depositing"
+                          : investment.status === "paused"
+                            ? "Needs attention"
+                            : "Pending"}
                   </Typography>
-                )}
-                {investment.transactionHash && (
-                  <Typography selectable variant="caption">
-                    {investment.transactionHash}
-                  </Typography>
-                )}
-              </View>
-            ))}
+                  {investment.status === "invested" && (
+                    <Typography variant="caption">
+                      {formatUsdc(investment.depositedAtoms)} USDG invested
+                    </Typography>
+                  )}
+                  {investment.transactionHash && (
+                    <Typography selectable variant="caption">
+                      {investment.transactionHash}
+                    </Typography>
+                  )}
+                </View>
+              ))}
             <View className="gap-3 rounded-2xl bg-well p-4">
               <View className="flex-row items-center justify-between gap-3">
                 <Typography variant="rowTitle">Steps verified</Typography>
@@ -307,10 +296,9 @@ export function DepositJourneyScreen({
                 <Typography variant="rowValue">{formatUsdc(row.budgetAtoms)} USDC</Typography>
               </View>
             </View>
-            {!paused && !invested && row.phase !== "settlingCredit" && (
+            {!paused && !invested && (
               <Typography variant="caption">
-                Keep this page open. The remaining steps continue automatically within your approval
-                limits.
+                Continues automatically within your approval limits. Keep Gizu open.
               </Typography>
             )}
             {invested && (
@@ -320,7 +308,7 @@ export function DepositJourneyScreen({
                 )}
                 <Typography>{formatUsdc(row.depositedAtoms)} USDG invested</Typography>
                 <Typography variant="caption">
-                  Your investment remains in the vault until you choose to withdraw.
+                  Your funds stay invested until you withdraw.
                 </Typography>
               </>
             )}
@@ -398,26 +386,43 @@ export function DepositJourneyScreen({
       {row && !invested && !unsigned && (
         <Button label="Pause deposit" variant="secondary" onPress={v.cancel} />
       )}
-      {row && (
-        <Button
-          label={v.details ? "Hide details" : "Details"}
-          variant="quiet"
-          onPress={() => v.setDetails(!v.details)}
-        />
+      <Button
+        label={v.details ? "Hide details" : "Details"}
+        variant="quiet"
+        onPress={() => v.setDetails(!v.details)}
+      />
+      {v.details && (
+        <Surface>
+          <View className="gap-3 p-5">
+            <Typography variant="caption">
+              {row && !distribution
+                ? "Two fresh wallets are created for this investment. The 10/90 split applies to verified private credit after source fees."
+                : "Your amount is distributed across fresh investment wallets. Each wallet invests after routing fees, gas and its withdrawal reserve."}
+            </Typography>
+            <Typography variant="caption">
+              The withdrawal reserve stays in each investment wallet. It is not an already-paid fee.
+            </Typography>
+            <Typography variant="caption">
+              One device approval authorizes the displayed limits for up to 15 minutes while the app
+              stays open. Withdrawal needs a separate review.
+            </Typography>
+          </View>
+        </Surface>
       )}
       {v.details && row && (
         <Surface>
           <View className="gap-2 p-5">
-            {row.destinations.map((destination, slot) => (
-              <View key={destination.address} className="gap-1">
-                <Typography variant="row">
-                  Wallet {slot + 1} · {destination.role}
-                </Typography>
-                <Typography selectable variant="caption">
-                  {destination.address}
-                </Typography>
-              </View>
-            ))}
+            {!review?.deposits?.length &&
+              row.destinations.map((destination, slot) => (
+                <View key={destination.address} className="gap-1">
+                  <Typography variant="row">
+                    Wallet {slot + 1} · {destination.role}
+                  </Typography>
+                  <Typography selectable variant="caption">
+                    {destination.address}
+                  </Typography>
+                </View>
+              ))}
             <Typography variant="caption">Vault contract</Typography>
             <Typography selectable variant="caption">
               {profile.vault}

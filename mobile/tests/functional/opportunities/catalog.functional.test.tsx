@@ -74,7 +74,8 @@ test("mainnet listing shows real metrics without investment actions and supports
   const { list } = setup();
   expect(screen.getByLabelText("Loading vaults…")).toBeVisible();
   expect(await screen.findByText("Lend USDC on Aave")).toBeVisible();
-  expect(screen.getByText("6.1% total APR")).toBeVisible();
+  expect(screen.getByText("6.1%")).toBeVisible();
+  expect(screen.getByText("total APR")).toBeVisible();
   expect(screen.queryByRole("button", { name: /deposit|withdraw|buy/i })).toBeNull();
   expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull();
   list.mockResolvedValueOnce({
@@ -148,7 +149,8 @@ test("a failed history omits the sparkline without blocking the list", async () 
   await waitFor(() => expect(tvl).toHaveBeenCalled());
   await act(async () => {});
   expect(within(card).queryByTestId("sparkline", hidden)).toBeNull();
-  expect(within(card).getByText("6.1% total APR")).toBeVisible();
+  expect(within(card).getByText("6.1%")).toBeVisible();
+  expect(within(card).getByText("total APR")).toBeVisible();
   expect(screen.getByRole("button", { name: "Load more" })).toBeEnabled();
 });
 

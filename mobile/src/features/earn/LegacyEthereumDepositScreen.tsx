@@ -5,6 +5,7 @@ import { Screen } from "@/components/templates/Screen";
 import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
 import { Surface } from "@/components/molecules/Surface";
+import { HoldingDetails } from "@/components/molecules/HoldingDetails";
 import { BackAction } from "@/navigation/BackAction";
 import type { RootStackParamList } from "@/navigation/types";
 import type { EarnIntent } from "@/domain/earn/types";
@@ -26,10 +27,6 @@ export function LegacyEthereumDepositScreen({
       <BackAction fallback="Vaults" />
       <Typography variant="title">Deposit</Typography>
       <Typography variant="heading">Pendle USDC</Typography>
-      <Typography>
-        Ethereum uses separate native approvals for funding, payouts, ETH liquidity and the vault.
-        Each step keeps its saved progress.
-      </Typography>
       {intent.distribution && (
         <>
           <Typography>Investment wallets: {intent.distribution.weightsBps.length}</Typography>
@@ -141,10 +138,16 @@ export function LegacyEthereumDepositScreen({
         </>
       )}
       {v.message !== "" && <Typography accessibilityRole="alert">{v.message}</Typography>}
-      <Typography variant="caption">
-        Withdrawal and returns remain separate. Public chains and providers can observe amounts and
-        timing.
-      </Typography>
+      <HoldingDetails label="Deposit details" accessibilityLabel="Ethereum deposit details">
+        <Typography variant="caption">
+          Ethereum uses separate native approvals for funding, payouts, ETH liquidity and the vault.
+          Each step keeps its saved progress.
+        </Typography>
+        <Typography variant="caption">
+          Withdrawal and returns remain separate. Public chains and providers can observe amounts
+          and timing.
+        </Typography>
+      </HoldingDetails>
     </Screen>
   );
 }

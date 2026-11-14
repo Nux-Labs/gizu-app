@@ -8,6 +8,7 @@ import { Screen } from "@/components/templates/Screen";
 import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
 import { Surface } from "@/components/molecules/Surface";
+import { HoldingDetails } from "@/components/molecules/HoldingDetails";
 import { formatUsdc } from "@/domain/wallet/amounts";
 import { portfolioVaultPosition, portfolioAssetAmount } from "@/domain/wallet/portfolioValue";
 import { useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
@@ -34,18 +35,16 @@ export function RequestedVaultWithdrawalScreen({
   return (
     <Screen>
       <BackAction fallback="Vaults" />
-      <Typography variant="title">Steakhouse USDG</Typography>
+      <Typography variant="title">Withdraw</Typography>
+      <Typography variant="caption">Steakhouse USDG</Typography>
       <Surface>
         <View className="gap-3 p-5">
-          <Typography variant="heading">Your vault position</Typography>
-          <Typography>
-            {invested !== null
-              ? `Deposited: ${formatUsdc(invested)} USDG`
-              : "Checking deposited amount…"}
+          <Typography variant="label11">Your vault position</Typography>
+          <Typography variant="value" className="!text-[28px]">
+            {invested !== null ? `${formatUsdc(invested)} USDG` : "Checking deposited amount…"}
           </Typography>
           <Typography variant="caption">
-            Your remaining shares stay invested. Withdrawal proceeds return to your private USDC
-            balance in Account 2 after fees.
+            Returns to your private USDC balance after fees.
           </Typography>
         </View>
       </Surface>
@@ -60,15 +59,22 @@ export function RequestedVaultWithdrawalScreen({
           <Typography variant="heading">Requested withdrawal complete.</Typography>
           <WithdrawalLadder withdrawn quoteReady sent received paused={false} />
           <Typography>
-            The selected proceeds have returned to private USDC. Your remaining investment stays in
-            the vault.
+            Proceeds received as private USDC. Remaining shares stay invested.
           </Typography>
           <Button label="Done" onPress={() => navigation.goBack()} />
         </>
       ) : !v.intent && !v.selection ? (
         <Surface>
           <View className="gap-3 p-5">
-            <Typography variant="heading">How much would you like to withdraw?</Typography>
+            <View className="flex-row items-center justify-between gap-3">
+              <Typography variant="label11">Amount in USDG</Typography>
+              <Button
+                label="Max"
+                variant="quiet"
+                disabled={v.loading || earn.busy || v.total === "0"}
+                onPress={() => v.setAmount(formatUsdc(v.total))}
+              />
+            </View>
             <TextInput
               accessibilityLabel="USDG withdrawal amount"
               value={v.amount}
@@ -81,16 +87,6 @@ export function RequestedVaultWithdrawalScreen({
               maxLength={38}
             />
             <Typography>Available: {formatUsdc(v.total)} USDG</Typography>
-            <Button
-              label="Max"
-              variant="quiet"
-              disabled={v.loading || earn.busy || v.total === "0"}
-              onPress={() => v.setAmount(formatUsdc(v.total))}
-            />
-            <Typography variant="caption">
-              Enter the vault amount before network and private-return fees. The review shows the
-              estimated proceeds; the private return quotes its minimum after the vault receipt.
-            </Typography>
             <Button
               label="Review withdrawal amount"
               disabled={v.loading || earn.busy || v.total === "0"}
@@ -134,7 +130,6 @@ export function RequestedVaultWithdrawalScreen({
         />
       )}
       <PrivateBalanceRefresh
-        showAmount
         onReadComplete={() => {
           if (!childBusy) void v.refresh();
         }}
@@ -145,6 +140,16 @@ export function RequestedVaultWithdrawalScreen({
         disabled={v.loading || earn.busy || childBusy}
         onPress={() => void v.refresh()}
       />
+      <HoldingDetails label="Withdrawal details" accessibilityLabel="About vault withdrawals">
+        <Typography variant="caption">
+          Your remaining shares stay invested. Withdrawal proceeds return to your private USDC
+          balance in Account 2 after fees.
+        </Typography>
+        <Typography variant="caption">
+          Enter the amount before network and private-return fees. Review shows estimated proceeds;
+          the private return quotes its minimum after the vault receipt.
+        </Typography>
+      </HoldingDetails>
     </Screen>
   );
 }

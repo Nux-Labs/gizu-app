@@ -36,8 +36,6 @@ export type VaultCardProps = {
   rate: string;
   /** Optional small suffix after the rate, e.g. ` total APR`. */
   rateSuffix?: string;
-  depositedAmount?: string;
-  depositedValue?: string;
   /** Top-right text: 24h change or catalog status. */
   trailing?: string;
   trailingTone?: keyof typeof trailingTones;
@@ -82,8 +80,6 @@ function CardBody({
   tvl,
   rate,
   rateSuffix,
-  depositedAmount,
-  depositedValue,
   trailing,
   trailingTone = "positive",
   series,
@@ -105,50 +101,36 @@ function CardBody({
           </CardText>
         )}
       </View>
-      <View className="-mx-1 my-3 min-h-10 flex-1 justify-center">
+      <View className="-mx-1 my-4 h-12 justify-center">
         {series && series.length >= 2 && (
           <Sparkline series={series} negative={negative} height={40} />
         )}
       </View>
-      <View>
+      <View className="gap-3">
         <CardText
           numberOfLines={2}
-          className="font-sans text-[14px] font-medium leading-tight text-text"
+          className="min-h-10 font-sans text-[14px] font-medium leading-5 text-text"
         >
           {name}
         </CardText>
-        <View className="mt-1.5 flex-row flex-wrap items-baseline justify-between gap-x-2">
-          <CardText className="font-sans shrink text-[11px] text-fg-55" style={tabular}>
+        <View className="gap-2 border-t border-cardEdge pt-3">
+          <CardText className="font-sans text-[11px] text-fg-55" style={tabular}>
             {tvl} TVL
           </CardText>
-          <CardText className="font-sans text-[13px] text-neon" style={tabular}>
+          <CardText className="font-sans text-[22px] font-medium text-neon" style={tabular}>
             {rate}
-            {rateSuffix !== undefined && (
-              <Text className="font-sans text-[11px] text-fg-55">{rateSuffix}</Text>
-            )}
+          </CardText>
+          <CardText className="font-mono text-[10px] uppercase text-fg-45">
+            {rateSuffix?.trim() || "APY"}
           </CardText>
         </View>
-        {depositedAmount !== undefined && (
-          <View className="mt-3 gap-1 border-t border-cardEdge pt-3">
-            <CardText className="font-sans text-[10px] text-fg-45">YOUR POSITION</CardText>
-            <CardText className="font-sans text-[13px] text-text" style={tabular}>
-              {depositedAmount}
-            </CardText>
-            {depositedValue !== undefined && (
-              <CardText className="font-sans text-[11px] text-fg-55" style={tabular}>
-                {depositedValue}
-              </CardText>
-            )}
-          </View>
-        )}
       </View>
     </>
   );
 }
 
 // Frontend `.glass` card: 24 px radius, p-4, content spread top to bottom.
-const cardClass =
-  "flex-1 justify-between overflow-hidden rounded-card border border-cardEdge bg-card p-4";
+const cardClass = "flex-1 overflow-hidden rounded-card border border-cardEdge bg-card p-4";
 
 /** Frontend OpportunityCard/VaultCard: glass tile with ticker chip, sparkline, name, TVL and rate. */
 export function VaultCard({

@@ -106,16 +106,18 @@ function setup(initial: ConfidentialWithdrawal | null = null, available = true) 
 }
 test("chosen private debit receives an immutable distributed native review before authorization", async () => {
   const h = setup();
-  expect(await screen.findByText("Confidential cash: 10 USDC")).toBeVisible();
+  expect(await screen.findByText("10 USDC")).toBeVisible();
   await userEvent.type(screen.getByLabelText("Withdrawal amount in USDC"), "10");
   await userEvent.press(screen.getByRole("button", { name: "Review withdrawal" }));
   expect(h.service.prepare).toHaveBeenCalledWith("10000000");
-  expect(await screen.findByText("2 fresh receiving wallets")).toBeVisible();
-  expect(screen.getByText("Minimum received: 9.8 USDC")).toBeVisible();
+  expect(await screen.findByText("Receiving wallets · 2")).toBeVisible();
+  expect(screen.getByText("Minimum received")).toBeVisible();
+  expect(screen.getByText("9.8 USDC")).toBeVisible();
+  expect(screen.queryByText("Received so far")).toBeNull();
   expect(h.service.execute).not.toHaveBeenCalled();
   await userEvent.press(screen.getByRole("button", { name: "Authorize public withdrawal" }));
   expect(h.service.execute).toHaveBeenCalledWith(plan());
-  expect(await screen.findByText("Withdrawal status: unknown")).toBeVisible();
+  expect(await screen.findByText("Confirmation needed")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Review withdrawal" })).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Resume saved withdrawal" }));
   expect(h.service.resume).toHaveBeenCalledWith(
@@ -129,11 +131,11 @@ test("invalid amount does not create a withdrawal or use public balance as priva
   await userEvent.type(screen.getByLabelText("Withdrawal amount in USDC"), "1.0000001");
   expect(screen.getByRole("button", { name: "Review withdrawal" })).toBeDisabled();
   expect(h.service.prepare).not.toHaveBeenCalled();
-  expect(screen.queryByText("Confidential cash: 25 USDC")).toBeNull();
+  expect(screen.queryByText("25 USDC")).toBeNull();
 });
 test("saved uncertain withdrawal is resumed rather than allocating more receiving wallets", async () => {
   const h = setup({ ...plan(), status: "unknown", canCancel: false });
-  expect(await screen.findByText("Withdrawal status: unknown")).toBeVisible();
+  expect(await screen.findByText("Confirmation needed")).toBeVisible();
   expect(screen.queryByLabelText("Withdrawal amount in USDC")).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Resume saved withdrawal" }));
   expect(h.service.resume).toHaveBeenCalledTimes(1);
@@ -151,11 +153,7 @@ test("an unsigned quote failure retains its saved distribution and can be cancel
     })),
   };
   const h = setup(draft);
-  expect(
-    await screen.findByText(
-      "Payout terms unavailable. Resume or cancel this unsigned distribution.",
-    ),
-  ).toBeVisible();
+  expect(await screen.findByText("A new payout quote is needed.")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Authorize public withdrawal" })).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Cancel unsigned withdrawal" }));
   expect(h.service.cancel).toHaveBeenCalledWith(draft);
@@ -168,7 +166,7 @@ test("a rejected native approval reloads the saved plan without generating new r
   h.service.execute.mockRejectedValueOnce(new Error("Native approval cancelled."));
   await userEvent.press(await screen.findByRole("button", { name: "Authorize public withdrawal" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Native approval cancelled.");
-  expect(screen.getByText("2 fresh receiving wallets")).toBeVisible();
+  expect(screen.getByText("Receiving wallets · 2")).toBeVisible();
   expect(h.service.prepare).not.toHaveBeenCalled();
   expect(h.service.read).toHaveBeenCalledTimes(2);
 });
@@ -186,10 +184,12 @@ test("a later quote failure preserves completed payout progress and permits resu
   };
   const h = setup(partial);
   expect(
-    await screen.findByText(
-      "Remaining payout terms need review. Resume this saved distribution; completed payouts stay complete.",
-    ),
+    await screen.findByText("Review remaining payouts. Completed payouts stay complete."),
   ).toBeVisible();
+  expect(screen.getByText("Received so far")).toBeVisible();
+  expect(screen.getByText("5.95 USDC")).toBeVisible();
+  expect(screen.queryByText("Receiving wallet 1 · paid")).toBeNull();
+  await userEvent.press(screen.getByRole("button", { name: "Withdrawal recipients" }));
   expect(screen.getByText("Receiving wallet 1 · paid")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Authorize public withdrawal" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Cancel unsigned withdrawal" })).toBeNull();
@@ -211,9 +211,7 @@ test("rejected preparation remains explicit and never invokes payout authorizati
 });
 test("unsupported native build has no actionable withdrawal", async () => {
   const h = setup(null, false);
-  expect(
-    await screen.findByText("Confidential withdrawals require the updated native Android build."),
-  ).toBeVisible();
+  expect(await screen.findByText("Requires an updated Android app.")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Review withdrawal" })).toBeNull();
   expect(h.service.prepare).not.toHaveBeenCalled();
 });
@@ -239,5 +237,5 @@ test("changing the wallet service clears an old busy operation and ignores its l
   await userEvent.type(input, "1");
   expect(screen.getByRole("button", { name: "Review withdrawal" })).toBeEnabled();
   await act(async () => pending.resolve({ ...plan(), status: "unknown", canCancel: false }));
-  expect(screen.queryByText("Withdrawal status: unknown")).toBeNull();
+  expect(screen.queryByText("Confirmation needed")).toBeNull();
 });

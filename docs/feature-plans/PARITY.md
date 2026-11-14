@@ -83,6 +83,32 @@ transactions are not indexed. Local public summaries and tracked contracts survi
 active-swap replacement, but they are not a complete chain ledger or backup of an
 installation's in-flight execution journal. See [portfolio contract](../internal/NATIVE_SIGNER_PORTFOLIO.md).
 
+## Mobile presentation
+
+Deposit, withdrawal and wallet recovery keep the amount, current status, fees,
+limits and next action prominent. Wallet addresses, routing explanations and scan
+settings open through labelled details controls. Recovery errors and the active
+scan's pause action stay visible outside those controls.
+
+Private-cash withdrawal uses a compact balance summary, a single amount hierarchy,
+a human-readable status and a minimum-credit row. Zero receipts are omitted until
+funds arrive; partial receipts and missing quotes remain explicit. Manual saved
+progress refresh sits beside Back. Transaction signing presents the review,
+passkey and signing flow with concise policy rows; its longer explanation opens
+on demand and does not imply that a provider/device capability was verified.
+
+Earn discovery uses the same logo, chart, title, TVL and APY hierarchy for every
+card. An invested badge identifies an existing position; detailed balances remain
+on the position screen. Token discovery cards show network, category, available
+price and issuer metadata without inventing quotes. Active Swap uses the shared
+particle visual, distinct running/paused states and observed order/payout counts.
+
+Activity groups local swap records by date, supports All/Buys/Sells filters and
+opens each record's reference on demand. It distinguishes completed/cancelled
+records and private/public sale proceeds. Buy quantities are omitted because the
+local history contract does not carry reliable token precision. Deposits and
+external transactions remain outside this local history.
+
 ## Native Swap
 
 The Exchange route carries the **Swap** tab. Its amount form, token picker and

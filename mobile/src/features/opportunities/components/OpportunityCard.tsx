@@ -1,4 +1,3 @@
-import { displayAmount, holdingAmount } from "@/domain/wallet/amounts";
 import { VaultCard } from "@/components/organisms/VaultList";
 import { tvlChange, type Opportunity } from "@/domain/opportunities";
 import { useTvlSeries } from "../useTvlSeries";
@@ -54,25 +53,15 @@ export function OpportunityCard({
       name={opportunity.name}
       tvl={tvl}
       rate={apr}
-      rateSuffix={opportunity.rateType === "apy" ? " net APY" : rateSuffix}
-      depositedAmount={
-        hasPosition
-          ? position.underlyingAtoms !== null && position.complete && position.decimals !== null
-            ? `${displayAmount(position.underlyingAtoms, position.decimals)} ${position.symbol} deposited`
-            : "Checking position…"
-          : undefined
-      }
-      depositedValue={
-        hasPosition && position.valueUsdcAtoms !== null
-          ? `≈ ${holdingAmount(position.valueUsdcAtoms, 6)} USDC`
-          : undefined
-      }
+      rateSuffix={opportunity.rateType === "apy" ? " net APY" : (rateSuffix ?? " total APR")}
       trailing={
-        opportunity.featured
-          ? "Featured"
-          : change === null
-            ? opportunity.status
-            : `${up ? "+" : ""}${percent.format(change)}%`
+        hasPosition
+          ? "Invested"
+          : opportunity.featured
+            ? "Featured"
+            : change === null
+              ? opportunity.status
+              : `${up ? "+" : ""}${percent.format(change)}%`
       }
       trailingTone={
         opportunity.featured || change === null ? "muted" : up ? "positive" : "negative"
