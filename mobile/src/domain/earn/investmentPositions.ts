@@ -13,7 +13,7 @@ export type EarnInvestmentPosition = {
   withdrawalComplete?: boolean;
   lastWithdrawalRequestId?: string;
   completedWithdrawalRequestIds?: string[];
-  withdrawalAttention?: "confirming" | "unfinished" | "returning" | "checking";
+  withdrawalAttention?: "confirming" | "unfinished" | "returning" | "checking" | "refunded";
 };
 export interface EarnInvestmentPositionsService {
   list(owner: EarnOwner): Promise<EarnInvestmentPosition[]>;

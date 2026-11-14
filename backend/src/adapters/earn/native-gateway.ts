@@ -469,7 +469,8 @@ export class NativeEarnGateway {
           refundType: "ORIGIN_CHAIN",
           recipient: input.confidentialAccount.toLowerCase(),
           recipientType: "CONFIDENTIAL_INTENTS",
-          deadline: new Date((seconds + 600) * 1000).toISOString(),
+          // Provider settlement/refund time is separate from local signing authority.
+          deadline: new Date((seconds + (!isSource && !isEth ? 1800 : 600)) * 1000).toISOString(),
         };
         const body = await auroraApi(
           this.config.auroraApiKey!,
@@ -535,6 +536,7 @@ export class NativeEarnGateway {
           q.timeWhenInactive === undefined
             ? Infinity
             : time(q.timeWhenInactive),
+          seconds + 600, // The native quote/review stays bounded to ten minutes.
         );
         if (
           expiresAt <= Math.floor(this.now() / 1000) + 15 ||

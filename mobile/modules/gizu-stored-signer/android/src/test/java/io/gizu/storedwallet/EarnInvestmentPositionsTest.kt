@@ -7,6 +7,34 @@ import org.junit.Test
 
 class EarnInvestmentPositionsTest {
   @Test
+  fun currentRequestedReturnStaysActiveUntilPrivateReceipt() {
+    record().use { r ->
+      val redeemed =
+        operation(r, 1, 0, "hoodRedeemAll", "finalized", "redeem_current")
+          .put("residualShares", "0")
+          .put("redeemedUsdgAtoms", "1462881")
+      redeemed
+        .getJSONObject("proposal")
+        .put("requestedWithdrawalAtoms", "1462881")
+        .put("withdrawalRequestId", "request_current")
+      val returned = operation(r, 1, 0, "hoodTokenReturn", "finalized", "return_current")
+      returned.getJSONObject("proposal").put("withdrawalOperationId", "redeem_current")
+      val row =
+        earnInvestmentPositions(
+            r,
+            r.id,
+            emptyList(),
+            listOf(redeemed, returned),
+            emptyList(),
+            emptyList(),
+          )
+          .single()
+      assertEquals("returning", row["withdrawalAttention"])
+      assertNull(row["withdrawalComplete"])
+    }
+  }
+
+  @Test
   fun requestedCompletionRemainsKnownAcrossALaterPartialWithdrawal() {
     record().use { r ->
       val redeemed =

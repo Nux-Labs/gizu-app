@@ -317,6 +317,7 @@ internal class EarnSponsoredEngine(
           JSONObject().put("operationId", p.getString("operationId")).put("proposal", p),
           journal.walletId,
           source.getString("residualShares"),
+          journal.generation,
         )
       }
       requireRequestedWithdrawalAdmission(
@@ -381,7 +382,13 @@ internal class EarnSponsoredEngine(
     reservations?.assertActive(id)
     val state = stateReader(p)
     requireRequestedWithdrawalAdmission(journal.all(), op, journal.walletId, journal.generation)
-    requireWithdrawalReturnSource(journal.all(), op, journal.walletId, state.shares)
+    requireWithdrawalReturnSource(
+      journal.all(),
+      op,
+      journal.walletId,
+      state.shares,
+      journal.generation,
+    )
     val coreRevision = p.getLong("revision").toULong()
     if (op.has("signedUserOperation")) {
       check(op.getString("status") == "signed" && !op.optBoolean("conflict"))
@@ -526,7 +533,13 @@ internal class EarnSponsoredEngine(
     requireSponsoredFunds(p, state)
     stateGuard(state)
     requireRequestedWithdrawalAdmission(journal.all(), op, journal.walletId, journal.generation)
-    requireWithdrawalReturnSource(journal.all(), op, journal.walletId, state.shares)
+    requireWithdrawalReturnSource(
+      journal.all(),
+      op,
+      journal.walletId,
+      state.shares,
+      journal.generation,
+    )
     authority()
     currentCoroutineContext().ensureActive()
     check(journal.get(review.id).getInt("revision") == review.revision)
@@ -897,6 +910,9 @@ internal fun requireSequentialSourceCredit(
     if (
       other.sponsoredSpendSaved() &&
         other.getString("status") !in setOf("reverted", "nonceCancelled") &&
+        !(walletId != null &&
+          generation != null &&
+          refundedSponsoredReturn(other, walletId, generation)) &&
         !(walletId != null &&
           generation != null &&
           expiredWithdrawalReturnReplacement(other, current, walletId))

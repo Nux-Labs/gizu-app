@@ -532,6 +532,14 @@ export function useSharedWithdrawalState() {
             covered,
           )
         : null,
+    activeProfile: checked
+      ? positions.find(
+          (row) =>
+            row.withdrawalAttention &&
+            row.withdrawalAttention !== "checking" &&
+            !covered[investmentPositionKey(row)],
+        )?.profileId
+      : undefined,
     historyProfile: checked
       ? positions.find(
           (row) => row.withdrawalAttention === "checking" && !covered[investmentPositionKey(row)],

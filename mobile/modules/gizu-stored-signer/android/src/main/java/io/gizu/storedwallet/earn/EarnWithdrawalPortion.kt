@@ -196,6 +196,7 @@ internal fun requireRequestedWithdrawalAdmission(
         it.getJSONObject("proposal").optString("withdrawalOperationId") ==
           old.getString("operationId") &&
           !it.optBoolean("cancelled") &&
+          !refundedSponsoredReturn(it, walletId, generation) &&
           it.optString("status") !in setOf("cancelled", "reverted", "nonceCancelled")
       }
     check(
@@ -212,6 +213,7 @@ internal fun requireWithdrawalReturnSource(
   op: JSONObject,
   walletId: String,
   shares: String,
+  generation: String? = null,
 ) {
   val p = op.getJSONObject("proposal")
   if (p.getString("kind") != "hoodTokenReturn") return
@@ -242,7 +244,8 @@ internal fun requireWithdrawalReturnSource(
         prior.getJSONObject("proposal").optString("withdrawalOperationId") == id &&
         prior.sponsoredSpendSaved() &&
         prior.optString("status") !in setOf("reverted", "nonceCancelled") &&
-        !expiredWithdrawalReturnReplacement(prior, op, walletId)
+        !expiredWithdrawalReturnReplacement(prior, op, walletId) &&
+        !(generation != null && refundedSponsoredReturn(prior, walletId, generation))
     }
   ) {
     "This withdrawal's proceeds already have a signed private return"

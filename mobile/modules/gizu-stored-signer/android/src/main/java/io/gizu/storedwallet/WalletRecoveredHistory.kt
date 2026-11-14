@@ -461,6 +461,20 @@ internal class RecoveredHistoryImporter(
       val operations = root.getJSONArray("operations")
       for (i in 0 until operations.length()) {
         val operation = operations.getJSONObject(i)
+        // Authenticated import may rebind a validated routing-terminal refund, never private
+        // credit or spending approval. Recovery needs this checkpoint before origin lookups.
+        if (
+          operation.optJSONObject("returnRouteProgress")?.optString("providerRouteStatus") ==
+            "REFUNDED"
+        ) {
+          check(refundedSponsoredReturn(operation, walletId, sourceGeneration))
+          operation
+            .getJSONObject("returnRouteProgress")
+            .getJSONObject("nativeBinding")
+            .put("generation", generation)
+          check(refundedSponsoredReturn(operation, walletId, generation))
+        } else operation.remove("returnRouteProgress")
+        operation.remove("returnRouteReadUnavailable")
         if (operation.has("returnFlowCompletion")) {
           check(ownerReportedReturnCompleted(operation, walletId, sourceGeneration))
           operation

@@ -162,6 +162,18 @@ test("expired quote cannot fund but remains available for authenticated settleme
     recipient,
   );
 });
+test("Robinhood return gives settlement time without extending local signing authority", async () => {
+  const p = provider(body => assert.equal(Date.parse(body.quoteRequest.deadline), now + 30 * 60_000));
+  const g = new NativeEarnGateway(
+    { auroraHistoryQualified: true, auroraApiKey: "key", auroraFeeQualification: config, recoveryKey: "11".repeat(32) },
+    { fetcher: p.fetcher, now: () => now },
+  );
+  const quote = await g.returnQuote(input);
+  assert.equal(quote.expiresAt, now / 1000 + 600);
+  const saved = g.verifiedQuoteForSettlement(input.operationId, 1, quote.quoteId);
+  assert.equal(saved.expiresAt, quote.expiresAt);
+});
+
 test("return quote uses exact supported chain and asset registry", async () => {
   const p = provider();
   const g = new NativeEarnGateway(

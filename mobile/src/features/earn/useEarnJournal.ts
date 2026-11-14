@@ -55,6 +55,7 @@ export function useEarnJournal<Row extends { operationId: string }>(
   async function perform<T>(
     task: (signal: AbortSignal) => Promise<T>,
     accept: (result: T) => void,
+    refreshPortfolio = true,
   ) {
     if (occupied.current) return;
     occupied.current = true;
@@ -81,7 +82,7 @@ export function useEarnJournal<Row extends { operationId: string }>(
       if (attempt === generation.current) {
         setBusy(false);
       }
-      void portfolio?.refreshAfterAction();
+      if (refreshPortfolio) void portfolio?.refreshAfterAction();
     }
   }
   const update = (row: Row) =>

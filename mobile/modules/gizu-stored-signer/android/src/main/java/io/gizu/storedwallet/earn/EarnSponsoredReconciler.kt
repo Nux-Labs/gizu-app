@@ -74,7 +74,8 @@ internal suspend fun reconcileEarnSponsoredOperations(
     rows.withIndex().filter { (_, op) ->
       op.optString("status") == "finalized" &&
         op.getJSONObject("proposal").optString("kind") == "hoodTokenReturn" &&
-        completedReturnLifecycle(op, journal.walletId, journal.generation)
+        (completedReturnLifecycle(op, journal.walletId, journal.generation) ||
+          refundedSponsoredReturn(op, journal.walletId, journal.generation))
     }
   for ((index, op) in rows.withIndex()) {
     if (operationIds != null && op.getString("operationId") !in operationIds) continue
@@ -88,7 +89,8 @@ internal suspend fun reconcileEarnSponsoredOperations(
     )
       continue
     val p = op.getJSONObject("proposal")
-    // The encrypted final return is the completion checkpoint for its preceding steps.
+    // A terminal route checkpoints its confirmed origin/predecessors. A refund is not private
+    // credit.
     // Later lookups and later investment balances cannot reopen those steps.
     if (
       op.optString("status") == "finalized" &&

@@ -5,6 +5,7 @@ import { Screen } from "@/components/templates/Screen";
 import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
+import { ProgressLadder } from "@/components/molecules/ProgressLadder";
 import { Surface } from "@/components/molecules/Surface";
 import { BackAction } from "@/navigation/BackAction";
 import type { RootStackParamList } from "@/navigation/types";
@@ -241,43 +242,23 @@ export function DepositJourneyScreen({
                 approval limits. Keep this page open.
               </Typography>
             )}
-            <View className="gap-4 rounded-2xl bg-well p-4">
-              {stages.map(([stage, legacyLabel], index) => {
+            <ProgressLadder
+              steps={stages.map(([stage, legacyLabel]) => {
                 const label =
                   distribution && stage === "payouts"
                     ? "Route funds to investment wallets"
                     : distribution && stage === "deposit"
                       ? "Deposit every wallet into the vault"
                       : legacyLabel;
-                const done = row.completedSteps.includes(stage),
-                  active = !v.authorizing && !done && currentStage[row.phase] === stage;
-                return (
-                  <View
-                    key={stage}
-                    className="flex-row items-center gap-3"
-                    accessible
-                    accessibilityLabel={`${label}: ${done ? "Verified" : active ? "In progress" : "Pending"}`}
-                  >
-                    <View
-                      className={`h-7 w-7 items-center justify-center rounded-full border ${done ? "border-neon bg-neon" : active ? "border-neon bg-neon-deep" : "border-cardEdge"}`}
-                    >
-                      <Typography
-                        variant="micro"
-                        className={done ? "text-ctaText" : active ? "text-accent" : "text-fg-35"}
-                      >
-                        {done ? "✓" : index + 1}
-                      </Typography>
-                    </View>
-                    <Typography
-                      variant="rowTitle"
-                      className={`flex-1 ${active ? "text-accent" : done ? "text-text" : "text-fg-45"}`}
-                    >
-                      {label}
-                    </Typography>
-                  </View>
-                );
+                const done = row.completedSteps.includes(stage);
+                const active = !v.authorizing && !done && currentStage[row.phase] === stage;
+                return {
+                  id: stage,
+                  label,
+                  state: done ? "complete" : active ? "active" : "pending",
+                };
               })}
-            </View>
+            />
             {row.investments?.map((investment) => (
               <View key={investment.slot} className="gap-1">
                 <Typography>

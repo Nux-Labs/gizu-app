@@ -1302,6 +1302,16 @@ class GizuStoredSignerModule : Module() {
             earnSponsoredJournal(activity, record)
           }
         val proposal = JSONObject(request["proposal"] as? Map<*, *> ?: error("Missing proposal"))
+        check(
+          !withdrawalContinuationNeedsFreshApproval(
+            journal.all(),
+            approval.redeemId,
+            walletId,
+            journal.generation,
+          )
+        ) {
+          "A refunded return requires a fresh spending approval"
+        }
         assertWithdrawalReturnAuthorized(
           approval,
           walletId,
@@ -1511,6 +1521,8 @@ class GizuStoredSignerModule : Module() {
           operationIds = setOf(id),
         )
         val operation = journal.get(id)
+        if (refundedSponsoredReturn(operation, walletId, journal.generation))
+          return@runCeremony journal.public(operation)
         val expected = sponsoredSettlementExpected(operation)
         android.util.Log.i("GizuSettlement", sponsoredSettlementReadFacts(operation))
         val identity =
@@ -3625,5 +3637,16 @@ internal suspend fun listSponsoredOperations(
       }
       .forEach { ledger.complete(it.getString("operationId")) }
   }
+  refreshSponsoredReturnProgress(
+    journal,
+    active.map { it.getString("operationId") }.toSet(),
+    EarnSponsoredChainRpc(4663),
+    { deposit ->
+      JSONObject(
+        NativeRpcTransport(EARN_NATIVE_BACKEND.removeSuffix("/earn/native") + "/swap/aurora/status")
+          .post(JSONObject().put("depositAddress", deposit).toString())
+      )
+    },
+  )
   return store.load().use { record -> select(record, journal.all()).map { journal.public(it) } }
 }

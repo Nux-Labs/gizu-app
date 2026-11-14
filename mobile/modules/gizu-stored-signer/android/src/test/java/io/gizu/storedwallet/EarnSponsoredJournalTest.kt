@@ -1,6 +1,8 @@
 package io.gizu.storedwallet
 
 import javax.crypto.KeyGenerator
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -35,6 +37,121 @@ class EarnSponsoredJournalTest {
 
   private fun journal(file: File, generation: String = wallet) =
     EarnSponsoredJournal(file, { key }, wallet, generation)
+
+  @Test
+  fun requestedRefundIsNativeBoundAndNeverCountsAsPrivateCredit() = runBlocking {
+    val j = journal(File())
+    val p =
+      proposal("return_current")
+        .put("kind", "hoodTokenReturn")
+        .put("chainId", 4663)
+        .put("withdrawalOperationId", "redeem_current")
+        .put("recipient", "0x" + "2".repeat(40))
+        .put("confidentialAccount", "0x" + "3".repeat(40))
+    j.create(p, JSONObject())
+    j.update("return_current", 1) {
+      it
+        .put("status", "finalized")
+        .put("signedUserOperation", "saved")
+        .put("transactionHash", "0x" + "a".repeat(64))
+        .put("stateBinding", JSONObject())
+    }
+    val rpc =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any {
+          check(method == "eth_call" && params.getJSONObject(0).getString("to") == HOOD_EARN_USDG)
+          return "0x" + 1502133.toString(16).padStart(64, '0')
+        }
+      }
+    refreshSponsoredReturnProgress(
+      j,
+      setOf("return_current"),
+      rpc,
+      { deposit ->
+        assertEquals(p.getString("recipient"), deposit)
+        JSONObject().put("status", "PROCESSING")
+      },
+      1000,
+    )
+    assertEquals("PROCESSING", j.public(j.get("return_current"))["providerRouteStatus"])
+    assertEquals("awaitingSettlement", j.public(j.get("return_current"))["status"])
+    refreshSponsoredReturnProgress(
+      j,
+      setOf("return_current"),
+      rpc,
+      { JSONObject().put("status", "REFUNDED") },
+      7000,
+    )
+    val refunded = j.get("return_current")
+    assertTrue(refundedSponsoredReturn(refunded, wallet, wallet))
+    assertFalse(completedReturnLifecycle(refunded, wallet, wallet))
+    assertEquals("refunded", j.public(refunded)["status"])
+    assertEquals("1502133", j.public(refunded)["returnPublicUsdgAtoms"])
+    assertFalse(j.public(refunded).containsKey("creditedAtoms"))
+    assertFalse(j.public(refunded).containsKey("verifiedMinimumAtoms"))
+    refreshSponsoredReturnProgress(
+      j,
+      setOf("return_current"),
+      rpc,
+      { error("Do not reopen terminal refund") },
+      13000,
+    )
+    assertEquals("refunded", j.public(j.get("return_current"))["status"])
+    assertThrows(Exception::class.java) { refundedSponsoredReturn(refunded, wallet, "other") }
+    val legacy = JSONObject(refunded.toString())
+    legacy.getJSONObject("proposal").remove("withdrawalOperationId")
+    legacy
+      .getJSONObject("returnRouteProgress")
+      .put("nativeBinding", returnCompletionBinding(legacy, wallet, wallet))
+    assertTrue(refundedSponsoredReturn(legacy, wallet, wallet))
+    val redeem =
+      JSONObject()
+        .put("operationId", "redeem_current")
+        .put("proposal", JSONObject(p.toString()).put("kind", "hoodRedeemAll"))
+    assertTrue(
+      withdrawalContinuationNeedsFreshApproval(
+        listOf(redeem, refunded),
+        "redeem_current",
+        wallet,
+        wallet,
+      )
+    )
+    assertTrue(
+      withdrawalContinuationNeedsFreshApproval(
+        listOf(redeem, legacy),
+        "redeem_current",
+        wallet,
+        wallet,
+      )
+    )
+    val cancelledDraft =
+      JSONObject(redeem.toString())
+        .put("operationId", "cancelled_draft")
+        .put("status", "planned")
+        .put("cancelled", true)
+    assertTrue(
+      withdrawalContinuationNeedsFreshApproval(
+        listOf(redeem, cancelledDraft, legacy),
+        "redeem_current",
+        wallet,
+        wallet,
+      )
+    )
+    val later = JSONObject(redeem.toString()).put("operationId", "redeem_later")
+    assertFalse(
+      withdrawalContinuationNeedsFreshApproval(
+        listOf(redeem, legacy, later),
+        "redeem_later",
+        wallet,
+        wallet,
+      )
+    )
+
+    val altered = JSONObject(refunded.toString())
+    altered.getJSONObject("proposal").put("withdrawalOperationId", "other")
+    assertThrows(Exception::class.java) { refundedSponsoredReturn(altered, wallet, wallet) }
+    Unit
+  }
 
   @Test
   fun finalizedZeroShareRedeemRemainsReadyForThePrivateReturn() {

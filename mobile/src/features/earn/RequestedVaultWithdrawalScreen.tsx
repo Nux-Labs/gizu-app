@@ -13,6 +13,7 @@ import { portfolioVaultPosition, portfolioAssetAmount } from "@/domain/wallet/po
 import { useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { PrivateBalanceRefresh } from "@/features/wallet/PrivateBalanceRefresh";
 import { useEarn } from "./EarnProvider";
+import { WithdrawalLadder } from "./WithdrawalLadder";
 import { RobinhoodWithdrawalPanel } from "./RobinhoodWithdrawalPanel";
 import { useRequestedWithdrawal } from "./useRequestedWithdrawal";
 import colors from "@/theme/colors.json";
@@ -57,6 +58,7 @@ export function RequestedVaultWithdrawalScreen({
       {!v.loading && v.complete ? (
         <>
           <Typography variant="heading">Requested withdrawal complete.</Typography>
+          <WithdrawalLadder withdrawn quoteReady sent received paused={false} />
           <Typography>
             The selected proceeds have returned to private USDC. Your remaining investment stays in
             the vault.

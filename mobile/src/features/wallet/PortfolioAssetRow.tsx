@@ -96,8 +96,8 @@ export function PortfolioAssetRow({
               ? `${holdingAmount(value, 6)} USD`
               : (formattedAmount ?? (loading ? "Checking…" : "Unavailable"))}
           </Typography>
-          {/* A priced stock shows how many shares the value stands for; USD stablecoins need not. */}
-          {value !== null && formattedAmount !== null && !usdc && !usdg && (
+          {/* Show public USDG and stock quantities alongside their USD value. */}
+          {value !== null && formattedAmount !== null && !usdc && (
             <Typography variant="micro">{formattedAmount}</Typography>
           )}
         </View>

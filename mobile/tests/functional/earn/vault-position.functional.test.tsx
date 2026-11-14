@@ -319,6 +319,174 @@ test("native finalized proceeds awaiting return take priority over an unrelated 
   expect(service.execute).not.toHaveBeenCalled();
 });
 
+test.each(["awaitingSettlement", "refunded"] as const)(
+  "the withdrawal ladder shows %s and a refund retries the return only",
+  async (status) => {
+    const from = first.destinations[0].address;
+    const redeem: SponsoredOperation = {
+      ...operation("withdrawn"),
+      kind: "hoodRedeemAll",
+      operationId: "ladder_redeem",
+      from,
+      withdrawalRequestId: "ladder_request",
+      requestedWithdrawalAtoms: "1400000",
+      redeemedUsdgAtoms: "1400000",
+      residualShares: "0",
+    };
+    const returned = {
+      ...operation(status as any),
+      kind: "hoodTokenReturn" as const,
+      operationId: "ladder_return",
+      from,
+      withdrawalOperationId: redeem.operationId,
+      providerRouteStatus: status === "refunded" ? "REFUNDED" : "PROCESSING",
+      routeCheckedAt: Date.now(),
+      returnPublicUsdgAtoms: "1502133",
+    };
+    const service: EarnRobinhoodService = {
+      available: jest.fn().mockResolvedValue(true),
+      withdrawalBalances: jest.fn(),
+      list: jest.fn().mockResolvedValue([operation(), redeem, returned]),
+      plan: jest.fn().mockRejectedValue(new Error("Review captured")),
+      execute: jest.fn(),
+      resume: jest.fn(),
+      reconcileCredit: jest.fn(),
+      cancelUnsigned: jest.fn(),
+      cancel: jest.fn(),
+    };
+    setup({
+      rows: [
+        {
+          ...position(first, 0, "redeemed"),
+          lastWithdrawalRequestId: "ladder_request",
+          withdrawalAttention: status === "refunded" ? ("refunded" as any) : "returning",
+        },
+      ],
+      robinhoodService: service,
+    });
+    expect(await screen.findByLabelText("Withdraw funds from vault: Verified")).toBeOnTheScreen();
+    expect(
+      screen.getByLabelText("Quote ready for confidential transaction: Verified"),
+    ).toBeOnTheScreen();
+    expect(screen.getByLabelText("Funds sent to confidential wallet: Verified")).toBeOnTheScreen();
+    expect(
+      screen.getByLabelText(
+        `Funds received: ${status === "refunded" ? "Needs attention" : "In progress"}`,
+      ),
+    ).toBeOnTheScreen();
+    if (status === "refunded") {
+      expect(screen.getByText("Aurora returned your funds. You can try again.")).toBeOnTheScreen();
+      expect(
+        screen.getByText("Available in this investment wallet: 1.502133 USDG"),
+      ).toBeOnTheScreen();
+      await userEvent.press(screen.getByRole("button", { name: "Try private return again" }));
+      await waitFor(() =>
+        expect(service.plan).toHaveBeenCalledWith(
+          expect.anything(),
+          "hoodTokenReturn",
+          expect.any(AbortSignal),
+          expect.objectContaining({
+            withdrawalOperationId: "ladder_redeem",
+            returnBudgetAtoms: "1400000",
+          }),
+        ),
+      );
+    }
+    expect(service.execute).not.toHaveBeenCalled();
+    expect(service.resume).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["awaitingSettlement", "signed"] as const)(
+  "the %s return ladder reaches received through read-only polling without switching apps",
+  async (initialStatus) => {
+    const from = first.destinations[0].address;
+    const redeemed: SponsoredOperation = {
+      ...operation("withdrawn"),
+      kind: "hoodRedeemAll",
+      operationId: "poll_redeem",
+      from,
+      withdrawalRequestId: "poll_request",
+      requestedWithdrawalAtoms: "400000",
+      redeemedUsdgAtoms: "400000",
+      residualShares: "400",
+    };
+    let providerReady = false;
+    let originConfirmed = initialStatus === "awaitingSettlement";
+    let h: ReturnType<typeof setup>;
+    const returned: SponsoredOperation = {
+      ...operation(initialStatus),
+      blocked: initialStatus === "signed",
+      userOperationHash: "0x" + "a".repeat(64),
+      kind: "hoodTokenReturn",
+      operationId: "poll_return",
+      from,
+      withdrawalOperationId: redeemed.operationId,
+      providerRouteStatus: "PROCESSING",
+      routeCheckedAt: Date.now(),
+    };
+    const service: EarnRobinhoodService = {
+      available: jest.fn().mockResolvedValue(true),
+      withdrawalBalances: jest.fn(),
+      list: jest
+        .fn()
+        .mockImplementation(async () => [
+          operation(),
+          redeemed,
+          {
+            ...returned,
+            status: originConfirmed ? "awaitingSettlement" : initialStatus,
+            blocked: !originConfirmed,
+            providerRouteStatus: providerReady ? "SUCCESS" : "PROCESSING",
+          },
+        ]),
+      plan: jest.fn(),
+      execute: jest.fn(),
+      resume: jest.fn(),
+      cancelUnsigned: jest.fn(),
+      cancel: jest.fn(),
+      reconcileCredit: jest.fn().mockImplementation(async () => {
+        h.setRows([
+          { ...position(first), withdrawalComplete: true, lastWithdrawalRequestId: "poll_request" },
+        ]);
+        return {
+          ...minimumReturnRow(),
+          operationId: returned.operationId,
+          from,
+          withdrawalOperationId: redeemed.operationId,
+        };
+      }),
+    };
+    h = setup({
+      rows: [
+        {
+          ...position(first),
+          lastWithdrawalRequestId: "poll_request",
+          withdrawalAttention: "returning",
+        },
+      ],
+      robinhoodService: service,
+    });
+    if (!originConfirmed) {
+      expect(
+        await screen.findByLabelText("Funds sent to confidential wallet: In progress"),
+      ).toBeOnTheScreen();
+      originConfirmed = true;
+    }
+    expect(
+      await screen.findByLabelText("Funds received: In progress", {}, { timeout: 12000 }),
+    ).toBeOnTheScreen();
+    providerReady = true;
+    expect(
+      await screen.findByText("Requested withdrawal complete.", {}, { timeout: 15000 }),
+    ).toBeOnTheScreen();
+    expect(screen.getByLabelText("Funds received: Verified")).toBeOnTheScreen();
+    expect(service.execute).not.toHaveBeenCalled();
+    expect(service.resume).not.toHaveBeenCalled();
+    expect(service.plan).not.toHaveBeenCalled();
+  },
+);
+
 test("a canceled balance read cannot suppress a replacement withdrawal load", async () => {
   let resolve!: (
     rows: { owner: string; shares: string; assetsAtoms: string; checkedAt: number }[],

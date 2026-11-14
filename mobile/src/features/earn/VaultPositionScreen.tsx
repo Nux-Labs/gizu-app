@@ -51,6 +51,7 @@ export function VaultPositionScreen({
       </Surface>
       <WithdrawalStatusNotice
         attention={coverage.attentionFor(profileId)}
+        onOpenWithdrawal={() => navigation.navigate("VaultWithdrawal", { profileId })}
         canCheckPastReturn={coverage.hasPastReturn(profileId)}
         onCheckPastReturn={() =>
           navigation.navigate("VaultWithdrawal", { profileId, historyOnly: true })

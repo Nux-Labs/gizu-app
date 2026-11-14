@@ -34,6 +34,76 @@ class WalletRecoveredHistoryTest {
     assertThrows(Exception::class.java) { ownerReportedReturnCompleted(restored, wallet, old) }
   }
 
+  @Test
+  fun terminalRefundRestoresWithoutReopeningItsOriginOrSpendingAuthority() = runBlocking {
+    val original = confirmedMinimumReturn("hoodTokenReturn")
+    original.remove("minimumReturnReceipt")
+    original.put(
+      "returnRouteProgress",
+      JSONObject()
+        .put("version", 1)
+        .put("providerRouteStatus", "REFUNDED")
+        .put("observedAtMs", 1)
+        .put("publicUsdgAtoms", "1502133")
+        .put("spendingAuthorized", false)
+        .put("nativeBinding", returnCompletionBinding(original, wallet, old)),
+    )
+    val domain = "gizu-earn-sponsored"
+    val root =
+      JSONObject()
+        .put("version", 1)
+        .put("walletId", wallet)
+        .put("operations", JSONArray().put(original))
+    importer().import(JSONArray().put(row(domain, root)))
+    val restored = JSONObject(read(domain)).getJSONArray("operations").getJSONObject(0)
+    assertTrue(refundedSponsoredReturn(restored, wallet, current))
+    assertThrows(Exception::class.java) { refundedSponsoredReturn(restored, wallet, old) }
+    assertTrue(
+      nativeJsonEqual(original.getJSONObject("proposal"), restored.getJSONObject("proposal"))
+    )
+    assertTrue(
+      nativeJsonEqual(
+        original.getJSONObject("stateBinding"),
+        restored.getJSONObject("stateBinding"),
+      )
+    )
+    assertEquals(original.getString("transactionHash"), restored.getString("transactionHash"))
+    assertFalse(restored.has("minimumReturnReceipt"))
+    assertFalse(restored.has("settlement"))
+    val journal =
+      EarnSponsoredJournal(files.getValue("$domain-$current.enc"), { key }, wallet, current)
+    val next =
+      JSONObject()
+        .put("operationId", "next")
+        .put("proposal", JSONObject().put("confidentialAccount", EarnPayoutFixtures.C))
+    requireSequentialSourceCredit(listOf(restored), next, wallet, current)
+    val unavailable =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any =
+          error("Do not reopen a restored terminal refund")
+      }
+    reconcileEarnSponsoredOperations(journal, unavailable, unavailable)
+    val rpc =
+      object : TransferRpc {
+        override suspend fun call(method: String, params: JSONArray): Any {
+          check(method == "eth_call")
+          return "0x" + 1502133.toString(16).padStart(64, '0')
+        }
+      }
+    refreshSponsoredReturnProgress(
+      journal,
+      setOf(restored.getString("operationId")),
+      rpc,
+      { JSONObject().put("status", "REFUNDED") },
+      1000,
+    )
+    val checked = journal.get(restored.getString("operationId"))
+    assertTrue(refundedSponsoredReturn(checked, wallet, current))
+    assertFalse(completedReturnLifecycle(checked, wallet, current))
+    requireSequentialSourceCredit(listOf(checked), next, wallet, current)
+    Unit
+  }
+
   private val wallet = "7aafcc2e-0891-4e31-a7d4-03780d7b4f12"
   private val old = "d450c45a-7d4d-4ce9-bbbd-3437c6ba6cb8"
   private val current = "2793c0c2-62a5-4539-bc25-18893b8fc8c2"

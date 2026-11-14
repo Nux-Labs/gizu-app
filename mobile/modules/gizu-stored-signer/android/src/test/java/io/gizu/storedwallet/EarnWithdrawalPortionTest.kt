@@ -198,6 +198,68 @@ class EarnWithdrawalPortionTest {
   }
 
   @Test
+  fun nativeObservedRefundReleasesOnlyTheFailedIncomingCreditWithoutCompletingWithdrawal() {
+    val old =
+      returned()
+        .put("status", "finalized")
+        .put("signedUserOperation", "saved")
+        .put("transactionHash", "0x" + "a".repeat(64))
+        .put("stateBinding", JSONObject())
+    old.put(
+      "returnRouteProgress",
+      JSONObject()
+        .put("version", 1)
+        .put("providerRouteStatus", "REFUNDED")
+        .put("observedAtMs", 1000)
+        .put("spendingAuthorized", false)
+        .put("publicUsdgAtoms", "500")
+        .put(
+          "nativeBinding",
+          ownerReceivedReturnRecord(old, "wallet", "generation", 1000, "SUCCESS", false)
+            .getJSONObject("nativeBinding"),
+        ),
+    )
+    val next = returned().put("operationId", "return_2")
+    requireSequentialSourceCredit(listOf(old), next, "wallet", "generation")
+    requireWithdrawalReturnSource(listOf(source(), old, next), next, "wallet", "700", "generation")
+    assertThrows(Exception::class.java) {
+      requireWithdrawalReturnSource(
+        listOf(source(), old, next),
+        next,
+        "wallet",
+        "700",
+        "other-generation",
+      )
+    }
+    val nextRedeem = source().put("operationId", "redeem_2").put("status", "planned")
+    nextRedeem.getJSONObject("proposal").put("withdrawalRequestId", "request_2").put("nonce", "0x4")
+    assertThrows(Exception::class.java) {
+      requireRequestedWithdrawalAdmission(listOf(source(), old), nextRedeem, "wallet", "generation")
+    }
+    val successfulRetry =
+      JSONObject(next.toString())
+        .put("status", "finalized")
+        .put("settlement", JSONObject().put("status", "credited"))
+    requireRequestedWithdrawalAdmission(
+      listOf(source(), old, successfulRetry),
+      nextRedeem,
+      "wallet",
+      "generation",
+    )
+    assertFalse(completedReturnLifecycle(old, "wallet", "generation"))
+    assertThrows(Exception::class.java) {
+      requireSequentialSourceCredit(listOf(old), next, "wallet", "other-generation")
+    }
+    for (status in listOf("PROCESSING", "SUCCESS", "FAILED")) {
+      val processing = JSONObject(old.toString())
+      processing.getJSONObject("returnRouteProgress").put("providerRouteStatus", status)
+      assertThrows(Exception::class.java) {
+        requireSequentialSourceCredit(listOf(processing), next, "wallet", "generation")
+      }
+    }
+  }
+
+  @Test
   fun firstDelegationPromptDescribesAndBoundsTheRequestedAmount() {
     val p = source().getJSONObject("proposal")
     val text = requestedWithdrawalReview(p, "500", "1000")
