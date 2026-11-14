@@ -1,17 +1,25 @@
 # Trading and transfers — M4
 
-This reference covers explicit demo-mode journeys with injected mock services.
-These fixtures involve no real credentials, live quotes or on-chain settlement.
-Normal native Deposit/Withdraw and Activity use the separate
-[native signer contract](NATIVE_SIGNER.md); the six-decimal fixture rules below
-do not apply to native MON. Production investment services remain deferred.
-User-facing mock banners remain omitted by the accepted product decision.
+Source reviewed 2026-11-14. This reference preserves M4's historical fixture
+contract, exercised through injected mock services in automated tests. These
+fixtures have no real credentials, live quotes or on-chain settlement. They are
+not normal startup or a production API specification.
+
+Normal Home Receive/Send shows the public Monad USDC address and unsupported direct
+Send. Native Swap uses the [confidential swap contract](../feature-plans/SWAP_ARCHITECTURE.md);
+full-holding sells retain verified USDC proceeds privately, and
+[Withdraw from Gizu](CONFIDENTIAL_WITHDRAWALS.md) is a separate capability-gated
+private payout. Live catalog deposits and saved vault withdrawals use
+[Confidential Earn](CONFIDENTIAL_EARN.md). The explicit testnet debug harness retains
+its [native MON transfer contract](NATIVE_SIGNER_TRANSFERS.md). None uses the fixture
+fee/minimum rules below. User-facing fixture banners remain omitted by product decision.
 
 ## Journeys and ownership
 
-- Home: Deposit and Withdraw. Vault detail: Buy and Sell. The Swap tab retains its
-  animated coming-soon presentation and does not start an order. Activity includes
-  session buy/sell receipts, transfers and pre-existing investment-history fixtures.
+- Fixture Home: Deposit and Withdraw. Fixture vault detail: Buy and Sell. Activity
+  combines fixture operation receipts and pre-existing investment history. The old
+  coming-soon Swap presentation is historical; `MainTabs` now mounts `NativeSwapScreen`,
+  independently from the mock transaction ledger.
 - `domain/transactions.ts` owns decimal parsing, fee math, quote calculation and
   balance/minimum validation. All asset amounts use six-decimal base-unit integers
   carried as strings; no floating-point amounts or chart data authorize an order.
@@ -77,9 +85,9 @@ rewritten as live performance. A failed balance reload is shown separately from 
 confirmed operation and blocks further orders until recovery. Refreshing investment
 history does not overwrite a changed session trading ledger.
 
-Disconnect/restart resets this memory-only mock ledger and operation history. M6
-must replace this with durable account-scoped reconciliation; current dismissal
-support does not promise recovery across app restarts or real network execution.
+Disconnect/restart resets this memory-only mock ledger and operation history.
+Native flows already use separate durable journals; fixture dismissal support does
+not promise recovery across app restarts or real network execution.
 
 ## Deterministic scenarios and tests
 
@@ -97,3 +105,6 @@ quote failure/expiry, rejection/retry, cancellation, pending dismissal, status
 recovery and duplicate prevention. Unit tests check exact rounding and validation;
 mock-adapter integration tests check idempotency and settlement ledger invariants.
 These do not prove biometrics, gestures or on-chain execution.
+
+The test coverage described above is retained implementation evidence, not a report
+that the suite or funded execution was rerun during this documentation review.

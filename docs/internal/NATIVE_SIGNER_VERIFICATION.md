@@ -1,9 +1,15 @@
 # Native signer verification
 
-Historical evidence consolidated on 2026-10-08; no checks were rerun for this edit.
+Historical evidence consolidated on 2026-10-08. Source references reviewed on
+2026-11-14; no native builds, application suites or live/device checks were rerun
+for this documentation review.
 Counts describe the recorded revisions, not current suite totals. Replacement and
 retired signer results are separated because they prove different boundaries.
-Current architecture: [signer overview](NATIVE_SIGNER.md). Setup:
+Later dated Earn/withdrawal evidence is maintained in
+[Confidential Earn](CONFIDENTIAL_EARN.md) and
+[confidential withdrawals](CONFIDENTIAL_WITHDRAWALS.md#recorded-verification).
+These records do not establish full iOS/Android parity or independent security
+acceptance. Current architecture: [signer overview](NATIVE_SIGNER.md). Setup:
 [local development](../app-guide/MOBILE_LOCAL_DEVELOPMENT.md).
 
 ## Stored-wallet implementation evidence

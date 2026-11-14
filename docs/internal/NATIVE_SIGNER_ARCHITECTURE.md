@@ -2,50 +2,62 @@
 
 **Complexity: 2 — Technical.** [Signer overview](NATIVE_SIGNER.md).
 
-Extracted from the signer reference on 2026-10-08. This split preserves the
-recorded implementation details; it is not a new device, provider or security
-verification. See [dated verification evidence](NATIVE_SIGNER_VERIFICATION.md).
+Reviewed against maintained native and TypeScript source on 2026-11-14. This is a
+source description, not a new device, provider or security verification. See
+[dated verification evidence](NATIVE_SIGNER_VERIFICATION.md).
 
-**Version note:** the sections below describe the original version-1 backup.
-The current [TypeScript contract](../../mobile/src/domain/wallet/storedSigner.ts)
-declares backup version 2. Consult current native codecs before making format or
-compatibility assumptions; the historical details below are not a v2 specification.
+## Stored-wallet boundary
 
-## Stored-wallet replacement boundary
+`GizuStoredSigner` is the active Expo module, with Swift/Kotlin integration and a
+shared Rust wallet/policy core. The retained `modules/gizu-signer` is excluded from
+Android/iOS autolinking. Legacy JavaScript adapters under
+`src/development/legacySigner` are inactive; app composition never chooses them.
+Rebuild installed binaries after changing native registration.
 
-The retained `modules/gizu-signer` implementation is disconnected from the app
-and excluded from Android/iOS autolinking. No legacy lookup or fallback remains
-in application access or diagnostic entry points. Existing installed binaries
-require rebuilding to remove the old native registration. Legacy JavaScript adapters
-are retained under `src/development/legacySigner`; normal wallet composition requires
-a stored-wallet identity and never selects these adapters.
+Android wallet eligibility requires Android 9/API 28 and an Activity. The library
+itself compiles with minSdk 24; that does not lower runtime eligibility. iOS wallet
+access requires iOS 18+, and Release additionally requires the signed
+`GizuWalletEnabled` flag. Storage, passkey access, verified backup, exact testnet
+transfers, swaps and public portfolio reads exist on both platforms. Android also
+advertises wallet recovery/discovery and the full guarded Earn deposit, funding,
+private payout, partial withdrawal and confidential cashout capabilities. iOS
+advertises Earn wallets and Ethereum vault execution; other Earn execution flags
+are false or absent. Always check capabilities for each operation.
 
-The replacement is named `GizuStoredSigner`; its versioned public contract is
-`src/domain/wallet/storedSigner.ts`. Android and iOS 18+ development builds implement native
-storage, passkey create/open, verified backup/restore and exact transfers in
-`modules/gizu-stored-signer`.
-Only backup-verified wallets enter app sessions. Other platforms are unsupported;
-normal startup remains native-only. The isolated testnet transfer diagnostic uses the replacement operation journal.
-Normal Home reads Monad mainnet USDC; that view does not grant mainnet transfer authority.
+Only backup-verified `ready` wallets enter app sessions. Other states are `absent`,
+`backupRequired` and `recoveryRequired`. Native owns credentials, secret material,
+file selection, backup verification and financial approval. JavaScript requests
+proposals and receives public metadata/status, never raw signed bytes or secrets.
+`lock` revokes authority while retaining storage and broadcast evidence. Android's
+`cancelWalletOperation` cancels feature work/spending authority while retaining a
+valid shared private-read grant; explicit lock also clears that grant.
 
-The contract provides wallet states (absent, backupRequired, ready, recoveryRequired),
-native create/open/backup/restore ceremonies and operation execute/status/resume/
-cancel methods. Only ready wallets expose account metadata for app sessions;
-backup-required wallets cannot fund or transact. Native code owns file selection,
-backup plaintext, secret material and approval. Resume checks the operation
-revision, reconciles first and obtains fresh native authorization. `lock` ends
-authority without deleting wallet storage or broadcast evidence. Native failures
-will use sanitized errors; no key material, raw signed bytes or file contents cross
-the app bridge.
+## Identity and derivation
 
-The replacement storage namespace is `io.gizu.storedwallet.v1`; backup format
-`gizu-stored-wallet` version 1; derivation `gizu-stored-evm-v1`; recovery PRF salt
-is SHA-256 of UTF-8 `gizu.stored-wallet.recovery-prf.v1`. These identities are distinct
-from the preserved signer. RP remains gizu.io. Random 32-byte wallet entropy uses
-English BIP-39, empty passphrase and m/44'/60'/0'/0/i for indices 0–15. Account 0
-remains the app account. The registered passkey authorizes locally stored-wallet
-use; PRF encrypts backups rather than determining wallet addresses.
+- Storage namespace: `io.gizu.storedwallet.v1`; RP: `gizu.io`.
+- Backup format: `gizu-stored-wallet`; both native writers emit version 3 and read
+  versions 1–3. TypeScript's `storedSignerIdentity.backupVersion` still says 2;
+  this is a source-contract discrepancy, not the current codec specification.
+- Derivation identity: `gizu-stored-evm-v1`; recovery PRF salt is SHA-256 of UTF-8
+  `gizu.stored-wallet.recovery-prf.v1`.
+- Random 32-byte entropy uses English BIP-39, empty passphrase and
+  `m/44'/60'/0'/0/i`. The exact MON transfer API limits indices to 0–15; the
+  allocation registry supports additional public receiving indices. Account 0 is
+  the app account, Account 1 public funding and Account 2 shared private USDC.
+- Public recipients start at index 3, allocated monotonically and persisted before
+  use. Swap allocation reserves blocks of three for 1–5 selected recipients;
+  Earn may reserve individual withdrawal recipients.
+- Original Earn cycle roles use `m/44'/60'/143'/{chainId}'/{role}`. Later cycles use
+  `m/44'/60'/144'/{chainId}'/{cycleIndex * 3 + role}`. Distribution investment
+  slots use `m/44'/60'/145'/{chainId}'/{cycleIndex * 8 + slot}`, slots 0–4.
+  Chains 1 and 4663 are distinct. New cycles persist `privateAccount: "shared"`
+  and use Account 2 for private cash; legacy identities and saved operations keep
+  their original bindings.
 
-Storage, passkey authorization, verified onboarding backup and transfer/resume are
-implemented; see [the migration plan](SIGNER_MIGRATION.md). No old state or provider passkeys
-are deleted or migrated. Web wallet sharing and physical iOS acceptance are deferred.
+Passkeys authorize use of randomly generated local entropy; PRF encrypts backups
+and does not determine addresses. Old signer state/provider passkeys are neither
+deleted nor migrated. Home's Monad mainnet portfolio does not expand the separate
+chain-10143 MON transfer policy. Mainnet operations use their own native policies.
+Android encrypted recovery sync can restore authenticated allocation/journal
+metadata after entropy restore; a backup alone does not recover local history.
+Web wallet sharing and lost-passkey recovery remain deferred.

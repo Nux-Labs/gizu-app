@@ -27,14 +27,14 @@ Implementation internals and investigations belong in
 
 Each guide follows prerequisites → steps → expected result → troubleshooting.
 
-| Guide                                                   | Purpose                                                                        |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| [Mobile local development](MOBILE_LOCAL_DEVELOPMENT.md) | Run iOS and Android development builds, including Android over USB.            |
-| [Backend deployment](BACKEND_DEPLOYMENT.md)             | Render runtime, provider configuration, release checks and backend operations. |
-| [AWS backend deployment](AWS_BACKEND_DEPLOYMENT.md)     | Build backend images from GitHub, configure ECS/RDS, and release manually.      |
-| [Android signing](ANDROID_SIGNING.md)                   | Local Android signing and certificate association setup.                       |
-| [Passkey configuration](PASSKEY_CONFIGURATION.md)       | App identity, relying-party domain and platform configuration.                 |
-| [Passkey hosting](PASSKEY_HOSTING.md)                   | Frontend hosting and deployment of domain association files.                   |
+| Guide                                                   | Purpose                                                                           |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [Mobile local development](MOBILE_LOCAL_DEVELOPMENT.md) | Run iOS and Android development builds, including Android over USB.               |
+| [Backend deployment](BACKEND_DEPLOYMENT.md)             | Shared runtime/provider configuration, release checks and legacy Render settings. |
+| [AWS backend deployment](AWS_BACKEND_DEPLOYMENT.md)     | Build backend images from GitHub, configure ECS/RDS, and release manually.        |
+| [Android signing](ANDROID_SIGNING.md)                   | Local Android signing and certificate association setup.                          |
+| [Passkey configuration](PASSKEY_CONFIGURATION.md)       | App identity, relying-party domain and platform configuration.                    |
+| [Passkey hosting](PASSKEY_HOSTING.md)                   | Publish canonical association files through the host serving the RP domain.       |
 
 ## Project entry points
 
@@ -42,5 +42,6 @@ Each guide follows prerequisites → steps → expected result → troubleshooti
 - [Frontend README](../../frontend/README.md): web app and token discovery setup.
 - [Repository README](../../README.md): repository overview and shared entry points.
 
-Passkey and local-development instructions were checked against source on
-2026-10-08. This is not a live deployment or device verification record.
+Production API: `https://api.gizu.io`. Deployment guides describe repository
+configuration and operator procedures; they do not establish live cloud, DNS,
+signed-artifact or device state.

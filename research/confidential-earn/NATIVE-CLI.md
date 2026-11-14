@@ -1,3 +1,14 @@
+> Scope reviewed 2026-11-14: this file documents the isolated research CLI and
+> dated experiments. Its 10/90 payouts, 70/30 test budgets, full-exit gas/residual
+> rules and separate confidential keys do not define current Android behavior.
+> Current app contracts are [Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md),
+> [requested withdrawals/refunds](../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
+> and [native Earn](../../docs/internal/NATIVE_SIGNER_EARN.md). Android now uses
+> algorithm-selected investment slots, shared Account-2 private cash and read access,
+> requested partial Robinhood exits, and saved terminal return/refund evidence.
+> iOS has narrower execution capabilities. Recorded hashes, amounts and test counts
+> below remain historical; no live probes or native builds were run for this review.
+
 # Native earn commands
 
 **Completed Ethereum mainnet cycle:** the revised Fusion order filled, wallet 2 deposited **1.084570 USDC**, redeemed all old/new shares for **1.218730 USDC**, and returned **1.268730 USDC + 0.000678997020223204 ETH** through separate Aurora intents. Both intents report SUCCESS; authenticated private credit is **3.081997 Monad-asset USDC**. Final wallet-2 balances are **zero ETH, USDC, WETH and shares**, meeting both residual targets. Wallet 1's ETH and USDC match its pre-test balances. No second Fusion purchase, helper, wallet-to-wallet transfer or joint destination transaction was used. [Mainnet evidence](fixtures/ethereum-mainnet-cycle.json).
@@ -12,7 +23,7 @@ The fee/disclosure changes passed 108 unit/regression tests, including a regress
 
 The native flow is now available in this experiment's CLI. It buys native ETH with Fusion only when needed, deposits into the existing vault, redeems, returns USDC to Aurora, then returns remaining ETH through a separate ETH-to-confidential-USDC quote. No helper contract, shared application fee, inter-wallet transfer, or joint destination order is introduced.
 
-**Wallet 2 only.** The source funding and separate 20/80 payout commands are unchanged. The old `vault-*` commands still use Circle; use `native-*` for this flow. Wallet 1's funds are untouched.
+**Wallet 2 only.** The legacy 20/80 amounts remain in historical evidence; current `splitSourceBudget` and route commands use 10/90. The old `vault-*` commands still use Circle; use `native-*` for this flow. Wallet 1's funds are untouched.
 
 ## Resolver pricing after the two expired orders
 
@@ -35,7 +46,7 @@ Verification: `npm test` and `node --env-file=.env scripts/fusion-economics-lab.
 
 Run from `research/confidential-earn` with Node >=22 and `npm ci`. Keep `.env` and `.local/` private. The existing Aurora/routing state must identify the same destination addresses, confidential account, and USDC assets as `.env`.
 
-Required existing settings: `DEST2_ADD`, `DEST2_PK`, `DEST1_ADD`, `SOURCE_ADD`, `AURORA_API_KEY`. Add `ONEINCH_API_KEY`. `ETHEREUM_RPC_URL` must be Ethereum mainnet and support historical state for the fresh local fork. `ANVIL_PATH` is the path to Anvil (tested with 1.8.3); if unset, `anvil` must be on PATH.
+Native-only settings are `DEST2_ADD`, `DEST2_PK`, `DEST1_ADD`, `SOURCE_ADD`, `AURORA_API_KEY` and `ONEINCH_API_KEY`. Source funding/payout commands additionally require `SOURCE_PK`, `DEST1_PK` and `PIMLICO_API_KEY`. `ETHEREUM_RPC_URL`, when supplied, must be Ethereum mainnet and support historical state for the fresh local fork; the default is `https://ethereum-rpc.publicnode.com`. `ANVIL_PATH` is the path to Anvil (tested with 1.8.3); if unset, `anvil` must be on PATH.
 
 The simulator spawns a temporary Anvil node on loopback, pins the selected mainnet block, executes the exact call sequence using local impersonation, and shuts it down. The simulator never receives the private key. It does not mutate mainnet or use fixed-dollar gas allowances.
 
@@ -99,4 +110,4 @@ Run `npm test` for unit/regression tests. Run `scripts/native-cli-lab.mjs` with 
 
 No mainnet transaction or signed order was submitted while implementing these commands.
 
-Verification recorded for this integration: **74 unit/regression tests passed**; full CLI fork execution ended with zero ETH/USDC/shares/WETH and remained pending until both mocked Aurora statuses became successful. An unsigned live withdrawal preview succeeded at block **26,082,501**; see [native-live-preview.json](fixtures/native-live-preview.json). The existing wallet still held prior vault shares at that read, so a new deposit is intentionally refused until those shares are withdrawn. The native journal remains uncreated in the user's workspace; only isolated test journals were used.
+Verification recorded for this integration: **74 unit/regression tests passed**; full CLI fork execution ended with zero ETH/USDC/shares/WETH and remained pending until both mocked Aurora statuses became successful. An unsigned live withdrawal preview succeeded at block **26,082,501**; see [native-live-preview.json](fixtures/native-live-preview.json). At that earlier checkpoint the wallet still held prior vault shares and the legacy native context refused a new deposit. The later `ethereum` profile explicitly binds the approved old-share baseline, as recorded in [MAINNET-TEST.md](MAINNET-TEST.md). The native journal was uncreated at the original integration checkpoint; subsequent mainnet journals are historical evidence and must not be inferred absent today.

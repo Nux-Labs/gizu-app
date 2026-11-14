@@ -1,10 +1,23 @@
-# Native wallet specification: confidential balance and Aurora Intent distribution
+# Historical native wallet prototype specification: confidential balance and distribution
 
-Updated: 25 September 2026.
+Research baseline: 25 September 2026. This document describes the isolated
+`research/combined-wallet-prototype`, not the active app in [`mobile/`](../mobile/README.md).
+The fixed six-account signer, temporary RP domain and entropy-only file backup
+remain prototype constraints. The active stored-wallet app has its own native
+allocation, execution journals and encrypted remote recovery; see
+[native signer](../docs/internal/NATIVE_SIGNER.md),
+[Confidential Earn](../docs/internal/CONFIDENTIAL_EARN.md) and
+[wallet discovery/recovery](../docs/internal/WALLET_DISCOVERY_RECOVERY.md).
+The proposed extensions below are historical requirements, not unfinished-work
+instructions for today's app. Dated provider/funded-run evidence remains unchanged.
 
-**Decision:** continue the shielding and distribution prototype using our own [combined wallet prototype](combined-wallet-prototype/README.md). Wallet creation, account derivation, operation authorization, signing and encrypted backup/restore belong to the native wallet engine inside the React Native app. Aurora Intent is the intended routing integration for the next research stage.
+**Historical decision:** continue the shielding and distribution prototype using our own [combined wallet prototype](combined-wallet-prototype/README.md). Wallet creation, account derivation, operation authorization, signing and encrypted backup/restore belong to the native wallet engine inside the React Native app. Aurora Intent is the intended routing integration for the next research stage.
 
-**Current baseline:** the combined Android app contains the signing module and native recovery flow. The user has confirmed that the signing module is ready for the next research step. This revision was checked against the checked-in source and README; it does not report a new device test or security audit. Confidential-balance and Aurora adapters are still to be implemented and verified.
+**Prototype baseline:** the combined Android experiment contains the fixed signing
+module and native recovery flow. Its source has no confidential-balance/Aurora
+integration. Those proposed extensions were the next research stage in September;
+the active mobile module is a separate implementation. This source review does
+not report a new device test or security audit.
 
 **Protocol baseline:** the earlier research has been recovered and the [confidential balance and distribution specification](outputs/confidential-balance-distribution-spec.md) revised for our native wallet. It preserves the Monad USDC → confidential account C → Ethereum USDC investment-wallet flow, allocation contract and Aurora-hosted quote/generate/submit path. The [endpoint verification note](outputs/aurora-signed-spending-verification.md) records evidence from 22 September 2026. A standalone 25 September mainnet test funded C from Monad and settled three confidential payouts to Ethereum; a corrected proof later authenticated C through Aurora and reconciled its 0.098009 USDC residual. Provider history is invite-only; refundable failures and Android wallet integration remain open.
 
@@ -12,14 +25,14 @@ Updated: 25 September 2026.
 
 The Earn app needs one user identity to manage a funding wallet, a confidential-balance signer, multiple investment wallets and fresh return wallets. A teammate's allocation algorithm will propose how many investment wallets to use and the amount for each. An investment or withdrawal may need more than twelve signatures at different times as routing and settlement complete.
 
-| # | Requirement | Implementation contract |
-| --- | --- | --- |
-| 1 | One identity controls all derived wallets | One native wallet manages account allocation and authorization without wallet switching or a separate passkey per account. |
-| 2 | One unlock, many signatures | One native intent confirmation and passkey authentication authorize a bounded operation. Subsequent signatures may occur after delays while that authorization remains valid. |
-| 3 | No wallet secrets exposed to the frontend | Wallet entropy, private keys, PRF output and backup plaintext stay outside React Native JavaScript. Any confidential spending/viewing secrets must follow the same boundary. |
-| 4 | User control and independent access | Normal signing requires no company cosigner. Users need recoverable wallet and protocol state plus an independently usable access path. |
-| 5 | No direct public ownership link | Do not publish a shared passkey owner, root wallet identifier or registry joining all accounts. Distinct addresses alone do not guarantee transaction anonymity. |
-| 6 | One usable interface across intended platforms | Mobile uses the app and OS authentication sheet. Android is the current implementation; iOS and web require separate work. |
+| #   | Requirement                                    | Implementation contract                                                                                                                                                       |
+| --- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | One identity controls all derived wallets      | One native wallet manages account allocation and authorization without wallet switching or a separate passkey per account.                                                    |
+| 2   | One unlock, many signatures                    | One native intent confirmation and passkey authentication authorize a bounded operation. Subsequent signatures may occur after delays while that authorization remains valid. |
+| 3   | No wallet secrets exposed to the frontend      | Wallet entropy, private keys, PRF output and backup plaintext stay outside React Native JavaScript. Any confidential spending/viewing secrets must follow the same boundary.  |
+| 4   | User control and independent access            | Normal signing requires no company cosigner. Users need recoverable wallet and protocol state plus an independently usable access path.                                       |
+| 5   | No direct public ownership link                | Do not publish a shared passkey owner, root wallet identifier or registry joining all accounts. Distinct addresses alone do not guarantee transaction anonymity.              |
+| 6   | One usable interface across intended platforms | The prototype implements Android only. It does not establish the active mobile app's iOS capabilities or a web secret-isolation design.                                       |
 
 **Economic constraint:** normal signing runs locally, avoiding a hosted signing fee per signature. Gas, protocol fees, RPC, development, maintenance and audits still cost money.
 
@@ -33,11 +46,11 @@ The native engine generates independent 32-byte wallet entropy with `SecureRando
 
 The entropy, registered passkey data, public accounts and operation journal are stored in an encrypted native state file using AES-GCM and an Android Keystore key. That key has `setUserAuthenticationRequired(false)`: passkey verification gates operations in native application code. This is software policy enforcement, not hardware-enforced passkey access to the seed. See [EncryptedWalletStore](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/EncryptedWalletStore.kt).
 
-The current six accounts are test accounts. Funding, investment, return and confidential-account roles have not yet been assigned or implemented. Extending account allocation must preserve existing derivation paths and persist newly allocated indices; it must not silently replace the wallet root or reuse an allocated return address.
+The prototype's six accounts are test accounts. Funding, investment, return and confidential-account roles have not yet been assigned or implemented. Extending account allocation must preserve existing derivation paths and persist newly allocated indices; it must not silently replace the wallet root or reuse an allocated return address.
 
 ### 2.2 Operation authorization and signing
 
-The current native operation is deliberately fixed:
+The prototype's native operation is deliberately fixed:
 
 - Chain ID 31337; six owned EVM accounts.
 - Twelve self-transfers: six zero-wei transfers followed by six one-wei transfers.
@@ -55,18 +68,18 @@ The native recovery screen requires explicit confirmation and a fresh passkey as
 
 Restoration requires the encrypted file and access to the original passkey. The native engine decrypts the backup and reconstructs the same six addresses under local Keystore protection. The backup exposes format/version, RP ID, credential ID and passkey public key; wallet addresses and entropy are not plaintext fields. See [RecoveryActivity](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/RecoveryActivity.kt) and [RecoveryBackupCodec](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/RecoveryBackupCodec.kt).
 
-The current backup excludes operation history. Restore deliberately creates an empty journal, so it cannot resume a distribution lost with the original device's data. Second-phone recovery is not reported as tested in the README. The test RP uses a temporary tunnel; durable recovery needs a stable domain and maintained app association. These limitations must be addressed as the wallet gains protocol balances and dynamically allocated accounts.
+The prototype backup excludes operation history. Restore deliberately creates an empty journal, so it cannot resume a distribution lost with the original device's data. Second-phone recovery is not reported as tested in the README. The test RP uses a temporary tunnel; durable recovery needs a stable domain and maintained app association. These limitations must be addressed as the wallet gains protocol balances and dynamically allocated accounts.
 
 ## 3. Responsibility boundaries for the next stage
 
-| Component | Responsibility |
-| --- | --- |
-| React Native interface | Present balances, proposed allocations and progress; request typed native operations. Receive public accounts, operation views and redacted errors/evidence. |
-| Native wallet engine | Own entropy and account allocation, verify passkey assertions, display the actual approval, enforce policy, sign and persist execution state. |
-| Native confidential-balance adapter — to build | Implement C’s NEAR/FAR Confidential Intents account identity and ERC-191 authorization, balance access and deposit recognition through the selected Aurora gateway, without exposing secret material through JavaScript. |
-| `ConfidentialIntentsGateway` — to build | Use Aurora-hosted authentication, balance/history, quote, generate-intent, submit-intent and status APIs. Bind routes to approved recipients and limits, and track settlement. Maintain one C account and reconciliation model per user. |
-| Allocation algorithm | Propose wallet count and amounts. It receives no signing authority; native code validates its result. |
-| App backend, if needed | Support orchestration or access to provider APIs. It must not become the owner of wallet secrets or an implicit mandatory cosigner. Record any provider availability or credential dependencies. |
+| Component                                      | Responsibility                                                                                                                                                                                                                           |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| React Native interface                         | Present balances, proposed allocations and progress; request typed native operations. Receive public accounts, operation views and redacted errors/evidence.                                                                             |
+| Native wallet engine                           | Own entropy and account allocation, verify passkey assertions, display the actual approval, enforce policy, sign and persist execution state.                                                                                            |
+| Native confidential-balance adapter — to build | Implement C’s NEAR/FAR Confidential Intents account identity and ERC-191 authorization, balance access and deposit recognition through the selected Aurora gateway, without exposing secret material through JavaScript.                 |
+| `ConfidentialIntentsGateway` — to build        | Use Aurora-hosted authentication, balance/history, quote, generate-intent, submit-intent and status APIs. Bind routes to approved recipients and limits, and track settlement. Maintain one C account and reconciliation model per user. |
+| Allocation algorithm                           | Propose wallet count and amounts. It receives no signing authority; native code validates its result.                                                                                                                                    |
+| App backend, if needed                         | Support orchestration or access to provider APIs. It must not become the owner of wallet secrets or an implicit mandatory cosigner. Record any provider availability or credential dependencies.                                         |
 
 The [existing React Native bridge](combined-wallet-prototype/specs/NativeWallet.ts) exposes wallet status, test-wallet creation, public accounts, recovery-screen opening, operation preparation/authorization/execution/status/cancellation and redacted evidence. It exposes no generic `signDigest`, private-key export or arbitrary-calldata signing method.
 
@@ -123,7 +136,7 @@ Vault deposits and later withdrawals remain downstream integrations. Fresh retur
 
 ## 5. Authorization policy required by those flows
 
-The current fixed transfer policy must be extended to a versioned operation manifest containing at least:
+The prototype's fixed transfer policy would need extension to a versioned operation manifest containing at least:
 
 - Operation ID, revision, action, creation time, authorization expiry and overall deadline.
 - Owned funding/confidential account references and allocated recipient indices/addresses.
@@ -141,18 +154,18 @@ Extend the journal to reserve, submit, reconcile and settle each allocation exac
 
 Preserve the existing rule: save the exact signed EVM transaction before broadcasting and reconcile its hash/nonce after an interruption. For confidential spending and intent requests, determine and persist the equivalent protocol identifiers, replay protections and status queries. Do not assume a new request is safe because the previous request timed out.
 
-| Situation | Required behavior |
-| --- | --- |
-| App restart or expired session, local state intact | Restore allocations and progress, reconcile unknown outcomes and request another unlock before new signatures. |
-| Route expires before execution | Requote within the approved constraints or require revised approval; reconcile any prior submission first. |
-| Some recipients settle and others remain pending | Preserve completed allocations and resume only unresolved work after reconciliation. |
-| Wallet restored after device/data loss | Recover or reconstruct confidential-account metadata, allocated indices, positions and pending spending state before enabling new spending. The current entropy-only recovery payload is insufficient for this workflow. |
-| Company backend unavailable | Wallet keys remain locally controlled. Document a usable alternative for any required provider credentials, discovery or orchestration; local signing alone does not supply it. |
-| Protocol, provider or chain unavailable | Preserve pending state and show the unresolved dependency. Recovery cannot force an unavailable protocol to settle. |
+| Situation                                          | Required behavior                                                                                                                                                                                                            |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App restart or expired session, local state intact | Restore allocations and progress, reconcile unknown outcomes and request another unlock before new signatures.                                                                                                               |
+| Route expires before execution                     | Requote within the approved constraints or require revised approval; reconcile any prior submission first.                                                                                                                   |
+| Some recipients settle and others remain pending   | Preserve completed allocations and resume only unresolved work after reconciliation.                                                                                                                                         |
+| Wallet restored after device/data loss             | Recover or reconstruct confidential-account metadata, allocated indices, positions and pending spending state before enabling new spending. The prototype's entropy-only recovery payload is insufficient for this workflow. |
+| Company backend unavailable                        | Wallet keys remain locally controlled. Document a usable alternative for any required provider credentials, discovery or orchestration; local signing alone does not supply it.                                              |
+| Protocol, provider or chain unavailable            | Preserve pending state and show the unresolved dependency. Recovery cannot force an unavailable protocol to settle.                                                                                                          |
 
 Extend encrypted recovery metadata with versioned derivation/role allocation, confidential identity and any required recovery secrets, plus the information needed to discover positions and reconcile outstanding operations. Define how stale backups catch up safely; restoring keys must not reset spent protocol nonces or silently replay an old distribution. Any sensitive payload stays native and encrypted outside the device.
 
-A user-held encrypted file plus the original passkey is the current recovery mechanism. Passkey sync alone cannot recreate independent wallet entropy. Independent recovery also needs a tested access path for RP/app continuity and protocol access; those requirements remain beyond the current test backup flow.
+A user-held encrypted file plus the original passkey is this prototype's recovery mechanism. Passkey sync alone cannot recreate independent wallet entropy. Independent recovery also needs a tested access path for RP/app continuity and protocol access; those requirements remain beyond the current test backup flow.
 
 ## 7. Privacy requirements
 
@@ -162,20 +175,20 @@ Shielding must be evaluated separately from splitting funds. Common gas funding,
 
 The next research report must state who can observe the funding account, confidential account, balance, recipients and allocation mapping at each step: public chain observers, the app operator, routing providers and the user. Record findings from actual payloads and transactions rather than assuming unlinkability from distinct addresses.
 
-## 8. Next research deliverables and acceptance criteria
+## 8. Historical research deliverables and acceptance criteria
 
-The signing module is the starting point for this phase. The next work is to establish the concrete confidential-balance and Aurora Intent integration, then extend the combined prototype against that contract.
+The signing module is the starting point for this phase. The proposed September work was to establish the concrete confidential-balance and Aurora Intent integration, then extend the combined prototype against that contract. This table is not a current mobile release checklist.
 
-| Research deliverable | Required evidence |
-| --- | --- |
+| Research deliverable                 | Required evidence                                                                                                                                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Authenticated environment validation | Use the existing Aurora-only API design and Monad USDC → C → Ethereum USDC route target. Confirm project credentials, supported exact asset IDs, liquidity and current schema compatibility. Endpoint discovery is already recorded; funded execution is still unproven. |
-| Native signer compatibility | Exact key type, derivation, serialization, message domain and signature verification for every deposit/spending/intent action. Confirm any public linkage introduced by key registration. |
-| Shielding path | Trace a funded account through authorized submission to a verified credit in the intended confidential account, with amounts and fees reconciled. |
-| Distribution path | Trace authorized confidential spending through Aurora routing to receipts in multiple owned accounts; reconcile totals, fees, remaining funds and refunds. |
-| Policy enforcement | Reject modified recipients, excess debits/fees/allowances, unsupported targets, expired requests, replay and concurrent overspending. Confirm secrets stay outside the RN bridge. |
-| Interrupted execution | Demonstrate expiry, termination, network loss, unknown submission outcomes and partial settlement without duplicate deposits or payouts. |
-| Recovery | Extend the backup for new accounts/protocol state and demonstrate second-device recovery and reconciliation, including a stale-backup case. |
-| Privacy assessment | Capture public transaction fields and provider-visible request fields; identify links that remain visible. |
+| Native signer compatibility          | Exact key type, derivation, serialization, message domain and signature verification for every deposit/spending/intent action. Confirm any public linkage introduced by key registration.                                                                                |
+| Shielding path                       | Trace a funded account through authorized submission to a verified credit in the intended confidential account, with amounts and fees reconciled.                                                                                                                        |
+| Distribution path                    | Trace authorized confidential spending through Aurora routing to receipts in multiple owned accounts; reconcile totals, fees, remaining funds and refunds.                                                                                                               |
+| Policy enforcement                   | Reject modified recipients, excess debits/fees/allowances, unsupported targets, expired requests, replay and concurrent overspending. Confirm secrets stay outside the RN bridge.                                                                                        |
+| Interrupted execution                | Demonstrate expiry, termination, network loss, unknown submission outcomes and partial settlement without duplicate deposits or payouts.                                                                                                                                 |
+| Recovery                             | Extend the backup for new accounts/protocol state and demonstrate second-device recovery and reconciliation, including a stale-backup case.                                                                                                                              |
+| Privacy assessment                   | Capture public transaction fields and provider-visible request fields; identify links that remain visible.                                                                                                                                                               |
 
 Keep existing signing and recovery behavior as regression requirements while adding adapters. Record device/OS/provider/build configuration, prompt counts, operation IDs and independently checked outcomes for new integration tests. A successful local transfer demo is not evidence that shielding or intent settlement works.
 
@@ -183,16 +196,19 @@ Production work still includes stable RP infrastructure, independently usable re
 
 ## 9. Local implementation reference
 
-| Artifact | Use |
-| --- | --- |
-| [Combined prototype README](combined-wallet-prototype/README.md) | Build instructions, current scope and recovery limitations. |
-| [Native bridge contract](combined-wallet-prototype/specs/NativeWallet.ts) | Existing public methods and returned operation/account views. |
-| [Wallet engine](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/WalletEngine.kt) | Entropy creation, account/state persistence, sessions and transfer execution. |
-| [Wallet Core signer](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/WalletCoreSigner.kt) | Actual derivation paths and restricted EVM signing support. |
-| [Operation rules](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/OperationRules.kt) | Fixed batches and delayed-step authorization. |
-| [Passkey gate](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/PasskeyGate.kt) / [verifier](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/PasskeyVerifier.kt) | Registration/assertions, challenge binding and native verification. |
-| [Native recovery UI](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/RecoveryActivity.kt) | User confirmation and encrypted file import/export. |
-| [Backup codec](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/RecoveryBackupCodec.kt) / [PRF protocol](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/RecoveryPrfProtocol.kt) | Versioned encrypted entropy backup and native PRF handling. |
-| [Encrypted store](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/EncryptedWalletStore.kt) | Local AES-GCM/Keystore storage boundary. |
+| Artifact                                                                                                                                                                                                                                      | Use                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Combined prototype README](combined-wallet-prototype/README.md)                                                                                                                                                                              | Build instructions, current scope and recovery limitations.                   |
+| [Native bridge contract](combined-wallet-prototype/specs/NativeWallet.ts)                                                                                                                                                                     | Existing public methods and returned operation/account views.                 |
+| [Wallet engine](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/WalletEngine.kt)                                                                                                                               | Entropy creation, account/state persistence, sessions and transfer execution. |
+| [Wallet Core signer](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/WalletCoreSigner.kt)                                                                                                                      | Actual derivation paths and restricted EVM signing support.                   |
+| [Operation rules](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/OperationRules.kt)                                                                                                                           | Fixed batches and delayed-step authorization.                                 |
+| [Passkey gate](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/PasskeyGate.kt) / [verifier](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/PasskeyVerifier.kt)                 | Registration/assertions, challenge binding and native verification.           |
+| [Native recovery UI](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/RecoveryActivity.kt)                                                                                                                      | User confirmation and encrypted file import/export.                           |
+| [Backup codec](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/RecoveryBackupCodec.kt) / [PRF protocol](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/RecoveryPrfProtocol.kt) | Versioned encrypted entropy backup and native PRF handling.                   |
+| [Encrypted store](combined-wallet-prototype/android/app/src/main/java/com/walletsigningprototype/EncryptedWalletStore.kt)                                                                                                                     | Local AES-GCM/Keystore storage boundary.                                      |
 
-Related protocol artifacts: [confidential balance and distribution specification, v0.8](outputs/confidential-balance-distribution-spec.md) and [Aurora signed-spending evidence](outputs/aurora-signed-spending-verification.md). The detailed specification is the implementation contract for allocation fields, quote configuration, per-allocation state machines, accounting, gas readiness and settlement evidence; this document establishes the native wallet baseline and integration boundaries.
+Related protocol artifacts: [confidential balance and distribution specification, v0.10](outputs/confidential-balance-distribution-spec.md) and [Aurora signed-spending evidence](outputs/aurora-signed-spending-verification.md). The detailed specification records the historical proposed allocation, quote,
+accounting, gas-readiness and settlement contract for this research stage. Current
+mobile behavior is defined by the stored-signer source and the active internal
+references linked above.

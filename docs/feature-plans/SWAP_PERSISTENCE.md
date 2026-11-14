@@ -1,6 +1,6 @@
 # Swap persistence and recovery boundaries
 
-**Complexity:** 3. **Status:** implemented reference. **Source review:** 2026-10-08.
+**Complexity:** 3. **Status:** implemented reference. **Source review:** 2026-11-14.
 Companion to [Swap architecture](SWAP_ARCHITECTURE.md). Limits below describe the
 inspected files, not a new cross-platform storage guarantee.
 
@@ -24,12 +24,12 @@ Both active stores use `gizu-swap-<journalId>.enc` and authenticated context bin
 `gizu-swap:v1:<walletId>:<journalId>`. They require the existing local encryption key.
 Missing keys or invalid envelopes are errors, not an instruction to create a new wallet.
 
-| Detail                  | Android                                                                                        | iOS                                                           |
-| ----------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Envelope                | Version, wallet/operation IDs, funding address, core state, history and optional funding batch | Version, wallet/operation IDs, funding address and core state |
-| Core state string bound | 900,000 characters                                                                             | 900,000 characters                                            |
-| File read/size bound    | 33,554,432 bytes                                                                               | 1,048,576 bytes on read                                       |
-| Extra orchestration     | Child source operations, reservations and combined review scope                                | Single active core operation in inspected wrapper             |
+| Detail                  | Android                                                                                        | iOS                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Envelope                | Version, wallet/operation IDs, funding address, core state, history and optional funding batch | Version, wallet/operation IDs, funding address and core state    |
+| Core state string bound | 67,108,864 UTF-16 code units (`String.length`)                                                 | 67,108,864 UTF-8 bytes                                           |
+| File read/size bound    | 268,435,456 bytes                                                                              | 268,435,456 bytes; save checks clear envelope size plus 32 bytes |
+| Extra orchestration     | Child source operations, reservations and combined review scope                                | Single active core operation in inspected wrapper                |
 
 See [Android store](../../mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/swap/SwapStore.kt)
 and [iOS store](../../mobile/modules/gizu-stored-signer/ios/Swap/SwapStore.swift).
@@ -60,16 +60,16 @@ recording its response must remain recoverable as an uncertain outcome.
 
 ## Recovery by interruption point
 
-| Interruption                              | Preserved evidence                                   | Required behavior                                                                        |
-| ----------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Before approval                           | Unsigned plan/quotes and allocated indices           | Revalidate/review; do not assume allocation can be reused elsewhere                      |
-| After signing, before known submit result | Signed request and saved step                        | Inspect receipt/status; never construct a duplicate simply because the response was lost |
-| During source credit wait                 | Funding quote/submission evidence                    | Check route credit separately from source receipt                                        |
-| Some payouts/orders completed             | Per-leg state and signatures                         | Reconcile individual legs and remaining amounts; do not restart the whole buy            |
-| App process ended                         | Encrypted machine, without live seed                 | Restore state; fresh unlock is required when signing needs authority                     |
-| User cancelled                            | Cancelled state and previous submissions             | Stop future signatures; cancellation does not revoke prior transactions                  |
-| Operation expired                         | Saved plan and financial evidence                    | Reconcile then use a supported recovery path; retry does not extend lifetime             |
-| Wallet restored on another installation   | Recovered wallet/registry subject to backup contents | New local journal generation; do not claim old in-flight execution history was restored  |
+| Interruption                              | Preserved evidence                                                | Required behavior                                                                         |
+| ----------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Before approval                           | Unsigned plan/quotes and allocated indices                        | Revalidate/review; do not assume allocation can be reused elsewhere                       |
+| After signing, before known submit result | Signed request and saved step                                     | Inspect receipt/status; never construct a duplicate simply because the response was lost  |
+| During source credit wait                 | Funding quote/submission evidence                                 | Check route credit separately from source receipt                                         |
+| Some payouts/orders completed             | Per-leg state, signatures and private-sale inbound-credit records | Reconcile individual legs and operation-bound credits; do not restart the whole operation |
+| App process ended                         | Encrypted machine, without live seed                              | Restore state; fresh unlock is required when signing needs authority                      |
+| User cancelled                            | Cancelled state and previous submissions                          | Stop future signatures; cancellation does not revoke prior transactions                   |
+| Operation expired                         | Saved plan and financial evidence                                 | Reconcile then use a supported recovery path; retry does not extend lifetime              |
+| Wallet restored on another installation   | Recovered wallet/registry subject to backup contents              | New local journal generation; do not claim old in-flight execution history was restored   |
 
 Core `restore` imports state with `seed: None`. A matching wallet unlock can restore
 in-memory authority within policy, but cannot change the plan's 24-hour lifetime.
@@ -85,10 +85,14 @@ proof that provider reconciliation occurred. See [failure handling](../internal/
 The portfolio store tracks token contracts and completed/cancelled summaries
 independently of the active operation. Its encryption context also binds wallet
 and journal generation. A successful balance read is evidence of holdings, not a
-reconstruction of every historical trade or its approved terms.
+reconstruction of every historical trade or its approved terms. Summaries preserve
+`completionTarget` and `privateCreditedAtoms`; private sales must not be rendered
+as a public Monad return. The saved core contains each sale inbound's Aurora quote,
+verified Fusion transaction hashes and authenticated credit, so restart can reconcile
+private completion without allocating public recipients or signing a replacement sale.
 
 [Shared holdings policy](../../mobile/modules/gizu-stored-signer/core/src/swap_holdings.rs)
-selects allocated accounts and sell batches. An unfinished operation should be
+selects allocated accounts, full-token holder sets and legacy sell batches. An unfinished operation should be
 preserved instead of overwritten. The temporary unfinished-buy recovery scans a
 bounded recent allocation range (up to 60 recipients) for USDG; it is not an
 unlimited indexer and cannot prove that no funds exist outside that range.
@@ -115,6 +119,9 @@ evidence, with their own availability and retention limits.
 - Partial Android batch completion preserves child records and reservations.
 - Process restart restores no reusable approval authority; stale responses cannot advance cancelled work.
 - Changed quote requires appropriate review; expiry cannot be extended by retry.
+- Full-holding private sales preserve frozen holders and verified per-inbound credits,
+  including large/partial holder sets, without allocating public recipients.
+- Legacy public-return plans retain their original completion behavior and history fields.
 - Wallet restore/holdings discovery does not fabricate transaction history.
 
 This list is acceptance guidance for future changes, not a report that all listed

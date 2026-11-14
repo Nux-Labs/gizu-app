@@ -1,6 +1,18 @@
 # Confidential balance, investment-wallet distribution and destination transfer
 
-Version: 0.10 · 27 September 2026 · Engineering specification
+Version: 0.10 · 27 September 2026 · Historical research specification
+
+This is the proposed contract for the standalone September experiments and combined
+Android prototype. It is not the active stored-wallet app's execution or recovery
+specification. Fixed 30/30/40 allocations, six-account signing limits, file-only
+backup and the Earn A1 → A3 handoff belong to that research scope. The active app
+uses a separate native signer with versioned allocations, journals and encrypted
+remote recovery. See [native signer](../../docs/internal/NATIVE_SIGNER.md),
+[Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md),
+[trading](../../docs/internal/TRADING.md) and
+[wallet discovery/recovery](../../docs/internal/WALLET_DISCOVERY_RECOVERY.md).
+Dated provider and financial evidence below is retained unchanged; it does not
+establish current availability, fees or mobile release acceptance.
 
 Wallet baseline: our [combined Android wallet prototype](../combined-wallet-prototype/README.md). Aurora provider findings below retain the evidence recorded on 22 September 2026. A separate EOA/Circle Paymaster transaction was executed on Arbitrum Sepolia on 25 September 2026. The standalone mainnet run funded C from a zero-MON Monad EOA and settled three confidential Aurora payouts to Ethereum on 25 September 2026. A corrected ownership proof then read and reconciled C's 0.098009 USDC residual through Aurora. The A1 → A3 transfer was not sent because A1's allocation was below Circle's maximum gas prefund.
 
@@ -20,16 +32,16 @@ The app must support partial execution, recovery after app termination or sessio
 
 Verified Aurora API base: `https://intents-api.aurora.dev`.
 
-| Capability | Published Aurora endpoint / behavior |
-|---|---|
-| Authenticate C | `POST /api/auth/authenticate/{apiKey}`; supports `erc191` |
-| Refresh read session | `POST /api/auth/refresh/{apiKey}` |
-| Read private balances | `GET /api/account/balances/{apiKey}` with user bearer token |
-| Read private history | `GET /api/account/history/{apiKey}` with user bearer token; the tested account currently receives HTTP 400 `History is invite-only for now` |
-| Quote funding or spending | `POST /api/quote/{apiKey}` with `CONFIDENTIAL_INTENTS` channel fields |
-| Generate spending payload | `POST /api/generate-intent/{apiKey}`; found in official source and published package, verified live request validation |
-| Submit signed spending payload | `POST /api/submit-intent/{apiKey}`; same evidence |
-| Track quote | `GET /api/status/{apiKey}`; confidential response contains status only |
+| Capability                     | Published Aurora endpoint / behavior                                                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authenticate C                 | `POST /api/auth/authenticate/{apiKey}`; supports `erc191`                                                                                   |
+| Refresh read session           | `POST /api/auth/refresh/{apiKey}`                                                                                                           |
+| Read private balances          | `GET /api/account/balances/{apiKey}` with user bearer token                                                                                 |
+| Read private history           | `GET /api/account/history/{apiKey}` with user bearer token; the tested account currently receives HTTP 400 `History is invite-only for now` |
+| Quote funding or spending      | `POST /api/quote/{apiKey}` with `CONFIDENTIAL_INTENTS` channel fields                                                                       |
+| Generate spending payload      | `POST /api/generate-intent/{apiKey}`; found in official source and published package, verified live request validation                      |
+| Submit signed spending payload | `POST /api/submit-intent/{apiKey}`; same evidence                                                                                           |
+| Track quote                    | `GET /api/status/{apiKey}`; confidential response contains status only                                                                      |
 
 **Correction to v0.1:** the documentation index omitted these operations, but Aurora's official widget source and published npm package 7.24.0 call `/api/generate-intent/{apiKey}` and `/api/submit-intent/{apiKey}` on `https://intents-api.aurora.dev`. Both production routes returned operation-specific HTTP 400 validation errors for deliberately empty unsigned requests; a nonexistent control route returned HTTP 404. The generate validator explicitly accepts `erc191`. The missing-endpoint gap is closed. [S12–S14]
 
@@ -41,29 +53,33 @@ Aurora's quote schema explicitly requires a signed transfer intent to fund a `CO
 
 Implement one internal `ConfidentialIntentsGateway`. Business logic never calls provider endpoints directly. Maintain one C account and one reconciliation model per user; do not build independent Aurora and NEAR balances.
 
-| Deployment option | Decision |
-|---|---|
+| Deployment option                           | Decision                                                                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | All intent/account API calls through Aurora | Selected design: quote, generate, local sign, submit, status, authentication and balance reads; history is currently invite-only |
-| Direct 1Click integration | Not required to fill the endpoint gap; retain only as an explicitly chosen future alternative |
+| Direct 1Click integration                   | Not required to fill the endpoint gap; retain only as an explicitly chosen future alternative                                    |
 
 Keep quote generation, payload generation, submission and status on Aurora. The standalone test proved account authentication, private balance access and asset mapping for its C signer. The Android native adapter and private history access still need separate validation. Do not reproduce the widget's public Intents settlement watcher as a substitute for confidential status/history reconciliation.
 
-Use a small REST adapter plus our native wallet engine. Extend the current fixed EVM self-transfer signer with validated source-token transfers and a native ERC-191 confidential-account signer; those adapters are not yet implemented. Installing Aurora's full widget is not required: its package contains NEAR/Defuse dependencies and additional public-chain behavior that this embedded-account flow need not import. Correct intent serialization/signature encoding still needs tested tooling. A separate NEAR wallet, named NEAR account, direct 1Click API client or full NEAR wallet SDK is not required by the verified endpoint flow. NEAR/FAR remains the underlying protocol dependency. [S10, S12–S14]
+The research design called for a small REST adapter plus the combined prototype's
+native wallet engine. That isolated fixed EVM self-transfer signer has no validated
+source-token or ERC-191 confidential-account adapters. The active mobile module
+implements its own constrained operations; use its current internal references
+rather than treating these prototype extensions as today's backlog. Installing Aurora's full widget is not required: its package contains NEAR/Defuse dependencies and additional public-chain behavior that this embedded-account flow need not import. Correct intent serialization/signature encoding still needs tested tooling. A separate NEAR wallet, named NEAR account, direct 1Click API client or full NEAR wallet SDK is not required by the verified endpoint flow. NEAR/FAR remains the underlying protocol dependency. [S10, S12–S14]
 
 **Release gate:** prove both funding C and spending/refunding C before enabling real-money funding. Balance access alone is insufficient.
 
 ## 3. Accounts, asset identity and responsibility
 
-| Item | Ownership / responsibility |
-|---|---|
-| F | Owned source funding account derived by the native wallet engine |
-| C | Distinct native wallet signing identity controlling the private ledger balance; its derivation and protocol account mapping must be versioned and verified |
-| A1…AN | Fresh investment accounts allocated from the same independent wallet root by the native engine |
-| Account registry | Native encrypted derivation indices, roles, chain, operation and addresses, covered by the extended recovery format |
-| Allocation algorithm | Teammate-owned wallet-count and amount calculation |
-| Orchestrator | Application requests and displays progress; native code validates allocations, owns account/budget reservations and enforces execution authority |
-| Gateway | Provider APIs, schema normalization, credential handling and capability checks |
-| Native signer | Validates account ownership proofs, spending intents, destination EIP-7702 authorizations, USDC permits and user operations; signs within a passkey-authorized operation; no wallet secrets enter React Native JavaScript |
+| Item                 | Ownership / responsibility                                                                                                                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F                    | Owned source funding account derived by the native wallet engine                                                                                                                                                          |
+| C                    | Distinct native wallet signing identity controlling the private ledger balance; its derivation and protocol account mapping must be versioned and verified                                                                |
+| A1…AN                | Fresh investment accounts allocated from the same independent wallet root by the native engine                                                                                                                            |
+| Account registry     | Native encrypted derivation indices, roles, chain, operation and addresses, covered by the extended recovery format                                                                                                       |
+| Allocation algorithm | Teammate-owned wallet-count and amount calculation                                                                                                                                                                        |
+| Orchestrator         | Application requests and displays progress; native code validates allocations, owns account/budget reservations and enforces execution authority                                                                          |
+| Gateway              | Provider APIs, schema normalization, credential handling and capability checks                                                                                                                                            |
+| Native signer        | Validates account ownership proofs, spending intents, destination EIP-7702 authorizations, USDC permits and user operations; signs within a passkey-authorized operation; no wallet secrets enter React Native JavaScript |
 
 C is an Intents account identifier, not an Ethereum USDC balance. Resolve its implicit ECDSA account identifier using the supported account model. Do not register the funding wallet as a public common owner of A1…AN. Use unique derivation indices per role and operation; never send the root or private keys to the backend. [S10, W1–W3]
 
@@ -71,7 +87,7 @@ Maintain exact identifiers for source-chain USDC, the credited confidential toke
 
 All monetary values are integer strings in token base units. Convert display decimals exactly; never use floating-point arithmetic. USDC examples assume six decimals only after metadata verification.
 
-### Current native baseline and required extensions
+### Combined prototype baseline and proposed extensions
 
 The combined Android app generates 32-byte entropy independently of the passkey and derives six EVM accounts at `m/44'/60'/0'/0/{index}`, indices 1–6, using Trust Wallet Core 4.8.3. The existing policy permits only twelve zero/one-wei self-transfers on chain 31337, with a delayed second batch. It persists signed transactions before broadcast. It does not yet sign ERC-20 transfers, ERC-191 protocol messages, EIP-7702 authorizations, EIP-2612 permits, ERC-4337 user operations or arbitrary destination routes. The signing module is the accepted starting point; this revision makes no new device-test claim. [W1–W2]
 
@@ -104,15 +120,15 @@ The funded run initially used a narrower temporary rule after an HTTP 401: a con
 
 Funding quote configuration:
 
-| Field | Value |
-|---|---|
-| `depositType` | `ORIGIN_CHAIN` |
-| `recipientType` | `CONFIDENTIAL_INTENTS` |
-| `recipient` | C |
-| `refundType` | `ORIGIN_CHAIN` |
-| `refundTo` | F |
-| `swapType` | `EXACT_INPUT` for the authorized source funding amount |
-| `confidentiality` | Explicitly `advanced`; never omitted or `public` |
+| Field             | Value                                                  |
+| ----------------- | ------------------------------------------------------ |
+| `depositType`     | `ORIGIN_CHAIN`                                         |
+| `recipientType`   | `CONFIDENTIAL_INTENTS`                                 |
+| `recipient`       | C                                                      |
+| `refundType`      | `ORIGIN_CHAIN`                                         |
+| `refundTo`        | F                                                      |
+| `swapType`        | `EXACT_INPUT` for the authorized source funding amount |
+| `confidentiality` | Explicitly `advanced`; never omitted or `public`       |
 
 Both non-public enum values are documented as confidential execution. This prototype selects `advanced` to match Aurora's current confidential swap example. Aurora and NEAR do not publish a precise difference between `basic` and `advanced`; do not infer extra amount masking, delays or batch behavior from the name. [S4]
 
@@ -134,30 +150,30 @@ Recommended packaging: a pure module running client-side, receiving amounts and 
 
 ### Request contract
 
-| Field | Meaning |
-|---|---|
-| `requestId` | Stable identifier for this planning request |
-| `sourceAsset` | Exact confidential quote asset ID and decimals |
-| `destinationAsset` | Destination chain, token contract, quote asset ID and decimals |
-| `availableSourceAtoms` | Reconciled available amount after existing app commitments |
-| `maxTotalSourceDebitAtoms` | User-approved maximum debit for the entire operation |
-| `requestedAmountAtoms` | Requested distributable amount, interpreted by `amountBasis` |
-| `amountBasis` | `SOURCE_INPUT` or `DESTINATION_OUTPUT`; mandatory |
-| `constraints` | Supported wallet-count range, route minima/maxima when known, fee cap, gas provision budget, slippage limit and operation expiry |
-| `quoteFeedback` | Optional structured infeasibility/cost information for a revised plan |
+| Field                      | Meaning                                                                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `requestId`                | Stable identifier for this planning request                                                                                      |
+| `sourceAsset`              | Exact confidential quote asset ID and decimals                                                                                   |
+| `destinationAsset`         | Destination chain, token contract, quote asset ID and decimals                                                                   |
+| `availableSourceAtoms`     | Reconciled available amount after existing app commitments                                                                       |
+| `maxTotalSourceDebitAtoms` | User-approved maximum debit for the entire operation                                                                             |
+| `requestedAmountAtoms`     | Requested distributable amount, interpreted by `amountBasis`                                                                     |
+| `amountBasis`              | `SOURCE_INPUT` or `DESTINATION_OUTPUT`; mandatory                                                                                |
+| `constraints`              | Supported wallet-count range, route minima/maxima when known, fee cap, gas provision budget, slippage limit and operation expiry |
+| `quoteFeedback`            | Optional structured infeasibility/cost information for a revised plan                                                            |
 
 ### Response contract
 
-| Field | Meaning |
-|---|---|
-| `algorithmVersion` | Version of teammate's allocation logic |
-| `planId` | Unique, persistable plan identity |
-| `walletCount` | Number of destination wallets N |
-| `amountBasis` | Same meaning as request |
-| `allocations[]` | `{ allocationId, walletSlot, amountAtoms }` |
-| `unallocatedAtoms` | Amount intentionally left unallocated, in the plan's amount basis |
-| `validUntil` | Latest time this plan can start execution |
-| `decision` | `EXECUTABLE` or `INFEASIBLE`, with machine-readable reason when infeasible |
+| Field              | Meaning                                                                    |
+| ------------------ | -------------------------------------------------------------------------- |
+| `algorithmVersion` | Version of teammate's allocation logic                                     |
+| `planId`           | Unique, persistable plan identity                                          |
+| `walletCount`      | Number of destination wallets N                                            |
+| `amountBasis`      | Same meaning as request                                                    |
+| `allocations[]`    | `{ allocationId, walletSlot, amountAtoms }`                                |
+| `unallocatedAtoms` | Amount intentionally left unallocated, in the plan's amount basis          |
+| `validUntil`       | Latest time this plan can start execution                                  |
+| `decision`         | `EXECUTABLE` or `INFEASIBLE`, with machine-readable reason when infeasible |
 
 V1 has one USDC allocation per wallet: wallet slots are exactly `0…N-1`, each used once. Gas routes are separate child operations and do not alter this count. If a later algorithm requires multiple USDC intents for one wallet, version the contract explicitly.
 
@@ -197,17 +213,17 @@ C is authenticated and reconciled; a working signed-spend provider path is enabl
 
 Payout quote configuration:
 
-| Field | Value |
-|---|---|
-| `depositType` | `CONFIDENTIAL_INTENTS` |
-| `recipientType` | `DESTINATION_CHAIN` |
-| `recipient` | Ai, allocated by our native account registry |
-| `refundType` | `CONFIDENTIAL_INTENTS` |
-| `refundTo` | C |
-| `originAsset` | Validated quote asset corresponding to C's spendable token |
-| `destinationAsset` | Exact target-chain USDC asset |
-| `amount` / `swapType` | Derived from algorithm amount basis |
-| `confidentiality` | Explicitly `advanced`, matching the funding quote |
+| Field                 | Value                                                      |
+| --------------------- | ---------------------------------------------------------- |
+| `depositType`         | `CONFIDENTIAL_INTENTS`                                     |
+| `recipientType`       | `DESTINATION_CHAIN`                                        |
+| `recipient`           | Ai, allocated by our native account registry               |
+| `refundType`          | `CONFIDENTIAL_INTENTS`                                     |
+| `refundTo`            | C                                                          |
+| `originAsset`         | Validated quote asset corresponding to C's spendable token |
+| `destinationAsset`    | Exact target-chain USDC asset                              |
+| `amount` / `swapType` | Derived from algorithm amount basis                        |
+| `confidentiality`     | Explicitly `advanced`, matching the funding quote          |
 
 For this source type, quote `depositAddress` denotes an internal account to fund by signed intent. Do not send an ERC-20 transaction to it. [S4, S8]
 
@@ -257,20 +273,20 @@ The Swap page lets the user exchange Monad USDC for one asset from a curated Rob
 
 ### Target set
 
-| Group | Members | Admission rule |
-|---|---|---|
-| Direct | ETH, WETH, USDe, USDG from Aurora's `hood` token registry | Aurora lists the asset and a confidential payout quote succeeds at the planned amount. CASHCAT and PONS are listed by Aurora but excluded as memecoins. |
+| Group        | Members                                                                                    | Admission rule                                                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direct       | ETH, WETH, USDe, USDG from Aurora's `hood` token registry                                  | Aurora lists the asset and a confidential payout quote succeeds at the planned amount. CASHCAT and PONS are listed by Aurora but excluded as memecoins.                                                                             |
 | Stock Tokens | Active assets from `GET https://api.robinhood.com/rhj/assets` with a chain 4663 deployment | Onchain `symbol`/`decimals` match the API. A 1inch USDG → stock quote at `LIQUIDITY_REFERENCE_USDG` (default 1000 USDG) must have a price impact of at most `MAX_PRICE_IMPACT_BPS` (default 100 bps) against a 10 USDG probe quote. |
 
 Price impact is `1 − reference rate / probe rate`, in basis points; a reference rate at or above the probe rate counts as zero. The `assets` command pins the evaluated set, with its timestamp and skip reasons, to the ignored `.local/robinhood-assets.json`. `prepare` rechecks the liquidity rule for a stock target before any source transaction is signed, and the live 1inch quote at swap time remains authoritative. Whether a given user may hold or trade Stock Tokens, and during which trading sessions, is a product and legal decision outside this specification. The runner records the API's `tradingCapabilities` but does not enforce them.
 
 ### Route types
 
-| Route | Aurora payout to Ai | Action by Ai | Gas for Ai |
-|---|---|---|---|
-| `direct` | The target asset itself | None | None needed to receive |
-| `usdg_then_swap` | Robinhood USDG | One ERC-4337 UserOperation: USDG `approve` to the 1inch v6 router, then the router swap to the target | Ai's own USDG through the Pimlico ERC-20 paymaster, with Ai kept as an EOA through an EIP-7702 delegation |
-| `usdg_then_fusion` | Robinhood USDG | Two off-chain signatures: an EIP-2612 USDG permit for the 1inch Limit Order Protocol and a 1inch Fusion order | None. A resolver submits the fill and pays ETH; the cost is priced into the Dutch auction |
+| Route              | Aurora payout to Ai     | Action by Ai                                                                                                  | Gas for Ai                                                                                                |
+| ------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `direct`           | The target asset itself | None                                                                                                          | None needed to receive                                                                                    |
+| `usdg_then_swap`   | Robinhood USDG          | One ERC-4337 UserOperation: USDG `approve` to the 1inch v6 router, then the router swap to the target         | Ai's own USDG through the Pimlico ERC-20 paymaster, with Ai kept as an EOA through an EIP-7702 delegation |
+| `usdg_then_fusion` | Robinhood USDG          | Two off-chain signatures: an EIP-2612 USDG permit for the 1inch Limit Order Protocol and a 1inch Fusion order | None. A resolver submits the fill and pays ETH; the cost is priced into the Dutch auction                 |
 
 Stock Tokens always use `usdg_then_swap` or `usdg_then_fusion`, because Aurora does not list them. An ERC-20 direct target other than USDG can use it too, with `ROUTE=usdg_then_swap`; this matters for WETH, which does not quote directly at the 10 USDC cap. The swap happens in Ai, not in C, so the asset purchase is always a public Robinhood transaction by Ai.
 
@@ -301,13 +317,13 @@ Fusion's cost appears as a worse rate, not as a gas payment. At the sub-dollar s
 
 ### Transaction-by-transaction privacy
 
-| Step | Visible on public chains | Aurora / NEAR | Gizu backend | Paymaster, bundler, 1inch |
-|---|---|---|---|---|
-| F → deposit address (Monad USDC, F's UserOperation) | F sends an amount to a 1Click deposit address, and the USDC gas fee | F, the amount and C as recipient | Everything it relays | Pimlico sees F's UserOperation |
-| Credit C on `intents.far` | Nothing beyond the Monad deposit | C's private credit | Everything it relays | — |
-| C → Ai payout (USDG or direct target on Robinhood) | A settlement address sends an amount to Ai at a time | The C → Ai mapping | Everything it relays | — |
-| Ai swap (`usdg_then_swap` only) | Ai's approval and swap, the USDG gas fee and the asset now held by Ai | — | Everything it relays | Pimlico sees Ai's UserOperation; 1inch sees Ai's quote request |
-| Ai Fusion fill (`usdg_then_fusion` only) | A resolver's transaction that spends Ai's permit and moves USDG out of and the target into Ai. The transaction's `from` is the resolver, and Ai sends no transaction | — | Everything it relays | The 1inch relayer and every resolver see Ai's signed order before the fill |
+| Step                                                | Visible on public chains                                                                                                                                             | Aurora / NEAR                    | Gizu backend         | Paymaster, bundler, 1inch                                                  |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------- | -------------------------------------------------------------------------- |
+| F → deposit address (Monad USDC, F's UserOperation) | F sends an amount to a 1Click deposit address, and the USDC gas fee                                                                                                  | F, the amount and C as recipient | Everything it relays | Pimlico sees F's UserOperation                                             |
+| Credit C on `intents.far`                           | Nothing beyond the Monad deposit                                                                                                                                     | C's private credit               | Everything it relays | —                                                                          |
+| C → Ai payout (USDG or direct target on Robinhood)  | A settlement address sends an amount to Ai at a time                                                                                                                 | The C → Ai mapping               | Everything it relays | —                                                                          |
+| Ai swap (`usdg_then_swap` only)                     | Ai's approval and swap, the USDG gas fee and the asset now held by Ai                                                                                                | —                                | Everything it relays | Pimlico sees Ai's UserOperation; 1inch sees Ai's quote request             |
+| Ai Fusion fill (`usdg_then_fusion` only)            | A resolver's transaction that spends Ai's permit and moves USDG out of and the target into Ai. The transaction's `from` is the resolver, and Ai sends no transaction | —                                | Everything it relays | The 1inch relayer and every resolver see Ai's signed order before the fill |
 
 What this does and does not provide:
 
@@ -368,12 +384,12 @@ Aurora's published widget source and npm package 7.24.0 call the production `/ap
 
 ### 25 September — USDC-paid gas tests before mainnet routing
 
-| Network and check | Observed result |
-|---|---|
-| Ethereum Sepolia, no-key Pimlico ERC-20 Paymaster, EIP-7702 EOA and EntryPoint v0.8 | SOURCE started with 20 test USDC and 0 ETH. It sent 1 test USDC to DEST1; the paymaster charged 0.735409 test USDC. SOURCE ended with 18.264591 test USDC and 0 ETH. [Transaction](https://sepolia.etherscan.io/tx/0x3531cd07961f183da0ff4cd971b6c2f53d2d46f1d0b8f746a84a9ac3674ecf06); UserOperation `0x5eee78f53e27b6580f0e0aeb4e6250c30b3bd2022f8abcf2d7c5db2734bc0042`. Preview and signed maximum gas charges were 1.740856 and 1.549274 test USDC, under the script's 2 USDC ceiling. This proves the no-key *testnet* path only. |
-| Monad testnet, public Pimlico endpoint | EntryPoint v0.8 and paymaster contract existed, but `pimlico_getTokenQuotes` returned no quote for canonical testnet USDC. No funded USDC-paid operation was possible there. |
-| Robinhood testnet, Thru | The published Robinhood *mainnet* addresses had no code on testnet. No verified Thru testnet deployment was found; unpublished addresses cannot be ruled out. `https://thru.family/docs/` returned 404 in this check. |
-| Arbitrum Sepolia, Circle Paymaster with EIP-7702 | A zero-ETH EOA sent 0.01 test USDC and paid 0.023702 test USDC net gas, preserving its EOA address. [Transaction](https://sepolia.arbiscan.io/tx/0x765d8458dfcd3f4e1e7f9b3d3c3893bae7cf5f9b19ad5438a76dc901c67e8b84). This verifies the mechanism on Arbitrum Sepolia, not on Ethereum mainnet. |
+| Network and check                                                                   | Observed result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ethereum Sepolia, no-key Pimlico ERC-20 Paymaster, EIP-7702 EOA and EntryPoint v0.8 | SOURCE started with 20 test USDC and 0 ETH. It sent 1 test USDC to DEST1; the paymaster charged 0.735409 test USDC. SOURCE ended with 18.264591 test USDC and 0 ETH. [Transaction](https://sepolia.etherscan.io/tx/0x3531cd07961f183da0ff4cd971b6c2f53d2d46f1d0b8f746a84a9ac3674ecf06); UserOperation `0x5eee78f53e27b6580f0e0aeb4e6250c30b3bd2022f8abcf2d7c5db2734bc0042`. Preview and signed maximum gas charges were 1.740856 and 1.549274 test USDC, under the script's 2 USDC ceiling. This proves the no-key _testnet_ path only. |
+| Monad testnet, public Pimlico endpoint                                              | EntryPoint v0.8 and paymaster contract existed, but `pimlico_getTokenQuotes` returned no quote for canonical testnet USDC. No funded USDC-paid operation was possible there.                                                                                                                                                                                                                                                                                                                                                            |
+| Robinhood testnet, Thru                                                             | The published Robinhood _mainnet_ addresses had no code on testnet. No verified Thru testnet deployment was found; unpublished addresses cannot be ruled out. `https://thru.family/docs/` returned 404 in this check.                                                                                                                                                                                                                                                                                                                   |
+| Arbitrum Sepolia, Circle Paymaster with EIP-7702                                    | A zero-ETH EOA sent 0.01 test USDC and paid 0.023702 test USDC net gas, preserving its EOA address. [Transaction](https://sepolia.arbiscan.io/tx/0x765d8458dfcd3f4e1e7f9b3d3c3893bae7cf5f9b19ad5438a76dc901c67e8b84). This verifies the mechanism on Arbitrum Sepolia, not on Ethereum mainnet.                                                                                                                                                                                                                                         |
 
 ### 25 September — funded Monad → confidential C → three Ethereum payouts
 
@@ -381,11 +397,11 @@ The source wallet began with 9.807581 USDC and 0 MON. The runner capped its sele
 
 The funding quote expected 9.800873 USDC in C and guaranteed a 9.702864 USDC minimum. Aurora's initial ERC-191 `auth/authenticate` call returned HTTP 401 (`Signature verification failed`). That proof used `intents.far` and a random nonce without the required timestamps. At the time of payout, private balance and history could not be read. The test conservatively spent only the quote minimum, split by **source amount** 30/30/40 across three child payouts; it did not claim exact 3/3/4 destination receipts. The generated payout payloads named the `intents.far` confidential verifier and an `imt:<shard-id>:<quote-asset-id>` token. All three signed intents were accepted and reached `SUCCESS`.
 
-| Destination | Public Ethereum USDC receipt | Native ETH |
-|---|---:|---:|
-| A1 | [2.303576 USDC](https://etherscan.io/tx/0x8a043dfad059c6904b5e3cf5ae62eb15f87931940fec110645048564521aa569) | 0 |
-| A2 | [2.303576 USDC](https://etherscan.io/tx/0x2c407a151041523216b1e78f6d23e08028b4ccb605923ee45dfc6b52b45de42b) | 0 |
-| A3 | [3.271435 USDC](https://etherscan.io/tx/0x5522268c236f7803c5b31f1537ca1e60777f7801f99855ced83097d92d811a5d) | 0 |
+| Destination |                                                                                Public Ethereum USDC receipt | Native ETH |
+| ----------- | ----------------------------------------------------------------------------------------------------------: | ---------: |
+| A1          | [2.303576 USDC](https://etherscan.io/tx/0x8a043dfad059c6904b5e3cf5ae62eb15f87931940fec110645048564521aa569) |          0 |
+| A2          | [2.303576 USDC](https://etherscan.io/tx/0x2c407a151041523216b1e78f6d23e08028b4ccb605923ee45dfc6b52b45de42b) |          0 |
+| A3          | [3.271435 USDC](https://etherscan.io/tx/0x5522268c236f7803c5b31f1537ca1e60777f7801f99855ced83097d92d811a5d) |          0 |
 
 Each receipt is a public destination-chain transfer and the point where its allocation leaves the confidential balance. An Etherscan label such as “NEAR Intents” names underlying settlement infrastructure; it does not by itself show whether the private signed spend was exposed. Neither this test nor the provider documentation establishes absolute unlinkability against timing and amount analysis.
 
@@ -405,17 +421,17 @@ These are **two separate endpoints with different access results**. The authenti
 
 These checks back the [Robinhood swap destination](#6a-swap-destination--robinhood-assets). Nothing was signed or broadcast. No Aurora, Pimlico or 1inch API key was configured, so these are the results available without keys.
 
-| Check | Observed result |
-|---|---|
-| Chain | Public RPC `https://rpc.mainnet.chain.robinhood.com` returned chain ID 4663, matching the [Robinhood connection docs](https://docs.robinhood.com/chain/connecting/). |
-| 4337 / 7702 contracts | Code is deployed at EntryPoint v0.8 (`0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108`), viem's Simple7702 v0.8 implementation (`0xe6Cae83BdE06E4c305530e199D7217f42808555B`), the Pimlico ERC-20 paymaster (`0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402`) and the 1inch v6 router (`0x111111125421cA6dc452d289314280a0f8842A65`). Circle's v0.8 paymaster has no code on 4663. |
-| Pimlico bundler | `https://public.pimlico.io/v2/4663/rpc` lists EntryPoint v0.8 among its supported entry points. |
-| **Pimlico USDG gas quote** | **`pimlico_getTokenQuotes` returned an empty list for USDG (`0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`), and for WETH and USDe.** The same public request returned a quote for Monad USDC, whose mainnet route was later confirmed with a key. The paymaster contract exists on Robinhood, but no token is currently priced for it there. **The stock route is blocked at its gas step until a USDG-priced ERC-20 paymaster is confirmed.** Per this spec there is no ETH top-up and no app sponsorship fallback. The runner stops before signing when no quote is returned. |
-| Aurora Robinhood assets | The public 1Click registry lists Robinhood (`hood`) USDG `nep141:hood-0x5fc5…d168.omft.near` (6 decimals), ETH `nep141:hood.omft.near`, WETH `nep141:hood-0x0bd7…ad73.omft.near` and USDe `nep141:hood-0x5d3a…ef34.omft.near` (18 decimals), plus CASHCAT and PONS. On chain, `symbol`/`decimals` match for USDG, WETH, USDe and AMZN. |
-| Public-rail dry quotes, Monad USDC → Robinhood | USDG: 3 USDC → 2.913869 USDG, 21 s estimate. WETH: `No liquidity available` at 3 and 20 USDC; quoted at 200 USDC (0.073357 WETH). ETH and USDe: `No liquidity available` at 3, 20 and 200 USDC. These are non-confidential `dry` quotes on the public 1Click endpoint. Confidential Aurora quotes need the Aurora key and are rechecked by `prepare`. |
-| Stock list | `GET https://api.robinhood.com/rhj/assets` returned 195 assets, with contract, 18 decimals, status and per-session `tradingCapabilities`. |
-| Stock liquidity | GeckoTerminal's public pool list for USDG on Robinhood (first 100 pools) shows 99 pools above $100k reserve. Among them: NVDA ($5.7M), META ($5.5M), SPY ($3.9M plus $1.8M), SPCX, CRCL, SGOV and GLD, with most liquidity on Uniswap v3/v4. WETH/USDG holds $33M on Uniswap v4. |
-| 1inch quote | The Robinhood quote API returned HTTP 401/402 without a key. The router is deployed, but USDG → stock quotes and price impact are unverified until `ONEINCH_API_KEY` is set and `assets` runs. |
+| Check                                          | Observed result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Chain                                          | Public RPC `https://rpc.mainnet.chain.robinhood.com` returned chain ID 4663, matching the [Robinhood connection docs](https://docs.robinhood.com/chain/connecting/).                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 4337 / 7702 contracts                          | Code is deployed at EntryPoint v0.8 (`0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108`), viem's Simple7702 v0.8 implementation (`0xe6Cae83BdE06E4c305530e199D7217f42808555B`), the Pimlico ERC-20 paymaster (`0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402`) and the 1inch v6 router (`0x111111125421cA6dc452d289314280a0f8842A65`). Circle's v0.8 paymaster has no code on 4663.                                                                                                                                                                                                     |
+| Pimlico bundler                                | `https://public.pimlico.io/v2/4663/rpc` lists EntryPoint v0.8 among its supported entry points.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Pimlico USDG gas quote**                     | **`pimlico_getTokenQuotes` returned an empty list for USDG (`0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`), and for WETH and USDe.** The same public request returned a quote for Monad USDC, whose mainnet route was later confirmed with a key. The paymaster contract exists on Robinhood, but no token is currently priced for it there. **The stock route is blocked at its gas step until a USDG-priced ERC-20 paymaster is confirmed.** Per this spec there is no ETH top-up and no app sponsorship fallback. The runner stops before signing when no quote is returned. |
+| Aurora Robinhood assets                        | The public 1Click registry lists Robinhood (`hood`) USDG `nep141:hood-0x5fc5…d168.omft.near` (6 decimals), ETH `nep141:hood.omft.near`, WETH `nep141:hood-0x0bd7…ad73.omft.near` and USDe `nep141:hood-0x5d3a…ef34.omft.near` (18 decimals), plus CASHCAT and PONS. On chain, `symbol`/`decimals` match for USDG, WETH, USDe and AMZN.                                                                                                                                                                                                                                         |
+| Public-rail dry quotes, Monad USDC → Robinhood | USDG: 3 USDC → 2.913869 USDG, 21 s estimate. WETH: `No liquidity available` at 3 and 20 USDC; quoted at 200 USDC (0.073357 WETH). ETH and USDe: `No liquidity available` at 3, 20 and 200 USDC. These are non-confidential `dry` quotes on the public 1Click endpoint. Confidential Aurora quotes need the Aurora key and are rechecked by `prepare`.                                                                                                                                                                                                                          |
+| Stock list                                     | `GET https://api.robinhood.com/rhj/assets` returned 195 assets, with contract, 18 decimals, status and per-session `tradingCapabilities`.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Stock liquidity                                | GeckoTerminal's public pool list for USDG on Robinhood (first 100 pools) shows 99 pools above $100k reserve. Among them: NVDA ($5.7M), META ($5.5M), SPY ($3.9M plus $1.8M), SPCX, CRCL, SGOV and GLD, with most liquidity on Uniswap v3/v4. WETH/USDG holds $33M on Uniswap v4.                                                                                                                                                                                                                                                                                               |
+| 1inch quote                                    | The Robinhood quote API returned HTTP 401/402 without a key. The router is deployed, but USDG → stock quotes and price impact are unverified until `ONEINCH_API_KEY` is set and `assets` runs.                                                                                                                                                                                                                                                                                                                                                                                 |
 
 Consequences for the swap runner: USDG is the only direct target that quotes at the 10 USDC test cap. WETH and USDe can use the `usdg_then_swap` route, since both have USDG pools, once a USDG gas paymaster exists. The stock route's code is complete, but its funded run is gated on the Pimlico USDG quote.
 
@@ -423,22 +439,22 @@ Consequences for the swap runner: USDG is the only direct target that quotes at 
 
 The separate [`confidential-swap` runner](../confidential-swap/README.md), a copy of `confidental-routing` that leaves the original unchanged, supports `DESTINATION=robinhood` (its default), `assets` and `swap-preview|send|status|resubmit`. Its 16 unit tests pass: fixed-point swap sizing, the liquidity rule, and acceptance or rejection of 1inch `swap` and `unoswap`/`unoswapTo` calldata. A re-run of the public `pimlico_getTokenQuotes` request again returned `{"quotes":[]}` for Robinhood USDG, while the same request returned a quote for Monad USDC. A local dry run against a synthetic delivered state confirmed the guards below. Each stopped before any signature, and nothing was broadcast.
 
-| Guard | Result |
-|---|---|
-| Swap on a wallet whose USDG differs from its confirmed payout | Rejected |
-| Swap with a destination key that does not match the payout recipient | Rejected |
-| `swap-status` with no signed swap | Rejected |
-| `post-preview` (A1 → A3) on a Robinhood run | Refused as publicly linking |
-| A saved Robinhood run resumed under `DESTINATION=ethereum` | Rejected |
-| Robinhood paymaster setup with an invalid Pimlico key | Stopped at the bundler's HTTP 401, with the key redacted |
+| Guard                                                                | Result                                                   |
+| -------------------------------------------------------------------- | -------------------------------------------------------- |
+| Swap on a wallet whose USDG differs from its confirmed payout        | Rejected                                                 |
+| Swap with a destination key that does not match the payout recipient | Rejected                                                 |
+| `swap-status` with no signed swap                                    | Rejected                                                 |
+| `post-preview` (A1 → A3) on a Robinhood run                          | Refused as publicly linking                              |
+| A saved Robinhood run resumed under `DESTINATION=ethereum`           | Rejected                                                 |
+| Robinhood paymaster setup with an invalid Pimlico key                | Stopped at the bundler's HTTP 401, with the key redacted |
 
 **No funded Robinhood run was executed.** No `.env`, Aurora, Pimlico or 1inch key, or funded source wallet was available to this test. Beyond that, each target is blocked for its own reason:
 
-| Target | Blocker |
-|---|---|
-| AMZN or any stock (`usdg_then_swap`) | Pimlico has no USDG gas quote on Robinhood |
-| WETH (direct) | Needs about 200 USDC of liquidity, above the 10 USDC cap |
-| USDG (direct) | Quotes publicly, but its confidential quotes and funded run are unverified |
+| Target                               | Blocker                                                                    |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| AMZN or any stock (`usdg_then_swap`) | Pimlico has no USDG gas quote on Robinhood                                 |
+| WETH (direct)                        | Needs about 200 USDC of liquidity, above the 10 USDC cap                   |
+| USDG (direct)                        | Quotes publicly, but its confidential quotes and funded run are unverified |
 
 Acceptance criteria 2 and 3 in §6A therefore remained open at that point. The funded runs below closed them.
 
@@ -446,14 +462,14 @@ Acceptance criteria 2 and 3 in §6A therefore remained open at that point. The f
 
 Run with `TARGET=USDG` (direct) through the [`confidential-swap` runner](../confidential-swap/README.md). F held 0 MON throughout and paid Monad gas in USDC through Pimlico's ERC-20 paymaster.
 
-| Step | Evidence |
-|---|---|
-| User funds F | 1.199201 USDC, Monad tx `0xc92259178e7da24f573d6d5a9d9a511f7683ba8ae4a3d72d55a6bfb2e3bf4b66` |
-| F → Aurora deposit address `0xc7e7a6F342D3B4EF26AE17e43A22F77B3dDc610B` | 1.196276 USDC, Monad tx `0x1d01c5c21076436599664276dccec53a80488ba068cf4e13d6716004fc03d25a`; 0.002925 USDC Monad gas cap |
-| C credited on `intents.far` | 1.195797 USDC (authenticated balance) |
-| C → A1 (30%) | 0.358739 USDC in, 0.206883 USDG out, intent `2UbjsqENbR6CPhqv5ZN1P7qBtXtJrUwZLAvTrjZEdmAq`, Robinhood tx `0x8f5a5127b4e7ac1e89174e0ae8695b73bb059b53a5b97dca7a4eed3af2597636` |
-| C → A2 (30%) | 0.358739 USDC in, 0.206883 USDG out, intent `HC4HsfYucJGeYCJVhdyiyP4NGh3QVqrHN1tY4DagcNRH`, Robinhood tx `0x0c34438a492e0dec0fad86e59fbaaeac6a2de915623984659ee3dbfe1e0189bc` |
-| C → A3 (40%) | 0.478319 USDC in, 0.325847 USDG out, intent `Dwiq32XYn8GMgTv7poYyysd5UyC1R8VQBu9AGzfHLjhZ`, Robinhood tx `0x577196e5ebc256248b2182d1f4425f80a3eb82ea07858a9bdf5293e12e38ec97` |
+| Step                                                                    | Evidence                                                                                                                                                                      |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| User funds F                                                            | 1.199201 USDC, Monad tx `0xc92259178e7da24f573d6d5a9d9a511f7683ba8ae4a3d72d55a6bfb2e3bf4b66`                                                                                  |
+| F → Aurora deposit address `0xc7e7a6F342D3B4EF26AE17e43A22F77B3dDc610B` | 1.196276 USDC, Monad tx `0x1d01c5c21076436599664276dccec53a80488ba068cf4e13d6716004fc03d25a`; 0.002925 USDC Monad gas cap                                                     |
+| C credited on `intents.far`                                             | 1.195797 USDC (authenticated balance)                                                                                                                                         |
+| C → A1 (30%)                                                            | 0.358739 USDC in, 0.206883 USDG out, intent `2UbjsqENbR6CPhqv5ZN1P7qBtXtJrUwZLAvTrjZEdmAq`, Robinhood tx `0x8f5a5127b4e7ac1e89174e0ae8695b73bb059b53a5b97dca7a4eed3af2597636` |
+| C → A2 (30%)                                                            | 0.358739 USDC in, 0.206883 USDG out, intent `HC4HsfYucJGeYCJVhdyiyP4NGh3QVqrHN1tY4DagcNRH`, Robinhood tx `0x0c34438a492e0dec0fad86e59fbaaeac6a2de915623984659ee3dbfe1e0189bc` |
+| C → A3 (40%)                                                            | 0.478319 USDC in, 0.325847 USDG out, intent `Dwiq32XYn8GMgTv7poYyysd5UyC1R8VQBu9AGzfHLjhZ`, Robinhood tx `0x577196e5ebc256248b2182d1f4425f80a3eb82ea07858a9bdf5293e12e38ec97` |
 
 Findings:
 
@@ -465,11 +481,11 @@ Findings:
 
 `fusion-preview`, `fusion-send` and `fusion-status` sold each Ai's full USDG receipt for AMZN (`0x12f190a9F9d7D37a250758b26824B97CE941bF54`) with the `fast` preset (180 s auction, no partial fills). Before the live send, the permit builder reproduced the `DOMAIN_SEPARATOR` of USDG and AMZN, and simulated `permit` with a throwaway key. The SDK's order extension carried the permit byte for byte. Unit tests: 18 pass, including acceptance and rejection of Fusion orders by maker, receiver, tokens, amount, minimum, permit and expiry.
 
-| Wallet | USDG sold | Market quote | Auction start → end | Received AMZN | Fill tx and block | Resolver (`from`) |
-|---|---|---|---|---|---|---|
-| A3 | 0.325847 | 0.001285400 | 0.001049742 → 0.000979045 | 0.001050207 (18.3% below market) | `0xff460c67290adf055977a36b878218b5d9a8554cc6812e0fd8cea1971e956537`, 74203823 | `0x5A0C868EB0F70b03b44c795FbA92A7ee3Bb230c7` |
-| A1 | 0.206883 | 0.000816291 | 0.000580217 → 0.000535321 | 0.000580252 (28.9% below) | `0x35d2a87c78179d8b018919ce7de4827711e20610933f6fa81cd50d1e20263f0c`, 74204144 | `0xaaaA550c6CDd074d37220E62D2921599F28514De` |
-| A2 | 0.206883 | 0.000816121 | 0.000579492 → 0.000534605 | 0.000579232 (29.0% below) | `0xcb2f7f6ddce7c2e945ab381c1623390d45db3820e86e139fabc10e065adb888a`, 74204204 | `0xaaaA550c6CDd074d37220E62D2921599F28514De` |
+| Wallet | USDG sold | Market quote | Auction start → end       | Received AMZN                    | Fill tx and block                                                              | Resolver (`from`)                            |
+| ------ | --------- | ------------ | ------------------------- | -------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------- |
+| A3     | 0.325847  | 0.001285400  | 0.001049742 → 0.000979045 | 0.001050207 (18.3% below market) | `0xff460c67290adf055977a36b878218b5d9a8554cc6812e0fd8cea1971e956537`, 74203823 | `0x5A0C868EB0F70b03b44c795FbA92A7ee3Bb230c7` |
+| A1     | 0.206883  | 0.000816291  | 0.000580217 → 0.000535321 | 0.000580252 (28.9% below)        | `0x35d2a87c78179d8b018919ce7de4827711e20610933f6fa81cd50d1e20263f0c`, 74204144 | `0xaaaA550c6CDd074d37220E62D2921599F28514De` |
+| A2     | 0.206883  | 0.000816121  | 0.000579492 → 0.000534605 | 0.000579232 (29.0% below)        | `0xcb2f7f6ddce7c2e945ab381c1623390d45db3820e86e139fabc10e065adb888a`, 74204204 | `0xaaaA550c6CDd074d37220E62D2921599F28514De` |
 
 Every order filled within about 30 seconds of submission, at or near the auction start amount. Every reconciliation held: USDG debit equal to the signed amount with no remainder, AMZN at or above the signed minimum, and 0 ETH in each Ai before and after. No Ai sent a transaction, and nothing was paid by F, an app wallet or a sponsor.
 

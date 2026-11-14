@@ -1,7 +1,7 @@
 # Swap failures and recovery
 
 **Complexity: 2 — Technical.** For engineers investigating a paused or stalled swap.
-Phase/code mappings checked against the shared Rust engine on **2026-10-08**.
+Phase/code mappings checked against the shared Rust engine on **2026-11-14**.
 This is a source-based guide, not evidence that any provider route works today.
 For device setup, see [Swap debugging](SWAP_DEBUGGING.md).
 
@@ -38,25 +38,32 @@ plan. Never bypass a validation check to make Resume succeed.
 
 ## Phases and what they mean
 
-| Phase       | Common steps                                                                                                                                                     | What is happening                                                                                                                          | Next action if stalled                                                                               |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `PLANNING`  | `assets`, `sourceChain`, `targetChain`, `fundingProbe`, `fundingQuote`, `fundingPrepare`, `payoutEstimate`, `fusionEstimate`, `holdings`, `recoveryScan`         | Validate networks, available funds, fees and route feasibility before approval. Recovery and payout-only flows may also authenticate here. | Inspect the failed service or validation; retry only after it is resolved.                           |
-| `REVIEW`    | `review`, or the step needing reapproval                                                                                                                         | Initial native approval or changed terms awaiting approval.                                                                                | Read the actual amount, fees and limits; approve explicitly or stop.                                 |
-| `FUNDING`   | `fundingSign`, `fundingSubmit`, `fundingReceipt`, `credit`; post-approval preparation also maps here                                                             | Fund the confidential route and wait for provider credit. A source receipt alone is not confidential credit.                               | Reconcile the existing submission; do not fund a second time.                                        |
-| `CREDITED`  | `authSalt`, `authenticate`, `balances` after approval                                                                                                            | Obtain authenticated private-balance evidence after route credit.                                                                          | Inspect authentication/balance errors. An aggregate balance is not proof every later payout settled. |
-| `PAYOUTS`   | `payoutQuote`, `payoutIntent`, `payoutSubmit`, `payoutStatus`, `payoutBalance`                                                                                   | Prepare/sign confidential payouts, wait for settlement, then check destination balances.                                                   | Distinguish an unsigned quote error from a submitted payout needing reconciliation.                  |
-| `FUSION`    | `fusionBalance`, `fusionPreview`, `fusionPermit`, `fusionOrder`, `fusionSign`, `fusionSubmit`, `fusionStatus`, `fusionReceipts`, `fusionAfter`; sell quote steps | Prepare and execute token orders, validate fills and resulting balances.                                                                   | Reconcile existing orders/fills before authorizing remaining execution.                              |
-| `PAUSED`    | Any; inspect `step`                                                                                                                                              | The engine has a specific stop reason.                                                                                                     | Use the pause-code table below.                                                                      |
-| `COMPLETE`  | `done`                                                                                                                                                           | The engine reached its completion checks for this operation.                                                                               | Read portfolio/holdings separately; a cached Home balance can lag.                                   |
-| `CANCELLED` | Saved last step                                                                                                                                                  | Future signatures are stopped.                                                                                                             | Reconcile any already-submitted work; cancellation is not a refund.                                  |
+| Phase       | Common steps                                                                                                                                                                      | What is happening                                                                                                                          | Next action if stalled                                                                               |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `PLANNING`  | `assets`, `sourceChain`, `targetChain`, `fundingProbe`, `fundingQuote`, `fundingPrepare`, `payoutEstimate`, `fusionEstimate`, `holdings`, `recoveryScan`, `privateHistoryProbe`   | Validate networks, available funds, fees and route feasibility before approval. Recovery and payout-only flows may also authenticate here. | Inspect the failed service or validation; retry only after it is resolved.                           |
+| `REVIEW`    | `review`, or the step needing reapproval                                                                                                                                          | Initial native approval or changed terms awaiting approval.                                                                                | Read the actual amount, fees and limits; approve explicitly or stop.                                 |
+| `FUNDING`   | `fundingSign`, `fundingSubmit`, `fundingReceipt`, `credit`; post-approval preparation also maps here                                                                              | Fund the confidential route and wait for provider credit. A source receipt alone is not confidential credit.                               | Reconcile the existing submission; do not fund a second time.                                        |
+| `CREDITED`  | `authSalt`, `authenticate`, `balances` after approval                                                                                                                             | Obtain authenticated private-balance evidence after route credit.                                                                          | Inspect authentication/balance errors. An aggregate balance is not proof every later payout settled. |
+| `PAYOUTS`   | `payoutQuote`, `payoutIntent`, `payoutSubmit`, `payoutStatus`, `payoutBalance`                                                                                                    | Prepare/sign confidential payouts, wait for settlement, then check destination balances.                                                   | Distinguish an unsigned quote error from a submitted payout needing reconciliation.                  |
+| `FUSION`    | `fusionBalance`, `fusionPreview`, `fusionPermit`, `fusionOrder`, `fusionSign`, `fusionSubmit`, `fusionStatus`, `fusionReceipts`, `fusionAfter`, `privateCredit`; sell quote steps | Prepare and execute token orders, validate fills and resulting balances.                                                                   | Reconcile existing orders/fills before authorizing remaining execution.                              |
+| `PAUSED`    | Any; inspect `step`                                                                                                                                                               | The engine has a specific stop reason.                                                                                                     | Use the pause-code table below.                                                                      |
+| `COMPLETE`  | `done`                                                                                                                                                                            | The engine reached its completion checks for this operation.                                                                               | Read portfolio/holdings separately; a cached Home balance can lag.                                   |
+| `CANCELLED` | Saved last step                                                                                                                                                                   | Future signatures are stopped.                                                                                                             | Reconcile any already-submitted work; cancellation is not a refund.                                  |
 
-The path is not always linear. Selling interleaves token orders, confidential credit
-and return payouts. Recovery can start from existing funds rather than a new deposit.
+The path is not always linear. Current full-token sells interleave holder orders
+and authenticated operation-bound private credit, then finish without public payouts.
+Legacy saved public-return sells retain their return-payout stages. Recovery can
+start from existing funds rather than a new deposit. Check `completionTarget`;
+`privateCreditedAtoms` is the verified private-sale amount, and a private sale has
+zero payout legs/return addresses. A separate public withdrawal is outside this swap
+machine; see [confidential withdrawals](CONFIDENTIAL_WITHDRAWALS.md).
 
 **Counters are not settlement proof:** `payoutsSubmitted` counts payout records with
 a saved signature, not confirmed delivery. `ordersComplete` counts orders marked
 complete by the engine. `0/3` during `credit` is expected while payouts have not begun;
-it does not establish that source funds are untouched.
+it does not establish that source funds are untouched. Recipient counts for new
+buys vary from one to five; private sells have zero payout counters and can have
+many holder orders. A `0/0` payout count is expected for private completion.
 
 ## Quote, service and validation pauses
 
@@ -78,29 +85,36 @@ It does not prove that an upstream service was unreachable. Likewise,
 
 ## Funds, fees and credit pauses
 
-| Code                                              | Meaning                                                                   | Next action                                                                                                                                       |
-| ------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AWAITING_DEPOSIT`                                | Selected source budget is zero.                                           | Read the actual selected source balance/network; a portfolio total can include other accounts. Retry after confirmed funding.                     |
-| `INSUFFICIENT_SOURCE_BALANCE`                     | Requested amount exceeds the selected source balance during planning.     | Confirm spendable funds and choose an affordable amount in a new reviewed plan.                                                                   |
-| `SOURCE_BALANCE_CHANGED`                          | Source no longer covers the saved budget at execution-time validation.    | Reconcile other spending/reservations first. Restore sufficient available funds or prepare a revised plan; approval does not override this check. |
-| `FEE_EXCEEDS_BUDGET`                              | Funding fee cap consumes the budget.                                      | Recheck fees later or revise the budget before approval. Do not reduce the fee guard.                                                             |
-| `FEE_UNSTABLE`                                    | Funding preparation exhausted its bounded fee/requote attempts.           | Wait and inspect sponsorship fees. Retry may encounter the same bound; persistent failures need engineering review.                               |
-| `FUNDING_REVERTED`                                | Funding receipt reports execution failure.                                | Inspect the saved transaction/UserOperation result and actual balances before a replacement operation.                                            |
-| `FUNDING_FAILED`, `FUNDING_REFUNDED`              | Route status reports failure or refund.                                   | Reconcile source funds and provider status. “Refunded” is not sufficient evidence that Home's displayed balance is current.                       |
-| `PRIVATE_BALANCE_UNAVAILABLE`                     | Payout-only authentication/balance request returned 401.                  | Fix private-balance authentication and retry. Do not assume a balance or substitute a deposit quote.                                              |
-| `NO_PRIVATE_BALANCE`                              | Authenticated payout-only balance is zero.                                | Check the correct wallet/asset and prior credit evidence; do not sign a payout with invented funds.                                               |
-| `NO_HOLDINGS`                                     | Selected sell holders have no target-token balance.                       | Refresh holdings and verify the chosen batch. Do not repeat sell authorization for an empty batch.                                                |
-| `NOTHING_TO_RECOVER`                              | Recovery scan found no USDG in its bounded range.                         | Inspect previous operations and allocation history. This is not proof that every wallet or asset has zero funds.                                  |
-| `HOLDER_<n>_HOLDS_ETH`, `RECIPIENT_<n>_HOLDS_ETH` | Unexpected native ETH violates the selected holder/recipient assumptions. | Engineering reconciliation is needed; do not sweep funds or bypass the condition as a debugging shortcut.                                         |
+| Code                                              | Meaning                                                                                                | Next action                                                                                                                                               |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AWAITING_DEPOSIT`                                | Selected source budget is zero.                                                                        | Read the actual selected source balance/network; a portfolio total can include other accounts. Retry after confirmed funding.                             |
+| `INSUFFICIENT_SOURCE_BALANCE`                     | Requested amount exceeds the selected source balance during planning.                                  | Confirm spendable funds and choose an affordable amount in a new reviewed plan.                                                                           |
+| `SOURCE_BALANCE_CHANGED`                          | Source no longer covers the saved budget at execution-time validation.                                 | Reconcile other spending/reservations first. Restore sufficient available funds or prepare a revised plan; approval does not override this check.         |
+| `FEE_EXCEEDS_BUDGET`                              | Funding fee cap consumes the budget.                                                                   | Recheck fees later or revise the budget before approval. Do not reduce the fee guard.                                                                     |
+| `FEE_UNSTABLE`                                    | Funding preparation exhausted its bounded fee/requote attempts.                                        | Wait and inspect sponsorship fees. Retry may encounter the same bound; persistent failures need engineering review.                                       |
+| `FUNDING_REVERTED`                                | Funding receipt reports execution failure.                                                             | Inspect the saved transaction/UserOperation result and actual balances before a replacement operation.                                                    |
+| `FUNDING_FAILED`, `FUNDING_REFUNDED`              | Route status reports failure or refund.                                                                | Reconcile source funds and provider status. “Refunded” is not sufficient evidence that Home's displayed balance is current.                               |
+| `PRIVATE_BALANCE_UNAVAILABLE`                     | Payout-only authentication/balance request returned 401.                                               | Fix private-balance authentication and retry. Do not assume a balance or substitute a deposit quote.                                                      |
+| `PRIVATE_CREDIT_UNAVAILABLE`                      | Pre-approval authenticated-history probe did not return 2xx.                                           | Check `/v1/swap/aurora/history`, adapter capability and provider configuration; no sale order should start until this boundary succeeds.                  |
+| `PRIVATE_CREDIT_AUTH_REQUIRED`                    | Private-sale authentication/history returned 401; access is cleared and the core returns to auth salt. | Preserve verified sales/credits; explicitly Resume after restoring authentication. Never substitute aggregate balance growth or a route-minimum fallback. |
+| `NO_PRIVATE_BALANCE`                              | Authenticated payout-only balance is zero.                                                             | Check the correct wallet/asset and prior credit evidence; do not sign a payout with invented funds.                                                       |
+| `NO_HOLDINGS`                                     | Selected sell holders have no target-token balance.                                                    | Refresh holdings and verify the selected token/owned holders. Do not repeat sell authorization for an empty holding.                                      |
+| `NOTHING_TO_RECOVER`                              | Recovery scan found no USDG in its bounded range.                                                      | Inspect previous operations and allocation history. This is not proof that every wallet or asset has zero funds.                                          |
+| `HOLDER_<n>_HOLDS_ETH`, `RECIPIENT_<n>_HOLDS_ETH` | Unexpected native ETH violates the selected holder/recipient assumptions.                              | Engineering reconciliation is needed; do not sweep funds or bypass the condition as a debugging shortcut.                                                 |
 
-Normal funded flows have a specific 401 fallback after route-confirmed credit:
-they can use the quote's guaranteed minimum as the credit basis. Payout-only flows
-cannot use that fallback. See the core's `Authenticate`/`Balances` handling before
+Public-funded buys have a specific 401 fallback after route-confirmed credit:
+they can use that funding quote's guaranteed minimum as their credit basis; they
+must not consume pre-existing private cash. Payout-only flows cannot use that
+fallback. Private-completion sells also require authenticated operation history,
+matching quote/deposit identity, exact amounts, timing and verified Fusion hashes.
+An unmatched history row waits; invalid evidence fails validation; neither is
+success merely because public route status is SUCCESS. See the core's `Authenticate`/`Balances` handling before
 comparing apparently different behavior between flows.
 
 ## Payout and order reconciliation pauses
 
-`<n>` is a one-based leg number, normally 1–3.
+`<n>` is a one-based payout or order number. Buys use one to five recipients;
+full-token private sells may span many owned holders, and create no payout legs.
 
 | Code                                       | Meaning                                                                                                                                  | Next action                                                                                                                                                       |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -169,3 +183,6 @@ and [persistence/recovery boundaries](../feature-plans/SWAP_PERSISTENCE.md).
 - [Android orchestration](../../mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/swap/SwapEngine.kt) and [iOS orchestration](../../mobile/modules/gizu-stored-signer/ios/Swap/SwapEngine.swift).
 - [Gateway logging](../../backend/src/http/routes/swap.routes.ts) and [Aurora diagnostics](../../backend/src/adapters/aurora/diagnostics.ts).
 - [Swap flow](../feature-plans/AURORA_SWAP_FLOW.md), [portfolio and recovery](NATIVE_SIGNER_PORTFOLIO.md), [device setup](SWAP_DEBUGGING.md).
+
+This documentation review checked source mappings only. It did not rerun provider
+probes, functional/native tests, passkeys or funded recovery acceptance.

@@ -57,6 +57,10 @@ Proposed changes belong in [Feature plans](../feature-plans/README.md).
 
 The two research reports linked above remain in `research/outputs/`.
 
-These documents were organized without refreshing their technical claims.
-Recorded versions, provider findings and verification results remain dated evidence;
-check current source and services before relying on them.
+Current implementation prose was audited against repository source on
+14 November 2026. Verification records, retired implementations and research
+reports retain their original evidence dates; a documentation review is not a
+new test, device acceptance or deployment. In particular, current Earn completion
+does not use invite-only history, and Android private-read grants are separate
+from spending approvals. Start with the Earn, withdrawal and storage references
+above rather than applying historical migration instructions to an installed wallet.

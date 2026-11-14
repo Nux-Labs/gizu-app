@@ -13,6 +13,31 @@ The original Android-only scope below is retained as migration history. The iOS
 replacement is now implemented; current platform behavior and pending acceptance
 are documented in [the native contract](NATIVE_SIGNER.md).
 
+## Current interpretation (source review 2026-11-14)
+
+The plan below records the 2026-09 Android milestone, not today's full capability
+list. Both native platforms implement stored-wallet storage, backup, exact testnet
+transfers, swaps and public portfolio reads. Android now adds encrypted recovery
+sync/discovery, distributed Earn/private funding, partial Robinhood exits and
+confidential cashout; iOS exposes Earn wallets and Ethereum vault execution while
+its other Earn execution capabilities remain disabled. Native backup writers emit
+v3/read v1–3, despite the TypeScript identity's remaining v2 constant. The native
+wallet namespace and entropy derivation remain distinct from the retained signer.
+
+Backup-only restore starts a fresh local journal generation. Android's separate
+encrypted recovery service can import authenticated signed history; the original
+phase-4 no-history statement below refers to entropy-file restore by itself.
+Read authorization also evolved: ordinary app switching retains Android's
+shared private-read grant, while spending work/approvals are cancelled. Lock,
+sign-out and restart clear that grant. Full financial native reviews can use a
+separate five-minute reading window; original two-minute wallet/exact-transfer
+ceremonies are not a universal Earn timeout.
+
+Use [architecture](NATIVE_SIGNER_ARCHITECTURE.md),
+[storage](NATIVE_SIGNER_STORAGE.md) and [Earn](NATIVE_SIGNER_EARN.md) for current
+source behavior. Historical test/device evidence above is preserved without
+claiming new builds or live acceptance.
+
 ## Summary
 
 Replace the current passkey-derived wallet model with randomly generated wallet

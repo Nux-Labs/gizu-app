@@ -106,7 +106,7 @@ Paths below are relative to `mobile/` unless stated otherwise.
 Read only what the task needs:
 
 - [README.md](README.md): local setup and available development commands.
-- [docs/PARITY.md](../docs/feature-plans/PARITY.md): current product decisions, frontend baseline,
+- [PARITY.md](../docs/feature-plans/PARITY.md): current product decisions, frontend baseline,
   feature behavior and availability; consult when changing a user journey or design.
-- [docs/NATIVE_SIGNER.md](../docs/internal/NATIVE_SIGNER.md): native trust boundary, policy and
+- [NATIVE_SIGNER.md](../docs/internal/NATIVE_SIGNER.md): native trust boundary, policy and
   derivation contract; consult before changing wallet/signing behavior.

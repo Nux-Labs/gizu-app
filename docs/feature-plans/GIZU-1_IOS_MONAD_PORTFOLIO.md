@@ -1,8 +1,16 @@
 # GIZU-1 — Shared Monad portfolio read for iOS and Android
 
 Status: implemented; physical-iPhone acceptance pending.  
-Branch: `feat/GIZU-1`.  
+Historical implementation branch: `feat/GIZU-1`.
+
 Implementation and verification: 2026-10-02. No upload or deployment performed.
+
+This is the historical GIZU-1 task and its dated verification record. Its public-USDC
+acceptance scope is narrower than the current portfolio. For current owned-token,
+confidential-cash, valuation and vault-position behavior, use
+[the portfolio contract](../internal/NATIVE_SIGNER_PORTFOLIO.md) and
+[product capabilities](PARITY.md). Source reviewed 2026-11-14; no historical check
+below was rerun for this documentation update.
 
 ## Task definition
 

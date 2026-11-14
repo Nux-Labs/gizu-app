@@ -2,13 +2,12 @@
 
 **Complexity: 2 — Technical.** [Signer overview](NATIVE_SIGNER.md).
 
-Extracted from the signer reference on 2026-10-08. This split preserves the
-recorded implementation details; it is not a new device, provider or security
-verification. See [dated verification evidence](NATIVE_SIGNER_VERIFICATION.md).
+Reviewed against source on 2026-11-14. This is not a new device, provider or
+security verification. See [dated verification evidence](NATIVE_SIGNER_VERIFICATION.md).
 
 For the current feature flow, cycle allocation and rollout record, start with
-[Confidential Earn](CONFIDENTIAL_EARN.md). The v1 boundary below records the initial
-derivation and authorization design; it does not supersede later cycle allocation.
+[Confidential Earn](CONFIDENTIAL_EARN.md). The derivation and authorization sections below distinguish current allocation
+from the original role design.
 
 ## Shared private cash (2026-11-13)
 
@@ -79,13 +78,18 @@ After explicit intent and native review/passkey approval, `prepareEarnIntent` bi
 supported destination profile and persists it atomically. Destination roles are derived
 at `m/44'/60'/143'/destinationChain'/role`: role 0 holds; role 1 invests. Chains 1 and 4663
 use distinct branches, separate from legacy accounts. Retries/readback recover the same pair.
-The original verified 32-byte entropy backup covers these branches. Additional independent
-cycles require a versioned allocator and recovery discovery before reuse is allowed.
+The same 32-byte entropy derives these branches. Later cycles use
+`m/44'/60'/144'/{chainId}'/{cycleIndex * 3 + role}` and persist their allocation
+metadata. Distribution slots use the separate 145 branch above. Version-3 backups
+include saved cycle metadata; Android recovery sync/discovery can recover newer
+allocations. Never reuse an index from an older backup without reconciliation.
 
 Role 2 is an internal confidential identity, not a third public destination wallet.
-`readEarnBalance` performs native review/passkey authorization, fetches the fixed public
-Intents salt, and asks the Rust core to construct and sign an empty ERC-191 read-authentication
-payload. The core accepts no arbitrary message or spending intents. Signed authentication
+On Android, `readEarnBalance` reuses the shared private-read grant described above;
+when locked, explicit native authorization is required. The native read fetches
+the fixed public Intents salt and asks Rust to construct/sign an empty ERC-191
+read-authentication payload. iOS retains its separate native read authorization
+flow and does not implement Android's shared private-read session. The core accepts no arbitrary message or spending intents. Signed authentication
 is sent directly from native code to the fixed Gizu backend; signatures, entropy and provider
 session credentials never cross Expo. The public result is an authenticated aggregate
 Monad-USDC balance with `operationScoped: false`, never settlement authority.
@@ -95,17 +99,44 @@ while gated is read-only; neither a balance check nor zero local history clears 
 Wallet ID, journal generation and profile are rechecked across authorization/network calls.
 Full funding and return completion require separately authenticated operation-scoped evidence.
 
+## Requested exits, receipts and refunds
+
+Android advertises `earnPartialWithdrawals`. Robinhood withdrawal proposals bind
+an optional requested USDG amount/request ID to exact selected shares, cycle and
+investment slot. Native checks current shares and `previewRedeem`, allowing one
+base unit of downward rounding and at most the greater of one base unit or 10 bps
+upward drift. A private return binds the canonical redemption and its gross
+proceeds; it cannot spend unrelated reserves. Shares remaining in the vault keep a
+next-withdrawal reserve of 2.6 times the approved redemption fee cap. A later
+portion requires a new request/approval. iOS does not advertise this capability.
+
+Saved minimum-return receipts bind immutable wallet/generation/proposal/origin
+facts and remain terminal after the credited private cash is spent. A completed
+portion leaves the remaining investment intact. Provider SUCCESS and aggregate
+balance alone do not create a credit receipt or spending authority. The separate
+owner-confirmed historical correction records lifecycle completion with
+`spendingAuthorized: false`; it cannot fund another payout.
+
+A bound REFUNDED observation means public USDG returned to its source, rather than
+private USDC received. A retry prepares a fresh private return from the original
+redemption proceeds, obtains new approval and never redeems the same portion again.
+Encrypted recovery validates terminal observations under their source generation
+before rebinding; failed reads and nonterminal observations are not terminal proof.
+Read-only progress polling does not plan, sign or resume financial work. See
+[requested withdrawal and refund rules](CONFIDENTIAL_WITHDRAWALS.md#requested-robinhood-vault-withdrawals)
+for the full ladder, fee preflight and acceptance record.
+
 ### iOS Ethereum vault execution
 
 The existing `executeEarnVault`, `listEarnVaultOperations`, `resumeEarnVaultOperation` and `cancelEarnVaultOperation` methods now use Swift native orchestration and the shared Rust transaction policy. Review/passkey authorization lasts two minutes and is invalidated by cancellation, lock, expiry and backgrounding. Entropy and signed bytes stay native. The per-wallet-generation encrypted journal commits before broadcast, checks revisions and prevents concurrent operations for one owner. Refresh reconciles without sending; resume requires explicit fresh approval. Unsupported funding, payouts and liquidity flags remain false. See the [rollout and remaining gates](CONFIDENTIAL_EARN.md#ios-parity-rollout).
 
 ### Android USB backend test build
 
-Native Earn normally uses the fixed HTTPS Render backend. An explicit Gradle
+Native Earn normally uses `https://api.gizu.io/v1/earn/native` on the hosted HTTPS backend. An explicit Gradle
 `-PgizuEarnBackend=usb` opt-in selects only
 `http://127.0.0.1:3000/v1/earn/native` in **debug** builds. The aggregate private-balance
 read uses the same backend with the pinned `/v1/earn/private-balance` path. Debug builds
-without the property keep Render; release builds always keep Render HTTPS even if the
+without the property keep hosted HTTPS; release builds always keep hosted HTTPS even if the
 USB property is passed. Other property values fail the build. There is no URL parameter,
 Expo setter or change to chain RPCs, native policy, review or passkey authorization.
 
@@ -122,7 +153,7 @@ EXPO_PUBLIC_API_URL=http://127.0.0.1:3000 npm run start -- --localhost
 ```
 
 Install the resulting debug APK using the normal local device workflow. Rebuild without
-`-PgizuEarnBackend=usb` to return native requests to Render, and set JavaScript's
+`-PgizuEarnBackend=usb` to return native requests to hosted HTTPS, and set JavaScript's
 `EXPO_PUBLIC_API_URL` to the same hosted HTTPS base. Backend provider credentials stay
 in the ignored backend environment file; never put them in Expo public configuration.
 The USB option is a local transport choice and does not make preview or signing automatic.

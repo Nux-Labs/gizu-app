@@ -35,8 +35,9 @@ The old `gizu-signer` module is disconnected; its reference is historical and mu
 not be used as the active API or as a fallback. The [migration record](SIGNER_MIGRATION.md)
 preserves the transition decisions.
 
-This index was split on 2026-10-08. Extracted sections preserve dated implementation
-claims and acceptance limits; they are not newly verified deployment or device results.
-The TypeScript contract currently declares backup version 2, while historical backup
-sections describe version 1. Use current codecs when working on backup compatibility.
+This index was split on 2026-10-08 and reviewed against source on 2026-11-14.
+Historical evidence remains dated; this review adds no build or device acceptance.
+Both native backup writers now emit version 3 and read versions 1–3; the TypeScript
+identity constant still declares version 2. See the storage reference for codec and
+platform limits rather than treating that constant as the file specification.
 See [verification evidence](NATIVE_SIGNER_VERIFICATION.md) for recorded checks and gaps.

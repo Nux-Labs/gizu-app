@@ -12,7 +12,8 @@ The remaining sections document the preserved implementation, not current app
 capabilities. Its no-secret-persistence/no-rebroadcast rules apply to that module;
 the replacement intentionally changes those rules under the migration plan.
 
-Updated 2026-09-24 against current source. Development implementation exists on
+Original reference updated 2026-09-24; source retention/isolation reviewed
+2026-11-14. Development implementation exists on
 Android and iOS; full security/device acceptance is open. Dated results and acceptance gaps live in
 [verification](NATIVE_SIGNER_VERIFICATION.md).
 
@@ -47,9 +48,10 @@ its objects and buffers must never be re-exported through Expo.
 
 Current native exports are `getCapabilities`, `openWallet`, `openNativeProbe`,
 `cancelProbe`, `executeOperation`, `getOperationStatus`, `cancelOperation`, `lock`.
-These are the current implementation, not the former N0 proposed API. App-facing
-TypeScript interfaces are in `src/services/wallet/nativeBridge.ts`; diagnostics
-remain under `src/development/`. Source/generated ownership is documented in the
+These are retained native exports, not the active app API or the former N0
+proposal. Historical adapters/interfaces remain under
+`src/development/legacySigner/`; the active app boundary is
+`src/domain/wallet/storedSigner.ts`. Source/generated ownership is documented in the
 [module guide](../../mobile/modules/gizu-signer/README.md).
 
 `openWallet` returns allowlisted public address, account index and chain ID after

@@ -9,6 +9,9 @@ Documentation is organized by complexity, intended reader and purpose.
 | [Feature plans](feature-plans/README.md) | **3 — Detailed**  | Deep technical designs, contracts, alternatives, tradeoffs, implementation steps and acceptance criteria. |
 
 Shared documentation diagrams and image assets live in [images/](images/README.md).
+Diagram sources, rendered images and diagram blocks are excluded from the
+14 November 2026 documentation refresh; use the prose and owning source for
+current behavior until those visuals are reviewed separately.
 
 ## Where a document belongs
 
@@ -29,7 +32,7 @@ copying content. Add feature subfolders when needed, such as `internal/swap/` or
 Folder names describe audience and purpose, not access controls. Never store
 credentials, private keys, wallet backups or unredacted sensitive logs here.
 
-## Migration status
+## Current reference map
 
 - Setup, deployment, signing and passkey configuration guides are in
   [App guide](app-guide/README.md).
@@ -39,5 +42,13 @@ credentials, private keys, wallet backups or unredacted sensitive logs here.
 - Research documents remain under `research/`; indexes link to relevant evidence.
 - Project/module READMEs and agent instructions remain alongside their code.
 
-The migration changes organization, not document freshness. Review dated claims
-against current source and services before relying on them.
+Current runtime references are [Confidential Earn](internal/CONFIDENTIAL_EARN.md),
+[withdrawals and private returns](internal/CONFIDENTIAL_WITHDRAWALS.md),
+[native storage and authorization](internal/NATIVE_SIGNER_STORAGE.md) and
+[AWS backend deployment](app-guide/AWS_BACKEND_DEPLOYMENT.md).
+
+The prose was audited against repository source on 14 November 2026. Historical
+research, migration proposals and verification records retain their original
+dates and evidence limits; they do not define today's app capabilities or prove
+the current deployment/provider state. Source discrepancies are documented rather
+than repaired by this documentation-only update.

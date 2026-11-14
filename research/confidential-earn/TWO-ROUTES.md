@@ -1,17 +1,28 @@
+> Scope reviewed 2026-11-14: this file documents the isolated research CLI and
+> dated experiments. Its 10/90 payouts, 70/30 test budgets, full-exit gas/residual
+> rules and separate confidential keys do not define current Android behavior.
+> Current app contracts are [Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md),
+> [requested withdrawals/refunds](../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
+> and [native Earn](../../docs/internal/NATIVE_SIGNER_EARN.md). Android now uses
+> algorithm-selected investment slots, shared Account-2 private cash and read access,
+> requested partial Robinhood exits, and saved terminal return/refund evidence.
+> iOS has narrower execution capabilities. Recorded hashes, amounts and test counts
+> below remain historical; no live probes or native builds were run for this review.
+
 # Two mainnet test routes
 
 Run from `research/confidential-earn` with Node >=22, installed dependencies, and Anvil (`ANVIL_PATH`). These commands send real funds when explicitly invoked. Previews only read providers and execute temporary local forks.
 
-| Command profile | Destination / vault | Gas payment |
-| --- | --- | --- |
-| `npm run ethereum -- …` | Ethereum USDC / Pendle Ecosystem USDC `0x55C1B6e461a6334B567bAF0FEb5D728715446f05` | Fusion buys native ETH as needed; native transactions afterward |
-| `npm run robinhood -- …` | Robinhood (4663) USDG / Steakhouse USDG `0xBeEff033F34C046626B8D0A041844C5d1A5409dd` | Pimlico ERC-20 paymaster + Pimlico bundler; charges USDG |
+| Command profile          | Destination / vault                                                                  | Gas payment                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `npm run ethereum -- …`  | Ethereum USDC / Pendle Ecosystem USDC `0x55C1B6e461a6334B567bAF0FEb5D728715446f05`   | Fusion buys native ETH as needed; native transactions afterward |
+| `npm run robinhood -- …` | Robinhood (4663) USDG / Steakhouse USDG `0xBeEff033F34C046626B8D0A041844C5d1A5409dd` | Pimlico ERC-20 paymaster + Pimlico bundler; charges USDG        |
 
 Both start from **Monad USDC**, use advanced confidential routing, and split the confirmed confidential USDC input **10/90** before route fees. Wallet 1 keeps its payout; **only wallet 2 invests**. “Ethereum” here means Ethereum USDC, not converting the entire payout into ETH.
 
 Candide's public endpoint rejected Monad 143 and Robinhood 4663 during the read-only checks. There is no verified usable Candide configuration for these routes, so they use Pimlico. Ethereum destination transactions need no bundler after the Fusion bootstrap.
 
-Recovery is complete: [RECOVERY.md](RECOVERY.md) records both confirmed bridge receipts. The saved test budgets are **7.652756 USDC Ethereum / 3.279753 USDC Robinhood**, from a total of 10.932509 USDC. Ethereum now records the old share balance and withdraws the full position after the new deposit; see the current mainnet test record below.
+The September recovery was recorded complete: [RECOVERY.md](RECOVERY.md) records both confirmed bridge receipts. The recorded saved test budgets were **7.652756 USDC Ethereum / 3.279753 USDC Robinhood**, from a total of 10.932509 USDC. Ethereum now records the old share balance and withdraws the full position after the new deposit; see the current mainnet test record below.
 
 ## Configuration and state
 
@@ -84,13 +95,13 @@ After an ambiguous submission, use status first. `resubmit 2` sends exactly the 
 
 ## Dynamic reserves and acceptance
 
-| Stage | Ethereum | Robinhood |
-| --- | --- | --- |
-| Before deposit | Simulated deposit gas +10%; simulated withdrawal gas +30% at 2× current fee cap. Fusion uses minimum native output to size the purchase. | Current provider deposit cap + **2.6×** the provider's withdrawal cap, estimated against the simulated post-deposit vault state. |
-| After deposit | Temporary **0.05 USDC**, plus calculated ETH withdrawal reserve. | Calculated USDG withdrawal reserve plus unspent deposit allowance. No fixed-dollar reserve. |
-| Withdrawal | Fresh simulation and funding check. | Fresh real-state provider estimate; liquid USDG must cover the entire current cap. |
-| Return | Fresh Aurora USDC quote, then separate native-ETH quote and exact-cost Ethereum sweep. | Fresh Aurora USDG quote; transfer balance minus the full current paymaster cap. |
-| Final acceptance | No shares; both Aurora routes successful; combined ETH+USDC **<0.5 USDC**. Local exact-sweep target is zero. | No shares; Aurora successful; combined ETH+USDG **<0.5 USDC**, target **<0.1**. |
+| Stage            | Ethereum                                                                                                                                 | Robinhood                                                                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Before deposit   | Simulated deposit gas +10%; simulated withdrawal gas +30% at 2× current fee cap. Fusion uses minimum native output to size the purchase. | Current provider deposit cap + **2.6×** the provider's withdrawal cap, estimated against the simulated post-deposit vault state. |
+| After deposit    | Temporary **0.05 USDC**, plus calculated ETH withdrawal reserve.                                                                         | Calculated USDG withdrawal reserve plus unspent deposit allowance. No fixed-dollar reserve.                                      |
+| Withdrawal       | Fresh simulation and funding check.                                                                                                      | Fresh real-state provider estimate; liquid USDG must cover the entire current cap.                                               |
+| Return           | Fresh Aurora USDC quote, then separate native-ETH quote and exact-cost Ethereum sweep.                                                   | Fresh Aurora USDG quote; transfer balance minus the full current paymaster cap.                                                  |
+| Final acceptance | No shares; both Aurora routes successful; combined ETH+USDC **<0.5 USDC**. Local exact-sweep target is zero.                             | No shares; Aurora successful; combined ETH+USDG **<0.5 USDC**, target **<0.1**.                                                  |
 
 Robinhood's return preview requires the full remaining allowance to be below 0.5 USDC in value. It uses current provider fees and gas limits; it never lowers the bid to force this threshold. If the current estimate cannot satisfy it, return stops and needs a later quote. The paymaster's actual charge reduces that allowance further. Final status checks the actual remainder at fresh prices.
 

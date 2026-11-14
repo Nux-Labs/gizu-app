@@ -1,24 +1,33 @@
 # Gizu mobile
 
-Expo SDK 57 development app for iOS and Android. Normal startup now uses native
-passkey access and the existing Gizu tabs. Home shows the native Circle USDC portfolio
-across public Monad mainnet accounts (143); Account shows the receiving address,
-copy, local preferences and disconnect.
-Wallet secrets remain in the native signer. This is local wallet access, not
-backend authentication; physical-iOS acceptance remains pending.
+Expo SDK 57 native development app for iOS and Android. Normal startup uses the
+stored-wallet signer, native passkey create/unlock and the Home, Vaults, Swap and
+Account tabs. A newly created wallet must save and reopen its encrypted backup
+before Home opens. Restore requires that file and the original passkey. This is
+local wallet access, not backend authentication. Wallet secrets and signing
+approval stay native; physical-iPhone acceptance remains pending.
 
-From welcome choose **Get started**, then **Continue with passkey**. New development
-wallets must save and reopen an encrypted backup before Home opens. Recovery needs
-the file and original passkey. Notifications, fiat valuations and performance history
-remain unavailable. Deposit shows the Monad mainnet USDC receiving address.
-Direct standalone USDC withdrawals remain unavailable. Earn can review a separate
-withdrawal of verified investment return credit to a native Monad receiving account. Confidential Earn
-prepares two native-owned wallets after intent, reads vault readiness and private
-balances, and executes independently reviewed native funding, payouts and investments. See [Confidential Earn](../docs/internal/CONFIDENTIAL_EARN.md).
-iOS 18+ stored-wallet support is implemented; physical-device acceptance is pending. Incoming/external activity is not indexed.
+Home shows public Monad USDC, authenticated confidential cash, tracked tokens and
+supported vault positions, with observed USD valuations and explicit missing/stale
+states. Receive shows the Monad funding address. Direct public-USDC Send remains
+unavailable. Swap executes the native confidential route to eligible Robinhood
+stocks; selling a selected stock covers all eligible owned holder wallets and
+leaves verified proceeds in confidential cash. **Withdraw from Gizu** is a separate,
+Android-capability-gated distribution from private cash to fresh Monad recipients.
+Activity contains this device's completed/cancelled swap summaries, not incoming
+or external transaction indexing.
 
-Normal startup supports native access only. Historical M2–M5 fixture flows remain
-in automated tests; the isolated UI playground retains visual fixtures.
+Vaults reads the backend catalog. Supported deposits enter Confidential Earn;
+Android supports the guided Robinhood amount/review/progress journey and saved
+investment management. iOS supports the staged Ethereum vault execution boundary,
+not the complete guided funding journey. See [product capabilities](../docs/feature-plans/PARITY.md),
+[Confidential Earn](../docs/internal/CONFIDENTIAL_EARN.md) and
+[confidential withdrawals](../docs/internal/CONFIDENTIAL_WITHDRAWALS.md).
+
+Normal startup has no simulated passkey mode or mock financial providers. Historical
+M2–M5 journeys remain test fixtures; `debug:ui` is an isolated visual playground.
+The web invitation form persists through the backend, while mobile's retained
+Request access route still uses a mock service and creates no waitlist entry.
 
 ## Prerequisites
 
@@ -62,8 +71,9 @@ A development APK needs Metro for its JavaScript. A locally built release APK
 embeds JavaScript and assets, so it opens from the phone's Gizu icon after USB is
 disconnected. Internet access is still required for Render and chain providers.
 
-After the native Android project and signer libraries have been generated, build
-from `mobile/android/` on this Mac:
+After generating the native Android project and signer libraries, a local Gradle
+release can be built from `mobile/android/`. The following example uses a macOS
+Homebrew JDK path; set `JAVA_HOME` for your installation:
 
 ```sh
 JAVA_HOME=/opt/homebrew/opt/openjdk@17 \
@@ -74,18 +84,17 @@ EXPO_PUBLIC_PASSKEY_MODE=native \
 ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a
 ```
 
-Use Node 24 on PATH. This arm64 APK matches the connected Samsung phone. Install
+Use Node 24 on PATH. The signer supports this arm64 APK target. Install
 `mobile/android/app/build/outputs/apk/release/app-release.apk` with
 `adb install -r <path-to-apk>`, then open Gizu from the phone's app list. USB is only
 needed for installation. Mobile source changes require rebuilding/reinstalling;
 backend catalog/environment changes require a Render deployment and app refresh.
 
-For this existing test installation, retain its Android application ID and signing
-keystore when updating. Its generated project uses `com.example.gizu.dev`, while
-new projects use `io.gizu.android`. Re-running prebuild can replace that local
-identity. Never uninstall to resolve a signing mismatch: installation identity
-also determines access to the encrypted wallet storage. The local release uses
-the existing development signing key for testing; store distribution has separate
+For an existing installation, retain its Android application ID and signing
+keystore when updating. Historical local testing used `com.example.gizu.dev`;
+checked-in configuration now uses `io.gizu.android`. Inspect the installed app and
+generated project before updating because prebuild can replace that local identity. Never uninstall to resolve a signing mismatch: installation identity
+also determines access to the encrypted wallet storage. Local test releases can use development signing; store distribution has separate
 signing requirements.
 
 ## Commands
@@ -125,7 +134,7 @@ the disconnected legacy signer are excluded. Kotlin uses ktfmt's Google style.
 `just mobile-check` delegates to `npm run check`. Release validation runs it on Linux
 and Windows, then separately compiles Android Debug and an unsigned iOS simulator
 build. PR CI runs typecheck, formatting, lint and all JavaScript tests on Linux,
-without coverage or Expo Doctor. See the [repository CI guide](../README.md#continuous-integration)
+without coverage or Expo Doctor. See the [repository CI guide](../README.md#quality-and-releases)
 for manual release validation and required-check settings.
 Configure these jobs as required branch checks in repository settings to enforce
 merge protection; the workflow alone cannot change branch protection.
@@ -154,108 +163,36 @@ based on this small foundation's measured coverage; include all source files and
 raise floors as the app grows. These tests do not verify native gestures, keyboard
 presentation, real biometrics, network operations or on-chain settlement.
 
-See [docs/FOUNDATION.md](../docs/internal/FOUNDATION.md) for version decisions and the validation
-record, and [docs/PARITY.md](../docs/feature-plans/PARITY.md) for the frozen product scope.
+See [FOUNDATION.md](../docs/internal/FOUNDATION.md) for version decisions and the validation
+record, and [PARITY.md](../docs/feature-plans/PARITY.md) for the current product scope.
 
-## Portfolio and vaults
+## Product UI and historical fixtures
 
-All M3 values come from mobile-local typed mock adapters. Portfolio totals sum
-integer cents; chart samples are synthetic performance indexes, never trade prices.
-Period buttons select deterministic 1D/1W/1M/1Y/All fixture windows. Search combines
-case-insensitive name/ticker/strategy/manager matching with the selected risk band.
-Advanced filters are explicitly unavailable. Vault sharing opens the native share
-sheet with a labeled demo summary and no fabricated public URL.
+The current journey contract is [PARITY.md](../docs/feature-plans/PARITY.md). Shared
+screens use safe areas, content Back actions, floating bottom tabs, large-text
+wrapping and reduced motion. The app uses Helvetica Neue on iOS and the bundled,
+owner-licensed HelveticaNeue family on Android; small monospace labels use the
+system font. Navigation pushes use `ios_from_right`; modal sheets retain platform
+behavior. Home keeps observed USD balance history separately from legacy USDC totals.
 
-Refresh preserves the previous snapshot on failure and labels stale/offline data.
-An empty portfolio, missing vault and empty activity have explicit states. Service
-adapters can inject those states in tests; no real network or OS connectivity is
-inferred. Disconnect clears the snapshot and invalidates pending requests.
+M3 portfolio/catalog snapshots, synthetic chart windows, M4 trading and transfer
+ledgers, and M5 fixture inbox/profile flows are isolated test contracts. They do not
+describe the normal mainnet runtime. See [Trading](../docs/internal/TRADING.md) and
+[Account](../docs/internal/ACCOUNT.md) for fixture rules and current local preferences.
+Native sessions use an empty inbox; push delivery, FX, statements and support
+messaging remain unavailable. Account includes the actual address, backup/recovery
+management, push-alert preference, mascot animation preference and disconnect.
 
-Home shows the vault-summary discovery list only when the account has no holdings.
-Accounts with holdings see their holdings list without the duplicate vault summaries;
-the full discovery catalog remains available from the Vaults tab.
-
-Notifications, buy/sell and deposit/withdraw are identified by availability notes.
-They do not simulate a successful operation.
-
-Balance and vault price lead their screens; demo disclosure remains visible while
-its timestamp expands on tap. Refresh uses a quiet action. Search/risk filters sit
-near the top and Clear filters appears only when needed. Content Back preserves the
-previous screen and falls back to the relevant tab for direct entry. Settings →
-UI preview demonstrates shared actions, metrics, filters and feedback states.
-
-The iPhone 17 Pro / iOS 26.5 development app was inspected at standard and enlarged
-text sizes, including native sharing and software keyboard search. Smaller native
-displays, VoiceOver, reduced motion, gestures and Android QA remain pending; see
-the foundation record for the exact scope.
-
-All top navigator bars are hidden, including access and modal screens. Each screen
-owns its content title; detail/access screens provide a scrolling Back action and
-the wallet picker retains Cancel. Bottom tabs remain available on main screens.
-The shared Screen template applies safe-area insets and keyboard spacing directly.
-
-## Frontend design parity (M3.2)
-
-The interface now uses layered rounded surfaces, compact vault tiles with sparklines,
-change badges, grouped holdings/terms/account rows, paired access cards and a floating
-bottom-tab capsule. All top navigation bars remain hidden. The capsule floats over a
-transparent overlay, with its measured height reserved in scroll-content bottom padding
-so the last items can scroll clear of it. Narrow/large-text vault layouts use one column.
-
-User-facing demo banners and prefixes are removed. The app still uses isolated mock
-services and memory-only sessions; this visual update adds no live wallet, signing,
-market feed or backend. Share payloads retain fixture provenance. M4 enables mock
-trading/transfers; M5 adds account pages, preferences and the in-app inbox. Timestamp details,
-error/retry and stale/offline feedback remain available.
-
-System fonts are used because no mobile redistribution licence was found for the
-frontend Helvetica assets. Decorative artwork is static and supports reduced motion.
-See docs/FOUNDATION.md for the exact native and automated validation record.
-
-## Latest frontend reconciliation (M3.3)
-
-Welcome now uses the Gizu logo and “DeFi in Stealth Mode” headline. Portfolio and
-vault discovery use “Confidential vaults”; the Swap tab shows the animated coming-soon
-presentation. Vault details provide buy/sell through M4 mock services. Access supports
-passkeys only.
-
-Request access opens a guest form with email, investment range and platform choices.
-Its isolated mock service sends and stores nothing and does not grant access or
-create a real waitlist entry. Functional tests cover validation, submission, retry,
-duplicate prevention and dismissal. Notifications use the M5 mock inbox.
-
-## Trading and transfers (M4)
-
-Home opens Deposit/Withdraw; vault details open Buy/Sell. The Swap tab remains a
-coming-soon presentation. Every available operation requires amount validation and quote review. After
-submission, Check status reconciles the same operation; closing the modal does
-not cancel it. Home and Activity can reopen status. The session-scoped mock ledger
-updates cash, units and activity only on confirmed responses and resets at sign-out.
-
-See [docs/TRADING.md](../docs/internal/TRADING.md) for exact fee, minimum, lockup, rounding,
-scenario and dismissal rules. These interfaces are mock contracts, not production
-API specifications or real wallet/signing integrations.
-
-## Account and notifications (M5)
-
-Home's notification button opens the inbox with read/unread and mark-all controls.
-Account opens passkey/signing information, push-alert preferences, currency,
-statements, contact desk and disclosures. Copy address uses the native clipboard.
-Only non-sensitive preferences persist in AsyncStorage; explicit disconnect clears
-this account's preferences and all session state. USD is the only supported display
-currency. Recovery, push delivery, FX, document downloads and support channels are
-explicitly unavailable pending their integrations. Real passkeys are next.
-
-See [docs/ACCOUNT.md](../docs/internal/ACCOUNT.md) for availability and persistence rules.
-M5 adds native storage/clipboard modules: rebuild an existing development client
-with `npm run ios` or `npm run android` from `mobile/` before testing this version.
+Historical simulator/device observations remain historical evidence; this source
+review does not establish fresh native, accessibility, provider or funded acceptance.
 
 ## Signer migration and developer diagnostics
 
 The old Gizu signer is preserved but disconnected from app access, diagnostics and
 native autolinking. `npm start` opens the existing app. Android and iOS 18+ development wallets
 require native save-and-reopen backup verification before entering Home. Account
-includes backup management; Withdraw and Activity use native approval and history. iOS signing uses the replacement Swift module; physical-device acceptance is pending. No fallback creates a demo or legacy wallet.
+includes backup management; the explicit testnet harness uses native transfer approval/history,
+and normal Activity uses saved swap summaries. iOS signing uses the replacement Swift module; physical-device acceptance is pending. No fallback creates a demo or legacy wallet.
 
 The isolated UI playground remains available without a simulated passkey mode:
 
@@ -320,7 +257,8 @@ when fewer than two protocols are listed. Search, paging and retry controls shar
 Paging tracks each chain independently and stops querying exhausted chains.
 Details show contract addresses and share symbols; unknown metrics show `Unavailable`,
 and Morpho net APY is labeled as APY. Protocol logos resolve by
-stable protocol ID before display name. Wallet balances still use Monad mainnet USDC.
+stable protocol ID before display name. Public cash balances use Monad mainnet USDC;
+Home also values supported private cash, tokens and vault positions.
 Deposit stays inside Gizu and rechecks the selected vault. An exact match to an
 existing Ethereum/Robinhood native profile prepares a fresh Earn cycle only after
 explicit intent, then reuses the existing funding and fee reviews. Unsupported
@@ -381,7 +319,7 @@ EXPO_NO_DOTENV=1 npx eas-cli build --platform ios --profile production --local -
 ```
 
 For Android, increment `android.versionCode` before each subsequent Play upload
-and keep the registered upload keystore. The first bundle uses version code 1.
+and keep the registered upload keystore. The checked-in Android version code is 11; inspect `app.config.ts` before incrementing it.
 From `mobile/`, with JDK 17, Android SDK/NDK and Rust prerequisites installed:
 
 ```sh
@@ -472,9 +410,9 @@ Whitespace is trimmed; invalid keys, malformed hosts, URL credentials, paths,
 queries and fragments disable capture. Never use a personal API key (`phx_...`).
 
 Leave the key empty for ordinary local development. For analytics verification,
-use a dedicated test project in local builds and the EAS `preview` environment
-used by TestFlight. Configure the production environment separately with its
-production project key. Values in EAS-managed environments can enable analytics
+use a dedicated test project in local builds. The EAS `preview` profile inherits
+the production environment; `testflight` is also an alias of `production`. Configure
+the selected EAS environment deliberately before each diagnostic or distribution build. Values in EAS-managed environments can enable analytics
 without appearing in `eas.json`; verify the selected environment before building.
 Public Expo variables are bundled at build time: rebuild after changing them.
 Jest's default analytics service stays disabled even when these variables are set.
@@ -510,13 +448,15 @@ the native portfolio. No hosted account catalogue or DeBank indexer is used.
 Funding a budget across multiple public accounts retains a separate fee cap and
 reserve for each account. All unsigned child plans are saved natively before the first
 account can be approved, allowing recovery after interruption. One native batch review and passkey authorization covers the selected source operations; their journals and settlement checks remain separate. Expired unsigned quotes refresh the same saved operations and budget before approval.
-Earn cycles retain distinct destination pairs and journals; cycle zero preserves the
-legacy v1 intent, while later cycles use v2 identities.
+Earn cycles retain distinct destinations and journals. Legacy cycles preserve their
+saved hold/invest pair; current amount-aware distributions can allocate one to five
+investment wallets with saved weights. Private Account 2 credit is a separate funding
+source and is never represented as an ordinary public account.
 
 The batch approval uses the existing 15-minute signing session and ends when its
 native screen/session closes or reviewed terms change. Transaction deadlines and
 fresh native fee checks still apply. See the [multi-account integration reference](../docs/internal/CONFIDENTIAL_EARN.md#october-1-multi-account-refresh-and-approval).
 
 Native token and vault-position rows display token amounts independently from the
-public Monad USDC total. A USDC valuation appears only when native data supplies it;
+public Monad USDC total. A native valuation or the bounded catalog stock-price estimate can supply USD value;
 unpriced assets and incomplete balance coverage are labeled explicitly.

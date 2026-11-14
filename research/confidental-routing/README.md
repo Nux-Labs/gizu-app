@@ -1,10 +1,18 @@
 # Standalone Aurora confidential routing test
 
-This is an independent Node.js mainnet experiment. The source wallet holds USDC on Monad; external public funding is outside this runner. The runner tests Pimlico's Monad ERC-20 paymaster for paying its first transfer fee in USDC, with no MON required in SOURCE. It transfers **the available USDC, capped at 10, minus the quoted maximum source gas cost** into a new confidential account C, then quotes three Aurora routes from C to the provided Ethereum addresses. It divides the authenticated private balance 30/30/40 when available. The original run fell back to the successful funding route's guaranteed minimum when account authentication failed; that proof format has since been corrected and the remaining balance read directly. Recipient amounts are whatever the three live quotes and settlement deliver after fees. After all three receipts settle, destination 1 sends its available Ethereum USDC to destination 3 using Circle's permissionless USDC Paymaster without ETH.
+This retained standalone Node.js experiment is independent of the active Gizu
+stored-wallet app. Its local private-key files, fixed 30/30/40 split and Circle
+A1 → A3 step are harness behavior, not the mobile wallet's current signing or
+recovery contract. For the app, see [native signer](../../docs/internal/NATIVE_SIGNER.md)
+and [Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md). Provider and
+funded-run observations below retain their original September 2026 scope;
+no current provider availability or balance is established by this README.
+
+The harness can submit mainnet operations. The source wallet holds USDC on Monad; external public funding is outside this runner. The runner tests Pimlico's Monad ERC-20 paymaster for paying its first transfer fee in USDC, with no MON required in SOURCE. It transfers **the available USDC, capped at 10, minus the quoted maximum source gas cost** into a new confidential account C, then quotes three Aurora routes from C to the provided Ethereum addresses. It divides the authenticated private balance 30/30/40 when available. The original run fell back to the successful funding route's guaranteed minimum when account authentication failed; that proof format has since been corrected and the remaining balance read directly. Recipient amounts are whatever the three live quotes and settlement deliver after fees. After all three receipts settle, destination 1 sends its available Ethereum USDC to destination 3 using Circle's permissionless USDC Paymaster without ETH.
 
 No wallet prototype code is imported. `init` creates C's private key in `.local/confidential-key` (mode 0600) unless `CONFIDENTIAL_PK` is set. Keep that key and the ignored `.env` file: C controls the confidential balance. The three destination private keys are optional and used only to check their addresses.
 
-## Setup
+## Standalone harness setup
 
 Use Node.js 22 or newer. Run `npm ci`, copy `.env.example` to `.env`, and fill in `AURORA_API_KEY`, `PIMLICO_API_KEY`, `SOURCE_PK`, `SOURCE_ADD`, `DEST1_PK`, and `DEST1_ADD` through `DEST3_ADD`. `DEST2_PK` and `DEST3_PK` are optional for the routing runner; this test does not spend from those wallets. The Aurora key comes from [Aurora Studio](https://studio.aurora.dev). The Pimlico key authenticates mainnet paymaster requests; gas is charged to SOURCE in USDC. The harness configures no Circle API key. The runner derives addresses from keys and rejects mismatches; it never prints keys or API keys. `MONAD_RPC_URL`, `ETHEREUM_RPC_URL` and `NEAR_RPC_URL` can override the public RPC defaults. The NEAR RPC supplies the current public `intents.near` salt for timestamped account-authentication proofs.
 

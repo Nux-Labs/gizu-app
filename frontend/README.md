@@ -1,8 +1,11 @@
-
 # Gizu web entry
 
-The site served at gizu.io keeps the responsive landing screen and Request access
-flow as separate buttons and dialogs. **Test On Mobile** opens an email invitation
+Source reviewed 2026-11-14; deployment and provider availability were not revalidated.
+
+This frontend provides the responsive mobile-testing entry and Request access
+flow as separate buttons and dialogs. The separate `landing/` project supplies
+the public site packaged for `gizu.io` by the landing deployment workflow.
+**Test On Mobile** opens an email invitation
 form as the recommended first option, followed by self-testing instructions and
 links to the repository and mobile setup guide. Self-testing explains how a local
 backend/database, configuration, app/API versions, connected services and device
@@ -17,8 +20,11 @@ Run locally with `npm ci` and `npm run dev` from `frontend/`. Validate with
 
 Local development proxies `/v1` to the backend on port 3000. Production defaults
 to `https://gizu-app.onrender.com`; set `VITE_API_URL` at build time to override it
-(see `.env.example`). Deploy the matching backend before the frontend. The API
-allows browser requests from `https://gizu.io` and `https://www.gizu.io`.
+(see `.env.example`). Set `VITE_API_URL=https://api.gizu.io` explicitly for the
+canonical API domain; the checked-in fallback still uses the Render hostname.
+Deploy the matching backend before the frontend. The API
+allows invitation requests from `https://gizu.io`, `https://www.gizu.io` and
+`https://app.gizu.io`.
 
 Submitting an email joins the invitation list. It does not send an email immediately;
 invitations are sent later by the team. No email delivery service is configured here.

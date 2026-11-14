@@ -1,12 +1,20 @@
 # Standalone confidential Monad USDC → Robinhood asset swap
 
-This is an independent Node.js mainnet experiment for the Swap screen. It is a copy of the [`confidental-routing`](../confidental-routing/README.md) runner extended with a Robinhood Chain (4663) destination; that folder is left unchanged. The design and privacy analysis are in [spec §6A](../outputs/confidential-balance-distribution-spec.md#6a-swap-destination--robinhood-assets). A tx-by-tx write-up of the live AMZN run is in [confidential-swap-tx-by-tx](../outputs/confidential-swap-tx-by-tx.md).
+This retained standalone Node.js mainnet experiment informed the Swap flow; it is
+not imported by the active mobile app. Local raw keys, fixed three-wallet splits
+and harness retry commands do not describe the native stored-wallet implementation.
+Use [native signer](../../docs/internal/NATIVE_SIGNER.md),
+[trading internals](../../docs/internal/TRADING.md) and
+[swap recovery](../../docs/internal/SWAP_FAILURES.md) for the app. Provider and
+funded-run observations below retain their original September 2026 scope.
+
+The harness is a copy of the [`confidental-routing`](../confidental-routing/README.md) runner extended with a Robinhood Chain (4663) destination; that folder is left unchanged. The design and privacy analysis are in [spec §6A](../outputs/confidential-balance-distribution-spec.md#6a-swap-destination--robinhood-assets). A tx-by-tx write-up of the live AMZN run is in [confidential-swap-tx-by-tx](../outputs/confidential-swap-tx-by-tx.md).
 
 The flow is the same up to the payouts. SOURCE (F) holds USDC and no MON on Monad and pays its gas in USDC through Pimlico's ERC-20 paymaster. It shields the available USDC, capped at 10, into a confidential account C. C then pays out 30/30/40 through confidential Aurora routes to three fresh Robinhood wallets (A1..A3). Depending on the target, those wallets receive the asset directly or buy it with USDG.
 
 No wallet prototype code is imported. `init` creates C's private key in `.local/confidential-key` (mode 0600) unless `CONFIDENTIAL_PK` is set. Keep that key and the ignored `.env` file: C controls the confidential balance.
 
-## Setup
+## Standalone harness setup
 
 Use Node.js 22 or newer. Run `npm ci`, copy `.env.example` to `.env`, and fill in `AURORA_API_KEY`, `PIMLICO_API_KEY`, `ONEINCH_API_KEY`, `SOURCE_PK`, `SOURCE_ADD` and `DEST1_ADD` through `DEST3_ADD`. `DEST{i}_PK` is required for the swap and Fusion commands of wallet `i`. The runner derives addresses from keys and rejects mismatches; it never prints keys or API keys. `DESTINATION` defaults to `robinhood`.
 
@@ -84,7 +92,7 @@ Limits:
 
 A failed swap leaves USDG in Ai and can be previewed again. A saved run cannot be continued under a different `DESTINATION`. `post-*` (A1 → A3) commands are refused for Robinhood runs because that transfer publicly links the wallets. The inherited Ethereum mode (`DESTINATION=ethereum`) is kept but belongs to the vault flow in `confidental-routing`.
 
-Current limits (27 September 2026):
+Recorded provider limits and results (27 September 2026; not rechecked):
 
 - **`swap-*` stock route blocked:** Pimlico returns no USDG token quote on Robinhood, so `swap-preview` stops with `No USDG gas quote from the Robinhood ERC-20 paymaster`. There is deliberately no ETH top-up fallback. Use the Fusion commands instead.
 - **Direct targets:** only USDG quotes at the 10 USDC cap. WETH quoted only at about 200 USDC, and ETH and USDe returned no liquidity.

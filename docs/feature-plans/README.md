@@ -37,13 +37,13 @@ Instructions for running the delivered feature belong in
 
 - [Swap architecture](SWAP_ARCHITECTURE.md): implemented ownership map, with [contracts](SWAP_CONTRACTS.md) and [persistence/recovery](SWAP_PERSISTENCE.md) references.
 
-- [Aurora swap flow](AURORA_SWAP_FLOW.md): current buy/sell flow, diagrams and provider responsibilities; a reference for future improvements.
+- [Aurora swap flow](AURORA_SWAP_FLOW.md): current buy/private-sell prose and provider responsibilities; retained diagrams show historical examples and are deferred for visual updates.
 
-| Document                                                         | Role                                                            |
-| ---------------------------------------------------------------- | --------------------------------------------------------------- |
-| [Shared iOS/Android portfolio](GIZU-1_IOS_MONAD_PORTFOLIO.md)    | GIZU-1 technical plan, implementation outcome and verification. |
-| [Confidential Earn integration](../internal/CONFIDENTIAL_EARN.md) | Current integration behavior and verification boundaries.       |
-| [Product capabilities and parity](PARITY.md)                     | Supporting capability reference; not a future-work backlog.     |
+| Document                                                          | Role                                                                                                |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| [Shared iOS/Android portfolio](GIZU-1_IOS_MONAD_PORTFOLIO.md)     | Historical GIZU-1 scope and dated implementation evidence; links to the current portfolio contract. |
+| [Confidential Earn integration](../internal/CONFIDENTIAL_EARN.md) | Current integration behavior and verification boundaries.                                           |
+| [Product capabilities and parity](PARITY.md)                      | Supporting capability reference; not a future-work backlog.                                         |
 
 Moving a document here does not reopen completed work or approve a proposal.
 Check each document's date, implementation status and current code before planning

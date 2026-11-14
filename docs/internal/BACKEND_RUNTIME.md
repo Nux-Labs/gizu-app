@@ -4,7 +4,7 @@ For service setup and deployment steps, see the [backend deployment guide](../ap
 This reference preserves implementation details and dated verification evidence.
 Historical probes do not establish current provider availability.
 
-## Verified release
+## Pinned simulator release
 
 The installer pins [Foundry v1.8.3](https://github.com/foundry-rs/foundry/releases/tag/v1.8.3),
 commit `cae51ad458f6abb64852b7709eb784352429825d`, and this exact archive:
@@ -42,10 +42,10 @@ native storage retains the nonce/role guard and exact signed bytes for reconcili
 
 The default Robinhood lifecycle policy is `gizu-portal-zero-2026-10-12`, based on the inspected API-key portal (zero integrator fee, no collection address/custom rules, confidential configuration inherits public) and captured local/Render quotes. It admits only these service-fee limits:
 
-| Routes | Collectors and maximum bps | Total maximum |
-| --- | --- | --- |
-| source, withdrawal | `widget_collect.sputnik-dao.near`: 4 | 4 |
-| payoutRobinhood, returnRobinhood | `widget_collect.sputnik-dao.near`: 25; `2238fd089f1c92b206c218cd16b8676cb98964e0d50f8ab729c6396a81e07805`: 20 | 45 |
+| Routes                           | Collectors and maximum bps                                                                                    | Total maximum |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------- |
+| source, withdrawal               | `widget_collect.sputnik-dao.near`: 4                                                                          | 4             |
+| payoutRobinhood, returnRobinhood | `widget_collect.sputnik-dao.near`: 25; `2238fd089f1c92b206c218cd16b8676cb98964e0d50f8ab729c6396a81e07805`: 20 | 45            |
 
 The two observed referrals are `aurora-jh500bnyo9` and `aurora-1u3j2qzclc`. This policy bounds observed service charges; it does not claim the collectors' ultimate beneficiaries were independently established. Configured Gizu/integrator fee and application charge are zero. Listed fee bps exclude other costs already reflected in route output. Exact executable fee breakdown, minimum output, gas cap and withdrawal reserve remain bound to native review.
 
@@ -135,11 +135,16 @@ and child environment contains only PATH plus the wrapper's worker settings.
 Provision the service with memory above the combined two-fork ceilings plus Node
 and service overhead; the wrapper is a per-child ceiling, not a total service limit.
 Check actual latency, peak memory and provider rate limits on the selected service
-before enabling traffic. `--compute-units-per-second 1000` is Anvil's upstream RPC
+before enabling traffic. `--compute-units-per-second 150` is Anvil's upstream RPC
 rate setting, not an OS CPU limit; the wrapper supplies the CPU limit separately.
-Scale instances only with awareness that limits and unsigned quote registries are
-process-local. An unknown or expired quote binding fails closed; payout recovery
-uses its protected immutable envelope, not an invented surviving cache entry.
+Simulation/concurrency limits and some unsigned quote caches remain process-local.
+Production Earn bindings and one-use submission claims use PostgreSQL coordination;
+recovery blobs, upload budgets and minimum-return receipts are also database-backed.
+Every replica must share the database and stable `EARN_GATEWAY_RECOVERY_KEY`.
+An unknown or expired cached quote fails closed; payout recovery uses its protected
+immutable envelope. Shared guards prevent replay but do not reconstruct cache
+contents. See [recovery persistence and admission](../../backend/docs/wallet-recovery.md)
+for retention, capacity controls and migration requirements.
 
 Fork funding and impersonation affect disposable loopback state only. The API never
 fabricates a live destination balance. A deposit stays invested; any redemption
@@ -152,26 +157,25 @@ not themselves authorize a transaction.
 
 Run `npm run typecheck`, `npm test` and `npm run build` from `backend`.
 The runtime tests reject unsupported platforms, corrupted archives and symlink caches.
-The verified Linux Anvil version/commit, offline archive installer, cached installer
-and complete `npm run build:render` were exercised successfully in a disposable
+Previously recorded local verification exercised the pinned Linux Anvil version/
+commit, offline and cached installers and `npm run build:render` in a disposable
 `node:24.19.0-bookworm` Linux x86-64 container. The resource-limited wrapper also
 started an isolated fork of a second loopback-only Anvil, and read-only RPC verified
 that the fork retained the exact pinned upstream block hash. Networking was disabled;
 no transactions, research secrets or server credentials were used. This verifies the
-prepared build and bounded executable path on Debian 12, matching Render's documented
-native operating system; it does not verify live chain simulation or a fresh network
-`npm ci` against a Render service.
-The current machine is macOS ARM64; no live Render build, service setting or publish
-was exercised by this preparation. Real provider credential/fee qualification remains
-an operator prerequisite, and rendered mobile tests do not prove phone authorization.
+prepared build and bounded executable path on Debian 12; it does not verify live
+chain simulation or any current hosting service. The checked-in Dockerfile now
+uses Node `24.19.0-bookworm` / `bookworm-slim`, installs both the RDS CA bundle and
+system CA certificates, and runs as `node`. CodeBuild and the backend GitHub
+workflow smoke-check that image with disposable PostgreSQL 18 before publication
+or CI acceptance. `server.ts` registers a 20-second signal drain; the image smoke
+check verifies clean SIGTERM exit. See [AWS deployment](../app-guide/AWS_BACKEND_DEPLOYMENT.md).
+These checks do not establish current ECS/RDS deployment, live RDS TLS, provider
+credential/fee qualification or signed-device authorization.
 
 Optional read-only upstream/fork tests use `EARN_TEST_ANVIL_PATH` with
 `EARN_TEST_ETHEREUM_RPC_URL` or `EARN_TEST_ROBINHOOD_RPC_URL`. Their known public test
 wallets are funded only inside disposable local forks, never on the origin chain.
-
-References: [Render native runtimes](https://render.com/docs/native-runtimes),
-[build/pre-deploy/start behavior](https://render.com/docs/deploys),
-[Node version selection](https://render.com/docs/node-version).
 
 ## Exit valuation freshness
 
@@ -215,8 +219,8 @@ checks the deadline extracted from that signed payload and rejects an expired
 message; a versioned nonce requires the signed deadline to be no later than the
 nonce's own deadline. Narrowing fresh unsigned authority preserves that bound.
 No documented generator deadline parameter was found, and the API does not invent
-one. Native deadline limits, protected nonce uniqueness and normal 2-basis-point
-provider fee qualification remain required.
+one. Native deadline limits, protected nonce uniqueness and the configured
+route-specific fee qualification remain required.
 
 ## Legacy authenticated history access
 

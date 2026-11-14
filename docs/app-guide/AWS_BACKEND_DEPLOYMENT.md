@@ -2,11 +2,17 @@
 
 Build the backend from GitHub `main`, store the image in ECR, and run it on ECS
 Fargate alongside RDS PostgreSQL. Frontend hosting is managed separately.
-The production release entry point will be CodePipeline's **Release change**.
+The documented release procedure uses CodePipeline's **Release change**. The
+repository supplies the Dockerfile/buildspec and GitHub validation workflows;
+it does not define ECS/RDS/CodePipeline infrastructure or verify current account
+resources, trigger settings, service state or DNS. Confirm those in the target
+account before using the provisioning steps below. Production clients use
+`https://api.gizu.io`.
 
 ## Prerequisites
 
-- AWS account `381673247521`, region `eu-central-1`.
+- Verify the intended AWS account. The checked-in buildspec and ECR policy target
+  `381673247521` in `eu-central-1`; this is configuration, not an account inventory.
 - Private ECR repository `gizu-backend`, with immutable tags.
 - RDS PostgreSQL 18, reachable from the backend security group on port 5432.
 - These deployment files must be committed and merged into GitHub `main` before
@@ -76,24 +82,27 @@ bash backend/scripts/smoke-container.sh gizu-backend:local
 
 Use the newly built image in an ECS Fargate task definition:
 
-| Setting | Value |
-| --- | --- |
-| Task definition family | `gizu-backend` |
-| Container name | `gizu-backend` (must match the buildspec) |
-| Operating system / architecture | Linux / X86_64 |
-| Initial task size | 1 vCPU / 4 GiB memory; measure simulation capacity |
-| Container port | 3000 / TCP |
-| Desired tasks | 1, with service autoscaling disabled initially |
-| Load balancer health check | `/v1/health` |
-| Application configuration | Runtime environment and Secrets Manager references |
+| Setting                         | Value                                              |
+| ------------------------------- | -------------------------------------------------- |
+| Task definition family          | `gizu-backend`                                     |
+| Container name                  | `gizu-backend` (must match the buildspec)          |
+| Operating system / architecture | Linux / X86_64                                     |
+| Initial task size               | 1 vCPU / 4 GiB memory; measure simulation capacity |
+| Container port                  | 3000 / TCP                                         |
+| Desired tasks                   | 1, with service autoscaling disabled initially     |
+| Load balancer health check      | `/v1/health`                                       |
+| Application configuration       | Runtime environment and Secrets Manager references |
 
 Use an ECS task execution role with ECR pull/logging permissions and scoped
 `secretsmanager:GetSecretValue` access for the secrets referenced by the task.
 The CodeBuild role does not need production-secret access.
 
-Copy the existing production backend configuration from Render to runtime
-configuration, using [the existing guide](BACKEND_DEPLOYMENT.md) as the reference.
-Preserve `EARN_GATEWAY_RECOVERY_KEY` exactly. The image already defaults
+Transfer the authoritative backend runtime configuration to the task, using
+[the runtime configuration guide](BACKEND_DEPLOYMENT.md) as the reference. Inventory
+the active service rather than assuming a legacy Render service still holds it.
+Preserve `EARN_GATEWAY_RECOVERY_KEY` exactly across replicas and releases, and
+preserve wallet recovery objects/versions, shared operation guards and durable
+minimum-return receipts along with existing application data. The image already defaults
 `NODE_ENV=production`, `PORT=3000`, `EARN_ANVIL_PATH`, and `NODE_EXTRA_CA_CERTS`.
 
 Supply `DATABASE_URL` as a runtime secret using the **RDS DNS endpoint**, a
@@ -129,10 +138,14 @@ Configure HTTPS for `api.gizu.io` on the load balancer before directing clients
 to the service. Keep the default single-proxy topology when using the app's
 current client-IP trust configuration.
 
-Quotes and simulation limits are process-local. One desired task does not prevent
-old/new tasks overlapping during deployments. Before production, use controlled
-maintenance/draining for deployments, or implement shared quote coordination;
-do not assume ordinary rolling updates preserve in-flight quote bindings.
+Simulation/concurrency limits and some quote caches remain process-local.
+Production Earn bindings and one-use submission guards already use shared
+PostgreSQL coordination; every replica must share the database and recovery key.
+Wallet recovery uploads and minimum-return receipts are also database-backed.
+One desired task does not prevent old/new tasks overlapping during deployments.
+Verify cached-quote failure/recovery and multiply per-process simulation limits
+when sizing overlapping tasks; shared replay guards do not make every cache
+portable. See [recovery persistence](../../backend/docs/wallet-recovery.md).
 
 ## Add CodePipeline once the ECS service is working
 
@@ -163,16 +176,19 @@ do not assume ordinary rolling updates preserve in-flight quote bindings.
 ## Verify and migrate
 
 Verify health, chains/catalogs, database writes, provider access, and prospective
-Anvil simulations. An empty RDS instance is not a migration of Render's data.
-Rehearse a PostgreSQL 18 dump/restore from a machine or one-off task with VPC
-access, verify restored ownership/schema permissions, then schedule a final
+Anvil simulations. An empty RDS instance is not a migration of an existing database.
+If migrating from a legacy host, rehearse a compatible PostgreSQL dump/restore
+from a machine or one-off task with VPC access, verify restored ownership/schema permissions, then schedule a final
 write freeze, drain in-flight operations, restore the final dump, and switch
 traffic. Retain the recovery key and recovery data throughout. After AWS accepts
-writes, do not roll back to a stale Render database.
+writes, do not roll back to a stale database.
 
-Give the frontend operator the final API URL for `VITE_API_URL`. Installed mobile
-builds using `gizu-app.onrender.com` need a compatibility forwarding service until
-they are upgraded; a domain owned by Render cannot be repointed through your DNS.
+Set the frontend build's `VITE_API_URL=https://api.gizu.io` explicitly: its source
+still contains a legacy Render fallback. Current EAS profiles and native hosted
+endpoints use `api.gizu.io`; installed older binaries and saved operations can
+retain prior gateways. Inventory those before retiring legacy hosting. A hostname
+owned by Render cannot be repointed through your DNS; any temporary forwarding
+service is a separate operational decision, not repository automation.
 
 ## Troubleshooting
 

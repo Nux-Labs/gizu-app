@@ -1,13 +1,16 @@
 # Host passkey associations
 
 Publish the files that allow Gizu's signed apps to use passkeys on `gizu.io`.
-This procedure deploys the frontend, not the backend or mobile app.
+Their canonical source is `frontend/public/.well-known/`; the deployment serving
+the RP domain must publish them even when that domain serves `landing/`.
 
 ## Prerequisites
 
-- Access to the frontend hosting service and `gizu.io`.
+- Access to the website hosting service serving `gizu.io`.
 - [Confirmed app identities](PASSKEY_CONFIGURATION.md) and
   [Android signing certificates](ANDROID_SIGNING.md).
+- Identify the active host before publishing. Repository workflows do not establish
+  current AWS provisioning, release enablement or DNS routing.
 
 ## Steps
 
@@ -15,24 +18,31 @@ This procedure deploys the frontend, not the backend or mobile app.
    - [Apple association](../../frontend/public/.well-known/apple-app-site-association)
      must include `588X2UZY3L.io.gizo.ios` under `webcredentials.apps`.
    - [Android association](../../frontend/public/.well-known/assetlinks.json)
-     must include `io.gizu.android` and the installed build's public certificate.
-2. Build the frontend from the repository root:
+     must include the installed APK's package and public signing certificate.
+     Canonical builds use `io.gizu.android`; legacy entries remain for older installs.
+2. Package for the host you actually operate:
+   - **Landing S3/CloudFront delivery:** use the
+     [landing deployment procedure](../../deploy/landing/README.md). Its packager
+     copies the canonical JSON byte-for-byte without building the frontend.
+     Automatic publication rejects changes to associations relative to the current
+     archive; association updates need a reviewed rollout that preserves installed
+     app compatibility.
+   - **A host serving the frontend build:** run the following from the repository
+     root and check both files exist in `frontend/dist/.well-known/`:
 
-   ```sh
-   npm --prefix frontend ci
-   npm --prefix frontend run build
-   ```
-
-   Check both files exist in `frontend/dist/.well-known/`.
-
-3. Deploy the frontend using the existing hosting service. Serve both paths
-   directly over HTTPS, without redirects or the app's HTML fallback.
-   On a Render Static Site, set these headers; on a Web Service, configure its server:
+     ```sh
+     npm --prefix frontend ci
+     npm --prefix frontend run build
+     ```
+3. Publish through the active host's release procedure. Serve both paths directly
+   over HTTPS, without redirects or an HTML fallback, with these response headers:
 
    | Path                                      | Header         | Value              |
    | ----------------------------------------- | -------------- | ------------------ |
    | `/.well-known/apple-app-site-association` | `Content-Type` | `application/json` |
    | `/.well-known/assetlinks.json`            | `Content-Type` | `application/json` |
+
+   Serving associations only at `app.gizu.io` does not satisfy the `gizu.io` RP ID.
 
 4. Check the deployed responses without following redirects:
 
@@ -49,4 +59,3 @@ These HTTP checks confirm hosting only; test passkey access in the signed app to
 ## Troubleshooting
 
 See [association and Apple cache diagnostics](../internal/PASSKEY_TROUBLESHOOTING.md).
-Hosting reference: [Render headers](https://render.com/docs/static-site-headers).

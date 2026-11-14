@@ -1,7 +1,7 @@
 # Confidential swap debugging
 
-This branch runs mainnet swaps. Provider connectivity checks do not establish
-funded settlement. Keep passkey/native approval with the person testing the phone.
+The active native swap flow can submit mainnet operations. Provider connectivity
+checks do not establish funded settlement. Keep passkey/native approval with the person testing the phone.
 
 For phase meanings, pause codes and recovery decisions, see
 [Swap failures and recovery](SWAP_FAILURES.md).
@@ -9,7 +9,9 @@ For phase meanings, pause codes and recovery decisions, see
 ## Local setup
 
 Configure `AURORA_API_KEY`, `PIMLICO_API_KEY` and `ONEINCH_API_KEY` in the ignored
-`backend/.env`. Do not put them in mobile configuration or share them in logs.
+`backend/.env`. Also configure `DATABASE_URL` for the local PostgreSQL instance
+(see [backend setup](../app-guide/BACKEND_DEPLOYMENT.md)). Do not put provider keys
+in mobile configuration or share them in logs.
 
 From `backend/`:
 
@@ -22,7 +24,8 @@ Preflight reports only credential presence and read-only Aurora token-registry a
 NEAR auth-salt results. It never quotes, authenticates, signs or submits. It does
 not validate the 1inch/Pimlico credentials beyond their presence.
 
-For USB Android development, start Metro from `mobile/` with the local API:
+The production API is `https://api.gizu.io`. For USB Android development, start
+Metro from `mobile/` with the local JavaScript API:
 
 ```sh
 EXPO_PUBLIC_API_URL=http://127.0.0.1:3000 npm start -- --localhost --port 8083
@@ -31,6 +34,12 @@ adb reverse tcp:8083 tcp:8083
 adb shell setprop log.tag.GizuSwap DEBUG
 adb logcat -v time -s GizuSwap:D '*:S'
 ```
+
+The environment variable controls JavaScript-selected requests. Native Earn uses
+its own build-time endpoint: build debug with `-PgizuEarnBackend=usb` to select
+port 3000 for that gateway; releases use `https://api.gizu.io`. Recovery, portfolio
+and restored-operation calls can still use the hosted API. Do not assume the USB
+setup isolates all native traffic.
 
 Rebuild/install the development app after native changes. Preserve installed app
 data and its wallet/operation journal; do not uninstall to clear a failed swap.
@@ -43,7 +52,9 @@ data and its wallet/operation journal; do not uninstall to clear a failed swap.
 - Android `GizuSwap`: persisted phase, step, pause code, numeric request sequence,
   response status and elapsed milliseconds. Status `0` means transport failed.
 - Backend `swap.gateway`: route template, HTTP status, elapsed time and Fastify's
-  request ID. `swap.error` adds the application error code without the raw exception.
+  request ID. The shared `private.request` hook also records private route template,
+  status and latency. `swap.error` adds the application error code without the raw
+  exception.
 - Backend `swap.provider`: fixed Aurora operation label, provider HTTP status,
   header-response latency and transport outcome. Gateway latency covers the full
   request. Provider events can be compared by time/operation; they do not currently

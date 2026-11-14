@@ -2,6 +2,8 @@
 
 The Android app separates exiting an investment from making funds public.
 Incoming public USDC and the existing public funding paths remain unchanged.
+Reviewed against repository source on 14 November 2026; dated test/device
+results below are historical, not a new execution or deployment check.
 
 ## User flows
 
@@ -182,8 +184,9 @@ execution does not prove private credit: the return remains awaiting settlement
 until its saved route reports success and authenticated private balance evidence
 meets the bound credit amount. A zero share balance alone cannot complete it.
 
-For the separate swap settlement path, Aurora's quoted `amountOut` is an expected output, rather than a maximum execution
-amount. The historical `maximumCreditAtoms` field remains the bound for ordinary
+For legacy exact-settlement clients, Aurora's quoted `amountOut` is an expected
+output, rather than a maximum execution amount. The historical
+`maximumCreditAtoms` field remains the bound for ordinary
 balance-delta evidence. If the authenticated credit exceeds that estimate, an
 updated client requests `operation-history-v1` using the
 `x-gizu-settlement-proof` header. The backend requires one exact authenticated
@@ -193,16 +196,22 @@ the approved minimum. Missing access or ambiguous history leaves verification
 pending; there is no tolerance increase or credit clamping. The sealed proof keeps
 its verification method across restart and balance consumption, and subsequent
 funding/payout checks revalidate it. Older clients continue using the existing
-bounded balance-delta method. Deploy the backend before relying on the new history
-path; older backends safely ignore the capability header.
+bounded balance-delta method. This compatibility path does not define the current
+Earn minimum-return method: that method accepts a verified delta at least the
+saved minimum and replays its durable receipt without account history. Keep the
+two proof types distinct. New confidential token sales still use authenticated
+operation history in the swap core; unavailable provider entitlement blocks that
+separate flow rather than justifying weaker credit evidence.
 
 Home offers a read-only wallet unlock when the shared private-balance session is
 locked. The in-memory grant survives ordinary app switching, and ends on screen
 lock, wallet lock/sign-out or app restart. Earn and cashout reads use the same
 grant; spending approvals stay separate. It refreshes the aggregate across native
-confidential accounts after authentication. Previously checked amounts stay visible with an explicit label;
-incomplete observations remain excluded from current portfolio valuation and
-cannot authorize spending or prove settlement.
+confidential accounts after authentication. Existing observations can remain
+visible, and known cached amounts may contribute an estimated/incomplete USD
+portfolio value. They never authorize spending or prove settlement; refresh
+failures must not silently replace them with zero. See the shared
+[portfolio rules](NATIVE_SIGNER_PORTFOLIO.md).
 
 Robinhood return planning estimates gas using a temporary, full nonzero-byte
 recipient whose USDG balance is verified as zero at the reference block. The old
@@ -213,8 +222,8 @@ issues one immutable route quote, checks the exact recipient's fee against the
 bounded budget, and simulates the final calls. Return-specific errors identify
 the USDG already held in the investment wallet; they do not suggest redeeming
 the vault again. The review displays the verified routing fee instead of a
-hardcoded 0.02%. Deploy the updated backend planner to Render for this correction
-to take effect; updating the APK alone only changes the messages and fee display.
+hardcoded 0.02%. Planner changes require a backend release to the AWS-hosted
+`https://api.gizu.io`; updating the APK alone does not publish them.
 
 ## Backend and privacy
 
@@ -247,20 +256,22 @@ Missing configuration, unavailable coordination or ambiguous evidence fails
 closed. New sales probe authenticated history before financial review or any
 Fusion permit/order, so an unavailable route stops the sale before funds move.
 
-The implementation supports Android through the `confidentialWithdrawals` and
-`confidentialSaleProceeds` native capabilities. Older builds and unsupported
-platforms must not simulate successful execution. A native rebuild is required;
-backend deployment alone does not update an installed app.
+Android advertises `confidentialWithdrawals` and `confidentialSaleProceeds` on
+eligible builds. Swift supports its shared-core private sale continuation but
+does not expose the Android public-cashout native capability or UI; shared Rust
+code is not proof of platform parity. Older builds and unsupported platforms
+must not simulate successful execution. A native rebuild is required; backend
+deployment alone does not update an installed app.
 
-| Boundary                             | Current limit                                                             |
-| ------------------------------------ | ------------------------------------------------------------------------- |
-| Chosen input                         | Positive canonical u64 atoms, six USDC decimals                           |
-| Private sources per cashout          | 32                                                                        |
-| Fresh receiving wallets              | 1–5                                                                       |
-| Transport children                   | At most sources + receivers − 1, maximum 36                               |
-| Public receiving registry high-water | 8192                                                                      |
-| Encrypted journal plaintext          | Less than 8 MiB; terminal history is retained without compaction          |
-| Quote lifetime                       | At most 60 seconds; large sequential preparations may need another review |
+| Boundary                     | Current limit                                                                                               |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Chosen input                 | Positive canonical u64 atoms, six USDC decimals                                                             |
+| Private sources per cashout  | 32                                                                                                          |
+| Fresh receiving wallets      | 1–5                                                                                                         |
+| Transport children           | At most sources + receivers − 1, maximum 36                                                                 |
+| Public receiving index bound | Rust portfolio/swap/cashout paths check a high-water of 8192; this is not the general role-registry maximum |
+| Encrypted journal plaintext  | Less than 8 MiB; terminal history is retained without compaction                                            |
+| Quote lifetime               | At most 60 seconds; large sequential preparations may need another review                                   |
 
 Reserved receiver indices are never reused, including after unsigned failures.
 Storage-capacity failures retain the previously committed journal and do not

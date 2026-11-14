@@ -1,17 +1,20 @@
 # Landing page AWS deployment
 
 Implementation of the approved [landing-only plan](../../docs/feature-plans/LANDING_AWS_DEPLOYMENT_PLAN.md).
-Branch: `deploy/landing-page`. This directory deploys `landing/` at `gizu.io`
-and `www.gizu.io`, with no hostname redirect between them. Infrastructure applies,
-DNS changes and publication have **not** been performed by adding this code.
+This directory contains delivery tooling for `landing/` at `gizu.io` and
+`www.gizu.io`, with no hostname redirect between them. The former implementation
+branch is not a release prerequisite: workflows target `main`. Code review cannot
+establish whether infrastructure is provisioned, public DNS has changed, or
+`LANDING_DEPLOY_ENABLED` is set; inspect the target account/repository before an
+operational change.
 
 ## Resources and boundaries
 
-| Root | Resources | State key |
-| --- | --- | --- |
-| `infra/bootstrap` | Private, AES256-encrypted, versioned S3 state bucket with TLS-only access and cleanup of old state/lock versions | `bootstrap/terraform.tfstate` after initial local bootstrap |
-| `infra/certificate` | DNS-validated ACM certificate in `us-east-1`, covering both hostnames | `certificate/terraform.tfstate` |
-| `infra/site` | Private/versioned/encrypted Frankfurt S3 bucket, CloudFront with OAC, cache/security policies and limited GitHub deployment role | `site/terraform.tfstate` |
+| Root                | Resources                                                                                                                        | State key                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `infra/bootstrap`   | Private, AES256-encrypted, versioned S3 state bucket with TLS-only access and cleanup of old state/lock versions                 | `bootstrap/terraform.tfstate` after initial local bootstrap |
+| `infra/certificate` | DNS-validated ACM certificate in `us-east-1`, covering both hostnames                                                            | `certificate/terraform.tfstate`                             |
+| `infra/site`        | Private/versioned/encrypted Frankfurt S3 bucket, CloudFront with OAC, cache/security policies and limited GitHub deployment role | `site/terraform.tfstate`                                    |
 
 No server, database, container registry, app/API domain or native endpoint is
 created. The existing DNS provider remains authoritative. Check its apex
@@ -20,7 +23,7 @@ name, not a fixed IP to place in an ordinary apex A record. Also inventory curre
 website routing and CloudFront aliases: existing alias ownership must be handled
 under a reviewed cutover procedure, never by silently removing another distribution.
 
-Public nameservers checked on 9 November 2026 are Squarespace's
+A historical public DNS preflight on 9 November 2026 reported Squarespace's
 `nsb1`–`nsb4.squarespacedns.com`. Squarespace documents apex `ALIAS` records and
 `www` CNAME records, so a DNS-provider migration is not part of this setup. Its
 ALIAS procedure requires DNSSEC to be off: verify the actual domain setting and
@@ -28,11 +31,12 @@ delegation before cutover, and do not silently disable DNSSEC if it is enabled.
 See [Squarespace's DNS record instructions](https://support.squarespace.com/hc/en-us/articles/31119879125645-DNS-records-for-web-hosting).
 The same preflight found a published DS record, apex A `216.24.57.1`, no returned
 apex AAAA, and www CNAME `gizu-web-app.onrender.com`. These are dated observations,
-not records to overwrite automatically. **Apex cutover is pending a DNS strategy
-that accounts for this existing DNSSEC delegation.** Keep DNSSEC and current
-records unchanged until that strategy is reviewed; never point apex at a transient
-resolved CloudFront IP. A CloudFront-hostname preview can be qualified before
-public DNS cutover once AWS provisioning is authorized.
+not current DNS inventory or records to overwrite automatically. That preflight
+left the apex/DNSSEC strategy unresolved. Recheck nameservers, DS/DNSSEC state,
+current routing and alias ownership before any cutover; keep existing records
+unchanged until the actual strategy is reviewed. Never point apex at a transient
+resolved CloudFront IP. A CloudFront-hostname preview can be qualified separately
+from public DNS cutover.
 
 The public origin is the S3 REST endpoint, with signed OAC requests. Only `site/*`
 is readable through the distribution. `archive/*` and `control/*` stay private.
@@ -202,14 +206,14 @@ assets still referenced by cached HTML before any separately authorized cleanup.
 
 Set these repository variables from the reviewed site outputs/account:
 
-| Variable | Value |
-| --- | --- |
-| `LANDING_AWS_ACCOUNT_ID` | Verified account ID |
-| `LANDING_DEPLOY_ROLE_ARN` | Deployment role output |
-| `LANDING_BUCKET` | Website bucket output |
-| `LANDING_DISTRIBUTION_ID` | Distribution ID output |
-| `LANDING_CLOUDFRONT_DOMAIN` | `d…cloudfront.net` output |
-| `LANDING_DEPLOY_ENABLED` | Leave unset until launch qualification; then `true` |
+| Variable                    | Value                                               |
+| --------------------------- | --------------------------------------------------- |
+| `LANDING_AWS_ACCOUNT_ID`    | Verified account ID                                 |
+| `LANDING_DEPLOY_ROLE_ARN`   | Deployment role output                              |
+| `LANDING_BUCKET`            | Website bucket output                               |
+| `LANDING_DISTRIBUTION_ID`   | Distribution ID output                              |
+| `LANDING_CLOUDFRONT_DOMAIN` | `d…cloudfront.net` output                           |
+| `LANDING_DEPLOY_ENABLED`    | Leave unset until launch qualification; then `true` |
 
 No AWS access-key secrets are needed. PRs only build/package/test; main releases
 authenticate with GitHub OIDC. Keep the enable flag unset while reviewing code
@@ -258,9 +262,9 @@ tofu test
 ```
 
 The infrastructure workflow runs mocked plan-only tests for all three roots.
-Source/provider locks include Linux amd64/arm64 and macOS arm64 hashes. Existing
-landing audit reports four build-toolchain findings (two high, two moderate),
-while `npm audit --omit=dev` reports zero at this review. Dependency upgrades are
+Source/provider locks include Linux amd64/arm64 and macOS arm64 hashes. Historical
+audit counts are not a current security assessment: rerun the appropriate audit
+against the locked dependencies when assessing a release. Dependency upgrades are
 separate work; no Vite development server or Node runtime is exposed here.
 
 Sources: [private S3 static site](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/getting-started-secure-static-website-cloudformation-template.html),

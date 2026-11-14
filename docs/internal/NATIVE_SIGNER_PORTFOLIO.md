@@ -2,9 +2,8 @@
 
 **Complexity: 2 — Technical.** [Signer overview](NATIVE_SIGNER.md).
 
-Extracted from the signer reference on 2026-10-08. This split preserves the
-recorded implementation details; it is not a new device, provider or security
-verification. See [dated verification evidence](NATIVE_SIGNER_VERIFICATION.md).
+Reviewed against source on 2026-11-14; no new native build, provider or device
+verification is claimed. See [dated verification evidence](NATIVE_SIGNER_VERIFICATION.md).
 
 ## Shared public Monad portfolio
 
@@ -13,7 +12,12 @@ uint256 decoding and checked aggregation. Swift and Kotlin consume its generated
 UniFFI bindings and serialize the same `MainnetPortfolioSnapshot` for Home.
 Account 1 supplies `fundingAtoms`; `returnAtoms` includes account 0 and allocated
 public recipients. Account 0 retains its existing `funding` row role for wire
-compatibility. Account 2 and unallocated recipients are excluded. The registry's
+compatibility. Account 2 and unallocated recipients are excluded from this public-USDC sum.
+Android exposes shared Account-2 and saved/discovered historical private balances
+through its separately authenticated owned portfolio; those are not public
+`eth_call` observations. Home and Earn share that read grant and encrypted display
+observations. Missing/locked private observations stay explicit and cannot authorize
+spending or prove route settlement. The registry's
 `nextRecipient` cannot exceed 8192 (8191 included public accounts).
 
 The shared core rejects invalid registry versions, unknown/duplicate accounts,
@@ -44,6 +48,12 @@ the Home validator tests. It includes account-0 funds, values above JavaScript's
 safe integer range, zero balances and Android partial/stale observations. Run
 `stored-signer:build` before Android unit tests: the latter load the host Rust
 library via JNA as well as compiling Android's generated bindings.
+
+Android owned assets and vault positions include completeness/staleness and
+valuation availability; unavailable values are not zeros. Completed return
+lifecycle comes from saved native receipts, not the current private balance, so
+spending cash does not reopen an old withdrawal. See
+[Earn return completion](NATIVE_SIGNER_EARN.md#requested-exits-receipts-and-refunds).
 
 The iOS portfolio includes persistent public swap summaries. Robinhood token
 holdings use a separate read contract; Earn asset extensions remain Android-only.

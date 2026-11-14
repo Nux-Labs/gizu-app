@@ -6,7 +6,7 @@ Use this guide when checking the app identity before a native build.
 
 - A native Gizu build; Expo Go does not include the wallet module.
 - iOS 18+ or Android 9+ with a compatible passkey provider.
-- Access to the app's signing configuration and the `gizu.io` frontend.
+- Access to the app's signing configuration and the website serving `gizu.io`.
 
 ## Steps
 
@@ -23,6 +23,9 @@ Use this guide when checking the app identity before a native build.
 
    The `gizo` spelling in the iOS bundle ID is intentional. Do not rename it
    to match Android. Development and release builds share the passkey domain.
+   These are the canonical build identities; an existing ignored Android project
+   may retain the legacy package described in [Android signing](ANDROID_SIGNING.md).
+   Check the signed artifact rather than assuming prebuild updated it.
 
 2. Check [Expo configuration](../../mobile/app.config.ts) uses that identity.
    iOS must include `webcredentials:gizu.io` in Associated Domains and be signed

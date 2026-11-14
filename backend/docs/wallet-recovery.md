@@ -3,8 +3,9 @@
 Production `buildApp` registers the recovery routes against `PgWalletRecovery`
 and injects one PostgreSQL-backed `OperationCoordinator` into the native Earn,
 Fusion and private payout gateways. No production memory-store fallback exists.
-Tables initialize lazily under transaction-scoped advisory locks; no deployment
-or production migration is performed by this change.
+Tables initialize lazily under transaction-scoped advisory locks. The runtime
+database role needs schema creation/data permissions; a documentation review does
+not deploy the service or migrate an existing database.
 
 ## Native-only recovery wire
 
@@ -17,7 +18,7 @@ existing deployment ingress.
 PUT accepts exactly:
 
 ```json
-{"expectedRevision":0,"ciphertext":"unpadded_base64url_client_ciphertext"}
+{ "expectedRevision": 0, "ciphertext": "unpadded_base64url_client_ciphertext" }
 ```
 
 `expectedRevision` ranges from 0 to 2147483646; 0 creates an object. Ciphertext is
@@ -25,7 +26,11 @@ canonical unpadded base64url, between 16 encoded characters and 1048576 decoded
 bytes. The JSON body limit is 1398400 bytes. GET and successful PUT return exactly:
 
 ```json
-{"version":1,"revision":1,"ciphertext":"unpadded_base64url_client_ciphertext"}
+{
+  "version": 1,
+  "revision": 1,
+  "ciphertext": "unpadded_base64url_client_ciphertext"
+}
 ```
 
 The next write uses the previous revision and authenticates the next revision,
@@ -33,7 +38,8 @@ locator and format version inside the client's AEAD ciphertext. Responses use
 `Cache-Control: no-store`, including parsing, size, authorization and storage errors.
 Missing objects and incorrect/malformed credentials return the identical 404
 `RECOVERY_NOT_FOUND`; stale authenticated writes return 409 `RECOVERY_CONFLICT`.
-Malformed bodies return 400, oversized bodies 413, storage failure 503, and
+Malformed bodies return 400, oversized bodies 413, unsupported PUT content type
+or content encoding 415, storage failure 503, and
 aggregate quota exhaustion 507 `RECOVERY_QUOTA_EXCEEDED`.
 The server cannot verify AEAD authenticity and has no recovery decryption key.
 
@@ -67,7 +73,8 @@ responsibilities. A new device cannot prove freshness from a malicious server al
 
 ## Shared temporary Earn guards
 
-`earn_operation_coordination` stores only 64-hex HMAC identifiers/commitments,
+The shared coordinator also guards confidential cashout/private funding and
+grouped Earn payouts. `earn_operation_coordination` stores only 64-hex HMAC identifiers/commitments,
 expiration and creation timestamps. HMAC purposes separate identities from bindings
 and existing recovery encryption. Inputs are processed transiently; no addresses,
 raw signed data, provider responses or server-decryptable payloads enter the table.
@@ -135,14 +142,14 @@ identity. The stable `EARN_GATEWAY_RECOVERY_KEY` supplies the HMAC key.
 
 Default controls (validated optional integer environment variables):
 
-| Variable | Default | Meaning |
-| --- | ---: | --- |
-| `RECOVERY_UPLOAD_CALLS_PER_MINUTE` | 1024 | Accepted PUT attempts per client per database-clock minute |
-| `RECOVERY_UPLOAD_BYTES_PER_MINUTE` | 67108864 | 64 MiB decoded upload bytes per client per minute |
-| `RECOVERY_UPLOAD_BYTES_PER_DAY` | 536870912 | 512 MiB decoded upload bytes per client per 24-hour bucket from first admission |
-| `RECOVERY_UPLOAD_MAX_CLIENTS` | 16384 | Hard maximum number of active HMAC-IP limiter rows |
-| `RECOVERY_STORAGE_MAX_BYTES` | 17179869184 | Global 16 GiB decoded ciphertext across all retained object versions |
-| `RECOVERY_STORAGE_MAX_OBJECTS` | 1000000 | Global maximum number of recovery objects across credentials |
+| Variable                           |     Default | Meaning                                                                         |
+| ---------------------------------- | ----------: | ------------------------------------------------------------------------------- |
+| `RECOVERY_UPLOAD_CALLS_PER_MINUTE` |        1024 | Accepted PUT attempts per client per database-clock minute                      |
+| `RECOVERY_UPLOAD_BYTES_PER_MINUTE` |    67108864 | 64 MiB decoded upload bytes per client per minute                               |
+| `RECOVERY_UPLOAD_BYTES_PER_DAY`    |   536870912 | 512 MiB decoded upload bytes per client per 24-hour bucket from first admission |
+| `RECOVERY_UPLOAD_MAX_CLIENTS`      |       16384 | Hard maximum number of active HMAC-IP limiter rows                              |
+| `RECOVERY_STORAGE_MAX_BYTES`       | 17179869184 | Global 16 GiB decoded ciphertext across all retained object versions            |
+| `RECOVERY_STORAGE_MAX_OBJECTS`     |     1000000 | Global maximum number of recovery objects across credentials                    |
 
 These upload defaults admit a 16 MiB/256-page snapshot plus root, including three
 such full snapshots per minute behind one NAT. Counts include admitted attempts even

@@ -1,9 +1,16 @@
 # Backend deployment
 
-Deploy the backend as a Render **Node Web Service**. All commands below run from
-`backend/` unless stated otherwise.
+The production API URL is `https://api.gizu.io`. Use the
+[AWS backend guide](AWS_BACKEND_DEPLOYMENT.md) for the repository's container,
+CodeBuild/ECR and ECS/RDS release procedure. This guide covers shared runtime
+configuration, local checks and retained legacy Render settings. Source code and
+workflows do not establish the current cloud resources or pipeline trigger settings.
+All commands below run from `backend/` unless stated otherwise.
 
-## Render settings
+## Legacy Render settings
+
+Use this section only when maintaining an existing Render service; it is not the
+current production hosting recommendation.
 
 | Setting        | Value                                                |
 | -------------- | ---------------------------------------------------- |
@@ -28,22 +35,28 @@ executable separately if testing Earn simulations.
 ## Environment variables
 
 Use [backend/.env.example](../../backend/.env.example) as the configuration reference.
-Set production values in Render; keep provider keys out of mobile/frontend bundles.
+Supply production values at runtime (ECS environment/secrets, or the existing
+legacy host); keep provider keys out of mobile/frontend bundles.
 
-| Variables                               | Purpose                                                                              |
-| --------------------------------------- | ------------------------------------------------------------------------------------ |
-| `DATABASE_URL`                          | Database connection.                                                                 |
-| `ONEINCH_API_KEY`                       | Token quotes and Fusion gateway.                                                     |
-| `AURORA_API_KEY`                        | Confidential quotes, balances and history.                                           |
-| `PIMLICO_API_KEY`                       | Gas sponsorship and bundler gateway.                                                 |
-| `ETHEREUM_RPC_URL`, `ROBINHOOD_RPC_URL` | HTTPS RPC providers with pinned-block state access for simulations.                  |
-| `EARN_ANVIL_PATH`                       | Installed simulation wrapper.                                                        |
-| `EARN_GATEWAY_RECOVERY_KEY`             | Durable recovery key: exactly 64 hexadecimal characters.                             |
-| `EARN_AURORA_FEE_QUALIFICATION_JSON`    | Optional override of the checked-in Robinhood fee policy.                               |
-| `EARN_AURORA_HISTORY_QUALIFIED`         | Legacy client admission only; omit or keep false for new APKs. |
+| Variables                               | Purpose                                                             |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| `DATABASE_URL`                          | Database connection.                                                |
+| `ONEINCH_API_KEY`                       | Token quotes and Fusion gateway.                                    |
+| `AURORA_API_KEY`                        | Confidential quotes, balances and history.                          |
+| `PIMLICO_API_KEY`                       | Gas sponsorship and bundler gateway.                                |
+| `ETHEREUM_RPC_URL`, `ROBINHOOD_RPC_URL` | HTTPS RPC providers with pinned-block state access for simulations. |
+| `EARN_ANVIL_PATH`                       | Installed simulation wrapper.                                       |
+| `EARN_GATEWAY_RECOVERY_KEY`             | Durable recovery key: exactly 64 hexadecimal characters.            |
+| `EARN_AURORA_FEE_QUALIFICATION_JSON`    | Optional override of the checked-in Robinhood fee policy.           |
+| `EARN_AURORA_HISTORY_QUALIFIED`         | Legacy client admission only; omit or keep false for new APKs.      |
 
 **Keep the recovery key unchanged across deployments** and maintain a protected
-backup. Losing it prevents verification of existing payout recovery envelopes.
+backup. It verifies existing payout recovery envelopes and credit attestations,
+and keys shared operation guards and recovery-upload admission. Every replica
+must use the same key. Losing or rotating it without a coordinated migration/drain
+breaks those guarantees. Private wallet ciphertext is encrypted by the client,
+not by this server key. See [recovery persistence](../../backend/docs/wallet-recovery.md)
+for quotas, admission settings and retention.
 
 New native Robinhood deposits use saved authenticated balance snapshots and signed-route/finalized-receipt verification; they do not require the invitation-only history API. The checked-in fee policy covers the observed Robinhood lifecycle with zero configured Gizu fee. Retain the recovery key: it now also authenticates portable credit attestations. An explicit fee-policy JSON overrides the default; a stale override can still reject current quotes. See [runtime policy](../internal/BACKEND_RUNTIME.md#recovery-and-provider-qualification).
 
@@ -78,7 +91,8 @@ Optional catalog settings:
 - `MORPHO_API_URL`: defaults/example endpoint is `https://api.morpho.org/graphql`.
 
 Copy the JSON shape from [the environment example](../../backend/.env.example).
-In Render, paste JSON **without surrounding shell quotes** and restart after changes.
+In hosting consoles, enter JSON **without surrounding shell quotes** and restart
+or replace tasks after changes.
 Invalid addresses, duplicate entries or unknown chains prevent startup. With
 `VAULT_CHAINS`, configured contracts on known inactive chains are retained in the
 configuration but excluded from provider requests and results. Without it,
@@ -92,9 +106,9 @@ details without deposit/withdraw buttons or a deposit amount calculator. Monad
 currently has no native vault deposit route. Neither promotion configuration nor
 provider metadata can add native execution support.
 
-For the current Render rollout:
+To configure and verify the example catalog:
 
-1. Deploy this branch's backend code; older deployments do not read `VAULT_CHAINS`.
+1. Release the intended backend commit using the active host's procedure.
 2. Set `VAULT_CHAINS` to `1,4663,143` (no quotes) to include all three chains.
 3. Keep `CATALOG_VAULTS_JSON` for Gizu Prime AUSD; copy its promotion example
    from the environment example if needed. It will coexist with the two regular
@@ -110,15 +124,20 @@ For the current Render rollout:
 
 Check `GET /v1/chains` after deployment. Native execution support must be implemented
 and verified before adding another catalog profile. See [catalog internals](../internal/BACKEND_RUNTIME.md#catalog-validation-and-caching)
-for validation, caching and partial results.
+for validation, caching and unavailable provider metrics.
 
 ## Validate and deploy
 
 1. Run `npm run typecheck`, `npm test` and `npm run build` locally.
-2. Set the Render configuration above and deploy the intended commit.
-3. Confirm build logs show successful Anvil installation and TypeScript compilation.
-4. Check `/v1/health`, `/v1/chains` and the relevant catalog endpoints.
-5. Verify provider access and simulation capacity before testing funded operations.
+2. Build and smoke-check the runtime container as described in the
+   [AWS guide](AWS_BACKEND_DEPLOYMENT.md); use the legacy settings only for an
+   existing Render service.
+3. Supply runtime configuration, preserve the recovery key and authoritative
+   database, and release the intended commit through the active host's procedure.
+4. Check `https://api.gizu.io/v1/health`, `/v1/chains` and the relevant catalog
+   endpoints after release.
+5. Verify provider access, recovery continuity and simulation capacity before
+   testing funded operations.
 
 A healthy server does not prove that quotes, signing or settlement work.
 
@@ -131,11 +150,14 @@ The database role therefore needs permission to create tables in its default sch
 Emails are trimmed and lowercased; repeat submissions keep one row and the original
 `created_at`, merging any new questionnaire answers into `preferences`.
 
-Both public website dialogs use this endpoint. Deploy the backend before the frontend;
-otherwise the website will report a save failure. Browser access is allowed for
-`https://gizu.io` and `https://www.gizu.io`; local mode also allows port 5173 on
-localhost and 127.0.0.1. Production trusts one reverse proxy hop for client IP
-rate limiting, matching Render hosting. Signup requests are limited to ten attempts
+Both frontend invitation dialogs use this endpoint; the landing page's Join form
+is still a placeholder. Configure the frontend production build with
+`VITE_API_URL=https://api.gizu.io` and release the backend before publishing forms
+that depend on it. Browser access is allowed for `https://gizu.io`,
+`https://www.gizu.io` and `https://app.gizu.io`; local mode also allows port 5173
+on localhost and 127.0.0.1. Production trusts one reverse proxy hop for client IP
+rate limiting. Restrict direct application access and verify the ingress removes
+untrusted forwarded-IP headers. Signup requests are limited to ten attempts
 per minute per client IP in each server process.
 
 The success response confirms database registration, not email delivery. Invitations
@@ -157,8 +179,11 @@ For guided Robinhood deposits, deploy the matching backend and install the new n
 
 The API allows up to two simulation forks per process; each has a 1 GiB memory
 ceiling. Provision additional memory for Node and service overhead, and measure
-actual resource use. Quote bindings are process-local, so consider this before
-scaling to multiple instances.
+actual resource use. Production Earn operation bindings/replay claims use shared
+PostgreSQL coordination; recovery objects, upload budgets and minimum-return
+receipts are also durable. Some quote caches and rate/concurrency limits remain
+process-local. Unknown/expired cache bindings can fail closed, so verify in-flight
+recovery across task replacement before scaling or enabling overlapping releases.
 
 For checksums, resource limits, recovery rules, deadlines and historical test
 results, see [Backend runtime and provider requirements](../internal/BACKEND_RUNTIME.md).

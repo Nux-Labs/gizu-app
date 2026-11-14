@@ -1,8 +1,8 @@
 # Stored-wallet native signer
 
-Phases 2–4 implement a separate local Expo module, `GizuStoredSigner`, under native
-package `io.gizu.storedwallet`. The retained `gizu-signer` module is unchanged and
-excluded from app linking. This module supports Android 9+ development and release builds and iOS 18+ development and release builds; physical iOS acceptance remains pending.
+The active local Expo module is `GizuStoredSigner`, under native package
+`io.gizu.storedwallet`. The retained `gizu-signer` module is inactive and excluded
+from app linking. This module supports Android 9+ development and release builds and iOS 18+ development and release builds; physical iOS acceptance remains pending.
 
 ## Implemented boundary
 
@@ -39,18 +39,39 @@ backup-required wallet; ready wallets remain ready when a later backup is cancel
 unreadable local storage. It never overwrites a healthy wallet. No file paths or
 contents cross Expo. See [backup format and lifecycle](../../../docs/internal/NATIVE_SIGNER_STORAGE.md).
 
-Native capabilities report storage/access/backup/transfers eligibility in Android
-development builds. The app gates entry on `ready`; Account offers backup management.
+Native capabilities report eligibility in Android development and release builds
+(API 28+ with an Activity). The Gradle library's minSdk 24 is a compilation floor. The app gates entry on `ready`; Account offers backup management.
 Withdraw and Activity use native exact-transfer review, passkey authorization and
 an encrypted operation journal. Signed bytes are saved before broadcast; refresh
 only reconciles. Explicit resume requires fresh authorization and retries saved
 transactions byte-for-byte. Unsigned cancellations are compacted; when the active
 journal fills, settled records are encrypted and durably archived before removal.
 Unresolved signed records remain active. Activity shows the active window, not local
-archive files. Restore starts a new journal generation. The explicit
+archive files. Entropy-file restore starts a new journal generation. Android additionally exposes
+separate encrypted recovery sync, history import and read-only discovery; these
+require their native capabilities and the backend recovery service. See
+[recovery protocol](../../../docs/internal/WALLET_DISCOVERY_RECOVERY.md). The explicit
 `npm run debug:stored-wallet` harness remains available, with no legacy fallback.
 Guided phase-4 phone checks were user-reported successful; extended failure-path
 acceptance remains pending.
+
+## Earn and confidential portfolio capability limits
+
+Android advertises guarded distributed Earn deposits, Account-2 private funding,
+partial Robinhood withdrawals, private payout/liquidity execution and confidential
+public cashout. The shared in-memory private-read session survives ordinary app
+switching; lock, sign-out, screen lock and process restart revoke it. Spending
+requires its own operation-bound approval. New Earn cycles persist
+`privateAccount: "shared"`; saved legacy identities and signed returns keep their
+original account. Minimum-return receipts and bound refund observations remain
+terminal lifecycle evidence after cash is spent, without becoming arbitrary
+spending authority. See [native Earn](../../../docs/internal/NATIVE_SIGNER_EARN.md).
+
+iOS advertises stored wallets, backup, transfers, swaps, Earn wallets and Ethereum
+vault execution. Sponsored funding, private payouts, Ethereum liquidity and guided
+Earn deposits remain false; recovery/discovery and partial-withdrawal flags are
+absent. Android's private-read grant and owned-asset/Earn extensions do not imply
+iOS parity. Query `getCapabilities` rather than inferring support from methods.
 
 ## Ownership and verification
 
@@ -99,9 +120,13 @@ make the key unavailable; recovery requires the encrypted backup and original
 PRF-capable passkey. The key is not a Secure Enclave secp256k1 signer, and spending
 approval remains enforced by native application code.
 
-Backup format v1 is unchanged. Swift and JVM tests consume the same known-answer
-fixture under `ios/Tests/Fixtures`; its entropy, PRF and credential are synthetic
-public test values. Cross-platform provider/recovery acceptance is deferred.
+Both native backup codecs write v3 and read v1–3. V3 encrypts entropy, role
+registry and saved Earn metadata; v1/v2 remain legacy reader formats. The
+TypeScript identity constant still declares backup version 2. Android accepts
+files up to 16 MiB while iOS is bounded to 64 KiB, so format compatibility does
+not establish equal capacity or provider interoperability. Swift/JVM fixtures
+under `ios/Tests/Fixtures` contain synthetic public entropy/PRF/credentials.
+Cross-platform provider/recovery acceptance is deferred.
 Restoration verifies the recovered address, discards plaintext before confirmation,
 then obtains fresh PRF authorization for committing local storage.
 

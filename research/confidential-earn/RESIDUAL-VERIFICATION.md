@@ -1,8 +1,19 @@
+> Scope reviewed 2026-11-14: this file documents the isolated research CLI and
+> dated experiments. Its 10/90 payouts, 70/30 test budgets, full-exit gas/residual
+> rules and separate confidential keys do not define current Android behavior.
+> Current app contracts are [Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md),
+> [requested withdrawals/refunds](../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
+> and [native Earn](../../docs/internal/NATIVE_SIGNER_EARN.md). Android now uses
+> algorithm-selected investment slots, shared Account-2 private cash and read access,
+> requested partial Robinhood exits, and saved terminal return/refund evidence.
+> iOS has narrower execution capabilities. Recorded hashes, amounts and test counts
+> below remain historical; no live probes or native builds were run for this review.
+
 # Residual verification — 29 September 2026
 
 **Correction:** the whole-reserve threshold is an acceptance guard, **not a usable fee solution**. Artificially lowering the bid to pass it can prevent inclusion. The known bad plans are blocked. There is **no demonstrated solution at the observed mainnet fees**. No live destination transaction was submitted or funded during this work. The residual requirement is strictly **<0.5 USDC**, preferably **<0.1 USDC**.
 
-The conditional path keeps Simple7702Account, Circle, and Morpho's existing SDK contracts. It bounds the *whole amount outside the deposit*, rather than predicting how much Circle will refund. It requires a much cheaper gas market. The public Candide deployment's configuration is unknown; successful local Voltaire admission is not a promise of public-relay acceptance.
+The conditional path keeps Simple7702Account, Circle, and Morpho's existing SDK contracts. It bounds the _whole amount outside the deposit_, rather than predicting how much Circle will refund. It requires a much cheaper gas market. The public Candide deployment's configuration is unknown; successful local Voltaire admission is not a promise of public-relay acceptance.
 
 ## Why the previous conclusion was inconsistent
 
@@ -21,10 +32,10 @@ Circle's permit authorizes the maximum pull. The deployed paymaster pulls during
 
 The fixtures contain public transaction input, authorization, receipt, block header, and prior transaction hashes. `scripts/replay-historical.mjs` uses the original signed UserOperation, Circle permit, and EIP-7702 authorization. The outer bundler is impersonated locally. No private key is needed for these two replays.
 
-| Replayed case | Deposit USDC | Circle charge USDC | Residual USDC | UserOperation gas | Transaction gas |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| First deposit | 1.128419 | 2.063812 | 2.464035 | 672,955 | 496,687 |
-| Candide deposit | 0.134142 | 1.726651 | 1.731762 | 650,510 | 496,879 |
+| Replayed case   | Deposit USDC | Circle charge USDC | Residual USDC | UserOperation gas | Transaction gas |
+| --------------- | -----------: | -----------------: | ------------: | ----------------: | --------------: |
+| First deposit   |     1.128419 |           2.063812 |      2.464035 |           672,955 |         496,687 |
+| Candide deposit |     0.134142 |           1.726651 |      1.731762 |           650,510 |         496,879 |
 
 Both replays assert the original charge, residual, deposit, minted shares, UserOperation gas, and transaction gas. Both fail the residual acceptance criterion. Results: [first](fixtures/first-replay-result.json), [Candide](fixtures/candide-replay-result.json).
 
@@ -50,15 +61,15 @@ Implemented in `src/residual-policy.mjs`, with enforcement in `signVaultDeposit`
 
 `residual-fork-lab.mjs` uses the historical states, original SDK share-price bounds/deadlines, and Morpho SDK 6.0.0's pure calldata builder. It changes the amount, associated signatures, stated gas fees/limits, and sets destination ETH to zero. The first-deposit cases include the real preceding reallocation and original delegation authorization. Test signatures use historical nonces already consumed on mainnet and are retained only in ignored `.local/` files.
 
-| Scenario | Maximum hold | Final Circle charge | Final USDC | Outcome |
-| --- | ---: | ---: | ---: | --- |
-| Candide state, 410k call / 125k Circle validation, historical fees | 2.118172 | 1.604064 | **0.514108** | Deposit works; acceptance fails |
-| First state, 410k call / 140k Circle validation, historical fees | 2.977802 | 1.916694 | **1.061108** | Deposit works; acceptance fails |
-| Candide state, original generous limits, 0.1-gwei cap/effective fee | 0.362797 | 0.181130 | **0.181667** | Passes <0.5 |
-| First state, original limits/delegation, 0.1-gwei cap/effective fee | 0.350326 | 0.184536 | **0.165790** | Passes <0.5 |
-| Candide state, 0.02-gwei cap/effective fee | 0.072560 | 0.036226 | **0.036334** | Passes <0.1 |
-| Candide state, 0.1-gwei cap but effective fee falls to 1 wei | 0.362797 | 0.000001 | **0.362796** | Passes even with almost full refund |
-| Candide state, deliberately insufficient 100k call gas | 0.158990 | 0.093804 | **3.498751** | Wallet call fails; no deposit or shares; never acceptance |
+| Scenario                                                            | Maximum hold | Final Circle charge |   Final USDC | Outcome                                                   |
+| ------------------------------------------------------------------- | -----------: | ------------------: | -----------: | --------------------------------------------------------- |
+| Candide state, 410k call / 125k Circle validation, historical fees  |     2.118172 |            1.604064 | **0.514108** | Deposit works; acceptance fails                           |
+| First state, 410k call / 140k Circle validation, historical fees    |     2.977802 |            1.916694 | **1.061108** | Deposit works; acceptance fails                           |
+| Candide state, original generous limits, 0.1-gwei cap/effective fee |     0.362797 |            0.181130 | **0.181667** | Passes <0.5                                               |
+| First state, original limits/delegation, 0.1-gwei cap/effective fee |     0.350326 |            0.184536 | **0.165790** | Passes <0.5                                               |
+| Candide state, 0.02-gwei cap/effective fee                          |     0.072560 |            0.036226 | **0.036334** | Passes <0.1                                               |
+| Candide state, 0.1-gwei cap but effective fee falls to 1 wei        |     0.362797 |            0.000001 | **0.362796** | Passes even with almost full refund                       |
+| Candide state, deliberately insufficient 100k call gas              |     0.158990 |            0.093804 | **3.498751** | Wallet call fails; no deposit or shares; never acceptance |
 
 Every successful case asserts exact USDC accounting, minted shares owned by wallet 2, zero destination ETH before/after, one UserOperation, and no reference to wallet 1 in calldata or receipt logs. No new helper, shared application fee recipient, or wallet-to-wallet transfer is added. Wallet 1 remains outside the deposit flow. These checks establish the absence of the prohibited new mechanisms, not a claim of complete anonymity against timing, amounts, or service-provider observation.
 
@@ -80,7 +91,7 @@ The test rejects an underpriced 0.02-gwei operation in that 0.1-gwei market, che
 
 An initial diagnostic against Anvil's unadjusted recommendation correctly rejected even the historical operation at a 1.577939683-gwei floor; this was a fixture mismatch, not a new mainnet observation. Another diagnostic disabled that fee check to isolate validation; it is not used as the final admission proof. Receipt and nonce caches survive `debug_bundler_clearState`, so **restart Voltaire between repeat test runs**. The harness rejects a stale cached receipt rather than accepting it as a new result.
 
-## Current eligibility and other candidates
+## Eligibility at the September checkpoint and other candidates
 
 The public read at **block 26,080,059, 02:13:20 UTC** confirmed wallet 2 still has **1.731762 USDC**, **0.133013839453606864 shares**, and **0.000707811898201088 ETH**. No balance was spent during this investigation.
 

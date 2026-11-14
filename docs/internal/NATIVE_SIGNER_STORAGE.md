@@ -2,14 +2,11 @@
 
 **Complexity: 2 — Technical.** [Signer overview](NATIVE_SIGNER.md).
 
-Extracted from the signer reference on 2026-10-08. This split preserves the
-recorded implementation details; it is not a new device, provider or security
+Reviewed against source on 2026-11-14; this is not new device, provider or security
 verification. See [dated verification evidence](NATIVE_SIGNER_VERIFICATION.md).
-
-**Version note:** the sections below describe the original version-1 backup.
-The current [TypeScript contract](../../mobile/src/domain/wallet/storedSigner.ts)
-declares backup version 2. Consult current native codecs before making format or
-compatibility assumptions; the historical details below are not a v2 specification.
+Both native codecs write backup version 3 and read versions 1–3. The
+[TypeScript identity](../../mobile/src/domain/wallet/storedSigner.ts) still declares
+version 2; it does not describe the current emitted file.
 
 ## Android shared private-read session
 
@@ -45,7 +42,7 @@ transaction authorization. Native code owns verification, approval and secret us
 AuthenticationServices registration/assertions are checked for the expected credential,
 challenge, RP, `https://gizu.io` origin, presence, verification and P-256 signature.
 Creation proves PRF availability before generating entropy. iOS uses the same backup
-format v1 and derivation, but a platform-local wallet record and journal format.
+format versions and derivation, with a platform-local wallet record and journal format.
 Document selection, save/reopen verification and restore remain native. Restore asks
 for address confirmation without retaining entropy/PRF across that confirmation;
 fresh PRF authorization commits the recovery. Initial acceptance is iPhone-to-iPhone;
@@ -70,21 +67,28 @@ Native comparison checks wallet identity, credential, entropy and all 16 derived
 addresses before atomically persisting `ready`. Cancellation/failure preserves the
 same wallet in `backupRequired`; repeating backup on a ready wallet preserves readiness.
 
-Backup version 1 encrypts 32-byte entropy using AES-256-GCM and the 32-byte recovery
-PRF result as key. AAD binds format/version, RP, derivation version, wallet UUID and
-credential ID/P-256 public key. Files are limited to 64 KiB. Backup plaintext and
-PRF never cross Expo; owned buffers are cleared before document selection. Provider
-and managed-runtime copies cannot be guaranteed to be erased. Two fresh passkey
-checks are expected for save and reopen verification.
+Current version-3 backups encrypt a JSON payload containing entropy, role registry,
+selected Earn chain, recovery gate, cycle index and cycle metadata using AES-256-GCM
+and the 32-byte recovery PRF result as key. AAD binds format/version, RP, derivation
+version, wallet UUID and credential ID/P-256 public key. Version 1 contains raw
+entropy; version 2 adds the authenticated public role registry to its header/AAD.
+Version 3 keeps that registry and Earn metadata inside ciphertext. Files are bounded
+to 16 MiB on Android and 64 KiB on iOS; shared format does not imply equal capacity.
+Backup plaintext and PRF never cross Expo. Owned buffers are cleared, but provider
+and managed-runtime copies cannot be guaranteed erased. Save and reopen verification
+use separate fresh passkey checks.
 
-Android local binary storage version 4 retains the version-3 journal-generation UUID
-and adds the selected Earn chain and a restore reconciliation gate. Version-2 records
-retain readiness and use their wallet UUID as journal generation; version-1 records
-load as backup-required without changing entropy. Restore requires the encrypted
+Android local binary storage writes version 6 and reads versions 1–6, including
+both historical version-4 layouts. Version 6 carries the role registry, Earn state,
+length-prefixed cycle catalogue and discovery high-water/recovery gate. Version-2
+records retain readiness and use wallet UUID as journal generation; version-1
+records load as backup-required without changing entropy. Restore requires the encrypted
 file and its original passkey, validates authenticated metadata and derivation,
 and re-encrypts under a local Keystore key. Only absent/unreadable storage can be
-restored; readable wallets cannot be overwritten. Restore does not recover local
-transaction history. Lost-passkey recovery and web sharing remain deferred.
+restored; readable wallets cannot be overwritten. The exported backup does not contain execution journals. Android can separately
+restore synced authenticated history and allocation metadata through
+[encrypted recovery sync](WALLET_DISCOVERY_RECOVERY.md); iOS does not advertise
+that capability. Lost-passkey recovery and web sharing remain deferred.
 
 The two-minute ceremony deadline includes document selection. Backgrounding outside
 native credential/document UI cancels; foreground/unlocked checks apply on return.

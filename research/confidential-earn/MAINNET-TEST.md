@@ -1,3 +1,14 @@
+> Scope reviewed 2026-11-14: this file documents the isolated research CLI and
+> dated experiments. Its 10/90 payouts, 70/30 test budgets, full-exit gas/residual
+> rules and separate confidential keys do not define current Android behavior.
+> Current app contracts are [Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md),
+> [requested withdrawals/refunds](../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
+> and [native Earn](../../docs/internal/NATIVE_SIGNER_EARN.md). Android now uses
+> algorithm-selected investment slots, shared Account-2 private cash and read access,
+> requested partial Robinhood exits, and saved terminal return/refund evidence.
+> iOS has narrower execution capabilities. Recorded hashes, amounts and test counts
+> below remain historical; no live probes or native builds were run for this review.
+
 # Authorized mainnet test — September 29, 2026
 
 Saved budgets: Ethereum 7.652756 USDC; Robinhood 3.279753 USDC. Both use the same two destination addresses and 10/90 confidential payout weights. Only wallet 2 invests. No wallet-to-wallet transfer, new helper, common application fee recipient, or joint transaction involving both destination wallets is introduced.
@@ -118,14 +129,13 @@ First end-to-end deposit through the Android app (one 3 USDC budget, Steakhouse 
 - Wallet 1 received **0.147037 USDG** from a 10% input of about 0.2987 USDC; a fixed route fee of about 0.15 USDC dominates this small leg.
 - Wallet 2 received **2.523394 USDG**, deposited **2.340164 USDG** for **2.317044829633649623 shares**, paid **0.034941 USDG** gas and kept **0.148289 USDG** as its withdrawal reserve.
 
-| Step | Chain | Block | Time (UTC) | Amount | Transaction |
-| --- | --- | ---: | --- | --- | --- |
-| Source funding (UserOp `0xd06cf92268a516ea06b6b6a272dfc53213f6043b0b0cb084b0a05ba95f4a3699`) | Monad 143 | 113056936 | 2026-10-13 13:49:07 | 2.987344 USDC to deposit address; 0.001624 USDC gas | `0x38d14d3ca79cbdddba88b979de78eeb9fe68932c20fd87c20d867e5db37f5db9` |
-| 10% hold payout | Robinhood 4663 | 87844020 | 2026-10-13 21:47:02 | 0.147037 USDG to wallet 1 | `0x7097cba568bbf9df3f6c7b876af4dd217aa502a1a3ee61187a641bf6ab304d70` |
-| 90% invest payout | Robinhood 4663 | 87861593 | 2026-10-13 22:16:35 | 2.523394 USDG to wallet 2 | `0x18ee795a01570969dee4a301a1cef9d2bc3f99b01817058ace22a8127b75e368` |
-| Vault deposit and wallet-2 EIP-7702 delegation (UserOp `0xfa04549cc8c6d5fa52efd494748fa296c964e47988adda0176a33b0a4ff81735`) | Robinhood 4663 | 87881208 | 2026-10-13 22:49:43 | 2.340164 USDG for 2.317044829633649623 shares; 0.034941 USDG gas | `0x9c436b682f58f7f5a12949c6e2b727cddcfbf7900931755db43899df62a02166` |
+| Step                                                                                                                         | Chain          |     Block | Time (UTC)          | Amount                                                           | Transaction                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------- | -------------- | --------: | ------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Source funding (UserOp `0xd06cf92268a516ea06b6b6a272dfc53213f6043b0b0cb084b0a05ba95f4a3699`)                                 | Monad 143      | 113056936 | 2026-10-13 13:49:07 | 2.987344 USDC to deposit address; 0.001624 USDC gas              | `0x38d14d3ca79cbdddba88b979de78eeb9fe68932c20fd87c20d867e5db37f5db9` |
+| 10% hold payout                                                                                                              | Robinhood 4663 |  87844020 | 2026-10-13 21:47:02 | 0.147037 USDG to wallet 1                                        | `0x7097cba568bbf9df3f6c7b876af4dd217aa502a1a3ee61187a641bf6ab304d70` |
+| 90% invest payout                                                                                                            | Robinhood 4663 |  87861593 | 2026-10-13 22:16:35 | 2.523394 USDG to wallet 2                                        | `0x18ee795a01570969dee4a301a1cef9d2bc3f99b01817058ace22a8127b75e368` |
+| Vault deposit and wallet-2 EIP-7702 delegation (UserOp `0xfa04549cc8c6d5fa52efd494748fa296c964e47988adda0176a33b0a4ff81735`) | Robinhood 4663 |  87881208 | 2026-10-13 22:49:43 | 2.340164 USDG for 2.317044829633649623 shares; 0.034941 USDG gas | `0x9c436b682f58f7f5a12949c6e2b727cddcfbf7900931755db43899df62a02166` |
 
 Both payout transactions were sent from `0x2cff890f0378a11913b6129b2e97417a2c302680` on the route's side. Both sponsored gas charges went to `0xd8baa107006c93a030d1455a2ef43261b384f21c`.
 
 Getting here required the native and backend fixes recorded in [`CONFIDENTIAL_EARN.md`](../../docs/internal/CONFIDENTIAL_EARN.md#2026-10-14--first-completed-in-app-robinhood-deposit). No duplicate funding, payout or vault transaction was sent; every retry reconciled the saved operation.
-

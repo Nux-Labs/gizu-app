@@ -1,8 +1,9 @@
 # Landing-only AWS deployment
 
-**Status:** approved architecture; implementation prepared, not provisioned or published.
-**Reviewed:** 9 November 2026.
-**Branch:** `deploy/landing-page`, created from `main`.
+**Status:** architecture and delivery tooling are implemented in the repository;
+provisioning, publication, DNS and enablement state require operator verification.
+**Architecture review:** 9 November 2026.
+**Release source:** `main`; the former implementation branch is not required.
 **Cost/recovery owner and monthly gross ceiling:** to assign before resource creation.
 
 Deploy `landing/` at `gizu.io` and `www.gizu.io`, retaining the existing DNS provider
@@ -52,9 +53,10 @@ account inventory or paid capacity has been assumed from code validation.
 Public DNS preflight found Squarespace nameservers and an existing DNSSEC DS
 delegation. Squarespace documents apex ALIAS setup with DNSSEC disabled; the
 current records/DNSSEC must remain untouched until a separate cutover strategy
-is chosen. Account/operator/budget inputs and that DNS decision remain pending;
-the user has not selected an account or authorized a DNSSEC change. These inputs
-do not block code/CI validation, but do block provisioning/public cutover.
+is chosen. Those were unresolved inputs at the architecture review, not a current
+account or DNS inventory. Recheck the actual account/operator/budget and DNSSEC/cutover
+strategy before provisioning or public routing changes. Repository tooling does
+not establish that those operational decisions have since been made.
 
 ## Acceptance and rollout
 

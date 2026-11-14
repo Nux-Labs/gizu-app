@@ -22,7 +22,7 @@ transactions simulated.
    ```
 
 2. Choose the backend in `mobile/.env` using `EXPO_PUBLIC_API_URL`.
-   Use `https://gizu-app.onrender.com` for the hosted backend. Never put provider
+   Use `https://api.gizu.io` for the production backend. Never put provider
    API keys in mobile environment variables.
 3. Build and install for **one** platform:
 
@@ -70,12 +70,12 @@ and the [mobile README](../../mobile/README.md) for deeper build instructions.
 Simulator launch is not proof that a physical device's passkey provider works.
 Expo reference: [development builds](https://docs.expo.dev/develop/development-builds/introduction/).
 
-## Standalone Android app with Render
+## Standalone Android app
 
 A release APK contains its JavaScript bundle. After installing it, tap **Gizu** in
 Android's app list; USB, the laptop and Metro are unnecessary. Internet and a
-compatible deployed Render backend are still required. Rebuild for new source or
-environment changes; this installation does not pull a Git branch automatically.
+compatible deployed API at `https://api.gizu.io` are still required. Rebuild for
+new source or environment changes; this installation does not pull a Git branch automatically.
 
 Use the existing generated Android project and verified signing identity. Do not
 uninstall Gizu, clear its storage, run prebuild or regenerate its keystore just to
@@ -83,17 +83,23 @@ update it. From `mobile/android`, with Node 24 on PATH, JDK 17 and the Android S
 
 ```sh
 NODE_ENV=production GIZU_BUILD_VARIANT=production \
-EXPO_PUBLIC_API_URL=https://gizu-app.onrender.com \
+EXPO_PUBLIC_API_URL=https://api.gizu.io \
 EXPO_PUBLIC_PASSKEY_MODE=native \
 ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --console=plain
 adb install -r app/build/outputs/apk/release/app-release.apk
-adb shell am start -n com.example.gizu.dev/io.gizu.android.MainActivity
 ```
 
-This checkout's existing test phone uses that package/activity and the preserved
-`mobile/.credentials/android-debug.keystore`. Verify the certificate before updating
-an existing install; a signing mismatch is not a reason to erase the wallet.
-The release native endpoint is pinned to Render. The USB backend property applies
-only to debug builds. A standalone release can coexist with Metro running, but it
-does not load code from Metro. If the backend has not deployed the new confidential
-preview routes, review remains unavailable before any funds move.
+Open Gizu from the phone's app list after installation. Verify the APK's package
+and certificate before updating an existing install; a signing mismatch is not a
+reason to erase the wallet. Canonical builds use `io.gizu.android`; an existing
+ignored native project can retain `com.example.gizu.dev` and the persistent local
+development keystore. This local release procedure is for device testing; store
+signing follows the distribution instructions in the [mobile README](../../mobile/README.md).
+
+Native hosted endpoints use `https://api.gizu.io`; changing `EXPO_PUBLIC_API_URL`
+alone does not redirect every native request. Android's explicit
+`-PgizuEarnBackend=usb` build property selects localhost for the native Earn gateway
+only in **debug** builds; release builds always use the hosted endpoint. Forward
+port 3000 separately when using that debug mode. It does not redirect all recovery,
+portfolio or restored-operation traffic. A standalone release does not load code
+from Metro. A compatible backend and native build are both required for review.

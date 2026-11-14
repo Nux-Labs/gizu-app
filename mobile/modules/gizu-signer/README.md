@@ -42,7 +42,10 @@ Storage keys, journal schema, module names, derivation and native ABI were prese
 From `mobile/`, `npm run signer:test` tests this Rust core and
 `npm run signer:build -- android` (or `ios` on macOS) builds its native artifacts.
 These commands do not reconnect it to the app. Source, tests and bindings remain
-here; the app CI builds no longer compile or link this module. Rust CI remains.
+here; the app native build jobs do not compile or link this module. The
+`native-core` job in `.github/workflows/mobile-release.yml` still runs its Rust
+format, test and Clippy checks alongside the stored signer. Workflow presence
+is not a claim of a newly passing hosted run.
 
 Platform wrapper tests need an isolated Expo host with this local module linked.
 In that host, run `:gizu-signer:testDebugUnitTest` for Android and the usual iOS

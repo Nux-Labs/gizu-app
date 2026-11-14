@@ -1,4 +1,15 @@
-# Residual-balance investigation — no accepted solution yet
+> Scope reviewed 2026-11-14: this file documents the isolated research CLI and
+> dated experiments. Its 10/90 payouts, 70/30 test budgets, full-exit gas/residual
+> rules and separate confidential keys do not define current Android behavior.
+> Current app contracts are [Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md),
+> [requested withdrawals/refunds](../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
+> and [native Earn](../../docs/internal/NATIVE_SIGNER_EARN.md). Android now uses
+> algorithm-selected investment slots, shared Account-2 private cash and read access,
+> requested partial Robinhood exits, and saved terminal return/refund evidence.
+> iOS has narrower execution capabilities. Recorded hashes, amounts and test counts
+> below remain historical; no live probes or native builds were run for this review.
+
+# Residual-balance investigation — original Circle checkpoint
 
 **Status (29 September 2026):** The acceptance criterion is **strictly less than 0.5 USDC** remaining after settlement; **less than 0.1 USDC** is preferred. No approach in this document has demonstrated all of the fee, residual, and privacy requirements. [HANDOVER.md](HANDOVER.md) records the accepted boundary. The sections below preserve research and rejected candidates, not execution instructions.
 
@@ -44,7 +55,7 @@ Circle pulls the **maximum** USDC gas cost before the wallet's deposit call and 
 
 A local Anvil fork of the pre-deposit state at Ethereum block 26,079,532 succeeded with signed limits of 400,000 wallet call, 165,395 verification, 55,679 pre-verification, 120,000 Circle validation, and 35,000 post-operation gas. At a matched 1 gwei maximum and effective fee, the projected refund was **0.498964 USDC**. The call and Circle validation margins over the observed usage were only about 21,000 and 12,000 gas. Raising those margins to 410,000 and 125,000 gas made the projected refund **0.539312 USDC** at that price.
 
-A second local fork of wallet 2's *post-deposit* state succeeded with all four tested profiles. At its read-only market quote of **0.630915148 gwei** and the then-current Circle token price, the 410,000 / 165,395 / 55,679 / 125,000 / 35,000 profile projected a **0.361219 USDC** refund and a **1.401903 USDC** maximum hold. This is a useful conditional option for a cheap-gas test, not a ceiling: a lower inclusion-block base fee or a cheaper execution path raises the refund. Candide has accepted the 165,395 verification limit, but it has **not** accepted the reduced 410,000 wallet and 125,000 paymaster limits on mainnet. No mainnet operation was sent during this investigation.
+A second local fork of wallet 2's _post-deposit_ state succeeded with all four tested profiles. At its read-only market quote of **0.630915148 gwei** and the then-current Circle token price, the 410,000 / 165,395 / 55,679 / 125,000 / 35,000 profile projected a **0.361219 USDC** refund and a **1.401903 USDC** maximum hold. This is a useful conditional option for a cheap-gas test, not a ceiling: a lower inclusion-block base fee or a cheaper execution path raises the refund. Candide has accepted the 165,395 verification limit, but it has **not** accepted the reduced 410,000 wallet and 125,000 paymaster limits on mainnet. No mainnet operation was sent during this investigation.
 
 For Circle-only use, a safe runner must simulate the exact wallet state, keep margins on each call, calculate the refund at the current Circle price and a range of plausible inclusion prices, and **stop before signing** if the upper estimate exceeds a conservative threshold such as 0.35 USDC. Even then, this is a best-effort policy, not a hard 0.5 USDC guarantee. A later cleanup transaction would need its own gas source.
 
@@ -54,7 +65,7 @@ The wallet signs an EIP-712 intent binding: Ethereum chain ID and helper address
 
 The helper checks both signatures, nonce, deadline, relayer, and fixed token/vault. It calls `permit`, pulls exactly the signed USDC amount, approves the vault for exactly the deposit amount, and calls [`deposit(assets, onBehalf)`](https://docs.morpho.org/developers/contracts/morpho-vaults-v2/) with `onBehalf = owner`. It checks the returned shares against the signed minimum, pays the fixed fee in USDC to the relayer, and checks the owner's remaining USDC against the signed maximum. Any failed check reverts the entire transaction, including the permit and token movements. The vault's `deposit` is callable by anyone and mints shares to `onBehalf`, so the relayer never owns the user's shares. Use exact approvals and a reentrancy guard, and do not expose an arbitrary call target or fee recipient. The helper's signature nonce prevents replay; the signed deadline limits stale fee and share-price quotes.
 
-The signed residual is deterministic on success: `starting USDC − deposited USDC − relayer fee`. A fresh balance read selects deposit amount so this equals 0.05 USDC; the onchain residual check makes a changed balance fail closed. The relayer must quote a fixed USDC fee that covers its expected Ethereum gas plus its risk margin. The user sees that fee before signing and never has to pre-fund a gas *maximum* that later returns to the wallet. The relayer bears any difference between its quoted fee and actual ETH gas cost. The application can obtain competing relayer quotes; each wallet can choose a different relayer.
+The signed residual is deterministic on success: `starting USDC − deposited USDC − relayer fee`. A fresh balance read selects deposit amount so this equals 0.05 USDC; the onchain residual check makes a changed balance fail closed. The relayer must quote a fixed USDC fee that covers its expected Ethereum gas plus its risk margin. The user sees that fee before signing and never has to pre-fund a gas _maximum_ that later returns to the wallet. The relayer bears any difference between its quoted fee and actual ETH gas cost. The application can obtain competing relayer quotes; each wallet can choose a different relayer.
 
 This direct-vault path needs an explicit signed `minShares` check to preserve Morpho's share-price protection. The present [Morpho SDK flow](https://docs.morpho.org/developers/earn/tutorials/assets-flow/) uses VaultBundlesV1, which mints to its transaction sender, so merely submitting its transaction from a relayer would mint shares to the relayer. The helper must call the vault directly and enforce the signed share bound itself.
 

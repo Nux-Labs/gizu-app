@@ -11,8 +11,9 @@
 
 Managing investments across chains should not require managing every technical
 step yourself. Gizu brings a USDC portfolio, token discovery and confidential swap
-flows into one iOS and Android app, with passkey access and native transaction
-approval.
+flows into one iOS and Android codebase, with passkey access and native transaction
+approval. Android currently exposes the broader Earn and private-balance flows;
+iOS capabilities are checked separately before an action is offered.
 
 Gizu uses confidential routing and fresh destination wallets to reduce the direct
 public connection between a funding wallet and investment holdings. The app
@@ -21,12 +22,16 @@ needs to continue later.
 
 - **Open with a passkey.** Access your wallet through the native device flow;
   recover it with an encrypted backup and the original passkey.
-- **See your portfolio in one place.** View public Monad USDC balances and inspect
-  token holdings and vault positions without manually navigating each account.
+- **See your portfolio in one place.** View owned public assets, private USDC and
+  vault positions in USD, with incomplete or unavailable observations identified.
 - **Discover before you trade.** Search tokens across Ethereum, Monad and Robinhood
   Chain, with eligibility checks before starting a swap.
 - **Buy and return to USDC.** Supported swaps route Monad USDC through confidential
-  credit into Robinhood token purchases; selling returns proceeds to Monad USDC.
+  credit into Robinhood token purchases; new sales return proceeds to private
+  USDC. Making those proceeds public is a separate withdrawal action.
+- **Invest and withdraw an amount.** Android's supported Robinhood vault journey
+  distributes investments across native-owned wallets and returns a chosen vault
+  withdrawal to private USDC in Account 2, keeping the remainder invested.
 - **Stay in control.** Wallet keys and signing stay in the native wallet layer.
   Paused operations retain state for reconciliation and, when required, fresh approval.
 
@@ -35,14 +40,14 @@ needs to continue later.
 The mobile app is the primary wallet experience and uses mainnet assets. The web
 app and research prototypes have different capabilities.
 
-| Area                  | Current scope                                                                                                                                                                                   |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mobile wallet         | Native passkey access, encrypted backup/restore and public Monad USDC portfolio.                                                                                                                |
-| Token discovery       | Catalog browsing on Ethereum (`1`), Monad (`143`) and Robinhood Chain (`4663`).                                                                                                                 |
-| Swap                  | The current UI enables eligible Robinhood tokens; the execution path uses Aurora Confidential Intents and 1inch Fusion. Catalog inclusion alone does not establish a usable quote or liquidity. |
-| Holdings and recovery | Native holdings lookup, sell flows and persisted swap recovery. Platform orchestration differs; shared Rust code does not imply complete iOS/Android parity.                                    |
-| Vaults and Earn       | Vault discovery plus native Confidential Earn infrastructure. Execution depends on supported routes, configuration and provider readiness; listing a vault does not enable investment in it.    |
-| Web app               | React UI with simulated authentication and mock-backed flows, plus backend-connected token discovery. It is not the native signing wallet.                                                      |
+| Area                  | Current scope                                                                                                                                                                                                                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mobile wallet         | Native passkey access, encrypted backup/restore and owned public-asset portfolio. Android adds the shared private-USDC read session and broader vault/asset observations.                                                                                                                     |
+| Token discovery       | Catalog browsing on Ethereum (`1`), Monad (`143`) and Robinhood Chain (`4663`).                                                                                                                                                                                                               |
+| Swap                  | The current UI enables eligible Robinhood tokens; the execution path uses Aurora Confidential Intents and 1inch Fusion. Catalog inclusion alone does not establish a usable quote or liquidity.                                                                                               |
+| Holdings and recovery | Native holdings lookup, sell flows and persisted swap recovery. Platform orchestration differs; shared Rust code does not imply complete iOS/Android parity.                                                                                                                                  |
+| Vaults and Earn       | Android guided Robinhood deposits, requested partial/full withdrawals, private return progress and refund recovery. iOS exposes Ethereum vault execution but lacks the funding/private-payout capabilities for an end-to-end Earn journey. Route, provider and capability checks still apply. |
+| Web app               | Mobile-testing and request-access entry screens. Earlier dashboard/demo components remain in source but are disconnected from the current entry point.                                                                                                                                        |
 
 **Privacy has boundaries.** Source funding and destination transfers remain public.
 Confidential credit is the private middle segment; providers can observe parts of
@@ -141,9 +146,9 @@ npm --prefix landing ci
 npm --prefix landing run dev
 ```
 
-Open the URL printed by each development server. Backend-connected web token
-search needs the provider configuration described in the
-[frontend README](frontend/README.md).
+Open the URL printed by each development server. Set the frontend's
+`VITE_API_URL=https://api.gizu.io` explicitly for the hosted API: its source still
+contains an older Render fallback. See the [frontend README](frontend/README.md).
 
 ## Quality and releases
 
@@ -175,9 +180,12 @@ approval stabilization and shared TypeScript/Rust vectors. Use
 opt-in and read-only; see [gas management](docs/internal/GAS_MANAGEMENT.md).
 
 See the [workflow definitions](.github/workflows/) for exact jobs. Native changes
-need release validation even when PR checks pass. CI does not deploy services,
-upload signed store builds or prove live provider settlement; backend tests use
-test doubles. Distribution and device acceptance are separate steps.
+need release validation even when PR checks pass. The landing workflow can deploy
+eligible `main` changes when its deployment flag and AWS variables are configured;
+backend releases use the separate AWS pipeline. Test workflows do not upload
+signed store builds or prove live provider settlement. Optional backend fork and
+database tests require their own inputs. Distribution and device acceptance are
+separate steps.
 
 ## Documentation by audience
 

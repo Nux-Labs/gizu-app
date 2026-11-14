@@ -2,8 +2,7 @@
 
 **Complexity: 2 — Technical.** [Signer overview](NATIVE_SIGNER.md).
 
-Extracted from the signer reference on 2026-10-08. This split preserves the
-recorded implementation details; it is not a new device, provider or security
+Reviewed against source on 2026-11-14; this is not a new device, provider or security
 verification. See [dated verification evidence](NATIVE_SIGNER_VERIFICATION.md).
 
 ## Exact transfers and operation recovery
@@ -48,8 +47,11 @@ Unsigned remainder is newly prepared and reviewed on every resume. Revision chec
 reject stale requests. Execution waits for each step to finalize before proceeding;
 a pending result stops the batch. Cancellation prevents unsigned remaining steps but
 cannot revoke a signed transaction; its status and explicit retry remain available.
-Restore creates a fresh journal generation and cannot resume another installation's
-operations. Activity shows local outgoing records only, not indexed incoming history.
+Entropy-file restore creates a fresh journal generation and alone cannot resume
+another installation's operations. Android's separately authenticated recovery sync
+can import exact signed history into that generation and reconcile read-only;
+explicit resume retains its normal approval rules. iOS does not advertise recovery
+sync. Activity shows saved outgoing records, not indexed incoming history.
 
 Android RPC uses OkHttp 4.9.2, matching the existing React Native dependency. The
 fixed Monad endpoint and bounded, cancellable transport live in `rpc/`; orchestration,

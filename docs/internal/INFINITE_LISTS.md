@@ -1,6 +1,7 @@
 # Infinite lists
 
-Swap and mainnet Vaults share `useInfiniteList` and `InfiniteListScreen`. Home
+Source reviewed 2026-11-14. Swap token discovery/pickers and mainnet Vaults share
+`src/hooks/useInfiniteList.ts` and `src/components/templates/InfiniteListScreen.tsx`. Home
 previews retain their existing bounded pagination. Backend contracts are unchanged.
 
 ## Adding a feature
@@ -51,7 +52,8 @@ from the shared `ScreenFrame`.
 
 ## Verification
 
-Service-mocked functional tests exercise both catalogs and a generic string-cursor
+The retained service-mocked functional tests exercise both catalogs and a generic string-cursor
 list, including refresh, retries, cancellation, overlapping identities and a large
 odd-length grid. Native scrolling, keyboard focus and Dynamic Type require separate
 simulator/device checks; these tests are not proof of live backend availability.
+No functional or native checks were rerun for this documentation review.

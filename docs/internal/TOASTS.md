@@ -1,6 +1,6 @@
 # In-app feedback
 
-Gizu uses `react-native-toast-message` behind a small app-owned API. Import
+Source reviewed 2026-11-14. Gizu uses `react-native-toast-message` behind a small app-owned API. Import
 `showToast` and `dismissToast` from `@/services/toast`; feature code should not
 import the package directly.
 
@@ -54,4 +54,5 @@ hosts mounted; the package directs calls to the most recently mounted host.
 Functional tests exercise the real library's content, replacement, lifetime,
 actions, dismissal and host cleanup. Native-driver animation is not reproduced
 by Jest; native modal layering, VoiceOver/TalkBack, large text, keyboard and
-physical-device appearance require device checks.
+physical-device appearance require device checks. These checks were not rerun
+for this documentation-only review.

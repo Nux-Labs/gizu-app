@@ -1,10 +1,21 @@
+> Scope reviewed 2026-11-14: this file documents the isolated research CLI and
+> dated experiments. Its 10/90 payouts, 70/30 test budgets, full-exit gas/residual
+> rules and separate confidential keys do not define current Android behavior.
+> Current app contracts are [Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md),
+> [requested withdrawals/refunds](../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
+> and [native Earn](../../docs/internal/NATIVE_SIGNER_EARN.md). Android now uses
+> algorithm-selected investment slots, shared Account-2 private cash and read access,
+> requested partial Robinhood exits, and saved terminal return/refund evidence.
+> iOS has narrower execution capabilities. Recorded hashes, amounts and test counts
+> below remain historical; no live probes or native builds were run for this review.
+
 # Confidential Earn: app integration handover
 
 Prepared 30 September 2026. Mainnet evidence below is from 29 September 2026 UTC. This document describes the accepted design, observed implementation, and remaining production work. **It does not authorize another mainnet transaction.**
 
-Use the [app integration reference](../../docs/internal/CONFIDENTIAL_EARN.md) for delivered app behavior, this document for product/fee policy, and [MAINNET-TEST.md](MAINNET-TEST.md) for historical execution evidence. Earlier Circle experiments, 20/80 splits, unfilled Fusion attempts, and incomplete-cycle reports in other documents are historical; they do not supersede the completed results below. Code references describe the research runner at handover time, not a production-ready mobile integration.
+Use the [app integration reference](../../docs/internal/CONFIDENTIAL_EARN.md) for current app behavior and policy, this document for the original research product/fee decisions, and [MAINNET-TEST.md](MAINNET-TEST.md) for historical execution evidence. Earlier Circle experiments, 20/80 splits, unfilled Fusion attempts, and incomplete-cycle reports in other documents are historical; they do not supersede the completed results below. Code references describe the research runner at handover time, not a production-ready mobile integration.
 
-## 1. Objective and non-negotiable decisions
+## 1. Original research objective and decisions
 
 The objective is to invest the amount remaining after properly budgeting execution, then return funds to Aurora's confidential account without accumulating significant destination-wallet dust. It is **not** to obtain an artificially small reserve by bidding below viable fees or understating gas limits.
 
@@ -23,44 +34,44 @@ The test's 70/30 allocation between Ethereum/Robinhood, up-to-10-USDC source bud
 
 ## 2. Supported profiles and proof boundaries
 
-| Role | Chain | Asset / vault | Execution |
-| --- | --- | --- | --- |
-| Source | Monad, 143 | Monad USDC, validated from route metadata | Pimlico token paymaster, ERC-4337 / EIP-7702 |
-| Investment | Ethereum, 1 | USDC `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`; Pendle Ecosystem vault `0x55C1B6e461a6334B567bAF0FEb5D728715446f05` | Fusion bootstrap; native approval/deposit/redemption/returns |
-| Investment | Robinhood, 4663 | USDG `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`; Steakhouse vault `0xBeEff033F34C046626B8D0A041844C5d1A5409dd` | Pimlico token paymaster; EntryPoint v0.8 |
-| Future | Base / other chains | No completed equivalent profile in this handover | Separate provider, asset, vault, charging and lifecycle qualification required |
+| Role       | Chain               | Asset / vault                                                                                                          | Execution                                                                      |
+| ---------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Source     | Monad, 143          | Monad USDC, validated from route metadata                                                                              | Pimlico token paymaster, ERC-4337 / EIP-7702                                   |
+| Investment | Ethereum, 1         | USDC `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`; Pendle Ecosystem vault `0x55C1B6e461a6334B567bAF0FEb5D728715446f05` | Fusion bootstrap; native approval/deposit/redemption/returns                   |
+| Investment | Robinhood, 4663     | USDG `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`; Steakhouse vault `0xBeEff033F34C046626B8D0A041844C5d1A5409dd`       | Pimlico token paymaster; EntryPoint v0.8                                       |
+| Future     | Base / other chains | No completed equivalent profile in this handover                                                                       | Separate provider, asset, vault, charging and lifecycle qualification required |
 
 Both destination tokens use six decimal places; native ETH uses 18. Do not generalize those decimals to arbitrary tokens or assume vault shares use the underlying token's decimals. Verify chain ID, code/delegation, vault `asset()`, token decimals, owner, spender and route assets before signing. [Profile source](src/routes.mjs).
 
 ### Completed Ethereum cycle
 
-| Item | Observed amount |
-| --- | ---: |
-| Wallet 2 USDC before Fusion | 6.256264 USDC |
-| Existing vault shares carried into cycle | 0.133013839453606864 shares |
-| USDC sold through Fusion | 5.121694 USDC |
-| Native ETH received | 0.001133295335295891 ETH |
-| New vault deposit | 1.084570 USDC |
-| Temporarily retained while invested | 0.050000 USDC |
-| Full redemption, including old shares | 1.218730 USDC |
-| USDC sent to Aurora | 1.268730 USDC |
-| Native ETH sent to Aurora | 0.000678997020223204 ETH |
-| Actual owner-paid native gas, six transactions | 0.000454298315072687 ETH |
-| Authenticated confidential USDC credited by both returns | 3.081997 USDC |
-| Final wallet 2 | **0 ETH / 0 USDC / 0 WETH / 0 shares** |
+| Item                                                     |                        Observed amount |
+| -------------------------------------------------------- | -------------------------------------: |
+| Wallet 2 USDC before Fusion                              |                          6.256264 USDC |
+| Existing vault shares carried into cycle                 |            0.133013839453606864 shares |
+| USDC sold through Fusion                                 |                          5.121694 USDC |
+| Native ETH received                                      |               0.001133295335295891 ETH |
+| New vault deposit                                        |                          1.084570 USDC |
+| Temporarily retained while invested                      |                          0.050000 USDC |
+| Full redemption, including old shares                    |                          1.218730 USDC |
+| USDC sent to Aurora                                      |                          1.268730 USDC |
+| Native ETH sent to Aurora                                |               0.000678997020223204 ETH |
+| Actual owner-paid native gas, six transactions           |               0.000454298315072687 ETH |
+| Authenticated confidential USDC credited by both returns |                          3.081997 USDC |
+| Final wallet 2                                           | **0 ETH / 0 USDC / 0 WETH / 0 shares** |
 
 The ETH identity is exact: received ETH − owner-paid native gas = returned ETH. The 0.05 USDC was returned, not abandoned. Redemption includes a pre-existing position: do not infer investment yield or cycle profit from these totals. The 3.081997 credit is in **Aurora's confidential Monad-USDC asset**, not a public transfer to the source address.
 
 Native gas receipts, in execution order:
 
-| Operation | Gas used | Actual total price, gwei | ETH paid |
-| --- | ---: | ---: | ---: |
-| Deposit approval | 55,558 | 0.554251195 | 0.000030793087891810 |
-| Deposit | 310,897 | 0.568337347 | 0.000176694376170259 |
-| Withdrawal approval | 45,984 | 0.560101169 | 0.000025755692155296 |
-| Withdrawal | 294,383 | 0.584317390 | 0.000172013106220370 |
-| USDC return funding | 57,448 | 0.589523299 | 0.000033866934480952 |
-| ETH return funding | 21,000 | 0.722624674 | 0.000015175118154000 |
+| Operation           | Gas used | Actual total price, gwei |             ETH paid |
+| ------------------- | -------: | -----------------------: | -------------------: |
+| Deposit approval    |   55,558 |              0.554251195 | 0.000030793087891810 |
+| Deposit             |  310,897 |              0.568337347 | 0.000176694376170259 |
+| Withdrawal approval |   45,984 |              0.560101169 | 0.000025755692155296 |
+| Withdrawal          |  294,383 |              0.584317390 | 0.000172013106220370 |
+| USDC return funding |   57,448 |              0.589523299 | 0.000033866934480952 |
+| ETH return funding  |   21,000 |              0.722624674 | 0.000015175118154000 |
 
 Fusion resolver gas is embedded in the exchange terms; it is **not** part of that owner-paid native-gas total. The resolver's whole transaction used 373,418 gas at 0.640090638 gwei. Its quoted estimate was 587,612 gas before headroom. This proves a public resolver filled these terms, not that the compensation was minimal.
 
@@ -70,18 +81,18 @@ Evidence: [independent receipts, balances and credit](fixtures/ethereum-mainnet-
 
 ### Completed Robinhood cycle
 
-| Item | Observed amount |
-| --- | ---: |
-| Wallet 2 payout | 2.773924 USDG |
-| New vault deposit / redemption | 2.521136 USDG |
-| Deposit fee budget / signed cap / actual fee | 0.077438 / 0.073750 / 0.042774 USDG |
-| Withdrawal reserve at deposit | 0.175350 USDG |
-| Withdrawal signed cap / actual fee | 0.059697 / 0.025875 USDG |
-| Return sent to Aurora | 2.650000 USDG |
-| Return signed cap / actual fee | 0.025334 / 0.011068 USDG |
-| Total actual destination paymaster charges | 0.079717 USDG |
-| Confidential USDC credited | 2.636109 USDC |
-| Final wallet 2 | **0.044207 USDG / 0 ETH / 0 shares** |
+| Item                                         |                      Observed amount |
+| -------------------------------------------- | -----------------------------------: |
+| Wallet 2 payout                              |                        2.773924 USDG |
+| New vault deposit / redemption               |                        2.521136 USDG |
+| Deposit fee budget / signed cap / actual fee |  0.077438 / 0.073750 / 0.042774 USDG |
+| Withdrawal reserve at deposit                |                        0.175350 USDG |
+| Withdrawal signed cap / actual fee           |             0.059697 / 0.025875 USDG |
+| Return sent to Aurora                        |                        2.650000 USDG |
+| Return signed cap / actual fee               |             0.025334 / 0.011068 USDG |
+| Total actual destination paymaster charges   |                        0.079717 USDG |
+| Confidential USDC credited                   |                        2.636109 USDC |
+| Final wallet 2                               | **0.044207 USDG / 0 ETH / 0 shares** |
 
 Exact reconciliation: 2.773924 − 0.079717 − 2.650000 = 0.044207 USDG. Its recorded fresh valuation was approximately 0.044211 USDC, below the optimal threshold. These token paymaster transfers showed actual charges; do not describe them as Circle pulling the full cap then refunding it.
 
@@ -114,17 +125,17 @@ flowchart TD
 
 Separate funding, payout, investment, withdrawal and return records. A single “transaction fee” field cannot represent this flow.
 
-| Component | Charge / reservation mechanism | Display rule |
-| --- | --- | --- |
-| Source gas | USDC paid through source paymaster | Show cap before authorization; actual receipt charge afterward |
-| Source Aurora route | Difference between funded input and confirmed private output, with provider quote breakdown where available | Show quoted minimum and actual credit; do not call the whole difference gas |
-| Two payouts | Independently quoted route fees / conversion and minimum outputs | Show each net output; 10/90 input allocation is not a promise of 10/90 net outputs |
-| Ethereum Fusion | USDC sold for net native ETH; provider costs and resolver allowance embedded | Show input, minimum net ETH, price basis, embedded cost estimate; do not charge allowance twice |
-| Ethereum native execution | Actual gas used × effective gas price | Separate deposit estimate, withdrawal reserve, and later return estimate |
-| Robinhood execution | USDG charge bounded by the supported signed paymaster terms | Separate actual cost, signed cap and extra budget; unused budget stays in wallet |
-| Vault | Shares/assets at current conversion, slippage protection and applicable vault economics | Read actual vault configuration; do not invent a zero-fee or fixed-yield claim |
-| Aurora returns | Origin transfer gas plus each route's quoted net output | Quote after withdrawal; final credit may differ from input value |
-| Application fee | None in the accepted experiment | Do not introduce a fee recipient or source application fee |
+| Component                 | Charge / reservation mechanism                                                                              | Display rule                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Source gas                | USDC paid through source paymaster                                                                          | Show cap before authorization; actual receipt charge afterward                                  |
+| Source Aurora route       | Difference between funded input and confirmed private output, with provider quote breakdown where available | Show quoted minimum and actual credit; do not call the whole difference gas                     |
+| Two payouts               | Independently quoted route fees / conversion and minimum outputs                                            | Show each net output; 10/90 input allocation is not a promise of 10/90 net outputs              |
+| Ethereum Fusion           | USDC sold for net native ETH; provider costs and resolver allowance embedded                                | Show input, minimum net ETH, price basis, embedded cost estimate; do not charge allowance twice |
+| Ethereum native execution | Actual gas used × effective gas price                                                                       | Separate deposit estimate, withdrawal reserve, and later return estimate                        |
+| Robinhood execution       | USDG charge bounded by the supported signed paymaster terms                                                 | Separate actual cost, signed cap and extra budget; unused budget stays in wallet                |
+| Vault                     | Shares/assets at current conversion, slippage protection and applicable vault economics                     | Read actual vault configuration; do not invent a zero-fee or fixed-yield claim                  |
+| Aurora returns            | Origin transfer gas plus each route's quoted net output                                                     | Quote after withdrawal; final credit may differ from input value                                |
+| Application fee           | None in the accepted experiment                                                                             | Do not introduce a fee recipient or source application fee                                      |
 
 Split atomically in integer accounting: `wallet1Input = floor(confirmedPrivateAtoms / 10)`; `wallet2Input = confirmedPrivateAtoms - wallet1Input`. Sign independent destination intents. Initial quoted private output does not replace the actual credited balance.
 
@@ -223,18 +234,18 @@ Display both the wallet allocation and the economic budget. They answer differen
 
 **Historical preview, not the executed quote:** [20:43 UTC preview](fixtures/ethereum-total-cost-preview.json).
 
-| Field | Value |
-| --- | ---: |
-| Initial USDC | 6.256264 |
-| Deposit maximum / priority / withdrawal reserve, gwei | 0.629874562 / 0.041829255 / 1.259749124 |
-| Deposit gas budget, ETH | 0.000301772272779638 |
-| Withdrawal reserve, ETH | 0.000600917968635736 |
-| Quoted Fusion overhead, ETH equivalent | 0.000405692668024358 |
-| Combined budget | 0.001308382909439732 ETH equivalent ≈ 3.519848 USDC |
-| USDC used to purchase ETH | 3.546219 |
-| Minimum ETH received | 0.000912492940932017 |
-| Additional funding headroom, ETH | 0.000009802699516643 |
-| Vault deposit / liquid USDC | 2.660045 / 0.050000 |
+| Field                                                 |                                               Value |
+| ----------------------------------------------------- | --------------------------------------------------: |
+| Initial USDC                                          |                                            6.256264 |
+| Deposit maximum / priority / withdrawal reserve, gwei |             0.629874562 / 0.041829255 / 1.259749124 |
+| Deposit gas budget, ETH                               |                                0.000301772272779638 |
+| Withdrawal reserve, ETH                               |                                0.000600917968635736 |
+| Quoted Fusion overhead, ETH equivalent                |                                0.000405692668024358 |
+| Combined budget                                       | 0.001308382909439732 ETH equivalent ≈ 3.519848 USDC |
+| USDC used to purchase ETH                             |                                            3.546219 |
+| Minimum ETH received                                  |                                0.000912492940932017 |
+| Additional funding headroom, ETH                      |                                0.000009802699516643 |
+| Vault deposit / liquid USDC                           |                                 2.660045 / 0.050000 |
 
 The later execution invested only 1.084570 USDC because live quotes changed. **The app must not silently replace a user-approved 2.660045 deposit with 1.084570.** Bind approval to maximum spend, minimum ETH, minimum deposit, fee bounds and validity. Any plan outside those approved bounds requires a new review.
 
@@ -309,37 +320,45 @@ For both: show the amount actually invested prominently next to the initial amou
 
 ### Required operational messages
 
-| Situation | Message / enabled action |
-| --- | --- |
-| No affordable plan | “Your balance cannot cover the current execution budget and a vault deposit.” Show shortfall, refresh/wait; disable signing |
-| Quote changed outside approval | “The quote changed. Your deposit would be {new}, previously {old}.” Show changed fee/output and require review |
-| Fusion pending | “ETH purchase is awaiting a resolver. Nothing has been deposited into the vault yet.” Show deadline/status |
-| Fusion unknown after timeout | “Submission status is being checked.” Keep the saved order; do not offer a duplicate purchase |
-| Fusion conclusively expired | “The ETH purchase expired without a fill.” Reconcile balances before offering a fresh order; source/payout fees may already have been paid |
-| Fusion filled, deposit now unaffordable | “ETH was received, but current fees exceed the deposit and withdrawal budget.” Show assets and shortfall; wait/review options |
-| Approval mined, deposit failed/pending | Show approval as completed and deposit state separately; resume without duplicating the approval blindly |
-| Withdrawal reserve shortfall | “Current withdrawal fees exceed the available reserve by {amount}.” No signature; show current quote and recovery choices |
-| Vault withdrawal unavailable | Show actual vault liquidity/limit reason separately from gas insufficiency |
-| Return route unavailable | “Funds are in your destination wallet. No valid return quote is available for this amount.” Do not claim funds returned |
-| One return leg pending | Show each USDC/ETH leg and the remaining wallet assets; keep cycle open |
-| Refunded route | Show refund receipt and restored balance; re-plan only after reconciliation |
-| Residual ≥ 0.5 | “Return settled, but {value} remains. The cycle has not met the residual target.” Preserve recovery state |
-| Residual ≥ 0.1 and < 0.5 | Complete with actual remainder; label acceptable, not optimal |
-| Final success | Show authenticated confidential credit, actual fees, final remainder and zero shares; distinguish this from a public source-wallet transfer |
+| Situation                               | Message / enabled action                                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| No affordable plan                      | “Your balance cannot cover the current execution budget and a vault deposit.” Show shortfall, refresh/wait; disable signing                 |
+| Quote changed outside approval          | “The quote changed. Your deposit would be {new}, previously {old}.” Show changed fee/output and require review                              |
+| Fusion pending                          | “ETH purchase is awaiting a resolver. Nothing has been deposited into the vault yet.” Show deadline/status                                  |
+| Fusion unknown after timeout            | “Submission status is being checked.” Keep the saved order; do not offer a duplicate purchase                                               |
+| Fusion conclusively expired             | “The ETH purchase expired without a fill.” Reconcile balances before offering a fresh order; source/payout fees may already have been paid  |
+| Fusion filled, deposit now unaffordable | “ETH was received, but current fees exceed the deposit and withdrawal budget.” Show assets and shortfall; wait/review options               |
+| Approval mined, deposit failed/pending  | Show approval as completed and deposit state separately; resume without duplicating the approval blindly                                    |
+| Withdrawal reserve shortfall            | “Current withdrawal fees exceed the available reserve by {amount}.” No signature; show current quote and recovery choices                   |
+| Vault withdrawal unavailable            | Show actual vault liquidity/limit reason separately from gas insufficiency                                                                  |
+| Return route unavailable                | “Funds are in your destination wallet. No valid return quote is available for this amount.” Do not claim funds returned                     |
+| One return leg pending                  | Show each USDC/ETH leg and the remaining wallet assets; keep cycle open                                                                     |
+| Refunded route                          | Show refund receipt and restored balance; re-plan only after reconciliation                                                                 |
+| Residual ≥ 0.5                          | “Return settled, but {value} remains. The cycle has not met the residual target.” Preserve recovery state                                   |
+| Residual ≥ 0.1 and < 0.5                | Complete with actual remainder; label acceptable, not optimal                                                                               |
+| Final success                           | Show authenticated confidential credit, actual fees, final remainder and zero shares; distinguish this from a public source-wallet transfer |
 
 Never say that withdrawing is “free,” that all reserved ETH has been spent, or that 25th-percentile pricing guarantees a block. Dismissing a screen or cancelling an API request cannot cancel an already submitted order/transaction.
 
 ## 8. App architecture and approval boundary
 
-### Existing mobile entry points
+### Current mobile entry points (source review 2026-11-14)
 
-Read [mobile guidance](../../mobile/AGENTS.md) and [native signer contract](../../docs/internal/NATIVE_SIGNER.md) before implementation. Relevant current paths:
+Read [mobile guidance](../../mobile/AGENTS.md) and [native signer contract](../../docs/internal/NATIVE_SIGNER.md) before implementation. Relevant maintained paths:
 
 - [Investment domain](../../mobile/src/domain/investments.ts) and [service](../../mobile/src/services/investments.ts): display models/demo loading, not a live earn execution API.
 - [Investment provider](../../mobile/src/features/investments/InvestmentProvider.tsx), [vault controller](../../mobile/src/features/investments/useVaultDetailController.ts), [vault screen](../../mobile/src/features/investments/VaultDetailScreen.tsx), [trade bar](../../mobile/src/features/investments/detail/TradeBar.tsx): UI integration points; current navigation is not proof of live vault support.
 - [Stored signer domain](../../mobile/src/domain/wallet/storedSigner.ts), [native bridge](../../mobile/src/services/wallet/nativeBridge.ts), [stored transfers](../../mobile/src/services/wallet/storedTransfers.ts): existing native trust boundary.
 
-`GizuStoredSigner` is the active signer. The legacy `gizu-signer` is disconnected. Current stored-signer operations cover exact transfers; do not assume arbitrary vault calldata, ERC-20 approvals, EIP-2612/Fusion, ERC-4337 or EIP-7702 authorization are already supported. Add narrowly scoped native operations with semantic validation and native approval; do not expose raw private keys or an unrestricted sign-digest bridge.
+`GizuStoredSigner` is active and `gizu-signer` remains retained/excluded from
+app autolinking. Android implements narrowly scoped native vault, sponsored,
+Fusion/liquidity, private payout, deposit and withdrawal operations. The domain
+contracts live in `mobile/src/domain/earn/`, app adapters in
+`mobile/src/services/earn/`, and native policy/orchestration in
+`mobile/modules/gizu-stored-signer/`. iOS supports Earn wallet reads and Ethereum
+vault execution, while sponsored funding, private payout, liquidity and guided
+deposit execution remain disabled. Query capability flags for each path; neither
+platform exposes arbitrary calldata or a generic digest-signing bridge.
 
 The mobile implementation must preserve backup-verified wallet readiness, native passkey authorization, encrypted persistence, request revisions and native resume/cancel policy. The research `.env` private-key signer and Node filesystem journal must never be ported into JavaScript app storage. Restore does not necessarily restore local operation history; reconcile provider and chain state before a restored wallet starts another cycle.
 
@@ -347,14 +366,14 @@ If the intended first implementation is web rather than mobile, confirm that sco
 
 ### Recommended separation
 
-| Layer | Responsibility |
-| --- | --- |
-| Domain | Integer amount types, chain profiles, fee formulas, quote validity, approval bounds, residual policy, lifecycle transitions |
-| Services | Aurora/Fusion/RPC/bundler/paymaster/vault adapters, typed errors, receipt parsing, authenticated credit reconciliation |
-| Simulation service | Exact public-state simulation with block/hash binding; no wallet secret or server-controlled owner signer |
-| Native wallet | Semantic transaction/order validation, user authorization, signing, immutable approved payload, protected journal |
-| Feature controller | Review, progress, refresh, recovery, cancellation semantics, revision checks |
-| UI | Cost breakdown, investable amount, warnings and progress; no signing or provider logic |
+| Layer              | Responsibility                                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| Domain             | Integer amount types, chain profiles, fee formulas, quote validity, approval bounds, residual policy, lifecycle transitions |
+| Services           | Aurora/Fusion/RPC/bundler/paymaster/vault adapters, typed errors, receipt parsing, authenticated credit reconciliation      |
+| Simulation service | Exact public-state simulation with block/hash binding; no wallet secret or server-controlled owner signer                   |
+| Native wallet      | Semantic transaction/order validation, user authorization, signing, immutable approved payload, protected journal           |
+| Feature controller | Review, progress, refresh, recovery, cancellation semantics, revision checks                                                |
+| UI                 | Cost breakdown, investable amount, warnings and progress; no signing or provider logic                                      |
 
 The research simulator spawns Anvil locally. A phone cannot run that Node process. Choose and validate a production simulation adapter rather than replacing exact post-deposit withdrawal simulation with a fixed gas constant. Treat backend simulation/quotes as untrusted proposals whose critical fields are checked against native policy and chain state. Keep provider credentials off distributed client bundles where they require secrecy.
 
@@ -392,23 +411,26 @@ Current research safety checks to preserve or deliberately strengthen:
 - Serialize writes/spends per owner and nonce, including multiple devices. Filesystem locks in the CLI are not a mobile/backend concurrency design.
 - Store chain, route and owner bindings in journals; reject a Robinhood journal in an Ethereum operation and vice versa.
 
-### Known research-to-app gaps: resolve before release
+### Research implementation gaps and acceptance limits
 
-| Gap | Required app treatment |
-| --- | --- |
-| Native signer does not yet implement the entire earn operation set | Extend reviewed native semantic operations and test both platforms; no generic JS signing shortcut |
-| `reconcileFusion` can return a provider's raw `expired` status before the explicit chain-deadline guard | Do not authorize a second order solely on API status. Establish terminal expiry/non-fill using chain deadline and state; add an early-provider-expiry regression |
-| Generic `assertCycleComplete` checks USDC/ETH/shares, not WETH | Make final completion explicitly reconcile WETH and supported residual assets; the mainnet independent check did verify zero WETH |
-| Initial cost summary uses approximate USDC peg conversion | Use consistent, fresh token prices and conservative rounding for summaries and acceptance |
-| Recomputed post-Fusion summary can obscure earlier costs | Persist a cycle ledger; do not replace initial balance and spent fees with a remaining-step preview |
-| Authenticated confidential credit was independently checked during mainnet verification | Integrate operation-scoped authenticated settlement checking, including concurrent account activity |
-| Source paymaster context may create EIP-7702 authorization during setup | Production preview must not sign; move authorization into explicit native-approved execution |
-| Source fee-cap arithmetic uses floor division while destination uses ceiling; source decoder is less restrictive | Port a consistently conservative validated decoder with boundary/unsupported-mode tests; do not blindly copy source helper |
-| Anvil/post-state simulation and plaintext local journals are research infrastructure | Provide production simulation, protected persistence, idempotency and restore/reconciliation adapters |
-| Small return amounts and provider availability may change while invested | Surface early eligibility and future uncertainty; never promise a guaranteed route or guaranteed future exit price |
-| Robinhood fresh delegation and Ethereum return top-up have narrower proof than the completed paths | Maintain separate local/provider/device acceptance cases; do not label every branch mainnet-proven |
+| Gap                                                                                                              | Required app treatment                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Platform support differs                                                                                         | Android implements guarded Earn execution; iOS advertises only Earn wallets and vault execution. Check native capabilities and maintain separate device acceptance |
+| `reconcileFusion` can return a provider's raw `expired` status before the explicit chain-deadline guard          | Do not authorize a second order solely on API status. Establish terminal expiry/non-fill using chain deadline and state; add an early-provider-expiry regression   |
+| Generic `assertCycleComplete` checks USDC/ETH/shares, not WETH                                                   | Make final completion explicitly reconcile WETH and supported residual assets; the mainnet independent check did verify zero WETH                                  |
+| Initial cost summary uses approximate USDC peg conversion                                                        | Use consistent, fresh token prices and conservative rounding for summaries and acceptance                                                                          |
+| Recomputed post-Fusion summary can obscure earlier costs                                                         | Persist a cycle ledger; do not replace initial balance and spent fees with a remaining-step preview                                                                |
+| Authenticated confidential credit was independently checked during mainnet verification                          | Integrate operation-scoped authenticated settlement checking, including concurrent account activity                                                                |
+| Source paymaster context may create EIP-7702 authorization during setup                                          | Production preview must not sign; move authorization into explicit native-approved execution                                                                       |
+| Source fee-cap arithmetic uses floor division while destination uses ceiling; source decoder is less restrictive | Port a consistently conservative validated decoder with boundary/unsupported-mode tests; do not blindly copy source helper                                         |
+| Anvil/post-state simulation and plaintext local journals are research infrastructure                             | Provide production simulation, protected persistence, idempotency and restore/reconciliation adapters                                                              |
+| Small return amounts and provider availability may change while invested                                         | Surface early eligibility and future uncertainty; never promise a guaranteed route or guaranteed future exit price                                                 |
+| Robinhood fresh delegation and Ethereum return top-up have narrower proof than the completed paths               | Maintain separate local/provider/device acceptance cases; do not label every branch mainnet-proven                                                                 |
 
-This list identifies implementation work; this documentation task does not modify those code paths.
+This table preserves research-runner concerns; it is not a current mobile
+implementation backlog or proof that each app path has the same defect. Consult
+the maintained app/native references for delivered behavior and acceptance gaps.
+This documentation review changes no code.
 
 ## 10. Privacy and data handling
 
@@ -424,18 +446,18 @@ Do not send source and both destination identities to a provider that only needs
 
 The app must demonstrate the entire lifecycle and every safety boundary, not just a successful approval or simulated deposit.
 
-| Test layer | Required evidence |
-| --- | --- |
-| Pure policy | Integer rounding, 10/90 conservation, 25th-percentile sampling, base-fee evolution, gas margins, resolver allowance, no double counting, depeg pricing, exact 0.1/0.5 boundaries |
-| Provider contracts | Malformed/changed chain, token, spender, recipient, refund owner, fee flags, calldata, native unwrap, deadline, output, quote ID and missing gas estimates all fail closed |
-| Fork lifecycle | Exact configured vault/account state; allowance variants; zero/existing ETH; Ethereum old shares; deposit/full redemption/USDC+ETH return; token-paymaster full lifecycle; wallet 1 unchanged |
-| Economics | Resolver fill at beginning/middle/end of auction with explicit gas/price assumptions; include full provider routing estimate; distinguish executable local fill from live admission |
-| Recovery | Crash before/after sign/broadcast/receipt; ambiguous submission; early API expiry; chain reorg; stale block; fee spike after Fusion; older replacement wins; duplicate UI/device actions; restore without history |
-| Return | No quote, expired quote, previously funded quote, tiny ETH amount, recipient code, sweep gas ≠ 21,000, return top-up, one leg pending/refunded, delayed/ambiguous private credit |
-| Residual | Shares/WETH remaining, nonzero native on token-paymaster chain, fresh asset prices, exact boundary cases; successful receipt cannot bypass final balance check |
-| UI functional | Real screen/controller flow with mocked external boundaries; exact investable amount and cost labels; changed quote requires review; no duplicate submission; cancellation/recovery visible |
-| Native/device | Approved semantics cannot be changed by JS; permits/orders/UserOps verified natively; encrypted recovery and backup behavior; actual Android/iOS checks distinct from mocked UI tests |
-| Optional later mainnet | Separately authorized, capped spend, recorded chain/provider versions, receipts, actual fee ledger, private credit and sibling-wallet comparison |
+| Test layer             | Required evidence                                                                                                                                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pure policy            | Integer rounding, 10/90 conservation, 25th-percentile sampling, base-fee evolution, gas margins, resolver allowance, no double counting, depeg pricing, exact 0.1/0.5 boundaries                                  |
+| Provider contracts     | Malformed/changed chain, token, spender, recipient, refund owner, fee flags, calldata, native unwrap, deadline, output, quote ID and missing gas estimates all fail closed                                        |
+| Fork lifecycle         | Exact configured vault/account state; allowance variants; zero/existing ETH; Ethereum old shares; deposit/full redemption/USDC+ETH return; token-paymaster full lifecycle; wallet 1 unchanged                     |
+| Economics              | Resolver fill at beginning/middle/end of auction with explicit gas/price assumptions; include full provider routing estimate; distinguish executable local fill from live admission                               |
+| Recovery               | Crash before/after sign/broadcast/receipt; ambiguous submission; early API expiry; chain reorg; stale block; fee spike after Fusion; older replacement wins; duplicate UI/device actions; restore without history |
+| Return                 | No quote, expired quote, previously funded quote, tiny ETH amount, recipient code, sweep gas ≠ 21,000, return top-up, one leg pending/refunded, delayed/ambiguous private credit                                  |
+| Residual               | Shares/WETH remaining, nonzero native on token-paymaster chain, fresh asset prices, exact boundary cases; successful receipt cannot bypass final balance check                                                    |
+| UI functional          | Real screen/controller flow with mocked external boundaries; exact investable amount and cost labels; changed quote requires review; no duplicate submission; cancellation/recovery visible                       |
+| Native/device          | Approved semantics cannot be changed by JS; permits/orders/UserOps verified natively; encrypted recovery and backup behavior; actual Android/iOS checks distinct from mocked UI tests                             |
+| Optional later mainnet | Separately authorized, capped spend, recorded chain/provider versions, receipts, actual fee ledger, private credit and sibling-wallet comparison                                                                  |
 
 Pin replay block, timestamp, base fee, account delegation, nonces, allowances, share balances, provider payload and gas parameters. Local donor funds or stub sponsorship must be declared. A funded local resolver proving execution does not establish public profitability. [Robinhood replay](fixtures/robinhood-replay.json), [captured synthetic operations](fixtures/robinhood-cycle-operations.json), [Ethereum existing-share test](fixtures/native-existing-shares.json), [Fusion economics lab](fixtures/fusion-economics-lab.json).
 
@@ -449,7 +471,7 @@ Release definition of done:
 - All approvals occur in the appropriate native trust boundary and survive process death without duplicate spend.
 - Changed quotes cannot worsen approved minimum output/deposit or exceed spend caps silently.
 - Deposit, user-triggered withdrawal and return remain independently resumable.
-- Completion requires settled return legs, authenticated credit, reconciled assets, zero full-exit shares and residual below 0.5; below 0.1 is reported separately.
+- The research full-exit acceptance requires settled return legs, authenticated credit, reconciled assets, zero full-exit shares and residual below 0.5; below 0.1 is reported separately. Current app partial exits retain unselected shares and use their saved terminal receipt contract.
 - Historical test parameters are not presented as fixed live fees or production privacy defaults.
 - Known gaps above are fixed or the affected feature is explicitly disabled; no demo/mocked provider is selected in a live path.
 - No prohibited linkage is introduced, and source/payout/old-share accounting cannot be mistaken for yield.

@@ -1,7 +1,7 @@
 # Swap architecture
 
 **Complexity:** 3 — Detailed. **Status:** implemented architecture reference, not a new proposal.
-**Reviewed:** 2026-10-08 against local source; no live provider or funded-device verification.
+**Reviewed:** 2026-11-14 against local source; no live provider or funded-device verification.
 **Ownership:** component responsibilities below; individual maintainer assignment is not recorded.
 
 ## Purpose and scope
@@ -69,12 +69,12 @@ payouts and token trades can complete independently and leave recoverable residu
 
 ## Operation variants
 
-| Variant                | Starting funds                              | Main path                                                                      |
-| ---------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| `confidentialSwap`     | Selected public Monad USDC source           | Sponsored funding → confidential credit → recipient payouts → Fusion buys      |
-| `confidentialPayout`   | Existing authenticated confidential balance | Read available private balance → payouts → Fusion buys; no new Monad deposit   |
-| `confidentialSell`     | Selected allocated token-holder batch       | Fusion sale into Aurora deposit → confidential credit → fresh Monad recipients |
-| `confidentialRecovery` | USDG left in allocated recipient accounts   | Bounded recipient scan → finish token purchases using those balances           |
+| Variant                | Starting funds                                 | Main path                                                                                                                         |
+| ---------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `confidentialSwap`     | Selected public Monad USDC source              | Sponsored funding → confidential credit → recipient payouts → Fusion buys                                                         |
+| `confidentialPayout`   | Existing authenticated confidential balance    | Read available private balance → payouts → Fusion buys; no new Monad deposit                                                      |
+| `confidentialSell`     | All eligible owned holders of a selected token | Fusion sale into Aurora deposit → operation-bound verified confidential USDC credit; legacy saved plans can retain public payouts |
+| `confidentialRecovery` | USDG left in allocated recipient accounts      | Bounded recipient scan → finish token purchases using those balances                                                              |
 
 The recovery variant is not generic cross-chain asset recovery. Sell holder and
 return-recipient indices are distinct, validated sets. An available token in the
@@ -87,34 +87,41 @@ random bytes once before review and `choose_buy_legs` (Rust, `swap/legs.rs`) tur
 plan that is shown in the review and persisted with the operation, so a restore or retry never
 rolls it again.
 
-| Budget (USDC)  | Wallets drawn from |
-| -------------- | ------------------ |
-| under 5        | 1                  |
-| 5 up to 20     | 2                  |
-| up to 100      | 2 or 3             |
-| up to 1,000    | 3 or 4             |
-| above 1,000    | 4 or 5             |
+| Budget (USDC) | Wallets drawn from |
+| ------------- | ------------------ |
+| under 5       | 1                  |
+| 5 up to 20    | 2                  |
+| up to 100     | 2 or 3             |
+| up to 1,000   | 3 or 4             |
+| above 1,000   | 4 or 5             |
 
 Upper bounds are inclusive. A budget under 5 USDC stays in one wallet because Aurora rejects a
 deposit under 0.075 USDG and one rejected leg stops the whole operation. Each share is 70%–130% of an equal share, so two wallets get
 35%–65%. Shares are whole basis points and always add up exactly. The engine accepts one to
 five wallets and rejects plans outside that or with invalid weights.
 
-A sell follows the same rule. Native code reserves up to five fresh return wallets and puts
-random bytes (`legsRandom`) in the plan. Once the sale is priced, the engine draws the payout
-count from the estimated proceeds with the table above and the shares with the same band, and
-drops the reserved wallets it does not need; the review shows the result. Every holder is sold
-and credited to C first, then C's pooled balance is split over the payouts, so no sale can be
-matched to one payout. Native code never sends weights for a sell. A sell saved before this
-change has no `legsRandom` and finishes the older way: each return wallet receives the proceeds
-of the holder in the same position.
-A buy from existing private balance has no budget to size from and keeps three wallets.
+Current full-holding sells do not use the payout ladder. The app submits `token:all`;
+Rust selects all eligible allocated holders, including partial groups, excluding Earn
+recipients. After fresh balance reads the plan freezes the funded holders and native
+review lists the real sales. There can be up to 8,189 eligible indices (3–8191),
+subject to the wallet registry. The sale has `completionTarget: "confidential"`,
+no new public recipients, no random payout weights and zero payout legs. Each sale's
+Fusion transfers must match authenticated Aurora operation history before USDC credit
+is counted. Aggregate private-balance growth or public route SUCCESS is insufficient.
+The resulting `privateCreditedAtoms` remains in confidential Account 2 until a separate,
+capability-checked [public withdrawal](../internal/CONFIDENTIAL_WITHDRAWALS.md).
 
-Allocation reserves whole blocks of three indices and uses the first `count` of them, so every
-swap starts on a block boundary. Holdings are grouped and sold in blocks of three; this keeps
-one swap's wallets from sharing a sell group with another swap's. A swap of four or five
-wallets therefore sells in two groups, and unused indices in a block are never funded. Sell
-reviews list only wallets that hold the token.
+Legacy persisted public-return sells keep their saved plans. Randomized public-return
+plans pool credit and use the amount ladder above; older plans without `legsRandom`
+retain the positional holder/return relationship. iOS also retains the explicit
+three-holder bridge path for these public-return terms. The normal sell form always
+requests `:all`. Status/history `completionTarget` separates the completion contracts.
+
+Buy allocation reserves whole blocks of three indices and uses the requested count,
+so unused indices stay unfunded. Legacy three-holder batch IDs remain readable;
+they do not limit the current full-holding sell or require sequential user sales.
+A buy from existing private balance currently retains three recipients. A public-funded
+buy authorizes its guaranteed route credit only, leaving pre-existing private cash alone.
 
 ## Shared engine versus platform orchestration
 

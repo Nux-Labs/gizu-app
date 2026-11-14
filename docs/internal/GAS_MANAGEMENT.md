@@ -5,7 +5,10 @@ business-call simulation, a provider token quote and a final UserOperation are
 different evidence. Signing authority remains native and binds the user's
 reviewed limits; a backend estimate never authorizes a signature.
 
-## Architectural faults found
+Reviewed against repository source on 14 November 2026. Commands below are
+current; the final verification record describes an earlier implementation run.
+
+## Resolved design faults
 
 The November 2026 audit found live Swap funding using the SDK's ERC-20 preparation
 directly, while Earn independently rebuilt approval and re-estimated calldata.
@@ -24,11 +27,12 @@ budget on every iteration. A one-atom change could cause a permanent oscillation
 despite a feasible budget. The earlier burn-address probe also underestimated
 fresh-recipient storage cost; a verified empty recipient is now used.
 
-Plain Ethereum vault signing required the prepared block or its immediate child,
+Plain Ethereum vault signing previously required the prepared block or its immediate child,
 even though a user could legitimately spend longer reading the review. Sponsored
 Earn and liquidity already reconstruct against fresh native observations while
-requiring an identical reviewed digest; plain vault execution needs an explicit
-native proof that its older reference remains canonical.
+requiring an identical reviewed digest. Plain vault execution now accepts an
+older reference only with the native canonical-reference proof enforced by the
+shared Rust gas policy.
 
 ## Shared runtime boundaries
 
@@ -65,24 +69,21 @@ must use the same profile. Shared tests include a 1000-atom balance funding
 silently substituted into that Swap contract. Historical signatures retain
 their original fee interpretation.
 
-## Implementation and verification sequence
+## Implementation map
 
-1. Reproduce SDK final-approval drift, oscillating budgets and changed reviewed
-   funding terms with deterministic regression tests.
-2. Consolidate backend arithmetic and stabilization, then migrate Monad source
-   funding, Robinhood sponsorship, Swap funding and EVM budget consumers.
-3. Consolidate native arithmetic, preserve reviewed Swap funding limits and add
-   canonical-reference signing for Android and iOS plain vault execution.
-4. Provide one offline diagnostic command and opt-in read-only preparation. The
-   command imports production helpers, excludes keys and linked addresses from
-   output, and never signs, submits or allocates a user's wallets.
-5. Run cross-language vectors, affected flow tests, full backend/mobile suites
-   and native checks. Build native bindings before platform tests. A successful
-   read-only estimate is not evidence of successful funded execution.
+- [Backend gas policy](../../backend/src/adapters/evm/gas-policy.ts): checked
+  integer arithmetic, explicit rounding and monotone fee envelopes.
+- [Token paymaster preparation](../../backend/src/adapters/evm/token-paymaster.ts):
+  bounded stabilization of final sponsorship and approval.
+- [Native gas policy](../../mobile/modules/gizu-stored-signer/core/src/gas.rs):
+  checked arithmetic and canonical reference validation for native consumers.
+- [Offline/read-only diagnostic](../../backend/scripts/gas-doctor.ts): production
+  helpers and shared vectors, without signing, submission or wallet allocation.
 
-The change lives on `feat/gas-management`. Deployment of backend code and an
-updated native build are separate release steps; an old deployed runtime does
-not gain these checks merely because the diagnostic command passes locally.
+This implementation is merged into `main`. Backend deployment and a rebuilt
+native app remain separate release steps; a passing local diagnostic does not
+update a deployed server or prove funded execution. Build native bindings before
+platform tests and use the existing release workflow for Android/iOS checks.
 
 ## Commands
 
@@ -121,9 +122,9 @@ The CLI reads configuration only in explicit live mode. A failed report exits
 nonzero. `ok: true` means the requested checks passed; `signingAvailable: false`
 and `submitted: false` apply in every mode.
 
-## Verification record
+## Historical verification record
 
-The integrated change passed 372 backend tests (10 environment-gated tests were
+The original gas-management integration passed 372 backend tests (10 environment-gated tests were
 skipped), 905 mobile JavaScript tests, 238 Rust tests and 426 Android native tests.
 Backend compilation, TypeScript checks, targeted formatting/lint, the shared gas
 command and the Android release build passed. The read-only diagnostic also

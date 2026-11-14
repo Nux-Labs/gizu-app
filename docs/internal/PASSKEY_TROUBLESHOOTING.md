@@ -1,6 +1,6 @@
 # Passkey and local development diagnostics
 
-**Complexity: 2 — Technical.** Source configuration checked on 2026-10-08.
+**Complexity: 2 — Technical.** Diagnose against the signed artifact and current source.
 This documentation update did not test live hosting, signing artifacts or devices.
 Use [setup guides](../app-guide/README.md) for the normal procedure.
 
@@ -30,8 +30,9 @@ If missing, intentionally provision a unique development key and authorize its
 public fingerprint. Do not fall back to Expo's shared template key or replace a
 release key to make a local build pass.
 
-The former package `com.example.gizu.dev` has a different private storage area from
-`io.gizu.android`. Installing the current package does not move the old wallet.
+The legacy package `com.example.gizu.dev` has a different private storage area from
+`io.gizu.android`; an existing ignored local Android project can still use it.
+Installing a different package does not move the old wallet.
 Keep an older installation until required recovery has been verified. The website
 retains legacy app entries; their presence does not make them the current app identity.
 
@@ -71,6 +72,9 @@ See [native signer architecture](NATIVE_SIGNER.md) and
 - **Local backend unreachable:** Metro forwarding does not forward backend traffic.
   Forward the backend's actual port separately and set `EXPO_PUBLIC_API_URL` to
   that forwarded localhost port. Restart Metro after changing the environment.
+  Native hosted calls use `https://api.gizu.io` independently; Android's
+  `-PgizuEarnBackend=usb` opts debug Earn gateway calls into port 3000 at build time,
+  not every native request. Release builds ignore that USB selection.
 - **Missing native module or stale binary:** rebuild the stored signer and app;
   reloading JavaScript cannot add native code. Expo Go cannot run this wallet.
 - **Changed Expo config/plugin:** regenerate the affected native project before

@@ -1,13 +1,15 @@
 # Android signing
 
 Use this guide to associate an Android build with passkeys on `gizu.io`.
-The app package is `io.gizu.android`.
+The canonical app package is `io.gizu.android`. Existing ignored native projects
+can retain the legacy `com.example.gizu.dev` package; inspect the APK you will
+install and preserve an existing wallet installation's package and certificate.
 
 ## Prerequisites
 
 - JDK 17 with `keytool` available.
 - The signing certificate for the build you will install.
-- Access to the frontend deployment if a new certificate must be authorized.
+- Access to the website deployment serving `gizu.io` if a new certificate must be authorized.
 
 ## Steps
 
@@ -31,7 +33,7 @@ The app package is `io.gizu.android`.
 
 3. Compare the public SHA-256 fingerprint with the approved fingerprints in
    [mobile identity](../../mobile/src/config/passkey-identity.json) and the
-   `io.gizu.android` entry in
+   entry for the APK's actual package in
    [assetlinks.json](../../frontend/public/.well-known/assetlinks.json).
    Add an approved missing fingerprint to both; preserve existing entries.
 4. If the association changed, [deploy and verify it](PASSKEY_HOSTING.md).

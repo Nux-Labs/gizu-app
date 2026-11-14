@@ -1,8 +1,19 @@
+> Scope reviewed 2026-11-14: this file documents the isolated research CLI and
+> dated experiments. Its 10/90 payouts, 70/30 test budgets, full-exit gas/residual
+> rules and separate confidential keys do not define current Android behavior.
+> Current app contracts are [Confidential Earn](../../docs/internal/CONFIDENTIAL_EARN.md),
+> [requested withdrawals/refunds](../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
+> and [native Earn](../../docs/internal/NATIVE_SIGNER_EARN.md). Android now uses
+> algorithm-selected investment slots, shared Account-2 private cash and read access,
+> requested partial Robinhood exits, and saved terminal return/refund evidence.
+> iOS has narrower execution capabilities. Recorded hashes, amounts and test counts
+> below remain historical; no live probes or native builds were run for this review.
+
 # Fusion-funded native gas: local verification
 
 **Integration update:** the flow is now implemented behind explicit native CLI commands. See [NATIVE-CLI.md](NATIVE-CLI.md) for commands and recovery. This document preserves the original five local cycle experiments; the separate CLI integration fixture tests the production runner with local provider write/status mocks.
 
-The supplied API key works. The new local harness executes **real unsigned Fusion quote terms against deployed Ethereum contracts on Anvil**, starting wallet 2 with zero ETH and zero USDC allowance to 1inch. It then deposits into the existing Morpho vault, redeems the shares, obtains a fresh Aurora `advanced` return quote, and transfers the remaining USDC to that quote's address **locally**.
+The supplied API key worked during the recorded experiment. The new local harness executes **real unsigned Fusion quote terms against deployed Ethereum contracts on Anvil**, starting wallet 2 with zero ETH and zero USDC allowance to 1inch. It then deposits into the existing Morpho vault, redeems the shares, obtains a fresh Aurora `advanced` return quote, and transfers the remaining USDC to that quote's address **locally**.
 
 **Corrected acceptance:** after returning to Aurora, the combined value of **ETH + USDC** left in the wallet must be below $0.50, ideally $0.10. The earlier test stopped after the USDC transfer and left ETH behind. Calling that a completed cycle measured the wrong endpoint. Prior balances are retained in [native-cycle-before-sweep.json](fixtures/native-cycle-before-sweep.json).
 
@@ -42,13 +53,13 @@ The gas price must still be competitive and at least the inclusion base fee. If 
 
 ## Recorded scenarios
 
-| Updated local scenario | ETH returned in final sweep | Quoted confidential USDC from ETH (minimum) | Final ETH | Final USDC | Final shares |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| [first-payout-balance](fixtures/native-cycle-first-payout-balance.json) | 0.000790601118026780 | 2.116464 | 0 | 0 | 0 |
-| [larger-balance](fixtures/native-cycle-larger-balance.json) | 0.000685288322038195 | 1.833123 | 0 | 0 | 0 |
-| [larger-balance-cycle-2](fixtures/native-cycle-larger-balance-cycle-2.json) | 0.000806624710261192 | 2.157256 | 0 | 0 | 0 |
-| [withdrawal-1.8x](fixtures/native-cycle-withdrawal-1.8x.json) | 0.000510205528792855 | 1.364505 | 0 | 0 | 0 |
-| [return-16x](fixtures/native-cycle-return-16x.json) | 0.000613652324944613 | 1.641783 | 0 | 0 | 0 |
+| Updated local scenario                                                      | ETH returned in final sweep | Quoted confidential USDC from ETH (minimum) | Final ETH | Final USDC | Final shares |
+| --------------------------------------------------------------------------- | --------------------------: | ------------------------------------------: | --------: | ---------: | -----------: |
+| [first-payout-balance](fixtures/native-cycle-first-payout-balance.json)     |        0.000790601118026780 |                                    2.116464 |         0 |          0 |            0 |
+| [larger-balance](fixtures/native-cycle-larger-balance.json)                 |        0.000685288322038195 |                                    1.833123 |         0 |          0 |            0 |
+| [larger-balance-cycle-2](fixtures/native-cycle-larger-balance-cycle-2.json) |        0.000806624710261192 |                                    2.157256 |         0 |          0 |            0 |
+| [withdrawal-1.8x](fixtures/native-cycle-withdrawal-1.8x.json)               |        0.000510205528792855 |                                    1.364505 |         0 |          0 |            0 |
+| [return-16x](fixtures/native-cycle-return-16x.json)                         |        0.000613652324944613 |                                    1.641783 |         0 |          0 |            0 |
 
 These five updated cycle executions passed. The two larger-balance cycles execute consecutively on the same fork/account state: the second begins after asserting the first ended at zero ETH/USDC/shares, then receives a new local payout fixture. Its USDC permit nonce and order state carry forward. No dust is discarded by resetting balances between those completed cycles.
 
@@ -95,4 +106,4 @@ The execution URL is hardcoded to loopback. The script verifies Anvil, chain ID,
 
 `fixtures/native-cycle-*.json` retain quote responses, budgets, fee/gas fields, transaction calldata/logs, local hashes, balances, and outcomes. Signed fill calldata, exact order and extension remain private in `.local/native-cycle-fill-<scenario>-<number>.json`. The last full unfunded USDC return quote is in `.local/native-cycle-return-quote.json`, and native return quotes are in `.local/native-cycle-native-return-<scenario>.json`; its public deposit address and minimum output are in each scenario fixture. No API key is stored in these results. The files plus pinned dependencies/state describe the tested transactions; an archive provider is still required. This is not a standalone offline state snapshot.
 
-The ordinary suite now has **55 passing tests**. New coverage includes integer rounding, separate reserve policies, high-fee affordability, USDC residual limits, rejecting missing native output/partial debit, changed-block/expired-quote guards, amount-dependent re-quoting, small-order errors, net Fusion fees/native unwrap, stale provider terms, application-fee rejection, combined-asset completion, and native-sweep gas/code restrictions. Those guard tests are distinct from the successful deployed-contract fork executions. A separate review verified the quote-age and unwanted-fee fixes.
+The ordinary suite at this checkpoint recorded **55 passing tests**. New coverage includes integer rounding, separate reserve policies, high-fee affordability, USDC residual limits, rejecting missing native output/partial debit, changed-block/expired-quote guards, amount-dependent re-quoting, small-order errors, net Fusion fees/native unwrap, stale provider terms, application-fee rejection, combined-asset completion, and native-sweep gas/code restrictions. Those guard tests are distinct from the successful deployed-contract fork executions. A separate review verified the quote-age and unwanted-fee fixes.

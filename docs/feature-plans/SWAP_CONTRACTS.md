@@ -1,6 +1,6 @@
 # Swap contracts and provider boundaries
 
-**Complexity:** 3. **Status:** implemented reference. **Source review:** 2026-10-08.
+**Complexity:** 3. **Status:** implemented reference. **Source review:** 2026-11-14.
 Start with [Swap architecture](SWAP_ARCHITECTURE.md). This describes repository
 contracts, not a promise about current upstream API availability.
 
@@ -20,6 +20,13 @@ Public views expose operation ID, phase, step, pause code, amounts and counters.
 Platform wrappers add public address metadata. Optional fields and aggregation can
 differ between wrappers; core public JSON alone is not the full app bridge contract.
 The UI's parser must not be treated as evidence that every native field is present.
+
+Current sells expose `completionTarget: "confidential"`, `privateCreditedAtoms`,
+`holders`, zero `legs` and no return addresses. `sellSwapHolding(token + ":all", gateway)`
+selects the full eligible owned holder set natively; legacy batch IDs and persisted
+public-return operations retain their older completion contract. Tracked contracts,
+account ownership and excluded Earn indices are checked by shared Rust, not supplied
+as signing paths from JavaScript.
 
 JavaScript supplies a gateway URL in this implementation. The Rust gateway parser
 permits HTTPS and specific local-development HTTP forms, with shape restrictions;
@@ -49,19 +56,20 @@ transport and durability. Neither an HTTP 200 nor provider JSON bypasses core ch
 All paths below are under `/v1/swap`. Schemas are defined in
 [swap.routes.ts](../../backend/src/http/routes/swap.routes.ts).
 
-| Routes                                                            | Adapter / provider              | Responsibility                                                                     |
-| ----------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------- |
-| `GET /aurora/tokens`                                              | Aurora                          | Normalize supported assets; adapter has a temporary token cache                    |
-| `POST /aurora/quote`                                              | Aurora                          | Exact-input route quote for origin/confidential/destination legs                   |
-| `POST /aurora/generate-intent`                                    | Aurora                          | Obtain a payout intent to validate and sign natively                               |
-| `POST /aurora/submit-intent`                                      | Aurora                          | Relay already-signed ERC-191 intent data                                           |
-| `POST /aurora/status`                                             | Aurora                          | Route status using deposit address and optional memo                               |
-| `GET /aurora/auth-salt`                                           | NEAR RPC through Aurora adapter | Read the authentication salt                                                       |
-| `POST /aurora/authenticate`, `/aurora/balances`                   | Aurora                          | Exchange signed authentication for access, then read private balance               |
-| `POST /monad/prepare-funding`                                     | Pimlico / Monad RPC             | Build unsigned sponsored funding UserOperation and optional EIP-7702 authorization |
-| `POST /monad/submit`, `/monad/receipt`                            | Pimlico                         | Submit signed UserOperation and inspect its receipt                                |
-| `POST /fusion/preview`, `/fusion/permit-context`, `/fusion/order` | 1inch / Robinhood RPC           | Liquidity/output preview, permit data and unsigned order construction              |
-| `POST /fusion/submit`, `/fusion/status`                           | 1inch relayer                   | Relay signed order; read fills/status. Accepted is not filled.                     |
+| Routes                                                            | Adapter / provider              | Responsibility                                                                                                                |
+| ----------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `GET /aurora/tokens`                                              | Aurora                          | Normalize supported assets; adapter has a temporary token cache                                                               |
+| `POST /aurora/quote`                                              | Aurora                          | Exact-input route quote for origin/confidential/destination legs                                                              |
+| `POST /aurora/generate-intent`                                    | Aurora                          | Obtain a payout intent to validate and sign natively                                                                          |
+| `POST /aurora/submit-intent`                                      | Aurora                          | Relay already-signed ERC-191 intent data                                                                                      |
+| `POST /aurora/status`                                             | Aurora                          | Route status using deposit address and optional memo                                                                          |
+| `GET /aurora/auth-salt`                                           | NEAR RPC through Aurora adapter | Read the authentication salt                                                                                                  |
+| `POST /aurora/authenticate`, `/aurora/balances`                   | Aurora                          | Exchange signed authentication for access, then read private balance                                                          |
+| `POST /aurora/history`                                            | Aurora                          | Authenticated operation history for a deposit address; absent adapter support returns 503 `AUTHENTICATED_HISTORY_UNAVAILABLE` |
+| `POST /monad/prepare-funding`                                     | Pimlico / Monad RPC             | Build unsigned sponsored funding UserOperation and optional EIP-7702 authorization                                            |
+| `POST /monad/submit`, `/monad/receipt`                            | Pimlico                         | Submit signed UserOperation and inspect its receipt                                                                           |
+| `POST /fusion/preview`, `/fusion/permit-context`, `/fusion/order` | 1inch / Robinhood RPC           | Liquidity/output preview, permit data and unsigned order construction                                                         |
+| `POST /fusion/submit`, `/fusion/status`                           | 1inch relayer                   | Relay signed order; read fills/status. Accepted is not filled.                                                                |
 
 Gateway schemas reject malformed shapes; native policy validates the financial
 meaning. Provider API keys stay in backend configuration. Signed payloads and
@@ -84,8 +92,13 @@ and NEAR; [native quote/intent validation](../../mobile/modules/gizu-stored-sign
 binds requests to expected assets, amounts, recipients and route terms.
 The route's confidential spending identity and its authentication context are
 related but not interchangeable. An authenticated aggregate balance is not an
-individual payout receipt. See the failure guide for the normal-funded-flow
-401 fallback and why payout-only flows require confirmed private balance.
+individual payout receipt. Current private-completion sells require authenticated
+history matching the sale's deposit address, route identities, amount, time bounds
+and verified Fusion transaction hashes. A pre-approval history probe fails closed
+before stock orders if that service is unavailable. Sale credit is recorded only
+from matching operation history; it never uses the funded-buy 401 fallback.
+See the failure guide for funded-buy fallback, payout-only balance authentication
+and private-sale credit failures.
 
 ## Fusion checks
 

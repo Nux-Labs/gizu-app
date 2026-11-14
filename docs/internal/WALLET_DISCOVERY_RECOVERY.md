@@ -52,9 +52,14 @@ discovery never broadcast transactions.
 
 ## Discovery and older backups
 
-Discovery checks both supported chains, cycles and the legacy plus distribution-v1
-derivation namespaces. Each cycle includes the legacy hold/invest/confidential
-roles and five distribution investment slots. Native consent covers one bounded
+Discovery checks Ethereum (1) and Robinhood (4663), cycles and legacy plus
+distribution-v1 derivation namespaces. Candidates include historical
+hold/invest/confidential roles and five distribution investment slots. Shared
+cycles use main-list Account 2 for private cash; their normal owned-portfolio reads
+do not add unused legacy private identities. The bounded recovery scanner still
+checks historical candidates explicitly, with signing/read validation for the
+actual owned address. Conflicting private identity markers
+fail recovery rather than changing an existing cycle. Native consent covers one bounded
 foreground session; pause, background, lock and destruction revoke it. Durable
 per-chain/per-candidate cursors allow interrupted scans to resume.
 
@@ -82,8 +87,11 @@ rules and temporary shared replay guards are described in
 [the backend protocol](../../backend/docs/wallet-recovery.md).
 
 Build and distribute the updated Android app only after the backend recovery
-routes are available. The distribution branch combines this recovery support with
+routes are available. The current Android implementation combines recovery support with
 algorithm-selected deposits. Recovery preserves each saved distribution plan and
 wallet slot, and discovery recognizes owners already covered by that plan.
 Restored withdrawals retain the selected investment slot and its receiver indices.
-No deployment or production data changes are performed by the branch update.
+This source review does not deploy the backend, modify production data or
+establish device/provider acceptance. Terminal minimum-return/refund observations
+are validated under their original generation before recovery rebinding; no
+restored lifecycle decision creates private-credit evidence or spending authority.
