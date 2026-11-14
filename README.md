@@ -55,6 +55,35 @@ the route, and timing or amounts may reveal relationships. Gizu does not promise
 complete anonymity or guaranteed unlinkability. See the
 [illustrated buy/sell flow](docs/feature-plans/AURORA_SWAP_FLOW.md).
 
+## Join mobile testing
+
+### iOS
+
+1. Open the [device registration link](https://expo.dev/register-device/603ea048-b9ef-460d-a658-9343e80570aa)
+   in **Safari on the iPhone you want to use**.
+2. Follow Expo's instructions to download and install the device registration profile.
+3. Tell the Gizu team when registration is complete.
+4. Wait for the team to add your device to the Ad Hoc provisioning profile and
+   re-sign the app. Then open the installation link they send on your iPhone.
+
+Registration alone does not enable installation. Each new iPhone must be included
+in a re-signed build; the team can add several devices together without recompiling
+the app. Already registered testers can use the
+[iOS 1.0.0 build](https://expo.dev/accounts/okanaslan/projects/gizu-mobile/builds/0a3aef15-be19-498a-a9e7-2edb1f54704b).
+
+### Android
+
+No device registration or Google testing group is required for these APK builds.
+
+1. Open the [Android 1.0.0 build link](https://expo.dev/accounts/okanaslan/projects/gizu-mobile/builds/533c5224-a3c7-489b-a2fb-a477b2e545af)
+   on your Android phone and download the APK.
+2. If prompted, allow your browser to install apps from this source, then install Gizu.
+
+The team shares a new installation link for each release. These are standalone
+apps; Expo Go is not required. See
+[Expo's internal distribution guide](https://docs.expo.dev/build/internal-distribution/)
+for more information.
+
 ## Technical architecture
 
 Gizu separates presentation, native authorization, shared transaction logic and
