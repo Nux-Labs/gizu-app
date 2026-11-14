@@ -64,6 +64,7 @@ test("a demo buy reviews, approves, runs every step and lands in holdings", asyn
   await act(() => jest.advanceTimersByTimeAsync(1_000));
   const sheet = within(await screen.findByLabelText("Swap review and progress"));
   expect(await sheet.findByText("Swap in progress")).toBeVisible();
+  fireEvent.press(sheet.getByRole("button", { name: "Demo swap progress details" }));
   expect(sheet.getByText("Move USDC to the private balance")).toBeVisible();
   await runToEnd();
   expect(screen.getByText(/^Bought 0\.1\d+ AMZN$/)).toBeVisible();

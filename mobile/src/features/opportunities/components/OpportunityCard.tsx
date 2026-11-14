@@ -45,7 +45,7 @@ export function OpportunityCard({
       name={opportunity.name}
       tvl={tvl}
       rate={apr}
-      rateSuffix={opportunity.rateType === "apy" ? " net APY" : rateSuffix}
+      rateSuffix={opportunity.rateType === "apy" ? " net APY" : (rateSuffix ?? " total APR")}
       trailing={
         opportunity.featured
           ? "Featured"

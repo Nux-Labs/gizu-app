@@ -13,3 +13,9 @@ export function formatSwapAmount(atoms: bigint): string {
   const fraction = (atoms % scale).toString().padStart(USDC_DECIMALS, "0").replace(/0+$/, "");
   return `${atoms / scale}${fraction ? `.${fraction}` : ""}`;
 }
+
+/** User-facing direction of a swap, always "FROM → TO"; buy/sell wording is not shown. */
+export function swapDirection(direction: "buy" | "sell" | string, symbol: string): string {
+  const token = symbol || "token";
+  return direction === "sell" ? `${token} → USDC` : `USDC → ${token}`;
+}

@@ -167,6 +167,12 @@ test("security, support and disclosure actions have explicit availability", asyn
     ],
   ] as const) {
     await open(title);
+    if (title === "Transaction signing") {
+      expect(screen.getByText("Preview only")).toBeVisible();
+      expect(screen.queryByText(/No biometric policy or spending cap is enforced/)).toBeNull();
+      await userEvent.press(screen.getByRole("button", { name: "Signing approval details" }));
+      expect(screen.getByText(/No biometric policy or spending cap is enforced/)).toBeVisible();
+    }
     for (const name of actions) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
       await userEvent.press(screen.getByRole("button", { name }));

@@ -8,12 +8,12 @@ import {
   type TextProps,
 } from "react-native";
 import { Lock } from "lucide-react-native";
+import colors from "@/theme/colors.json";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { FadeIn } from "@/components/molecules/FadeIn";
 import { Sparkline } from "@/components/molecules/Sparkline";
 import type { Vault } from "@/domain/investments";
 import { cardDelay } from "@/theme/motion";
-import colors from "@/theme/colors.json";
 
 const tabular = { fontVariant: ["tabular-nums" as const] };
 const trailingTones = {
@@ -110,27 +110,27 @@ function CardBody({
           </CardText>
         )}
       </View>
-      <View className="-mx-1 my-3 min-h-10 flex-1 justify-center">
+      <View className="-mx-1 my-4 h-12 justify-center">
         {series && series.length >= 2 && (
           <Sparkline series={series} negative={negative} height={40} />
         )}
       </View>
-      <View>
+      <View className="gap-3">
         <CardText
           numberOfLines={2}
-          className="font-sans text-[14px] font-medium leading-tight text-text"
+          className="min-h-10 font-sans text-[14px] font-medium leading-5 text-text"
         >
           {name}
         </CardText>
-        <View className="mt-1.5 flex-row flex-wrap items-baseline justify-between gap-x-2">
-          <CardText className="font-sans shrink text-[11px] text-fg-55" style={tabular}>
+        <View className="gap-2 border-t border-cardEdge pt-3">
+          <CardText className="font-sans text-[11px] text-fg-55" style={tabular}>
             {tvl} TVL
           </CardText>
-          <CardText className="font-sans text-[13px] text-neon" style={tabular}>
+          <CardText className="font-sans text-[22px] font-medium text-neon" style={tabular}>
             {rate}
-            {rateSuffix !== undefined && (
-              <Text className="font-sans text-[11px] text-fg-55">{rateSuffix}</Text>
-            )}
+          </CardText>
+          <CardText className="font-mono text-[10px] uppercase text-fg-45">
+            {rateSuffix?.trim() || "APY"}
           </CardText>
         </View>
       </View>
@@ -139,8 +139,7 @@ function CardBody({
 }
 
 // Frontend `.glass` card: 24 px radius, p-4, content spread top to bottom.
-const cardClass =
-  "flex-1 justify-between overflow-hidden rounded-card border border-cardEdge bg-card p-4";
+const cardClass = "flex-1 overflow-hidden rounded-card border border-cardEdge bg-card p-4";
 
 /** Frontend OpportunityCard/VaultCard: glass tile with ticker chip, sparkline, name, TVL and rate. */
 export function VaultCard({

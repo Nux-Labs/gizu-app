@@ -42,7 +42,7 @@ export function DemoDepositScreen({
           />
         )}
         <View className="flex-1 gap-1">
-          <Typography variant="title">
+          <Typography variant="pageTitle">
             {done
               ? "Deposit complete"
               : processing
@@ -57,7 +57,7 @@ export function DemoDepositScreen({
       {v.phase === "amount" && (
         <Surface>
           <View className="gap-3 p-5">
-            <Typography variant="row">Amount in USDC</Typography>
+            <Typography variant="caption">Amount in USDC</Typography>
             <TextInput
               accessibilityLabel="USDC deposit amount"
               value={v.amount}
@@ -65,7 +65,7 @@ export function DemoDepositScreen({
               keyboardType="decimal-pad"
               placeholder="0.00"
               placeholderTextColor={colors.fg[45]}
-              className="min-h-16 rounded-2xl bg-well px-4 py-3 font-sans text-[28px] text-text"
+              className="min-h-16 rounded-2xl bg-well px-4 py-3 font-sans text-[36px] text-text"
               maxLength={38}
             />
             <Typography variant="caption">
@@ -90,10 +90,9 @@ export function DemoDepositScreen({
             {done && <CircleCheck size={48} color={colors.neon.DEFAULT} />}
             {processing && <Spinner size="lg" label="Processing deposit" />}
             <Typography variant="caption">{done ? "Invested" : "You invest"}</Typography>
-            <Typography variant="balance" className="text-neon">
+            <Typography variant="value" className="!text-[28px] text-neon">
               {formatUsdc(v.quote.receiveAtoms)} USDC
             </Typography>
-            <Typography>Deposit into {vaultName}</Typography>
             {v.phase === "review" && (
               <>
                 <View className="flex-row flex-wrap justify-between gap-2">

@@ -14,6 +14,7 @@ import { useAccount } from "./AccountProvider";
 import { PreferenceFeedback } from "./PreferenceFeedback";
 import { SettingsGroup } from "./components/SettingsGroup";
 import { PageIntro } from "./components/PageIntro";
+import { SigningOverview } from "./components/SigningOverview";
 import {
   informationPages,
   nativeInformationPages,
@@ -42,13 +43,20 @@ function InformationPage({ page, native }: { page: AccountPage; native: boolean 
   if (!info) return null;
   return (
     <>
-      <PageIntro title={info.title} body={info.body} />
-      {info.rows.length > 0 && (
-        <SettingsGroup delay={sectionDelay(1)}>
-          {info.rows.map((row, index) => (
-            <GroupedRow key={row.label} {...row} last={index === info.rows.length - 1} />
-          ))}
-        </SettingsGroup>
+      <PageIntro
+        title={info.title}
+        body={page === "transaction-signing" || page === "contact-desk" ? undefined : info.body}
+      />
+      {page === "transaction-signing" ? (
+        <SigningOverview native={native} rows={info.rows} explanation={info.body} />
+      ) : (
+        info.rows.length > 0 && (
+          <SettingsGroup delay={sectionDelay(1)}>
+            {info.rows.map((row, index) => (
+              <GroupedRow key={row.label} {...row} last={index === info.rows.length - 1} />
+            ))}
+          </SettingsGroup>
+        )
       )}
       {info.actions && <PageActions labels={info.actions} delay={sectionDelay(3)} />}
     </>
@@ -58,7 +66,7 @@ function InformationPage({ page, native }: { page: AccountPage; native: boolean 
 function AlertsPage() {
   return (
     <>
-      <PageIntro title="Push alerts" body="Manage your alert preference on this device." />
+      <PageIntro title="Push alerts" />
       <PreferenceFeedback />
       <SettingsGroup delay={sectionDelay(1)}>
         <PushAlertsRow />
@@ -74,14 +82,7 @@ function CurrencyPage({ native }: { native: boolean }) {
   const selected = native ? asset : "USD";
   return (
     <>
-      <PageIntro
-        title="Currency"
-        body={
-          native
-            ? `Balances are shown in ${asset}. Fiat values are not available yet.`
-            : "USD is the only display currency for now."
-        }
-      />
+      <PageIntro title="Currency" />
       <PreferenceFeedback />
       <SettingsGroup delay={sectionDelay(1)}>
         {currencies.map((currency) => (
@@ -103,7 +104,7 @@ function StatementsPage() {
   const unavailable = loading || busy || !preferences;
   return (
     <>
-      <PageIntro title="Statements" body="Statement delivery is not available yet." />
+      <PageIntro title="Statements" />
       <PreferenceFeedback />
       <SettingsGroup title="Frequency" delay={sectionDelay(1)}>
         {frequencies.map((frequency) => (

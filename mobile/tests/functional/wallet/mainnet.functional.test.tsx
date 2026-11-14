@@ -108,7 +108,7 @@ test("mainnet Home includes receiving USDC, Deposit uses funding address, Withdr
 test("Activity displays completed sale proceeds and no testnet transfer journal", async () => {
   await open();
   fireEvent.press(screen.getByRole("button", { name: "View activity" }));
-  expect(await screen.findByText("Sell GOOGL")).toBeVisible();
+  expect(await screen.findByText("Sold GOOGL")).toBeVisible();
   expect(screen.getByText("Returned 2.5 USDC on Monad")).toBeVisible();
   expect(screen.queryByText(/Monad testnet/)).toBeNull();
 });

@@ -98,7 +98,7 @@ test("demo deposit requires a valid affordable amount and reviews without native
   }
   fireEvent.press(button());
   expect(screen.getByText("10.5 USDC")).toBeVisible();
-  expect(screen.getByText("Deposit into Steakhouse USDG")).toBeVisible();
+  expect(screen.getByText("Steakhouse USDG")).toBeVisible();
   expect(screen.getByRole("button", { name: "Confirm deposit" })).toBeEnabled();
   fireEvent.press(screen.getByRole("button", { name: "Edit amount" }));
   fireEvent.changeText(screen.getByLabelText("USDC deposit amount"), "0");
@@ -124,7 +124,7 @@ test.each([
   expect(screen.getByText(name)).toBeVisible();
   fireEvent.changeText(screen.getByLabelText("USDC deposit amount"), "25");
   fireEvent.press(screen.getByRole("button", { name: "Review deposit" }));
-  expect(screen.getByText(`Deposit into ${name}`)).toBeVisible();
+  expect(screen.getByText(name)).toBeVisible();
   expect(getStoredEarnDepositSigner).not.toHaveBeenCalled();
   expect(network).not.toHaveBeenCalled();
 });

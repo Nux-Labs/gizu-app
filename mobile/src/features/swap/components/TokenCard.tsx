@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Image, View } from "react-native";
 import { Typography } from "@/components/atoms/Typography";
-import type { CatalogToken } from "@/domain/tokenCatalog";
+import { tokenNetworks, type CatalogToken } from "@/domain/tokenCatalog";
+const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const formatUsd = (value: number) => usd.format(value);
+const tokenDisplayName = (name: string) => name.replace(/\s*•\s*Robinhood Token$/, "") || name;
 export function TokenLogo({ token }: { token: CatalogToken }) {
   const [failed, setFailed] = useState(false);
   return token.logoURI && /^https?:\/\//i.test(token.logoURI) && !failed ? (
@@ -21,21 +24,44 @@ export function TokenLogo({ token }: { token: CatalogToken }) {
   );
 }
 export function TokenCard({ token }: { token: CatalogToken }) {
+  const price =
+    "priceUsd" in token && typeof token.priceUsd === "number" && Number.isFinite(token.priceUsd)
+      ? formatUsd(token.priceUsd)
+      : null;
   return (
-    <View className="flex-1 gap-3 rounded-2xl border border-borderSoft bg-glassSoft p-4">
-      <View className="items-start gap-3">
+    <View className="flex-1 gap-4 rounded-card border border-cardEdge bg-card p-4">
+      <View className="flex-row items-center justify-between gap-2">
         <TokenLogo key={token.logoURI} token={token} />
-        <View className="w-full gap-1">
-          <Typography variant="rowTitle">{token.symbol}</Typography>
-          <Typography variant="caption">{token.name}</Typography>
-        </View>
-      </View>
-      {token.issuer !== null && <Typography variant="caption">Issuer: {token.issuer}</Typography>}
-      <View className="gap-2">
-        <Typography variant="eyebrow">
-          {token.category === "rwa" ? "RWA" : "Other asset"}
+        <Typography variant="micro">
+          {tokenNetworks.find((n) => n.chainId === token.chainId)?.name}
         </Typography>
-        <Typography variant="eyebrow">
+      </View>
+      <View className="gap-1">
+        <Typography variant="value" numberOfLines={1}>
+          {token.symbol}
+        </Typography>
+        <Typography variant="caption" numberOfLines={2} className="min-h-10 !text-fg-55">
+          {tokenDisplayName(token.name)}
+        </Typography>
+      </View>
+      <View className="gap-1">
+        <Typography variant="label11">USD price</Typography>
+        <Typography
+          variant="rowTitle"
+          className="!text-[20px]"
+          style={{ fontVariant: ["tabular-nums"] }}
+        >
+          {price ?? "Unavailable"}
+        </Typography>
+      </View>
+      <View className="mt-auto gap-2 border-t border-cardEdge pt-3">
+        <View className="self-start rounded-full bg-neon/10 px-2.5 py-1">
+          <Typography variant="micro" className="!text-neon">
+            {token.category === "rwa" ? "RWA" : "Other asset"}
+          </Typography>
+        </View>
+        {token.issuer && <Typography variant="micro">Issuer: {token.issuer}</Typography>}
+        <Typography variant="micro">
           {token.swapListed ? "Listed on 1inch" : "Not listed on 1inch"}
         </Typography>
       </View>

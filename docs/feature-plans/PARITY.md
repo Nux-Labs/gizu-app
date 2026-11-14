@@ -29,6 +29,19 @@ native diagnostics, but that does not expand the main-app product scope.
 
 ## Mainnet app flow on the confidential-swap branch
 
+### Shared mobile presentation
+
+The demo branch follows the mobile design refresh from main: uniform discovery
+cards, richer token cards, the signing overview, and dated/filterable swap history
+with expandable references. Deposit and withdrawal use compact summaries and a
+consistent amount scale. Swap progress uses the shared particle status card;
+step details open on demand while background continuation remains available.
+
+Demo deposits/withdrawals still use their existing simulation controllers. Wallet
+recovery and private-cash distribution are absent from this branch and are not
+introduced through the design port. Missing catalog prices remain unavailable;
+local sale records continue to describe the public USDC returns this branch stores.
+
 Normal stored-wallet onboarding now creates a `mainnet` session for the existing
 swap funding account (index 1, Monad chain 143). It does not create a new wallet,
 move funds, change derivation, or expand the native testnet transfer policy.

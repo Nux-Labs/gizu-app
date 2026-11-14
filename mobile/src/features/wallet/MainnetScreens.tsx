@@ -1,3 +1,4 @@
+import { ActivityHistory } from "./ActivityHistory";
 import { useCallback, useState } from "react";
 import { Pressable, View } from "react-native";
 import { Bell, ChevronDown, ChevronUp } from "lucide-react-native";
@@ -255,9 +256,7 @@ export function MainnetActivity() {
       <Typography variant="heading" accessibilityRole="header">
         Activity
       </Typography>
-      <Typography variant="micro">
-        Completed and cancelled swaps on this device. Deposits aren’t included.
-      </Typography>
+      <Typography variant="caption">Your swaps, all in one place.</Typography>
       {wallet.loading && !wallet.snapshot ? (
         <Typography variant="micro" accessibilityLiveRegion="polite">
           Loading activity…
@@ -284,20 +283,10 @@ export function MainnetActivity() {
           <Typography variant="caption">Your finished swaps will appear here.</Typography>
         </View>
       ) : null}
-      {wallet.snapshot?.history.map((item) => (
-        <Surface key={item.operationId}>
-          <View className="gap-2 p-5">
-            <Typography variant="rowTitle">
-              {item.direction === "sell" ? "Sell" : "Buy"} {item.symbol}
-            </Typography>
-            <Typography>{item.phase === "COMPLETE" ? "Completed" : "Cancelled"}</Typography>
-            {item.direction === "sell" && item.phase === "COMPLETE" ? (
-              <Typography>Returned {holdingAmount(item.receivedAtoms, 6)} USDC on Monad</Typography>
-            ) : null}
-            <Typography variant="micro">{new Date(item.recordedAt).toLocaleString()}</Typography>
-          </View>
-        </Surface>
-      ))}
+      {!!wallet.snapshot?.history.length && <ActivityHistory entries={wallet.snapshot.history} />}
+      <Typography variant="micro">
+        Swaps recorded on this device · Deposits aren’t included
+      </Typography>
     </Screen>
   );
 }

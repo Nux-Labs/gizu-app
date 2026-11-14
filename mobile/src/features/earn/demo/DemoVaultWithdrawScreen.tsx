@@ -25,12 +25,9 @@ export function DemoVaultWithdrawScreen({ vault }: { vault: OpportunityDetail })
     <Screen>
       <BackAction fallback="Vaults" />
       <View className="gap-1">
-        <Typography variant="title">
+        <Typography variant="pageTitle">
           {done ? "Withdrawal complete" : processing ? "Withdrawing" : "Withdraw"}
         </Typography>
-        {!done && !processing && (
-          <Typography variant="caption">Back to your wallet, in USDC.</Typography>
-        )}
       </View>
       <Surface>
         <View className="flex-row items-center gap-3 p-5">
@@ -68,7 +65,7 @@ export function DemoVaultWithdrawScreen({ vault }: { vault: OpportunityDetail })
                   keyboardType="decimal-pad"
                   placeholder="0.00"
                   placeholderTextColor={colors.fg[35]}
-                  className="min-h-16 min-w-0 flex-1 font-sans text-5xl text-text"
+                  className="min-h-16 min-w-0 flex-1 font-sans text-[28px] text-text"
                   maxLength={38}
                   editable={!v.empty}
                 />
@@ -96,7 +93,7 @@ export function DemoVaultWithdrawScreen({ vault }: { vault: OpportunityDetail })
                 <Typography variant="label11">
                   {done ? "Added to your wallet" : "You receive"}
                 </Typography>
-                <Typography variant="balance" className="text-neon">
+                <Typography variant="value" className="!text-[28px] text-neon">
                   {formatUsdc(v.quote.receiveAtoms)}
                 </Typography>
                 <Typography variant="row">USDC on Monad</Typography>

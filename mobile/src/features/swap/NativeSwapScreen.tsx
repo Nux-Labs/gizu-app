@@ -80,7 +80,7 @@ export function NativeSwapScreen() {
       ) : null}
       {/* The swap itself sits in the middle of the screen, under the header. */}
       <View className="flex-1 justify-center gap-4 pb-6">
-        {active && swap.status ? <ActiveSwapCard status={swap.status} /> : null}
+        {active && swap.status ? <ActiveSwapCard status={swap.status} background={demo} /> : null}
         {!active && mode === "sell" && (
           <SwapSellForm flip={flip} onSettled={() => void swap.refresh()} />
         )}

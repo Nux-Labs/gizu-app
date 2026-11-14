@@ -1,10 +1,12 @@
 import { useSyncExternalStore } from "react";
 import { Modal, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Check, CircleCheck } from "lucide-react-native";
+import { CircleCheck } from "lucide-react-native";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Typography } from "@/components/atoms/Typography";
+import { ActiveSwapCard } from "../SwapStatusPanel";
+import { HoldingDetails } from "@/components/molecules/HoldingDetails";
 import { Surface } from "@/components/molecules/Surface";
 import { formatSwapAmount } from "@/domain/swap";
 import type { StoredSwapView } from "@/domain/wallet/storedSigner";
@@ -109,76 +111,25 @@ function Review({ review }: { review: DemoReview }) {
 }
 
 function Progress({ view }: { view: StoredSwapView }) {
-  const symbol = view.targetSymbol || "tokens";
-  const sell = view.direction === "sell";
-  const legs = view.legs ?? 1;
-  const holders = view.holders ?? legs;
-  const counters = sell
-    ? [
-        { label: "Sales filled", done: view.ordersComplete, total: holders },
-        { label: "USDC payouts sent", done: view.payoutsSubmitted, total: legs },
-      ]
-    : [
-        { label: "Wallets paid", done: view.payoutsSubmitted, total: legs },
-        { label: "Stock orders filled", done: view.ordersComplete, total: legs },
-      ];
   return (
     <>
       <ScrollView className="flex-1" contentContainerClassName="gap-4 pb-4">
-        <View className="flex-row gap-2">
-          <Chip label={sell ? "SELLING" : "BUYING"} />
-          <Chip label={symbol} />
-        </View>
-        <Typography variant="pageTitle" className="!text-[26px]">
-          Swap in progress
-        </Typography>
-        <View className="flex-row items-center gap-3">
-          <Spinner size="sm" />
-          <Typography variant="rowTitle">{demoStepText(view.step, symbol)}</Typography>
-        </View>
-        <Surface>
-          <View className="gap-4 p-4">
-            {stages(view).map((stage) => (
-              <View key={stage.name} className="flex-row items-center gap-3">
-                <View
-                  className={`h-6 w-6 items-center justify-center rounded-full ${stage.done ? "bg-neon" : stage.current ? "border-2 border-neon bg-neon/15" : "border border-borderSoft"}`}
-                >
-                  {stage.done ? <Check size={14} color={colors.ink} /> : null}
-                </View>
-                <Typography
-                  variant="rowTitle"
-                  className={stage.current ? "!text-neon" : stage.done ? "" : "!text-fg-35"}
-                >
-                  {stage.name}
-                </Typography>
-              </View>
-            ))}
-          </View>
-        </Surface>
-        <Surface>
-          <View className="gap-4 p-4">
-            {counters.map((counter) => (
-              <View key={counter.label} className="gap-2">
-                <View className="flex-row justify-between">
-                  <Typography variant="rowTitle">{counter.label}</Typography>
-                  <Typography variant="caption">
-                    {counter.done} / {counter.total}
-                  </Typography>
-                </View>
-                <View className="h-2 overflow-hidden rounded-full bg-glassSoft">
-                  <View
-                    className="h-2 rounded-full bg-neon"
-                    style={{ width: `${Math.min(100, (100 * counter.done) / counter.total)}%` }}
-                  />
-                </View>
-              </View>
-            ))}
-          </View>
-        </Surface>
-        <Typography variant="micro">
-          You can leave this screen. The swap continues in the background, and Gizu notifies you
-          when it finishes.
-        </Typography>
+        <ActiveSwapCard status={view} background />
+        <HoldingDetails label="Progress details" accessibilityLabel="Demo swap progress details">
+          <Typography variant="caption">
+            {demoStepText(view.step, view.targetSymbol || "tokens")}
+          </Typography>
+          {stages(view).map((stage) => (
+            <View key={stage.name} className="flex-row items-center gap-3 py-2">
+              <View
+                className={`h-2 w-2 rounded-full ${stage.done || stage.current ? "bg-neon" : "bg-glassSoft"}`}
+              />
+              <Typography variant="rowTitle" className={stage.current ? "!text-neon" : ""}>
+                {stage.name}
+              </Typography>
+            </View>
+          ))}
+        </HoldingDetails>
       </ScrollView>
       <Button
         label="Continue in background"
