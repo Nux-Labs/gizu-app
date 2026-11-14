@@ -796,8 +796,6 @@ struct WithdrawalProposal {
 pub struct ConfidentialEarnWithdrawalOperation {
     inner: Arc<EarnPayoutOperation>,
 }
-#[uniffi::export]
-
 /// Shared strict single-token parser for the separate generic cashout signer.
 pub(crate) fn strict_private_transfer(
     payload: &str,
@@ -837,6 +835,7 @@ pub(crate) fn strict_private_transfer(
     }
     Ok(m.nonce)
 }
+#[uniffi::export]
 impl ConfidentialEarnWithdrawalOperation {
     #[uniffi::constructor]
     pub fn new(
