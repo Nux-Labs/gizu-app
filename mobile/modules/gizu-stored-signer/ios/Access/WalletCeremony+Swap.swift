@@ -72,6 +72,8 @@ import Foundation
   {
     try require(StoredSwapHTTP.allowed(gateway))
     let record = try store.load()
+    defer { record.close() }
+    try assertCashoutInactive(store: store, record: record)
     let credential = record.credential
     let walletId = record.id
     let engine = try StoredSwapEngine(

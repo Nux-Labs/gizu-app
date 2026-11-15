@@ -112,6 +112,15 @@ Run `npm run stored-signer:build:ios` before iOS prebuild or pod installation.
 set `GIZU_IOS_TEST_DEVICE` to choose a simulator UDID. `npm run stored-signer:check:ios`
 checks generated Expo registration and the Pods graph for legacy-signer exclusion.
 
+The iOS public cashout flow now implements `confidentialWithdrawals`, including
+native read authorization, transaction review/passkey approval, encrypted recovery
+and independent finalized Monad receipt checks. Native cashout tests use the real
+Rust signer with mocked providers/RPC; funded physical-iPhone acceptance is still
+required before release qualification. Android private-balance session/discovery
+and `confidentialSaleProceeds` capability parity are separate work. See
+[confidential withdrawals](../../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
+for the platform boundaries and recovery guarantees.
+
 Local records use a binary entropy suffix and encrypted public metadata. Files use
 complete protection, atomic checked writes and exclusion from automatic backups.
 The non-synchronizing Keychain encryption key uses

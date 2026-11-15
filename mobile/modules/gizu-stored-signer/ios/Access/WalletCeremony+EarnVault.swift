@@ -32,6 +32,10 @@ import Foundation
   func earnVault(
     _ request: [String: Any]?, walletId: String, id: String? = nil, revision: Int? = nil
   ) async throws -> [String: Any] {
+    let identity = try store.load()
+    defer { identity.close() }
+    try assertCashoutInactive(store: store, record: identity)
+    identity.close()
     let journal = try earnVaultJournal(walletId)
     let engine = EarnVaultEngine(store: store, journal: journal, rpc: EarnVaultRPC())
     defer { engine.close() }

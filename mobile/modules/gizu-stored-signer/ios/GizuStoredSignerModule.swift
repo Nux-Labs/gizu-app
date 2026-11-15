@@ -93,11 +93,28 @@ public final class GizuStoredSignerModule: Module {
         "earnEthereumLiquidityExecution": false,
         "earnDepositJourney": false,
         "earnBalanceDeltaSettlement": false,
+        "confidentialWithdrawals": Self.supported,
       ]
     }
 
     AsyncFunction("getWalletState") { (promise: Promise) in
       self.run(promise, operation: "getWalletState") { try $0.publicState() }
+    }
+
+    AsyncFunction("getConfidentialWithdrawal") { (walletId: String, promise: Promise) in
+      self.run(promise, operation: "getConfidentialWithdrawal") { try $0.getCashout(walletId: walletId) }
+    }
+    AsyncFunction("prepareConfidentialWithdrawal") { (request: [String: Any], promise: Promise) in
+      self.run(promise, operation: "prepareConfidentialWithdrawal", timeout: 900_000_000_000) { try await $0.prepareCashout(request) }
+    }
+    AsyncFunction("executeConfidentialWithdrawal") { (request: [String: Any], promise: Promise) in
+      self.run(promise, operation: "executeConfidentialWithdrawal", timeout: 900_000_000_000) { try await $0.executeCashout(request) }
+    }
+    AsyncFunction("resumeConfidentialWithdrawal") { (request: [String: Any], promise: Promise) in
+      self.run(promise, operation: "resumeConfidentialWithdrawal", timeout: 900_000_000_000) { try await $0.executeCashout(request, resume: true) }
+    }
+    AsyncFunction("cancelConfidentialWithdrawal") { (request: [String: Any], promise: Promise) in
+      self.run(promise, operation: "cancelConfidentialWithdrawal") { try $0.cancelCashout(request) }
     }
 
     AsyncFunction("createWallet") { (promise: Promise) in

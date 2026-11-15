@@ -111,7 +111,7 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
       earnDepositDistribution: Platform.OS === "android" && result.earnDepositDistribution === true,
       earnDepositPrivateFunding:
         Platform.OS === "android" && result.earnDepositPrivateFunding === true,
-      confidentialWithdrawals: Platform.OS === "android" && result.confidentialWithdrawals === true,
+      confidentialWithdrawals: result.confidentialWithdrawals === true,
       confidentialSaleProceeds:
         Platform.OS === "android" && result.confidentialSaleProceeds === true,
     };

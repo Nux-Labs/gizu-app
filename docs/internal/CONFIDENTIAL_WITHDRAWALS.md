@@ -257,11 +257,29 @@ closed. New sales probe authenticated history before financial review or any
 Fusion permit/order, so an unavailable route stops the sale before funds move.
 
 Android advertises `confidentialWithdrawals` and `confidentialSaleProceeds` on
-eligible builds. Swift supports its shared-core private sale continuation but
-does not expose the Android public-cashout native capability or UI; shared Rust
-code is not proof of platform parity. Older builds and unsupported platforms
-must not simulate successful execution. A native rebuild is required; backend
-deployment alone does not update an installed app.
+eligible builds. Swift now exposes `confidentialWithdrawals` through native
+prepare, execute, resume, cancel and saved-state methods. It uses the shared Rust
+planner/signer, a wallet-generation-bound encrypted journal, and independent
+finalized Monad receipt verification for grouped deliveries. Signed bytes and
+receiver allocations survive interruption; cancellation is limited to unsigned
+work. Active cashouts exclude swap and vault execution, and unfinished local
+swap/vault work blocks a new cashout.
+
+Unlike Android's shared private-read session, iOS explicitly reviews and authorizes
+read-only confidential account checks for each prepare/execute/resume ceremony.
+Spending requires a separate native review and passkey approval. Its source
+catalogue covers the local shared swap account and persisted earn cycles;
+wallets marked as needing recovery cannot start a cashout. This does not add
+Android's private-balance portfolio/session or discovery features, and does not
+enable `confidentialSaleProceeds` on iOS. The existing withdrawal screen can
+prepare an exact entered amount using these authenticated native reads.
+
+Swift automated tests exercise signing, encrypted recovery, immutable retries,
+receipt finality and failure paths. Funded physical-iPhone acceptance remains
+pending; automated fixtures are not proof of live provider interoperability.
+Older builds and unsupported platforms must not simulate successful execution.
+A native rebuild is required; backend deployment alone does not update an
+installed app.
 
 | Boundary                     | Current limit                                                                                               |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -283,6 +301,8 @@ establish successful live cashout.
 ## Implementation references
 
 - [Cashout planner and signer](../../mobile/modules/gizu-stored-signer/core/src/confidential_withdrawal.rs)
+- [iOS cashout orchestration](../../mobile/modules/gizu-stored-signer/ios/Cashout/CashoutEngine.swift)
+- [iOS receipt verification](../../mobile/modules/gizu-stored-signer/ios/Cashout/CashoutReceipts.swift)
 - [Android cashout orchestration](../../mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/withdrawal/ConfidentialWithdrawalEngine.kt)
 - [Swap policy and credit verification](../../mobile/modules/gizu-stored-signer/core/src/swap/engine.rs)
 - [Backend cashout gateway](../../backend/src/adapters/earn/confidential-cashout.ts)
