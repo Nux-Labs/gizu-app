@@ -54,7 +54,10 @@ read-only reconciliation and explicitly authorized identical-byte retries match 
 Capability adapters query native capabilities before entering each operation; module
 presence alone is insufficient. Release availability requires the signed
 `GizuWalletEnabled` build flag. Simulator checks
-are separate from pending physical-device/provider and independent security acceptance.
+are separate from physical-device/provider evidence and independent security review.
+Physical-iPhone testing is complete. Cross-platform recovery-provider
+interoperability and independent security review remain separate requirements;
+see the [verification record](NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
 
 ## Verified backup and recovery
 

@@ -57,6 +57,11 @@ Proposed changes belong in [Feature plans](../feature-plans/README.md).
 
 The two research reports linked above remain in `research/outputs/`.
 
+The updated editable [system diagrams](../diagrams/Gizu-System-Diagrams-SVG.drawio)
+provide the system overview and flows. Physical-iPhone testing and AWS
+deployment/networking are complete; see the
+[verification record](NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
+
 Current implementation prose was audited against repository source on
 14 November 2026. Verification records, retired implementations and research
 reports retain their original evidence dates; a documentation review is not a

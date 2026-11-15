@@ -31,13 +31,13 @@ Instructions for running the delivered feature belong in
 
 ## Plans
 
-- [Landing-only AWS deployment](LANDING_AWS_DEPLOYMENT_PLAN.md): approved S3/CloudFront/ACM architecture; implementation prepared, with provisioning/publication and launch inputs pending.
+- [Landing-only AWS deployment](LANDING_AWS_DEPLOYMENT_PLAN.md): implemented S3/CloudFront/ACM architecture and delivery tooling; AWS deployment and networking complete.
 
-- [AWS production deployment plan](AWS_DEPLOYMENT_PLAN.md): cost-conscious, production-facing hackathon proposal; single-server options, repository constraints, migration and open decisions; not provisioned or approved.
+- [AWS production deployment plan](AWS_DEPLOYMENT_PLAN.md): superseded Lightsail proposal retained for architectural context; current deployment follows the linked landing and ECS/RDS guides.
 
 - [Swap architecture](SWAP_ARCHITECTURE.md): implemented ownership map, with [contracts](SWAP_CONTRACTS.md) and [persistence/recovery](SWAP_PERSISTENCE.md) references.
 
-- [Aurora swap flow](AURORA_SWAP_FLOW.md): current buy/private-sell prose and provider responsibilities; retained diagrams show historical examples and are deferred for visual updates.
+- [Aurora swap flow](AURORA_SWAP_FLOW.md): current buy/private-sell prose and provider responsibilities; retained illustrations show historical examples. Use the updated [system diagrams](../diagrams/Gizu-System-Diagrams-SVG.drawio) for the system overview and flows.
 
 | Document                                                          | Role                                                                                                |
 | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |

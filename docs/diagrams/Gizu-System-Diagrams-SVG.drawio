@@ -335,7 +335,7 @@
         <mxCell id="gizu-systems-01-57" parent="1" style="rounded=1;arcSize=3;html=0;fillColor=#FFF0DF;strokeColor=#BC7C37;strokeWidth=1.5;opacity=55;connectable=0;" value="" vertex="1">
           <mxGeometry height="270" width="1810" x="40" y="950" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-01-58" parent="1" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#BC7C37;" value="EARN WITHDRAWAL → PRIVATE USDC · ANDROID PUBLIC CASHOUT IS SEPARATE" vertex="1">
+        <mxCell id="gizu-systems-01-58" parent="1" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#BC7C37;" value="EARN WITHDRAWAL → PRIVATE USDC · PUBLIC CASHOUT NEEDS NATIVE SUPPORT" vertex="1">
           <mxGeometry height="24" width="1770" x="60" y="965" as="geometry" />
         </mxCell>
         <object label="" tooltip="mobile/modules/gizu-stored-signer/core/src/confidential_withdrawal.rs" id="gizu-systems-01-59">
@@ -352,7 +352,7 @@
         <mxCell id="gizu-systems-01-59-title" parent="gizu-systems-01-59" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=1;fontColor=#23354B;" value="Fresh Monad receivers Rᵢ" vertex="1">
           <mxGeometry height="19" width="227" x="9" y="99" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-01-59-sub" parent="gizu-systems-01-59" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;" value="Android cashout · 1–5 wallets" vertex="1">
+        <mxCell id="gizu-systems-01-59-sub" parent="gizu-systems-01-59" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;" value="iOS / Android · 1–5 wallets" vertex="1">
           <mxGeometry height="16" width="227" x="9" y="121" as="geometry" />
         </mxCell>
         <object label="" tooltip="mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/earn/EarnMinimumReturn.kt" id="gizu-systems-01-60">
@@ -412,7 +412,7 @@
         <mxCell id="gizu-systems-01-67" edge="1" parent="1" source="gizu-systems-01-60" style="edgeStyle=none;html=0;rounded=0;strokeColor=#C17C31;strokeWidth=2;endArrow=block;endFill=1;dashed=1;dashPattern=6 4;exitX=0;exitY=0.5;entryX=1;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" target="gizu-systems-01-59" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-01-68" parent="1" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=1;fontColor=#C17C31;" value="Separate Android cashout ·&#xa;fresh review / approval" vertex="1">
+        <mxCell id="gizu-systems-01-68" parent="1" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=1;fontColor=#C17C31;" value="Separate cashout ·&#xa;native support + fresh approval" vertex="1">
           <mxGeometry height="45" width="235" x="460" y="1060" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-01-69" parent="1" style="rounded=1;arcSize=3;html=0;fillColor=#F4F6F9;strokeColor=#8996A6;strokeWidth=1.5;opacity=55;connectable=0;" value="" vertex="1">
@@ -784,7 +784,7 @@
         <mxCell id="gizu-systems-02-45" parent="1" vertex="1" value="" style="rounded=1;arcSize=3;html=0;fillColor=#E7F4F6;strokeColor=#40848C;strokeWidth=1.5;opacity=55;connectable=0;">
           <mxGeometry x="40" y="870" width="1810" height="350" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-02-46" parent="1" vertex="1" value="ANDROID SELL · HOLDINGS → USDG INTO AURORA → VERIFIED PRIVATE USDC" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#40848C;">
+        <mxCell id="gizu-systems-02-46" parent="1" vertex="1" value="SELL · HOLDINGS → USDG INTO AURORA → VERIFIED PRIVATE USDC" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#40848C;">
           <mxGeometry x="60" y="885" width="1770" height="24" as="geometry" />
         </mxCell>
         <object id="gizu-systems-02-47" label="" tooltip="mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/swap/SwapEngine.kt">
@@ -860,7 +860,7 @@
         <mxCell id="gizu-systems-02-51-title" parent="gizu-systems-02-51" vertex="1" value="Withdraw from Gizu" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=1;fontColor=#23354B;">
           <mxGeometry x="9" y="99" width="172" height="19" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-02-51-sub" parent="gizu-systems-02-51" vertex="1" value="Android · fresh Rᵢ · fresh approval" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
+        <mxCell id="gizu-systems-02-51-sub" parent="gizu-systems-02-51" vertex="1" value="Native capability · fresh approval" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
           <mxGeometry x="9" y="121" width="172" height="32" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-02-52" parent="1" edge="1" value="" style="edgeStyle=none;html=0;rounded=0;strokeColor=#299160;strokeWidth=3;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" source="gizu-systems-02-47" target="gizu-systems-02-48">
@@ -890,7 +890,7 @@
         <mxCell id="gizu-systems-02-61" parent="1" vertex="1" value="" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#8996A6;">
           <mxGeometry x="60" y="1260" width="1770" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-02-62" parent="1" vertex="1" value="Android public-funded buys save 1–5 recipients and amount-aware weights; iOS public input is capped at 10 USDC. Existing-private-balance buys retain three recipients.&#xa;New sales and separate public cashout require Android. Sale credit must meet the quote minimum scaled to verified USDG input; cashout requires fresh approval. Public amounts/timing and providers can reveal links." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=0;fontColor=#23354B;">
+        <mxCell id="gizu-systems-02-62" parent="1" vertex="1" value="Android public-funded buys save 1–5 recipients and amount-aware weights; iOS public input is capped at 10 USDC. Existing-private-balance buys retain three recipients.&#xa;Sales require native confidential-sale support. Public cashout separately requires its native bridge and approval. Sale credit must meet the quote minimum scaled to verified USDG input. Public amounts/timing and providers can reveal links." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=0;fontColor=#23354B;">
           <mxGeometry x="58" y="1259" width="1774" height="56" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-02-63" parent="1" vertex="1" value="CODE REFERENCES · source numbers are local to this page; component tooltips contain exact file paths" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=1;fontColor=#23354B;">
@@ -2854,7 +2854,7 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="gizu-systems-09-1" parent="1" vertex="1" value="ANDROID TRADE SELL · provider and contract wiring" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=29;fontStyle=1;fontColor=#23354B;">
+        <mxCell id="gizu-systems-09-1" parent="1" vertex="1" value="TRADE SELL · provider and contract wiring" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=29;fontStyle=1;fontColor=#23354B;">
           <mxGeometry x="44" y="30" width="1812" height="40" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-09-2" parent="1" vertex="1" value="Wallet signatures, provider relay and asset movement are separate relationships. A resolver fills the 1inch order on Robinhood Chain." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=0;fontColor=#23354B;">
@@ -3071,7 +3071,7 @@
         <mxCell id="gizu-systems-09-40" parent="1" vertex="1" value="" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#8996A6;">
           <mxGeometry x="60" y="1085" width="1765" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-09-41" parent="1" vertex="1" value="New sales require Android’s confidential-sale capability. Sell selects eligible owned holders, excluding Earn; unsellable dust can remain unsigned. Resolver settlement sends public USDG to quoted Aurora deposits.&#xa;Count private Account 2 credit only after bound history matches verified transfers and USDC credit meets the quote minimum scaled to actual USDG input. Android public cashout requires a separate action and approval." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=0;fontColor=#23354B;">
+        <mxCell id="gizu-systems-09-41" parent="1" vertex="1" value="Sales require native confidential-sale capability on iOS or Android. Sell selects eligible owned holders, excluding Earn; unsellable dust can remain unsigned. Resolver settlement sends public USDG to quoted Aurora deposits.&#xa;Count private Account 2 credit only after bound history matches verified transfers and USDC credit meets the quote minimum scaled to actual USDG input. Public cashout needs its native bridge, a separate action and fresh approval." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=0;fontColor=#23354B;">
           <mxGeometry x="58" y="1084" width="1769" height="78" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-09-42" parent="1" vertex="1" value="CODE REFERENCES · source numbers are local to this page; component tooltips contain exact file paths" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=1;fontColor=#23354B;">
@@ -3629,7 +3629,7 @@
         <mxCell id="gizu-systems-10-75-title" parent="gizu-systems-10-75" vertex="1" value="Owned private-USDC source" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=1;fontColor=#23354B;">
           <mxGeometry x="9" y="99" width="222" height="19" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-10-75-sub" parent="gizu-systems-10-75" vertex="1" value="Android · owned private USDC" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
+        <mxCell id="gizu-systems-10-75-sub" parent="gizu-systems-10-75" vertex="1" value="Native-owned private USDC" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
           <mxGeometry x="9" y="121" width="222" height="16" as="geometry" />
         </mxCell>
         <object id="gizu-systems-10-76" label="" tooltip="mobile/modules/gizu-stored-signer/core/src/earn_payout.rs&#xa;mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/earn/EarnWithdrawalEngine.kt&#xa;mobile/modules/gizu-stored-signer/core/src/roles.rs">
@@ -3657,7 +3657,7 @@
         <mxCell id="gizu-systems-10-77-title" parent="gizu-systems-10-77" vertex="1" value="Aurora → fresh Monad Rᵢ" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=1;fontColor=#23354B;">
           <mxGeometry x="9" y="99" width="332" height="19" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-10-77-sub" parent="gizu-systems-10-77" vertex="1" value="Android · 1–5 fresh Monad receivers" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
+        <mxCell id="gizu-systems-10-77-sub" parent="gizu-systems-10-77" vertex="1" value="iOS / Android · 1–5 receivers" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
           <mxGeometry x="9" y="121" width="332" height="16" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-10-78" parent="1" edge="1" value="" style="edgeStyle=none;html=0;rounded=0;strokeColor=#8862BB;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;" source="gizu-systems-10-75" target="gizu-systems-10-76">
@@ -3732,7 +3732,7 @@
         <mxCell id="gizu-systems-10-90" parent="1" vertex="1" value="" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#8996A6;">
           <mxGeometry x="60" y="2605" width="1765" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-10-91" parent="1" vertex="1" value="Account-2 read proofs have empty intents[]; payouts use exact ERC-191 intents. Robinhood UserOps may include a separate 7702 delegation signature. Its 15-minute withdrawal grant can cover redemption and the bound return; refund/expiry needs fresh approval.&#xa;Robinhood portion completion saves credited/minimum evidence without a new spending signature. Ethereum full exit also needs its fresh public-balance check. Historical owner acknowledgement closes lifecycle only; Android cashout is separate; retries reuse signed bytes." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=0;fontColor=#23354B;">
+        <mxCell id="gizu-systems-10-91" parent="1" vertex="1" value="Account-2 read proofs have empty intents[]; payouts use exact ERC-191 intents. Robinhood UserOps may include a separate 7702 delegation signature. Its 15-minute withdrawal grant can cover redemption and the bound return; refund/expiry needs fresh approval.&#xa;Robinhood portion completion saves credited/minimum evidence without a new spending signature. Ethereum full exit also needs its fresh public-balance check. Historical owner acknowledgement closes lifecycle only; Native-supported cashout is separate; retries reuse signed bytes." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=0;fontColor=#23354B;">
           <mxGeometry x="58" y="2604" width="1769" height="73" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-10-92" parent="1" vertex="1" value="CODE REFERENCES · source numbers are local to this page; component tooltips contain exact file paths" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=1;fontColor=#23354B;">
@@ -4184,7 +4184,7 @@
         <mxCell id="gizu-systems-11-62" parent="1" vertex="1" value="" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#8996A6;">
           <mxGeometry x="60" y="1665" width="1765" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-11-63" parent="1" vertex="1" value="Account 2 signs empty ERC-191 read proofs and exact payout intents. Holding wallets sign EIP-2612 permits and EIP-712 orders; the token verifies its permit, LOP verifies the order. New private sales and separate public cashout require Android.&#xa;Sale completion needs bound private credit. The signing grant lasts 15 minutes; permit/order deadlines are separate. Android shared reads survive app switching but cannot spend. Native-only recovery has no UI action; eligible saved-byte retries retain signatures." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=0;fontColor=#23354B;">
+        <mxCell id="gizu-systems-11-63" parent="1" vertex="1" value="Account 2 signs empty ERC-191 read proofs and exact payout intents. Holding wallets sign EIP-2612 permits and EIP-712 orders; the token verifies its permit, LOP verifies the order. iOS and Android advertise native private-sale support.&#xa;Sale completion needs bound private credit. Both platforms expose separately approved cashout through all five native methods. iOS cashout read checks require authorization; spending needs separate review/passkey approval. Android shared reads cannot spend. Eligible retries retain signed bytes." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=0;fontColor=#23354B;">
           <mxGeometry x="58" y="1664" width="1769" height="73" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-11-64" parent="1" vertex="1" value="CODE REFERENCES · source numbers are local to this page; component tooltips contain exact file paths" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=1;fontColor=#23354B;">
@@ -4234,7 +4234,7 @@
         <mxCell id="gizu-systems-12-1" parent="1" vertex="1" value="EARN WITHDRAWAL · private return and separate public cashout" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=29;fontStyle=1;fontColor=#23354B;">
           <mxGeometry x="44" y="30" width="1812" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-12-2" parent="1" vertex="1" value="Robinhood completes each selected portion using saved return evidence. Ethereum also needs full-exit checks; Android public cashout is separate." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=0;fontColor=#23354B;">
+        <mxCell id="gizu-systems-12-2" parent="1" vertex="1" value="Robinhood completes each selected portion using saved return evidence. Ethereum also needs full-exit checks; native-supported public cashout is separate." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=0;fontColor=#23354B;">
           <mxGeometry x="44" y="80" width="1812" height="48" as="geometry" />
         </mxCell>
         <mxCell id="gizu-systems-12-3" parent="1" edge="1" value="" style="edgeStyle=none;html=0;rounded=0;strokeColor=#299160;strokeWidth=3;endArrow=none;endFill=1;">
@@ -4297,7 +4297,7 @@
         <mxCell id="gizu-systems-12-17" parent="1" vertex="1" value="" style="rounded=1;arcSize=3;html=0;fillColor=#E9F2FE;strokeColor=#527CAF;strokeWidth=1.5;opacity=55;connectable=0;">
           <mxGeometry x="1320" y="200" width="530" height="1000" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-12-18" parent="1" vertex="1" value="ANDROID CASHOUT · EXPLICIT USER ACTION" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#527CAF;">
+        <mxCell id="gizu-systems-12-18" parent="1" vertex="1" value="PUBLIC CASHOUT · NATIVE CAPABILITY REQUIRED" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacing=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=14;fontStyle=1;fontColor=#527CAF;">
           <mxGeometry x="1340" y="215" width="490" height="24" as="geometry" />
         </mxCell>
         <object id="gizu-systems-12-19" label="" tooltip="mobile/src/features/earn/useRequestedWithdrawal.ts">
@@ -4373,7 +4373,7 @@
         <mxCell id="gizu-systems-12-23-title" parent="gizu-systems-12-23" vertex="1" value="Separate cashout approval" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=1;fontColor=#23354B;">
           <mxGeometry x="9" y="99" width="312" height="19" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-12-23-sub" parent="gizu-systems-12-23" vertex="1" value="Android · fresh review / approval" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
+        <mxCell id="gizu-systems-12-23-sub" parent="gizu-systems-12-23" vertex="1" value="iOS / Android · fresh approval" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
           <mxGeometry x="9" y="121" width="312" height="16" as="geometry" />
         </mxCell>
         <object id="gizu-systems-12-24" label="" tooltip="mobile/modules/gizu-stored-signer/core/src/confidential_withdrawal.rs">
@@ -4390,7 +4390,7 @@
         <mxCell id="gizu-systems-12-24-title" parent="gizu-systems-12-24" vertex="1" value="Fresh Monad receivers Rᵢ" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=16;fontStyle=1;fontColor=#23354B;">
           <mxGeometry x="9" y="99" width="312" height="19" as="geometry" />
         </mxCell>
-        <mxCell id="gizu-systems-12-24-sub" parent="gizu-systems-12-24" vertex="1" value="Android · 1–5 wallets · saved allocation" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
+        <mxCell id="gizu-systems-12-24-sub" parent="gizu-systems-12-24" vertex="1" value="1–5 wallets · saved allocation" style="text;html=0;whiteSpace=wrap;align=center;verticalAlign=top;spacing=0;connectable=0;strokeColor=none;fillColor=none;fontFamily=Arial;fontSize=12;fontStyle=0;fontColor=#617084;">
           <mxGeometry x="9" y="121" width="312" height="16" as="geometry" />
         </mxCell>
         <object id="gizu-systems-12-25" label="" tooltip="mobile/src/features/earn/useRequestedWithdrawal.ts; mobile/src/features/earn/useVaultPosition.ts">

@@ -12,6 +12,20 @@ These records do not establish full iOS/Android parity or independent security
 acceptance. Current architecture: [signer overview](NATIVE_SIGNER.md). Setup:
 [local development](../app-guide/MOBILE_LOCAL_DEVELOPMENT.md).
 
+## Current maintainer-confirmed status
+
+On 15 November 2026, the maintainer confirmed that physical-iPhone testing is
+complete and that AWS deployment and networking are configured. The API is
+`https://api.gizu.io`. This supersedes the blanket iPhone acceptance and deployment
+gaps in the older records. No new test runs are recorded here; historical records
+retain their original dates and scope. Cross-platform backup interoperability and
+independent security review remain separate requirements.
+
+The subsequently integrated iOS public-cashout implementation has its own funded
+physical-iPhone acceptance requirement. The earlier device confirmation does not
+establish live settlement for that new feature; see
+[cashout deployment and limits](CONFIDENTIAL_WITHDRAWALS.md#deployment-and-limits).
+
 ## Stored-wallet implementation evidence
 
 | Date / slice                   | Recorded verification                                                                                                                        | Limitation                                                                                                                                                                                                |
@@ -95,13 +109,14 @@ At that revision, Home, Account, Deposit/Withdraw and Activity used native adapt
 coverage mocks those boundaries and exercises validation, duplicate prevention,
 status display, missing legacy details, refresh failure, leaving a page during an
 operation, disconnect and stale results. Native-only signing policy is unchanged.
-Main-app physical acceptance remains outstanding; debug-harness evidence does not
-complete it. Installation/build success is not an accepted live journey.
+Main-app physical acceptance was outstanding in that record; debug-harness
+evidence did not complete it. The later maintainer-confirmed status is recorded above. Installation/build success is not an accepted live journey.
 
 ## Historical acceptance gaps
 
 These were open in the original records. They are not a current release-blocker
-list; later acceptance must be established from dated evidence, not inferred.
+list. The 15 November 2026 maintainer confirmation above supersedes the blanket iPhone
+gap; the original records below retain their scenario-specific evidence limits.
 
 - Physical iOS PRF create/open/recovery, review, cancellation and provider behavior.
 - Android provider/device/revision/prompt record and native synthetic-secret

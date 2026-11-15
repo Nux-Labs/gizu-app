@@ -4,6 +4,7 @@
   <a href="https://gizu.io">Website</a> ·
   <a href="docs/app-guide/MOBILE_LOCAL_DEVELOPMENT.md">Run locally</a> ·
   <a href="docs/feature-plans/SWAP_ARCHITECTURE.md">Architecture</a> ·
+  <a href="docs/diagrams/Gizu-System-Diagrams-SVG.drawio">System diagrams</a> ·
   <a href="docs/README.md">Documentation</a>
 </p>
 
@@ -85,6 +86,9 @@ apps; Expo Go is not required. See
 for more information.
 
 ## Technical architecture
+
+Explore the updated editable [system diagrams](docs/diagrams/Gizu-System-Diagrams-SVG.drawio)
+for the system overview and flows.
 
 Gizu separates presentation, native authorization, shared transaction logic and
 provider access. This keeps wallet authority out of the JavaScript UI and backend.
@@ -213,8 +217,8 @@ need release validation even when PR checks pass. The landing workflow can deplo
 eligible `main` changes when its deployment flag and AWS variables are configured;
 backend releases use the separate AWS pipeline. Test workflows do not upload
 signed store builds or prove live provider settlement. Optional backend fork and
-database tests require their own inputs. Distribution and device acceptance are
-separate steps.
+database tests require their own inputs. Distribution and device checks for future
+releases remain separate from CI validation.
 
 ## Documentation by audience
 

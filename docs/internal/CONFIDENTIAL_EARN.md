@@ -205,8 +205,8 @@ simulation. Never bundle those credentials or a private key into JavaScript.
 The backend must expose the matching deposit-preview/private-funding/group-status
 and withdrawal-balance/planning routes before the corresponding native client is
 used. Unsupported capability/schema or missing simulation fails visibly rather
-than widening a proposal. Deployment state must be checked separately; a source
-review is not evidence that today's backend or association files are live.
+than widening a proposal. The API is deployed on AWS at `https://api.gizu.io`
+with networking configured. Verify compatibility after subsequent releases.
 
 ## Implementation and diagnostics
 

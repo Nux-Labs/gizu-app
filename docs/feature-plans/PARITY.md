@@ -3,7 +3,9 @@
 Source reviewed 2026-11-14 against the checked-in entry points, navigation,
 JavaScript adapters and native wrappers. This is the current capability reference;
 dated test records remain evidence only for the build and scope they describe.
-No provider, deployment, funded-device or physical-iPhone acceptance was rerun.
+Physical-iPhone testing is complete. The API is deployed on AWS at
+`https://api.gizu.io` with networking configured. See the
+[verification record](../internal/NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
 
 ## Runtime modes
 
@@ -25,9 +27,9 @@ not persist or enroll anyone.
 | Access                          | Native create/unlock, verified encrypted backup, restore with backup and original passkey                    | Injected access fixtures; no simulated startup mode                                |
 | Home                            | Observed USD total, public/private cash, tracked tokens and supported vault positions                        | Synthetic portfolio/chart fixtures                                                 |
 | Vaults                          | Backend catalog, qualification, filters, paging, details and supported Earn entry                            | Fixture discovery/detail journeys                                                  |
-| Swap                            | Native confidential buy, full selected-token sell, saved resume/cancel/recovery                              | Mocked public-contract and interaction checks                                      |
+| Swap                            | Native confidential buy, capability-gated iOS/Android selected-token sell, saved resume/cancel/recovery                              | Mocked public-contract and interaction checks                                      |
 | Receive / Send                  | Public Monad USDC receiving address; direct public Send unavailable                                          | Historical six-decimal transfer fixtures; explicit testnet harness uses native MON |
-| Withdraw from Gizu              | Separate Android private-cash distribution, gated by native capability                                       | Injected withdrawal service journeys                                               |
+| Withdraw from Gizu              | Separate private-cash distribution, gated by native methods and capability                                       | Injected withdrawal service journeys                                               |
 | Activity                        | Local completed/cancelled swap summaries; private credit and legacy public return distinguished              | Session fixture activity                                                           |
 | Earn                            | Android guided Robinhood deposit and saved investment management; staged Ethereum flow                       | Service and real-screen fixtures                                                   |
 | iOS Earn                        | Ethereum vault execution; sponsored funding, private payout, liquidity and guided deposit remain unavailable | Native simulator/bridge fixtures do not establish complete funding parity          |

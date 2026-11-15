@@ -14,7 +14,10 @@ the replacement intentionally changes those rules under the migration plan.
 
 Original reference updated 2026-09-24; source retention/isolation reviewed
 2026-11-14. Development implementation exists on
-Android and iOS; full security/device acceptance is open. Dated results and acceptance gaps live in
+Android and iOS; independent security review of this retired implementation
+was not established. Current stored-wallet physical-iPhone testing is complete;
+that status does not reactivate or qualify this module.
+Dated results and acceptance gaps live in
 [verification](NATIVE_SIGNER_VERIFICATION.md).
 
 ## Threat model and enforceable claim

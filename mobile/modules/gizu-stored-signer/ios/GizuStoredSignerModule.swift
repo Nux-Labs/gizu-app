@@ -86,6 +86,7 @@ public final class GizuStoredSignerModule: Module {
       [
         "contractVersion": 1, "available": Self.supported, "walletStorage": Self.supported,
         "backup": Self.supported, "transfers": Self.supported, "swaps": Self.supported,
+        "confidentialSaleProceeds": Self.supported,
         "earnWallets": Self.supported,
         "earnVaultExecution": Self.supported,
         "earnSponsoredExecution": false,

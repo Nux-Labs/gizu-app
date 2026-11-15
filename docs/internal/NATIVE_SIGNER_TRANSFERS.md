@@ -56,5 +56,6 @@ sync. Activity shows saved outgoing records, not indexed incoming history.
 Android RPC uses OkHttp 4.9.2, matching the existing React Native dependency. The
 fixed Monad endpoint and bounded, cancellable transport live in `rpc/`; orchestration,
 reconciliation, journal and native approval live in `transfers/`. The inactive module
-is not a runtime dependency. Guided phone checks were user-reported successful; extended failure-path
-acceptance remains pending. See [verification evidence](NATIVE_SIGNER_VERIFICATION.md).
+is not a runtime dependency. Guided phone checks were reported successful. Physical-iPhone testing is
+complete; see [verification evidence](NATIVE_SIGNER_VERIFICATION.md) for the
+current status and historical test scope.

@@ -2,7 +2,7 @@
 
 The active local Expo module is `GizuStoredSigner`, under native package
 `io.gizu.storedwallet`. The retained `gizu-signer` module is inactive and excluded
-from app linking. This module supports Android 9+ development and release builds and iOS 18+ development and release builds; physical iOS acceptance remains pending.
+from app linking. This module supports Android 9+ development and release builds and iOS 18+ development and release builds; physical-iPhone testing is complete. See the [verification record](../../../docs/internal/NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
 
 ## Implemented boundary
 
@@ -52,8 +52,9 @@ separate encrypted recovery sync, history import and read-only discovery; these
 require their native capabilities and the backend recovery service. See
 [recovery protocol](../../../docs/internal/WALLET_DISCOVERY_RECOVERY.md). The explicit
 `npm run debug:stored-wallet` harness remains available, with no legacy fallback.
-Guided phase-4 phone checks were user-reported successful; extended failure-path
-acceptance remains pending.
+Guided phase-4 phone checks were reported successful. See the
+[verification record](../../../docs/internal/NATIVE_SIGNER_VERIFICATION.md) for
+historical evidence and current device status.
 
 ## Earn and confidential portfolio capability limits
 
@@ -67,8 +68,11 @@ original account. Minimum-return receipts and bound refund observations remain
 terminal lifecycle evidence after cash is spent, without becoming arbitrary
 spending authority. See [native Earn](../../../docs/internal/NATIVE_SIGNER_EARN.md).
 
-iOS advertises stored wallets, backup, transfers, swaps, Earn wallets and Ethereum
-vault execution. Sponsored funding, private payouts, Ethereum liquidity and guided
+iOS advertises stored wallets, backup, transfers, swaps, confidential sale
+proceeds, public cashout, Earn wallets and Ethereum vault execution. Selected-token
+sales are gated by native methods and `confidentialSaleProceeds` on both platforms. Public
+cashout separately requires all five native methods and `confidentialWithdrawals`.
+Sponsored funding, private payouts, Ethereum liquidity and guided
 Earn deposits remain false; recovery/discovery and partial-withdrawal flags are
 absent. Android's private-read grant and owned-asset/Earn extensions do not imply
 iOS parity. Query `getCapabilities` rather than inferring support from methods.
@@ -116,8 +120,9 @@ The iOS public cashout flow now implements `confidentialWithdrawals`, including
 native read authorization, transaction review/passkey approval, encrypted recovery
 and independent finalized Monad receipt checks. Native cashout tests use the real
 Rust signer with mocked providers/RPC; funded physical-iPhone acceptance is still
-required before release qualification. Android private-balance session/discovery
-and `confidentialSaleProceeds` capability parity are separate work. See
+required for this newly added feature before release qualification. Previously
+completed iPhone testing does not establish live cashout acceptance. Android
+private-balance session/discovery parity remains separate work. See
 [confidential withdrawals](../../../docs/internal/CONFIDENTIAL_WITHDRAWALS.md)
 for the platform boundaries and recovery guarantees.
 
@@ -143,7 +148,10 @@ then obtains fresh PRF authorization for committing local storage.
 or keys to the app. Generated Swift bindings and XCFrameworks are ignored. The
 retired signer remains untouched and excluded. Native simulator tests and an app
 build do not establish physical iPhone, passkey-provider, Keychain or file-picker
-acceptance. Real-device validation and independent security review remain pending.
+acceptance. Previously completed physical-iPhone testing is recorded in the
+[verification record](../../../docs/internal/NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status);
+the new cashout feature's funded-device qualification is separate. Independent
+security review remains a separate requirement.
 
 ### iOS source map
 

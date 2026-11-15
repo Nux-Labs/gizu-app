@@ -1,6 +1,7 @@
 # Confidential proceeds and public withdrawals
 
-The Android app separates exiting an investment from making funds public.
+Gizu separates exiting an investment from making funds public. Availability is
+gated by the native methods and reported capabilities for each operation.
 Incoming public USDC and the existing public funding paths remain unchanged.
 Reviewed against repository source on 14 November 2026; dated test/device
 results below are historical, not a new execution or deployment check.
@@ -256,8 +257,10 @@ Missing configuration, unavailable coordination or ambiguous evidence fails
 closed. New sales probe authenticated history before financial review or any
 Fusion permit/order, so an unavailable route stops the sale before funds move.
 
-Android advertises `confidentialWithdrawals` and `confidentialSaleProceeds` on
-eligible builds. Swift now exposes `confidentialWithdrawals` through native
+Eligible Android and iOS builds advertise `confidentialSaleProceeds` for
+selected-token sales through their native sale engines. Public cashout separately
+requires all five native methods and the reported `confidentialWithdrawals`
+capability. Swift now exposes `confidentialWithdrawals` through native
 prepare, execute, resume, cancel and saved-state methods. It uses the shared Rust
 planner/signer, a wallet-generation-bound encrypted journal, and independent
 finalized Monad receipt verification for grouped deliveries. Signed bytes and
@@ -270,13 +273,17 @@ read-only confidential account checks for each prepare/execute/resume ceremony.
 Spending requires a separate native review and passkey approval. Its source
 catalogue covers the local shared swap account and persisted earn cycles;
 wallets marked as needing recovery cannot start a cashout. This does not add
-Android's private-balance portfolio/session or discovery features, and does not
-enable `confidentialSaleProceeds` on iOS. The existing withdrawal screen can
-prepare an exact entered amount using these authenticated native reads.
+Android's private-balance portfolio/session or discovery features. The existing
+withdrawal screen can prepare an exact entered amount using these authenticated
+native reads.
 
 Swift automated tests exercise signing, encrypted recovery, immutable retries,
 receipt finality and failure paths. Funded physical-iPhone acceptance remains
-pending; automated fixtures are not proof of live provider interoperability.
+pending for this newly added cashout feature; the previously completed iPhone
+testing does not establish its live provider interoperability. See the
+[verification record](NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status)
+for the scope of prior device testing. Automated fixtures are not proof of live
+provider interoperability.
 Older builds and unsupported platforms must not simulate successful execution.
 A native rebuild is required; backend deployment alone does not update an
 installed app.

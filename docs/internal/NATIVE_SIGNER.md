@@ -36,7 +36,9 @@ not be used as the active API or as a fallback. The [migration record](SIGNER_MI
 preserves the transition decisions.
 
 This index was split on 2026-10-08 and reviewed against source on 2026-11-14.
-Historical evidence remains dated; this review adds no build or device acceptance.
+Physical-iPhone testing is complete; see the
+[verification record](NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
+Historical evidence retains its original dates and scope.
 Both native backup writers now emit version 3 and read versions 1–3; the TypeScript
 identity constant still declares version 2. See the storage reference for codec and
 platform limits rather than treating that constant as the file specification.

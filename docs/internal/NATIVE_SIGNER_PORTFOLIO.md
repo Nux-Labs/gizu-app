@@ -112,5 +112,6 @@ swap approval; wallet/backup ceremonies retain two minutes. Backgrounding, lock
 and Cancel invalidate the ceremony. Polling remains in the native dialog until
 review, unlock, pause or completion; cancellation checks prevent a late network
 response from advancing the operation. Closing cannot reverse a submitted step.
-Simulator tests are not proof of funded execution or physical-iPhone passkeys;
-those remain acceptance gates, including background/resume and restore discovery.
+Simulator tests are not proof of funded execution or physical-iPhone passkeys.
+Physical-iPhone testing is complete; current status and historical evidence are
+in the [verification record](NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).

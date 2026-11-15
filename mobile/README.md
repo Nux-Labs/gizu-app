@@ -5,7 +5,8 @@ stored-wallet signer, native passkey create/unlock and the Home, Vaults, Swap an
 Account tabs. A newly created wallet must save and reopen its encrypted backup
 before Home opens. Restore requires that file and the original passkey. This is
 local wallet access, not backend authentication. Wallet secrets and signing
-approval stay native; physical-iPhone acceptance remains pending.
+approval stay native. Physical-iPhone testing is complete; see the
+[verification record](../docs/internal/NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
 
 Home shows public Monad USDC, authenticated confidential cash, tracked tokens and
 supported vault positions, with observed USD valuations and explicit missing/stale
@@ -13,7 +14,7 @@ states. Receive shows the Monad funding address. Direct public-USDC Send remains
 unavailable. Swap executes the native confidential route to eligible Robinhood
 stocks; selling a selected stock covers all eligible owned holder wallets and
 leaves verified proceeds in confidential cash. **Withdraw from Gizu** is a separate,
-Android-capability-gated distribution from private cash to fresh Monad recipients.
+native-capability-gated distribution from private cash to fresh Monad recipients.
 Activity contains this device's completed/cancelled swap summaries, not incoming
 or external transaction indexing.
 
@@ -101,7 +102,7 @@ use `gizu.io` as their passkey relying-party domain.
 
 A development APK needs Metro for its JavaScript. A locally built release APK
 embeds JavaScript and assets, so it opens from the phone's Gizu icon after USB is
-disconnected. Internet access is still required for Render and chain providers.
+disconnected. Internet access is still required for the AWS-hosted API and chain providers.
 
 After generating the native Android project and signer libraries, a local Gradle
 release can be built from `mobile/android/`. The following example uses a macOS
@@ -120,7 +121,7 @@ Use Node 24 on PATH. The signer supports this arm64 APK target. Install
 `mobile/android/app/build/outputs/apk/release/app-release.apk` with
 `adb install -r <path-to-apk>`, then open Gizu from the phone's app list. USB is only
 needed for installation. Mobile source changes require rebuilding/reinstalling;
-backend catalog/environment changes require a Render deployment and app refresh.
+backend catalog/environment changes require an AWS backend release and app refresh.
 
 For an existing installation, retain its Android application ID and signing
 keystore when updating. Historical local testing used `com.example.gizu.dev`;
@@ -224,7 +225,7 @@ The old Gizu signer is preserved but disconnected from app access, diagnostics a
 native autolinking. `npm start` opens the existing app. Android and iOS 18+ development wallets
 require native save-and-reopen backup verification before entering Home. Account
 includes backup management; the explicit testnet harness uses native transfer approval/history,
-and normal Activity uses saved swap summaries. iOS signing uses the replacement Swift module; physical-device acceptance is pending. No fallback creates a demo or legacy wallet.
+and normal Activity uses saved swap summaries. iOS signing uses the replacement Swift module; physical-iPhone testing is complete. No fallback creates a demo or legacy wallet.
 
 The isolated UI playground remains available without a simulated passkey mode:
 
@@ -237,8 +238,7 @@ Rebuild installed clients with `npm run android` or `npm run ios` to remove the
 old native module; restarting Metro alone cannot remove native registrations.
 Independent retained-core build/test commands remain `npm run signer:build` and
 `npm run signer:test`; see the [retained module guide](modules/gizu-signer/README.md).
-Follow the [migration plan](../docs/internal/SIGNER_MIGRATION.md) for the replacement contract
-and remaining implementation.
+Follow the [migration plan](../docs/internal/SIGNER_MIGRATION.md) for the historical replacement contract and migration evidence.
 
 ## Wallet integration organization
 
@@ -267,7 +267,7 @@ it cannot undo signed/submitted transfers. Pending or nonce-conflicting operatio
 block new transfers. Restoring a backup does not restore local transaction history.
 
 Phase-3 guided checks were user-reported successful. Guided phase-4 cancellation, withdrawal, restart and resume checks were also
-user-reported successful. Extended failure paths and second-device restore remain pending. Test restore only where the original
+user-reported successful. See the [verification record](../docs/internal/NATIVE_SIGNER_VERIFICATION.md) for historical evidence and current device status. Test restore only where the original
 passkey is available and compare Account 0. The explicit `npm run debug:stored-wallet`
 harness and retained legacy source remain separate from normal entry.
 
@@ -337,8 +337,9 @@ diagnostic commands remain separate.
 
 `GizuWalletEnabled` is embedded in the signed iOS release binary. It enables
 wallet access without changing native transaction policy. Mainnet UI and flows
-remain as implemented; release naming does not establish platform feature parity
-or complete the outstanding physical-iPhone acceptance.
+remain as implemented; release naming does not establish platform feature parity.
+Physical-iPhone testing is complete. Future release checks remain separate from
+the simulator/build checks described here.
 
 The sole passkey domain is `gizu.io`. Deploy the association file and verify both
 the origin and Apple's cache authorize `588X2UZY3L.io.gizo.ios`; see
@@ -367,7 +368,7 @@ Console internal testing track (`io.gizu.android`). Play may sign installed apps
 with a different certificate from the upload key; authorize the Play app-signing
 SHA-256 in `gizu.io/.well-known/assetlinks.json` before testing passkeys.
 
-The profile explicitly sets the Render API URL and native passkey mode. Local,
+The profile explicitly sets `https://api.gizu.io` on AWS and native passkey mode. Local,
 IP and insecure HTTP endpoints are rejected for release builds. The iOS
 pre-install hook builds Rust bindings before CocoaPods. Upload the signed IPA
 with Transporter, or submit with the `production` EAS submission profile.

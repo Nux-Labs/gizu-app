@@ -7,6 +7,7 @@ import {
   getStoredSwapSigner,
   getStoredEarnVaultSigner,
   getStoredEarnDepositSigner,
+  getStoredConfidentialWithdrawalSigner,
 } from "@/services/wallet/nativeBridge";
 
 jest.mock("expo", () => ({ requireOptionalNativeModule: jest.fn() }));
@@ -172,7 +173,7 @@ test.each([
   },
 );
 
-test("iOS retains holdings and recovery while new private sales require the updated Android signer", async () => {
+test("iOS retains holdings and recovery while private sales require native capability support", async () => {
   const target = "0x" + "11".repeat(20);
   const gateway = "https://api.gizu.io";
   const native = {
@@ -204,6 +205,74 @@ test("iOS retains holdings and recovery while new private sales require the upda
   await expect(signer.startRecovery(target, gateway)).rejects.toThrow(/capabilities/);
   expect(native.sellSwapHolding).not.toHaveBeenCalled();
   expect(native.startRecovery).toHaveBeenCalledTimes(1);
+});
+
+test("iOS exposes private sales when its native signer supports them", async () => {
+  const native = {
+    getCapabilities: jest.fn().mockResolvedValue({
+      contractVersion: 1,
+      available: true,
+      swaps: true,
+      confidentialSaleProceeds: true,
+    }),
+    sellSwapHolding: jest.fn().mockResolvedValue({ phase: "REVIEW" }),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+
+  expect((await getSignerCapabilities()).confidentialSaleProceeds).toBe(true);
+  await expect(
+    getStoredSwapSigner()!.sellSwapHolding("owned-token:all", "https://api.gizu.io"),
+  ).resolves.toEqual({ phase: "REVIEW" });
+  expect(native.sellSwapHolding).toHaveBeenCalledWith("owned-token:all", "https://api.gizu.io");
+});
+
+test.each([
+  ["ios", "18.5"],
+  ["android", 35],
+])("%s exposes cashout only through an advertised native implementation", async (os, version) => {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: os });
+  Object.defineProperty(Platform, "Version", { configurable: true, value: version });
+  const native = {
+    getCapabilities: jest.fn().mockResolvedValue({
+      contractVersion: 1,
+      available: true,
+      confidentialWithdrawals: true,
+    }),
+    getConfidentialWithdrawal: jest.fn().mockResolvedValue(null),
+    prepareConfidentialWithdrawal: jest.fn(),
+    executeConfidentialWithdrawal: jest.fn(),
+    resumeConfidentialWithdrawal: jest.fn(),
+    cancelConfidentialWithdrawal: jest.fn(),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+
+  expect((await getSignerCapabilities()).confidentialWithdrawals).toBe(true);
+  const signer = getStoredConfidentialWithdrawalSigner()!;
+  await expect(signer.getConfidentialWithdrawal("wallet")).resolves.toBeNull();
+  native.getCapabilities.mockResolvedValue({
+    contractVersion: 1,
+    available: true,
+    confidentialWithdrawals: false,
+  });
+  expect((await getSignerCapabilities()).confidentialWithdrawals).toBe(false);
+  await expect(signer.getConfidentialWithdrawal("wallet")).rejects.toThrow(/capabilities/);
+  expect(native.getConfidentialWithdrawal).toHaveBeenCalledTimes(1);
+});
+
+test("an incomplete cashout implementation is unavailable even when native advertises it", async () => {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+  Object.defineProperty(Platform, "Version", { configurable: true, value: 35 });
+  jest.mocked(requireOptionalNativeModule).mockReturnValue({
+    getCapabilities: jest.fn().mockResolvedValue({
+      contractVersion: 1,
+      available: true,
+      confidentialWithdrawals: true,
+    }),
+    getConfidentialWithdrawal: jest.fn(),
+  });
+
+  expect((await getSignerCapabilities()).confidentialWithdrawals).toBe(false);
+  expect(getStoredConfidentialWithdrawalSigner()).toBeNull();
 });
 
 test("iOS vault execution is independently capability-gated and status reads never execute", async () => {

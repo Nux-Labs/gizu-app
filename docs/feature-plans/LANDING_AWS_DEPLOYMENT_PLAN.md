@@ -1,10 +1,11 @@
 # Landing-only AWS deployment
 
-**Status:** architecture and delivery tooling are implemented in the repository;
-provisioning, publication, DNS and enablement state require operator verification.
+**Status:** architecture and delivery tooling are implemented; AWS deployment and
+networking are complete.
 **Architecture review:** 9 November 2026.
 **Release source:** `main`; the former implementation branch is not required.
-**Cost/recovery owner and monthly gross ceiling:** to assign before resource creation.
+**Original launch requirement:** assign a cost/recovery owner and monthly gross
+ceiling before resource creation; this record does not inventory those values.
 
 Deploy `landing/` at `gizu.io` and `www.gizu.io`, retaining the existing DNS provider
 and serving both hostnames without redirecting between them. The user approved
@@ -52,13 +53,16 @@ issued certificate and the repository's actual OIDC subject format. No live AWS
 account inventory or paid capacity has been assumed from code validation.
 Public DNS preflight found Squarespace nameservers and an existing DNSSEC DS
 delegation. Squarespace documents apex ALIAS setup with DNSSEC disabled; the
-current records/DNSSEC must remain untouched until a separate cutover strategy
-is chosen. Those were unresolved inputs at the architecture review, not a current
-account or DNS inventory. Recheck the actual account/operator/budget and DNSSEC/cutover
-strategy before provisioning or public routing changes. Repository tooling does
-not establish that those operational decisions have since been made.
+records/DNSSEC were to remain untouched until a separate cutover strategy was
+chosen. Those were unresolved inputs at the 9 November architecture review,
+resolved for the completed AWS deployment and networking setup.
+Recheck the actual account/operator/budget and DNSSEC/cutover strategy before
+subsequent provisioning or public routing changes.
 
-## Acceptance and rollout
+## Acceptance and rollout procedure
+
+This procedure is retained for subsequent releases and infrastructure changes;
+it is not a list of currently pending initial-deployment tasks.
 
 1. Validate format/provider schemas, mocked safety plans, release recovery tests,
    workflow syntax, production build and the complete packaged artifact locally/CI.

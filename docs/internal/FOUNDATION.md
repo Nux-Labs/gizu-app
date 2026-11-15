@@ -50,6 +50,8 @@ They do not prove native biometrics, signing isolation or network settlement.
 The old Expo Doctor 57.0.24/57.0.25 mismatch describes a historical build; the
 current package declares ~57.0.31. Doctor was not rerun during this docs review.
 UI milestone tests/builds were recorded during development; small-display,
-accessibility, Windows and full signed-device acceptance were incomplete.
+accessibility, Windows and full signed-device acceptance were incomplete in
+those records. Physical-iPhone testing is now complete; accessibility and Windows
+checks retain their separately recorded scope.
 See the signer verification record for exact retained native/live evidence and
 README for commands. No application/native checks were rerun by this documentation review.

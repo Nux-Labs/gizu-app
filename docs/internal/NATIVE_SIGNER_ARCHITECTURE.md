@@ -21,8 +21,12 @@ access requires iOS 18+, and Release additionally requires the signed
 transfers, swaps and public portfolio reads exist on both platforms. Android also
 advertises wallet recovery/discovery and the full guarded Earn deposit, funding,
 private payout, partial withdrawal and confidential cashout capabilities. iOS
-advertises Earn wallets and Ethereum vault execution; other Earn execution flags
-are false or absent. Always check capabilities for each operation.
+advertises confidential cashout, Earn wallets and Ethereum vault execution; other
+Earn execution flags are false or absent. Both platforms advertise confidential
+sale proceeds on eligible builds. Cashout requires its reported capability and
+all five native methods. iOS cashout uses separate read-only authorization and
+spending review; it does not add Android's shared private-read session. Always
+check capabilities for each operation.
 
 Only backup-verified `ready` wallets enter app sessions. Other states are `absent`,
 `backupRequired` and `recoveryRequired`. Native owns credentials, secret material,

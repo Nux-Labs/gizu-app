@@ -7,8 +7,7 @@ procedure and does not describe deployed resources.
 The website implementation follows the [landing S3/CloudFront plan](LANDING_AWS_DEPLOYMENT_PLAN.md)
 and [delivery tooling](../../deploy/landing/README.md). Backend build/release
 instructions now use [Docker, CodeBuild/ECR and ECS/RDS](../app-guide/AWS_BACKEND_DEPLOYMENT.md).
-Production clients target `https://api.gizu.io`. No account inventory, DNS changes,
-pipeline enablement or live migration was performed by this documentation review.
+The API is deployed on AWS at `https://api.gizu.io` with networking configured.
 
 ## Original rationale and choices
 
@@ -20,7 +19,7 @@ not current infrastructure requirements:
 | Component          | Historical choice                                                     | Current interpretation                                                                                                |
 | ------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | App host           | Lightsail Ubuntu 24.04 LTS x86-64, 2 vCPU / 4 GB / 80 GB in Frankfurt | Not provisioned by checked-in tooling; backend container/release guide uses ECS                                       |
-| Database           | Separate encrypted Lightsail PostgreSQL Standard tier, no HA standby  | Current backend guide targets RDS PostgreSQL 18; actual database state is unverified                                  |
+| Database           | Separate encrypted Lightsail PostgreSQL Standard tier, no HA standby  | Current backend guide uses RDS PostgreSQL 18; deployment and networking are complete                                  |
 | Landing            | NGINX serving the same `landing/dist` at apex and www                 | Superseded by private S3 + CloudFront + ACM tooling                                                                   |
 | Frontend           | Separate `frontend/dist` root at `app.gizu.io`                        | Remains separate from landing tooling; no frontend AWS delivery workflow is supplied                                  |
 | API                | One Fastify process behind NGINX at `api.gizu.io`                     | Domain retained; container guide uses an HTTPS load balancer                                                          |
@@ -102,5 +101,6 @@ Use the active [backend guide](../app-guide/AWS_BACKEND_DEPLOYMENT.md),
 [runtime reference](../internal/BACKEND_RUNTIME.md),
 [recovery persistence contract](../../backend/docs/wallet-recovery.md) and
 [landing procedure](../../deploy/landing/README.md) for current commands. Current
-cloud resources, budget, backups, release triggers and public routing must be
-verified by their operators; this historical proposal is not evidence of them.
+deployment and networking are complete as noted above. Operators should
+verify resources, budget, backups, release triggers and public routing before
+subsequent changes; this historical proposal is not an operational inventory.

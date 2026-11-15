@@ -1,6 +1,7 @@
 # Gizu web entry
 
-Source reviewed 2026-11-14; deployment and provider availability were not revalidated.
+Source reviewed 2026-11-14. The API is deployed on AWS at `https://api.gizu.io`
+with networking configured.
 
 This frontend provides the responsive mobile-testing entry and Request access
 flow as separate buttons and dialogs. The separate `landing/` project supplies

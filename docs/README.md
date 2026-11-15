@@ -8,10 +8,12 @@ Documentation is organized by complexity, intended reader and purpose.
 | [Internal](internal/README.md)           | **2 — Technical** | How the system works, debugging, implementation boundaries and verification evidence.                     |
 | [Feature plans](feature-plans/README.md) | **3 — Detailed**  | Deep technical designs, contracts, alternatives, tradeoffs, implementation steps and acceptance criteria. |
 
-Shared documentation diagrams and image assets live in [images/](images/README.md).
-Diagram sources, rendered images and diagram blocks are excluded from the
-14 November 2026 documentation refresh; use the prose and owning source for
-current behavior until those visuals are reviewed separately.
+The updated editable [system diagrams](diagrams/Gizu-System-Diagrams-SVG.drawio)
+cover the system overview and flows. Shared rendered assets and historical
+illustrations live in [images/](images/README.md).
+
+Physical-iPhone testing and AWS deployment/networking are complete
+(maintainer-confirmed, 15 November 2026). See the [verification record](internal/NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
 
 ## Where a document belongs
 
@@ -49,6 +51,5 @@ Current runtime references are [Confidential Earn](internal/CONFIDENTIAL_EARN.md
 
 The prose was audited against repository source on 14 November 2026. Historical
 research, migration proposals and verification records retain their original
-dates and evidence limits; they do not define today's app capabilities or prove
-the current deployment/provider state. Source discrepancies are documented rather
-than repaired by this documentation-only update.
+dates and evidence limits; they do not define today's app capabilities. Provider
+availability remains a runtime observation.

@@ -4,12 +4,12 @@ Build the backend from GitHub `main`, store the image in ECR, and run it on ECS
 Fargate alongside RDS PostgreSQL. Frontend hosting is managed separately.
 The documented release procedure uses CodePipeline's **Release change**. The
 repository supplies the Dockerfile/buildspec and GitHub validation workflows;
-it does not define ECS/RDS/CodePipeline infrastructure or verify current account
-resources, trigger settings, service state or DNS. Confirm those in the target
-account before using the provisioning steps below. Production clients use
-`https://api.gizu.io`.
+it does not define ECS/RDS/CodePipeline infrastructure. The API is deployed on
+AWS at `https://api.gizu.io` with networking configured. The provisioning steps
+below remain reference procedures for subsequent changes; confirm the target
+account and current settings before using them.
 
-## Prerequisites
+## Prerequisites for subsequent builds or infrastructure changes
 
 - Verify the intended AWS account. The checked-in buildspec and ECR policy target
   `381673247521` in `eu-central-1`; this is configuration, not an account inventory.

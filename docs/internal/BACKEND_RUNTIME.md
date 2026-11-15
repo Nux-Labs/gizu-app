@@ -2,7 +2,8 @@
 
 For service setup and deployment steps, see the [backend deployment guide](../app-guide/BACKEND_DEPLOYMENT.md).
 This reference preserves implementation details and dated verification evidence.
-Historical probes do not establish current provider availability.
+Historical probes do not establish current provider availability. The API is
+deployed on AWS at `https://api.gizu.io` with networking configured.
 
 ## Pinned simulator release
 
@@ -170,8 +171,9 @@ system CA certificates, and runs as `node`. CodeBuild and the backend GitHub
 workflow smoke-check that image with disposable PostgreSQL 18 before publication
 or CI acceptance. `server.ts` registers a 20-second signal drain; the image smoke
 check verifies clean SIGTERM exit. See [AWS deployment](../app-guide/AWS_BACKEND_DEPLOYMENT.md).
-These checks do not establish current ECS/RDS deployment, live RDS TLS, provider
-credential/fee qualification or signed-device authorization.
+Those historical checks alone do not establish live RDS TLS, provider
+credential/fee qualification or signed-device authorization. Current AWS
+deployment and networking are complete.
 
 Optional read-only upstream/fork tests use `EARN_TEST_ANVIL_PATH` with
 `EARN_TEST_ETHEREUM_RPC_URL` or `EARN_TEST_ROBINHOOD_RPC_URL`. Their known public test

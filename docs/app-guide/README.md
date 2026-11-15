@@ -42,6 +42,6 @@ Each guide follows prerequisites → steps → expected result → troubleshooti
 - [Frontend README](../../frontend/README.md): web app and token discovery setup.
 - [Repository README](../../README.md): repository overview and shared entry points.
 
-Production API: `https://api.gizu.io`. Deployment guides describe repository
-configuration and operator procedures; they do not establish live cloud, DNS,
-signed-artifact or device state.
+The API is deployed on AWS at `https://api.gizu.io` with networking configured.
+Physical-iPhone testing is complete. The guides remain procedures for subsequent
+builds, releases and infrastructure changes.

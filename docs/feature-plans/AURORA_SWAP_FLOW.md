@@ -1,7 +1,8 @@
 # Aurora flow in the app
 
 Source reviewed 2026-11-14. This page describes the current native swap flow. The
-existing illustrations are retained historical assets; diagram updates are deferred. **F** is the Monad funding wallet; **C** is the app's confidential Aurora balance. Aurora converts between chain assets; 1inch Fusion handles the stock-token trade on Robinhood Chain.
+existing illustrations are retained historical examples. Use the updated
+[system diagrams](../diagrams/Gizu-System-Diagrams-SVG.drawio) for the system overview and flows. **F** is the Monad funding wallet; **C** is the app's confidential Aurora balance. Aurora converts between chain assets; 1inch Fusion handles the stock-token trade on Robinhood Chain.
 
 For component ownership, contracts and durable recovery, see
 [Swap architecture](SWAP_ARCHITECTURE.md).
@@ -30,7 +31,7 @@ native code counts USDC credit in **C** (confidential Account 2).
 The current return path is **stock token → USDG on Robinhood Chain → verified
 private USDC credit in C**. A full-holding sell stops there, with zero public payout
 legs and no fresh Monad recipients. **Withdraw from Gizu** is a separate,
-Android-capability-gated operation that can distribute a chosen private-cash amount
+native-capability-gated operation that can distribute a chosen private-cash amount
 to fresh Monad receiving wallets after its own review and approval.
 
 The unchanged sell illustration depicts a legacy public-return sale. Those saved

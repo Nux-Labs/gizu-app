@@ -1,6 +1,10 @@
 # GIZU-1 — Shared Monad portfolio read for iOS and Android
 
-Status: implemented; physical-iPhone acceptance pending.  
+Status: implemented; physical-iPhone testing complete.
+
+This status supersedes the blanket iPhone acceptance gap in the dated record
+below. See the [current verification record](../internal/NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
+
 Historical implementation branch: `feat/GIZU-1`.
 
 Implementation and verification: 2026-10-02. No upload or deployment performed.
@@ -292,7 +296,8 @@ the generated signer supports Apple Silicon simulators, not Intel simulators. An
 initial generic build requested both architectures and failed; the ARM64 rebuild
 passed. Release CI already uses the correct flags.
 
-Remaining acceptance: open a backup-verified wallet on a physical iPhone, compare
+Acceptance remaining at the 2026-10-02 verification: open a backup-verified wallet on a physical iPhone, compare
 Home totals with its on-chain public accounts, refresh after a balance change, and
 verify background/lock cancellation. Android device smoke after rebuilding is also
-pending. No claims of iOS Earn/holdings/history parity are added by GIZU-1.
+pending at that revision. See the current iPhone status above.
+No claims of iOS Earn/holdings/history parity are added by GIZU-1.

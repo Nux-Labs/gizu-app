@@ -3,8 +3,8 @@
 The production API URL is `https://api.gizu.io`. Use the
 [AWS backend guide](AWS_BACKEND_DEPLOYMENT.md) for the repository's container,
 CodeBuild/ECR and ECS/RDS release procedure. This guide covers shared runtime
-configuration, local checks and retained legacy Render settings. Source code and
-workflows do not establish the current cloud resources or pipeline trigger settings.
+configuration, local checks and retained legacy Render settings. The API is
+deployed on AWS with networking configured.
 All commands below run from `backend/` unless stated otherwise.
 
 ## Legacy Render settings

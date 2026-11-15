@@ -1,26 +1,34 @@
 # Android stored-wallet signer migration
 
 Agreed 2026-09-25; revised to preserve the existing signer module.
-Status: phases 1–4 implemented. Android onboarding requires a saved and reopened
+Historical migration status (September 2026): phases 1–4 implemented. Android onboarding requires a saved and reopened
 encrypted backup before app access. Withdraw and Activity use native exact-transfer
 approval, encrypted operation history and explicit resume. The user reported phase-3
 onboarding/backup checks passed. Guided phase-4 cancellation, withdrawal, restart and resume checks were also
 user-reported successful. Extended device failure-path checks, second-device restore
-and phase-5 validation remain pending. Android APK exclusion and iOS simulator binary exclusion are verified; physical iOS
-acceptance remains unverified. Existing installed clients require rebuilding.
+and phase-5 validation were pending in that record. Android APK exclusion and iOS simulator binary exclusion are verified; physical iOS
+acceptance was unverified at that time. Existing installed clients require rebuilding.
 
 The original Android-only scope below is retained as migration history. The iOS
-replacement is now implemented; current platform behavior and pending acceptance
+replacement is now implemented; current platform behavior and acceptance evidence
 are documented in [the native contract](NATIVE_SIGNER.md).
 
-## Current interpretation (source review 2026-11-14)
+## Current interpretation (updated 2026-11-15)
+
+Physical-iPhone testing is complete, superseding the blanket iOS acceptance gap
+in the historical migration status. See the
+[verification record](NATIVE_SIGNER_VERIFICATION.md#current-maintainer-confirmed-status).
+Cross-platform backup interoperability and independent security review remain
+separate requirements.
 
 The plan below records the 2026-09 Android milestone, not today's full capability
 list. Both native platforms implement stored-wallet storage, backup, exact testnet
 transfers, swaps and public portfolio reads. Android now adds encrypted recovery
 sync/discovery, distributed Earn/private funding, partial Robinhood exits and
-confidential cashout; iOS exposes Earn wallets and Ethereum vault execution while
-its other Earn execution capabilities remain disabled. Native backup writers emit
+confidential cashout; iOS also exposes confidential cashout, Earn wallets and
+Ethereum vault execution while its other Earn execution capabilities remain
+disabled. Both platforms advertise confidential sale proceeds on eligible
+builds. Native backup writers emit
 v3/read v1–3, despite the TypeScript identity's remaining v2 constant. The native
 wallet namespace and entropy derivation remain distinct from the retained signer.
 
@@ -35,8 +43,7 @@ ceremonies are not a universal Earn timeout.
 
 Use [architecture](NATIVE_SIGNER_ARCHITECTURE.md),
 [storage](NATIVE_SIGNER_STORAGE.md) and [Earn](NATIVE_SIGNER_EARN.md) for current
-source behavior. Historical test/device evidence above is preserved without
-claiming new builds or live acceptance.
+source behavior. Historical test/device evidence above retains its original scope.
 
 ## Summary
 

@@ -3,10 +3,9 @@
 Implementation of the approved [landing-only plan](../../docs/feature-plans/LANDING_AWS_DEPLOYMENT_PLAN.md).
 This directory contains delivery tooling for `landing/` at `gizu.io` and
 `www.gizu.io`, with no hostname redirect between them. The former implementation
-branch is not a release prerequisite: workflows target `main`. Code review cannot
-establish whether infrastructure is provisioned, public DNS has changed, or
-`LANDING_DEPLOY_ENABLED` is set; inspect the target account/repository before an
-operational change.
+branch is not a release prerequisite: workflows target `main`. AWS deployment
+and networking are complete. Inspect the target account/repository before
+changing infrastructure, DNS or release flags.
 
 ## Resources and boundaries
 
@@ -58,8 +57,9 @@ The user explicitly selected keeping the existing controls unchanged during this
 implementation, with their behavior to be resolved before launch. Join currently
 prevents submission and Explore the app links to `#top`.
 Docs/X/GitHub footer links also still point at `#top`. No destination is invented
-or changed by deployment wiring. Signed-app passkey QA and responsive/link QA
-remain launch checks.
+or changed by deployment wiring. The original rollout required signed-app passkey QA and responsive/link QA.
+Physical-iPhone testing is complete; validate affected links and passkey behavior
+when publishing subsequent changes.
 
 Use OpenTofu **1.11.0** and the committed AWS provider lock files. Use a reviewed,
 short-lived operator AWS session through the normal SDK environment/profile.
@@ -70,8 +70,8 @@ No `.aws` or application `.env` files are read by the local/CI validation path.
 
 ## Manual infrastructure procedure
 
-The commands below are instructions for a later reviewed apply, not evidence
-that resources exist. Run from the repository root with an encrypted workstation
+The commands below remain the procedure for reviewed infrastructure changes;
+initial AWS deployment/networking is complete. Run from the repository root with an encrypted workstation
 and restrictive permissions. Each `plan` must be reviewed before its matching
 `apply`; do not apply automatically on `main`.
 

@@ -111,9 +111,14 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
       earnDepositDistribution: Platform.OS === "android" && result.earnDepositDistribution === true,
       earnDepositPrivateFunding:
         Platform.OS === "android" && result.earnDepositPrivateFunding === true,
-      confidentialWithdrawals: result.confidentialWithdrawals === true,
-      confidentialSaleProceeds:
-        Platform.OS === "android" && result.confidentialSaleProceeds === true,
+      confidentialWithdrawals:
+        result.confidentialWithdrawals === true &&
+        typeof native.getConfidentialWithdrawal === "function" &&
+        typeof native.prepareConfidentialWithdrawal === "function" &&
+        typeof native.executeConfidentialWithdrawal === "function" &&
+        typeof native.resumeConfidentialWithdrawal === "function" &&
+        typeof native.cancelConfidentialWithdrawal === "function",
+      confidentialSaleProceeds: result.confidentialSaleProceeds === true,
     };
   } catch {
     return unavailable;
