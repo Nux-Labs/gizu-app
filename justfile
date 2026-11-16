@@ -207,3 +207,15 @@ landing-start:
 # Typecheck and build the landing page.
 landing-build:
     npm --prefix landing run build
+
+# Install user documentation site (Docusaurus) dependencies.
+docs-install:
+    npm --prefix docs-site ci
+
+# Start the user documentation site development server (port 3000).
+docs-start:
+    npm --prefix docs-site start
+
+# Typecheck and build the user documentation site.
+docs-build:
+    npm --prefix docs-site run typecheck && npm --prefix docs-site run build

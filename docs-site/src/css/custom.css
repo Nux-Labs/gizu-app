@@ -1,0 +1,86 @@
+/* Gizu docs theme: the landing page's ink, neon and Helvetica, in Infima terms. */
+
+@font-face { font-family: 'Helvetica Neue LT'; src: url('/fonts/HelveticaNeue-400.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Helvetica Neue LT'; src: url('/fonts/HelveticaNeue-500.ttf') format('truetype'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Helvetica Neue LT'; src: url('/fonts/HelveticaNeue-700.ttf') format('truetype'); font-weight: 700; font-display: swap; }
+
+:root,
+[data-theme='dark'] {
+  --gizu-ink: #04060a;
+  --gizu-ink-soft: #0a0e15;
+  --gizu-card: #0b1018;
+  --gizu-neon: #7ce8f2;
+  --gizu-violet: #b9a6ff;
+
+  --ifm-font-family-base: 'Helvetica Neue LT', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --ifm-heading-font-weight: 600;
+  --ifm-font-color-base: #d6dde6;
+  --ifm-heading-color: #f1f4f8;
+  --ifm-background-color: var(--gizu-ink);
+  --ifm-background-surface-color: var(--gizu-ink-soft);
+  --ifm-navbar-background-color: rgba(7, 10, 15, 0.92);
+  --ifm-footer-background-color: var(--gizu-ink-soft);
+  --ifm-toc-border-color: rgba(255, 255, 255, 0.08);
+  --ifm-hr-border-color: rgba(255, 255, 255, 0.08);
+  --ifm-color-emphasis-300: rgba(255, 255, 255, 0.12);
+
+  --ifm-color-primary: #7ce8f2;
+  --ifm-color-primary-dark: #5fe2ee;
+  --ifm-color-primary-darker: #50dfec;
+  --ifm-color-primary-darkest: #24d5e5;
+  --ifm-color-primary-light: #99eef6;
+  --ifm-color-primary-lighter: #a8f1f8;
+  --ifm-color-primary-lightest: #d4f8fb;
+
+  --ifm-code-font-size: 92%;
+  --ifm-link-decoration: none;
+  --docusaurus-highlighted-code-line-bg: rgba(124, 232, 242, 0.12);
+}
+
+body {
+  background: var(--gizu-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { letter-spacing: -0.025em; }
+.markdown h1:first-child { font-size: clamp(2rem, 4vw, 2.75rem); }
+
+.navbar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: none;
+  backdrop-filter: blur(10px);
+}
+.navbar__title { font-weight: 500; letter-spacing: -0.035em; }
+
+/* the early-access link reads as the landing page's gradient button */
+.navbar-cta {
+  margin-left: 8px;
+  border-radius: 10px;
+  padding: 6px 16px;
+  color: var(--gizu-ink) !important;
+  font-weight: 600;
+  background: linear-gradient(135deg, #c8f8fc 0%, #7ce8f2 45%, #b9a6ff 100%);
+}
+.navbar-cta::after, .navbar-cta svg { display: none; }
+.navbar-cta:hover { opacity: 0.9; }
+
+.menu__link--active:not(.menu__link--sublist) { background: rgba(124, 232, 242, 0.08); }
+.menu__list-item-collapsible .menu__link { font-weight: 500; }
+.theme-doc-sidebar-container { border-right-color: rgba(255, 255, 255, 0.07) !important; }
+
+.alert { border-radius: 12px; }
+.alert--info { --ifm-alert-background-color: rgba(124, 232, 242, 0.06); --ifm-alert-border-color: var(--gizu-neon); --ifm-alert-foreground-color: #d6dde6; }
+.alert--warning { --ifm-alert-background-color: rgba(185, 166, 255, 0.07); --ifm-alert-border-color: var(--gizu-violet); --ifm-alert-foreground-color: #d6dde6; }
+
+.footer { border-top: 1px solid rgba(255, 255, 255, 0.07); }
+
+/* step list on the overview page */
+.gizu-steps { counter-reset: step; list-style: none; padding-left: 0; }
+.gizu-steps > li { counter-increment: step; position: relative; padding: 16px 20px 16px 64px; margin-bottom: 12px; border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 14px; background: var(--gizu-card); }
+.gizu-steps > li::before { content: counter(step, decimal-leading-zero); position: absolute; left: 20px; top: 17px; font-family: var(--ifm-font-family-monospace); font-size: 12px; color: var(--gizu-neon); opacity: 0.8; }
+
+/* supported chains & protocols grid */
+.gizu-logos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin: 16px 0 28px; }
+.gizu-logo { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 14px; background: var(--gizu-card); }
+.gizu-logo img { width: 28px; height: 28px; object-fit: contain; }
+.gizu-logo span { font-weight: 500; color: #f1f4f8; }
