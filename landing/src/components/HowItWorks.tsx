@@ -25,15 +25,10 @@ function WalletArt({ kind }: { kind: VisualKind }) {
 export default function HowItWorks() {
   return (
     <section id="money" aria-labelledby="how-title" className="shell scroll-mt-28 py-20 md:py-28">
-      <Reveal>
-        <div className="mb-12 grid items-end gap-6 md:grid-cols-[1.1fr_0.9fr] md:gap-16">
-          <div>
-            <p className="eyebrow">The process</p>
-            <h2 id="how-title" className="mt-5 text-[clamp(38px,5vw,64px)] font-medium leading-[1.02] tracking-[-0.04em]">How it works.</h2>
-          </div>
-          <p className="max-w-[42ch] text-[17px] leading-relaxed text-white/55">From your first deposit to your next investment. A connected flow, with privacy built into the route.</p>
-        </div>
-      </Reveal>
+      <div className="mb-12 grid items-end gap-6 md:grid-cols-[1.1fr_0.9fr] md:gap-16">
+        <Reveal direction="left"><h2 id="how-title" className="text-[clamp(38px,5vw,64px)] font-medium leading-[1.02] tracking-[-0.04em]">How it works.</h2></Reveal>
+        <Reveal direction="right"><p className="max-w-[42ch] text-[17px] leading-relaxed text-white/55">From your first deposit to your next investment. A connected flow, with privacy built into the route.</p></Reveal>
+      </div>
 
       <div className="process-bento">
         <BentoCard number="01" title="One passkey. Your wallet." body="Open Gizu with a passkey. Your keys stay on your device, and every transaction starts with your approval." wide>

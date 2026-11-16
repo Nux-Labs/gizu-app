@@ -62,9 +62,8 @@ export default function Faq() {
   return (
     <section id="faq" className="shell scroll-mt-28 py-24 md:py-32">
       <div className="grid gap-12 lg:grid-cols-[0.8fr_1.2fr]">
-        <Reveal>
-          <p className="eyebrow">Answers</p>
-          <h2 className="mt-5 text-[clamp(32px,4.4vw,52px)] font-semibold leading-[1.02] tracking-[-0.025em]">
+        <Reveal direction="left">
+          <h2 className="text-[clamp(32px,4.4vw,52px)] font-semibold leading-[1.02] tracking-[-0.025em]">
             FAQ
           </h2>
         </Reveal>
@@ -73,7 +72,7 @@ export default function Faq() {
           {ITEMS.map((item, i) => {
             const isOpen = open === i
             return (
-              <Reveal key={item.q} delay={i * 0.04}>
+              <Reveal key={item.q} direction={i % 2 ? 'left' : 'right'} delay={0.04}>
                 <div className="relative border-t border-white/[0.07]">
                   <RuleFill p={p} from={i * step} to={(i + 1) * step} />
                 </div>

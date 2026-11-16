@@ -1,5 +1,6 @@
 import { ArrowUpRight } from 'lucide-react'
 import AsciiChameleon from '../chameleon/AsciiChameleon'
+import Reveal from './Reveal'
 import { APP_URL, DOCS_URL, REPOSITORY_URL } from '../links'
 
 const LINKS = [
@@ -13,7 +14,7 @@ export default function Footer() {
   return (
     <footer className="relative overflow-hidden border-t border-white/[0.07]">
       <div className="shell relative pt-16">
-        <div className="flex flex-col gap-10 md:flex-row md:items-center md:justify-between">
+        <Reveal direction="left" className="flex flex-col gap-10 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2.5">
             <img src="/gizulogo.svg" alt="" className="h-6 w-auto" />
             <span className="text-[17px] font-medium tracking-tight">Gizu</span>
@@ -26,7 +27,7 @@ export default function Footer() {
               <ArrowUpRight size={15} strokeWidth={2.6} />
             </a>
           </div>
-        </div>
+        </Reveal>
       </div>
 
       {/* the mascot gets its own strip between the form and the links */}

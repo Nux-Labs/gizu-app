@@ -11,11 +11,20 @@ This record distinguishes browser checks, JavaScript checks and device validatio
   phones, two on tablets and three with alternating wide cards on desktop.
 - Landing: restore the blurred privacy message with hover, keyboard and tap
   reveal. Remove the hero's decorative dots, capsule navigation and pill actions.
-  Use a straight header and a collapsible mobile navigation menu.
+  Adapt the local Nux Labs header: centered links, rolling hover labels and a
+  collapsible mobile menu. The header is transparent at the top and contracts
+  into a rounded rectangle while scrolling. Remove its app CTA.
 - Landing: replace generic feature tiles with an interactive vault-discovery
   illustration adapted from the local portfolio registry. Protocol filters and
   vault selection are previews; charts are illustrative, with no live rates or
   balances. App/docs/repository destinations lead to their real entry points.
+- Landing: replace the split vault slogan and checklist with a full-width
+  investment workspace. Filters select the protocol and update an adjacent
+  asset/network detail panel. Remove marketing eyebrow labels throughout.
+- Landing: alternate left/right entrance animations for section headings,
+  process cards, product workspace, FAQ rows and footer content. Animate each
+  grid item directly so responsive spans remain intact. Reduced motion renders
+  all of this content immediately, without translated or transparent elements.
 - Web entry: match the native primary button's gradient, foreground, 56 px minimum
   height and spacing. Allow short screens to scroll; respect safe areas and reduced
   motion. Keep dialog controls reachable, inputs at least 16 px and choices announced.
@@ -45,7 +54,14 @@ Mobile navigation opens, follows section links and closes. Illustrations play
 when visible and respect reduced motion; larger illustration modules are split
 into separate build chunks.
 
-Source references: Wildjury's `site/src/sections/Otari.tsx`, `site/src/styles.css`
+The revised header was checked for a fully transparent background and border at
+scroll zero, its compact state below the hero, menu dismissal with Escape and
+focus restoration. Protocol filtering, selected vault details and the FAQ
+accordion were exercised. Left/right process-card transforms start at -48/+48 px
+and settle to no transform; reduced motion leaves no hidden reveal content.
+
+Source references: Nux Labs' `src/components/Nav.tsx` and `src/styles.css`;
+Wildjury's `site/src/sections/Otari.tsx`, `site/src/styles.css`
 and `site/src/illos/`; portfolio's
 `registry/ui/widgets/confidential-vault-grid.tsx`. Illustration attribution and
 license comments are preserved in the copied source. Donor projects are unchanged.
