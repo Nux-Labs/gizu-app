@@ -25,6 +25,13 @@ This record distinguishes browser checks, JavaScript checks and device validatio
   process cards, product workspace, FAQ rows and footer content. Animate each
   grid item directly so responsive spans remain intact. Reduced motion renders
   all of this content immediately, without translated or transparent elements.
+- Landing: add a 1.7-second chameleon intro on the first visit in each tab
+  session, with a Skip intro button and Escape dismissal. Deep links and reduced
+  motion bypass it. Background controls remain inert until the intro completes.
+- Landing: rasterize the ASCII wave's glyph atlas once per resize, cache glyph
+  rows and field geometry, and update only changed cells in a pixel buffer.
+  Upload the buffer once per frame and advance waves by elapsed time. Stop the
+  hero and footer canvas loops when off screen or in a background tab.
 - Web entry: match the native primary button's gradient, foreground, 56 px minimum
   height and spacing. Allow short screens to scroll; respect safe areas and reduced
   motion. Keep dialog controls reachable, inputs at least 16 px and choices announced.
@@ -59,6 +66,13 @@ scroll zero, its compact state below the hero, menu dismissal with Escape and
 focus restoration. Protocol filtering, selected vault details and the FAQ
 accordion were exercised. Left/right process-card transforms start at -48/+48 px
 and settle to no transform; reduced motion leaves no hidden reveal content.
+
+A fresh browser tab showed the chameleon intro with inert background content,
+then dismissed it automatically; reload did not replay it. The intro also fit
+320 x 568. Reduced motion bypassed it. The hero made no canvas uploads during
+30 animation frames while the FAQ was visible. A short local instrumented sample
+of hero draw callbacks measured a 1.6 ms median and 2.3 ms 95th percentile after
+caching unchanged cells. These are local callback timings, not device FPS claims.
 
 Source references: Nux Labs' `src/components/Nav.tsx` and `src/styles.css`;
 Wildjury's `site/src/sections/Otari.tsx`, `site/src/styles.css`

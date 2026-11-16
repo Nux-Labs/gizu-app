@@ -4,12 +4,12 @@ import AsciiField from './AsciiField'
 import { APP_URL } from '../links'
 import { useState } from 'react'
 
-export default function Hero() {
+export default function Hero({ paused = false }: { paused?: boolean }) {
   const [revealed, setRevealed] = useState(false)
   return (
     <section id="top" className="relative flex min-h-[100svh] flex-col justify-center pt-28">
       <div className="pointer-events-none absolute inset-0">
-        <AsciiField fontSize={11} />
+        <AsciiField fontSize={11} paused={paused} />
         <div className="absolute inset-0 bg-gradient-to-b from-ink/10 via-ink/35 to-ink" />
       </div>
 

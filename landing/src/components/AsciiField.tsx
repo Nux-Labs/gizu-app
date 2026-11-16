@@ -2,9 +2,8 @@ import { useEffect, useRef } from 'react'
 import { useReducedMotion } from 'framer-motion'
 
 // ASCII wave field, ported from mimir/HeroAscii and tuned for Gizu.
-// Two things keep a full screen field cheap: drawing is batched into runs of
-// cells that share a colour level, and the per cell trigonometry is replaced by
-// a sine table plus per row and per column terms computed once per frame.
+// Cached glyph sprites, a bounded grid and precomputed field geometry keep
+// the full screen animation away from the text rasterizer on every frame.
 const BASE: [number, number, number] = [170, 186, 210]
 const PEAK: [number, number, number] = [124, 232, 242]
 const LEVELS = 7
@@ -24,6 +23,7 @@ type Props = {
   opacity?: number
   /** how far the pointer ripple reaches, 0 disables it */
   pointer?: number
+  paused?: boolean
 }
 
 export default function AsciiField({
@@ -32,6 +32,7 @@ export default function AsciiField({
   speed = 0.55,
   opacity = 1,
   pointer = 0.4,
+  paused = false,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const reduce = useReducedMotion()
@@ -42,10 +43,21 @@ export default function AsciiField({
     const ctx = canvas.getContext('2d', { alpha: true })
     if (!ctx) return
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.25)
-    const cellW = fontSize * 0.6
+    // Rasterize glyphs once, then copy small sprites instead of shaping text
+    // thousands of times every frame. Keep the grid bounded on wide screens.
+    const atlas = document.createElement('canvas')
+    const atlasCtx = atlas.getContext('2d')
+    if (!atlasCtx) return
+    let cellW = fontSize * 0.6
+    let cellH = fontSize
+    let spriteW = 1
+    let spriteH = 1
+    let image: ImageData
+    let pixels: Uint32Array
+    let glyphRows: Uint32Array[][] = []
+    let previousGlyphs = new Uint8Array(0)
 
-    // one colour per level, so fillStyle changes at most LEVELS times per row
+    // The palette and every glyph row are cached until the canvas resizes.
     const palette = Array.from({ length: LEVELS }, (_, i) => {
       const t = i / (LEVELS - 1)
       const mix = Math.max(0, t - 0.45) * 1.9
@@ -67,6 +79,9 @@ export default function AsciiField({
     let cx2 = new Float32Array(0)
     let sinX = new Float32Array(0)
     let cosX = new Float32Array(0)
+    let distances = new Float32Array(0)
+    let rowSin = new Float32Array(0)
+    let rowCos = new Float32Array(0)
 
     // the canvas sits at the top of the page, so its box follows scroll
     let baseTop = 0
@@ -84,19 +99,41 @@ export default function AsciiField({
       const rect = canvas.getBoundingClientRect()
       W = rect.width
       H = rect.height
-      canvas.width = Math.round(W * dpr)
-      canvas.height = Math.round(H * dpr)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      ctx.font = `${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`
-      ctx.textBaseline = 'top'
+      cellH = Math.max(fontSize, W / 100)
+      cellW = cellH * 0.6
       cols = Math.ceil(W / cellW)
-      rows = Math.ceil(H / fontSize)
+      rows = Math.ceil(H / cellH)
       aspect = cols / Math.max(rows, 1)
+
+      spriteW = Math.ceil(cellW)
+      spriteH = Math.ceil(cellH)
+      canvas.width = cols * spriteW
+      canvas.height = rows * spriteH
+      image = ctx.createImageData(canvas.width, canvas.height)
+      pixels = new Uint32Array(image.data.buffer)
+      atlas.width = spriteW * CHARS.length
+      atlas.height = spriteH * LEVELS
+      atlasCtx.font = `${cellH}px ui-monospace, SFMono-Regular, Menlo, monospace`
+      atlasCtx.textBaseline = 'top'
+      for (let level = 0; level < LEVELS; level++) {
+        atlasCtx.fillStyle = palette[level]
+        for (let ch = 1; ch < CHARS.length; ch++) atlasCtx.fillText(CHARS[ch], ch * spriteW, level * spriteH)
+      }
+      const atlasPixels = atlasCtx.getImageData(0, 0, atlas.width, atlas.height)
+      glyphRows = Array.from({ length: LEVELS * CHARS.length }, (_, index) => {
+        const level = Math.floor(index / CHARS.length)
+        const char = index % CHARS.length
+        return Array.from({ length: spriteH }, (_, row) => new Uint32Array(atlasPixels.data.buffer, ((level * spriteH + row) * atlas.width + char * spriteW) * 4, spriteW))
+      })
+      previousGlyphs = new Uint8Array(cols * rows).fill(255)
 
       xNorm = new Float32Array(cols)
       cx2 = new Float32Array(cols)
       sinX = new Float32Array(cols)
       cosX = new Float32Array(cols)
+      distances = new Float32Array(cols * rows)
+      rowSin = new Float32Array(rows)
+      rowCos = new Float32Array(rows)
       for (let x = 0; x < cols; x++) {
         const n = x / cols
         const cx = n - 0.5
@@ -104,6 +141,11 @@ export default function AsciiField({
         cx2[x] = cx * cx
         sinX[x] = Math.sin(x * 0.28)
         cosX[x] = Math.cos(x * 0.28)
+      }
+      for (let y = 0; y < rows; y++) {
+        rowSin[y] = Math.sin(y * 0.32)
+        rowCos[y] = Math.cos(y * 0.32)
+        for (let x = 0; x < cols; x++) distances[y * cols + x] = Math.sqrt(cx2[x] + (y / rows - 0.5) ** 2)
       }
 
       measure()
@@ -116,7 +158,7 @@ export default function AsciiField({
       window.clearTimeout(resizeTimer)
       resizeTimer = window.setTimeout(() => {
         resize()
-        if (reduce) draw(performance.now())
+        if (!running) draw(performance.now())
       }, 120)
     }
     const onScroll = () => {
@@ -146,21 +188,24 @@ export default function AsciiField({
 
     let frame = 0
     let raf = 0
-    let running = !reduce
+    let running = !reduce && !paused
     let last = 0
-    const step = 1000 / 30
+    let elapsed = 0
+    const step = 1000 / 60
     const reach2 = pointer * pointer
 
     const draw = (now: number) => {
       if (running) raf = requestAnimationFrame(draw)
-      if (now - last < step) return
+      const delta = last ? Math.min(now - last, 64) : step
+      if (last && now - last < step - 1) return
       last = now
+      elapsed += delta
+      frame = elapsed / (1000 / 30) * speed
 
       cur.x += (target.x - cur.x) * 0.1
       cur.y += (target.y - cur.y) * 0.1
       cur.on += (target.on - cur.on) * 0.07
 
-      ctx.clearRect(0, 0, W, H)
       const t = frame * 0.03
       const rippleT = frame * 0.1
       const live = cur.on > 0.02
@@ -175,21 +220,14 @@ export default function AsciiField({
       const c2 = Math.cos(nT2)
 
       for (let y = 0; y < rows; y++) {
-        const cy = y / rows - 0.5
-        const cy2 = cy * cy
         const py = y / rows - cur.y
         const py2 = py * py
-        const rowY = y * fontSize
-        const sy = Math.sin(y * 0.32)
-        const cyc = Math.cos(y * 0.32)
+        const sy = rowSin[y]
+        const cyc = rowCos[y]
         const noiseY = cyc * c2 - sy * s2
 
-        let run = ''
-        let runLevel = -1
-        let runStart = 0
-
         for (let x = 0; x < cols; x++) {
-          const dist = Math.sqrt(cx2[x] + cy2)
+          const dist = distances[y * cols + x]
           const wave = SIN[(((dist * 14 - t) * SIN_SCALE) | 0) & SIN_MASK] * 0.5 + 0.5
           const noise = (sinX[x] * c1 + cosX[x] * s1) * noiseY
 
@@ -210,57 +248,54 @@ export default function AsciiField({
 
           const val = wave * 0.62 + noise * 0.24 + ripple * 0.7
           const clamped = val < 0 ? 0 : val > 1 ? 1 : val
-          const ch = CHARS[(clamped * (CHARS.length - 1)) | 0]
-          const level = ch === ' ' ? -1 : Math.round(clamped * (LEVELS - 1))
-
-          if (level !== runLevel) {
-            if (run && runLevel > 0) {
-              ctx.fillStyle = palette[runLevel]
-              ctx.fillText(run, runStart * cellW, rowY)
-            }
-            run = ''
-            runStart = x
-            runLevel = level
+          const ch = (clamped * (CHARS.length - 1)) | 0
+          const level = Math.round(clamped * (LEVELS - 1))
+          const glyphIndex = ch && level ? level * CHARS.length + ch : 0
+          const cellIndex = y * cols + x
+          if (previousGlyphs[cellIndex] !== glyphIndex) {
+            previousGlyphs[cellIndex] = glyphIndex
+            const glyph = glyphRows[glyphIndex]
+            const start = y * spriteH * canvas.width + x * spriteW
+            for (let row = 0; row < spriteH; row++) pixels.set(glyph[row], start + row * canvas.width)
           }
-          if (level >= 0) run += ch
-        }
-
-        if (run && runLevel > 0) {
-          ctx.fillStyle = palette[runLevel]
-          ctx.fillText(run, runStart * cellW, rowY)
         }
       }
-
-      frame += speed
+      // One canvas upload per frame; no per-cell drawing or text calls.
+      ctx.putImageData(image, 0, 0)
     }
 
-    raf = requestAnimationFrame(draw)
+    draw(performance.now())
 
-    // decoration only, so it stops while off screen
+    // Decoration stops off screen and in background tabs, without catching up.
+    let inView = true
+    const sync = () => {
+      running = inView && !document.hidden && !reduce && !paused
+      last = 0
+      if (running && !raf) raf = requestAnimationFrame(draw)
+      if (!running && raf) { cancelAnimationFrame(raf); raf = 0 }
+    }
     const io = new IntersectionObserver(
       ([entry]) => {
-        running = entry.isIntersecting && !reduce
-        if (running && !raf) raf = requestAnimationFrame(draw)
-        if (!running && raf) {
-          cancelAnimationFrame(raf)
-          raf = 0
-        }
+        inView = entry.isIntersecting
+        sync()
       },
       { threshold: 0 },
     )
     io.observe(canvas)
+    document.addEventListener('visibilitychange', sync)
 
     return () => {
       running = false
       cancelAnimationFrame(raf)
       io.disconnect()
+      document.removeEventListener('visibilitychange', sync)
       window.clearTimeout(resizeTimer)
       window.removeEventListener('resize', onResize)
       window.removeEventListener('scroll', onScroll)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerleave', onLeave)
     }
-  }, [fontSize, speed, opacity, pointer, reduce])
+  }, [fontSize, speed, opacity, pointer, reduce, paused])
 
   return (
     <canvas

@@ -42,6 +42,7 @@ export default function AsciiChameleon({
     let fs = 11
     let raf = 0
     let last = 0
+    let visible = false
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
@@ -107,9 +108,8 @@ export default function AsciiChameleon({
 
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop)
-      if (document.hidden) return
       if (!last) last = now
-      if (now - last < 1000 / 30) return
+      if (now - last < 1000 / 30 - 1) return
       step(Math.min(0.1, (now - last) / 1000))
       last = now
       render()
@@ -124,10 +124,19 @@ export default function AsciiChameleon({
     observer.observe(canvas)
     // The ramp needs the monospace face; redraw once it has loaded.
     document.fonts?.load(`500 11px "Geist Mono"`).then(render).catch(() => undefined)
-    if (!reduce && !paused) raf = requestAnimationFrame(loop)
+    const sync = () => {
+      const running = visible && !document.hidden && !reduce && !paused
+      if (running && !raf) { last = 0; raf = requestAnimationFrame(loop) }
+      if (!running && raf) { cancelAnimationFrame(raf); raf = 0 }
+    }
+    const visibility = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; sync() })
+    visibility.observe(canvas)
+    document.addEventListener('visibilitychange', sync)
     return () => {
       cancelAnimationFrame(raf)
       observer.disconnect()
+      visibility.disconnect()
+      document.removeEventListener('visibilitychange', sync)
     }
   }, [anchorX, anchorY, size, grid, reduce, paused])
 
