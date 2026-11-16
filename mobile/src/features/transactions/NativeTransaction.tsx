@@ -36,7 +36,11 @@ function TestnetNativeTransaction({
       <Screen>
         <BackAction fallback="Home" />
         <Typography variant="title">
-          {kind === "deposit" ? "Receive" : kind === "withdraw" ? "Send" : "Investment unavailable"}
+          {kind === "deposit"
+            ? "Add funds"
+            : kind === "withdraw"
+              ? "Send"
+              : "Investment unavailable"}
         </Typography>
         <Typography variant="caption">{wallet.asset.network} · Account 0</Typography>
         {kind === "deposit" ? (

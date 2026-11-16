@@ -32,6 +32,8 @@ import { useSwapAssetSweep } from "@/features/swap/useSwapAssetSweep";
 import { WithdrawalStatusNotice } from "@/features/earn/WithdrawalStatusNotice";
 import { useSharedWithdrawalState } from "@/features/earn/useVaultPosition";
 import { useMainnetWallet } from "./MainnetWalletProvider";
+import { AddFunds } from "./AddFunds";
+import { useSession } from "@/application/SessionProvider";
 import { PrivateBalanceRefresh } from "./PrivateBalanceRefresh";
 import { BalanceCard } from "./BalanceCard";
 import { PortfolioAssetRow, type PortfolioAssetAction } from "./PortfolioAssetRow";
@@ -238,14 +240,14 @@ function OwnedBalances({
             <View className="gap-3 p-5">
               <Typography variant="rowTitle">No assets yet</Typography>
               <Typography variant="caption">
-                Buy a stock with USDC, or receive USDC to get started.
+                Add USDC to your wallet, then buy your first stock.
               </Typography>
               <View className="flex-row gap-3 pt-1">
                 <View className="flex-1">
                   <Button label="Buy a stock" onPress={navigation.onBuy} />
                 </View>
                 <View className="flex-1">
-                  <Button label="Receive USDC" variant="secondary" onPress={navigation.onReceive} />
+                  <Button label="Add funds" variant="secondary" onPress={navigation.onReceive} />
                 </View>
               </View>
             </View>
@@ -445,23 +447,33 @@ export function MainnetPortfolioScreen({
   );
 }
 
-export function MainnetTransaction({
-  route,
-}: NativeStackScreenProps<RootStackParamList, "Transaction">) {
-  const wallet = usePortfolio();
-  const deposit = route.params.kind === "deposit";
+export function MainnetTransaction(
+  props: NativeStackScreenProps<RootStackParamList, "Transaction">,
+) {
+  return props.route.params.kind === "deposit" ? <MainnetAddFunds /> : <MainnetSend />;
+}
+
+/** Add funds only shows where to send USDC; it does not read or refresh balances. */
+function MainnetAddFunds() {
+  const { session } = useSession();
   return (
     <Screen>
       <BackAction fallback="Home" />
-      <Typography variant="title">{deposit ? "Receive" : "Send"}</Typography>
-      {deposit ? (
-        <>
-          <AccountAddress />
-          <Typography variant="micro">Refresh your balance after funds arrive.</Typography>
-        </>
-      ) : (
-        <Notice message="Sending USDC directly is not available yet. Your funds remain in your wallets." />
-      )}
+      <Typography variant="title" accessibilityRole="header">
+        Add funds
+      </Typography>
+      {session?.kind === "mainnet" ? <AddFunds address={session.address} /> : <AccountAddress />}
+    </Screen>
+  );
+}
+
+function MainnetSend() {
+  const wallet = usePortfolio();
+  return (
+    <Screen>
+      <BackAction fallback="Home" />
+      <Typography variant="title">Send</Typography>
+      <Notice message="Sending USDC directly is not available yet. Your funds remain in your wallets." />
       <BalanceStatus />
       {wallet.snapshot && wallet.snapshot.balanceComplete !== false ? (
         <Typography>Total: {holdingAmount(wallet.snapshot.totalAtoms, 6)} USDC</Typography>

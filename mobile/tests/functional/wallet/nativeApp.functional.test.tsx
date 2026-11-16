@@ -63,7 +63,7 @@ test("native access opens existing Home and Account with live units and no fixtu
   expect(screen.getByRole("header", { name: "Your portfolio" })).toBeVisible();
   expect(screen.queryByRole("header", { name: "Your wallet" })).toBeNull();
   expect(screen.queryByText(/Available USDC/)).toBeNull();
-  expect(screen.getByRole("button", { name: "Receive" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Add funds" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "View activity" })).toBeEnabled();
   await userEvent.press(screen.getByLabelText("Earn tab"));
@@ -163,8 +163,8 @@ const record = {
 test("deposit copies the real address without signing and withdrawal validates before native approval", async () => {
   const { transfers, clipboard, bridge } = setup();
   await open();
-  await userEvent.press(await screen.findByRole("button", { name: "Receive" }));
-  expect(await screen.findByRole("header", { name: "Receive" })).toBeVisible();
+  await userEvent.press(await screen.findByRole("button", { name: "Add funds" }));
+  expect(await screen.findByRole("header", { name: "Add funds" })).toBeVisible();
   await userEvent.press(screen.getByRole("button", { name: "Copy account address" }));
   expect(clipboard.copy).toHaveBeenCalledWith(address);
   expect(transfers.send).not.toHaveBeenCalled();
