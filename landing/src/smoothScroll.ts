@@ -1,8 +1,17 @@
 import gsap from 'gsap'
+import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import Lenis from 'lenis'
 import 'lenis/dist/lenis.css'
 
 let lenis: Lenis | undefined
+let paused = false
+gsap.registerPlugin(ScrollTrigger)
+
+export function setScrollPaused(value: boolean) {
+  paused = value
+  if (paused) lenis?.stop()
+  else lenis?.start()
+}
 
 export function scrollToPosition(target: number | HTMLElement, offset = 0) {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -21,18 +30,23 @@ export function startSmoothScroll() {
   const tick = (time: number) => lenis?.raf(time * 1000)
   const sync = () => {
     lenis?.destroy()
-    lenis = media.matches ? undefined : new Lenis({ duration: 0.9, smoothWheel: true, anchors: false })
+    lenis = media.matches ? undefined : new Lenis({ duration: 1.05, smoothWheel: true, syncTouch: false, anchors: false })
+    lenis?.on('scroll', ScrollTrigger.update)
+    if (paused) lenis?.stop()
+    ScrollTrigger.refresh()
   }
   sync()
   media.addEventListener('change', sync)
   gsap.ticker.add(tick)
+  gsap.ticker.lagSmoothing(0)
 
   const onClick = (event: MouseEvent) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href^="#"]') : null
     const id = link?.hash.slice(1)
     if (!id) return
-    const target = document.getElementById(decodeURIComponent(id))
+    let target: HTMLElement | null
+    try { target = document.getElementById(decodeURIComponent(id)) } catch { return }
     if (!target) return
     event.preventDefault()
     history.pushState(null, '', `#${id}`)

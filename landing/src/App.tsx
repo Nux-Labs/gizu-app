@@ -7,13 +7,18 @@ import Features from './components/Features'
 import { AnimatePresence, MotionConfig } from 'framer-motion'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import Splash, { shouldShowIntro } from './components/Splash'
+import { useScrollAnimations } from './useScrollAnimations'
+import { setScrollPaused } from './smoothScroll'
 
 export default function App() {
   const [intro, setIntro] = useState(shouldShowIntro)
   const content = useRef<HTMLDivElement>(null)
   const completeIntro = useCallback(() => setIntro(false), [])
+  useScrollAnimations(content)
   useLayoutEffect(() => {
     if (content.current) content.current.inert = intro
+    setScrollPaused(intro)
+    return () => setScrollPaused(false)
   }, [intro])
   return (
     <MotionConfig reducedMotion="user">

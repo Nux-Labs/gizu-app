@@ -32,6 +32,13 @@ This record distinguishes browser checks, JavaScript checks and device validatio
   rows and field geometry, and update only changed cells in a pixel buffer.
   Upload the buffer once per frame and advance waves by elapsed time. Stop the
   hero and footer canvas loops when off screen or in a background tab.
+- Landing: use GSAP ScrollTrigger for the directional section/card entrances,
+  with Lenis driven by the GSAP ticker and updating ScrollTrigger on scroll.
+  Keep native touch scrolling, bypass smoothing and reveal motion for reduced
+  motion, and refresh triggers when accordion/font changes move content.
+- Landing: use a 7 px arrow-free scrollbar in Chromium/WebKit, a subtle dark
+  thumb, and a native thin scrollbar in Firefox. Reserve the gutter to avoid
+  width jumps. Pause Lenis during the intro and clean up its ticker on Vite HMR.
 - Web entry: match the native primary button's gradient, foreground, 56 px minimum
   height and spacing. Allow short screens to scroll; respect safe areas and reduced
   motion. Keep dialog controls reachable, inputs at least 16 px and choices announced.
@@ -73,6 +80,13 @@ then dismissed it automatically; reload did not replay it. The intro also fit
 30 animation frames while the FAQ was visible. A short local instrumented sample
 of hero draw callbacks measured a 1.6 ms median and 2.3 ms 95th percentile after
 caching unchanged cells. These are local callback timings, not device FPS claims.
+
+GSAP/Lenis checks: wheel input moved the document, internal links settled at the
+88 px navigation offset, and card entrances cleared their transforms on completion.
+Changing reduced motion at runtime removed Lenis and made every reveal visible;
+restoring motion resumed scrolling. Mobile navigation, FAQ height changes and
+320/390 px overflow were checked. Chromium reported a 7 px scrollbar with hidden
+arrow buttons; desktop/mobile screenshots confirmed the minimal rail.
 
 Source references: Nux Labs' `src/components/Nav.tsx` and `src/styles.css`;
 Wildjury's `site/src/sections/Otari.tsx`, `site/src/styles.css`
