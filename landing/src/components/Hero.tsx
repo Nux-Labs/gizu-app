@@ -2,10 +2,10 @@ import { motion } from 'framer-motion'
 import { ArrowDown } from 'lucide-react'
 import AsciiField from './AsciiField'
 import PhoneFrame from './PhoneFrame'
-import { APP_URL } from '../links'
+import EarlyAccessButton from './EarlyAccessButton'
+import type { AccessPlatform, AccessSource } from '../services/earlyAccess'
+import MobileDemo from './demo/MobileDemo'
 import { useState } from 'react'
-
-const LOGIN_SCREENSHOT = '/hero-login.png'
 
 // Platform marks (Apple from Simple Icons, CC0). Not the official store badges:
 // those may only be used once Gizu is listed on the App Store / Google Play.
@@ -31,7 +31,7 @@ const PLATFORMS = [
   },
 ]
 
-export default function Hero({ paused = false }: { paused?: boolean }) {
+export default function Hero({ paused = false, onEarlyAccess }: { paused?: boolean; onEarlyAccess: (source: AccessSource, platform?: AccessPlatform) => void }) {
   const [revealed, setRevealed] = useState(false)
   return (
     <section id="top" className="relative flex min-h-[100svh] flex-col justify-center pt-28">
@@ -78,13 +78,11 @@ export default function Hero({ paused = false }: { paused?: boolean }) {
             transition={{ duration: 0.7, delay: 0.5 }}
             className="mt-11 flex flex-wrap items-center gap-3"
           >
-            <a href={APP_URL} className="btn-neon">
-              Get early access
-            </a>
+            <EarlyAccessButton onClick={() => onEarlyAccess('landing-hero')} />
             {PLATFORMS.map(({ name, icon }) => (
-              <a
+              <button type="button"
                 key={name}
-                href={APP_URL}
+                onClick={() => onEarlyAccess(name === 'iOS' ? 'landing-ios' : 'landing-android', name === 'iOS' ? 'ios' : 'android')}
                 aria-label={`Test Gizu on ${name}`}
                 className="inline-flex min-h-[52px] items-center gap-2.5 rounded-xl border border-white/10 bg-[#1c1c22] px-4 py-2 text-white transition-colors hover:border-white/30 hover:bg-[#24242c]"
               >
@@ -93,7 +91,7 @@ export default function Hero({ paused = false }: { paused?: boolean }) {
                   <span className="text-[10px] text-white/60">Test on</span>
                   <span className="mt-1 text-[16px] font-semibold tracking-tight">{name}</span>
                 </span>
-              </a>
+              </button>
             ))}
           </motion.div>
         </div>
@@ -102,9 +100,9 @@ export default function Hero({ paused = false }: { paused?: boolean }) {
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.9, delay: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="mx-auto w-[240px] sm:w-[270px] lg:mx-0 lg:w-[300px] lg:self-start"
+          className="mx-auto w-full max-w-[320px] sm:max-w-[340px] lg:mx-0 lg:w-[340px] lg:self-start"
         >
-          <PhoneFrame src={LOGIN_SCREENSHOT} alt="Gizu sign-in screen" />
+          <PhoneFrame alt="Interactive Gizu mobile app demo"><MobileDemo /></PhoneFrame>
         </motion.div>
       </div>
 

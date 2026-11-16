@@ -1,11 +1,11 @@
 import PhoneFrame from './PhoneFrame'
 import Reveal from './Reveal'
 
-// Drop the screenshots into landing/public/screens/ with these names.
+// Captured from the interactive demo using the native app's layout and tokens.
 const SCREENS = [
-  { src: '/screens/portfolio.png', title: 'Portfolio', caption: 'Everything you hold, in one view.', tilt: 'md:[transform:perspective(1600px)_rotateY(14deg)_scale(0.92)]' },
-  { src: '/screens/discover.png', title: 'Discover', caption: 'Stocks and vaults across chains.', tilt: '', featured: true },
-  { src: '/screens/confirm.png', title: 'Confirm', caption: 'Approve every move with your passkey.', tilt: 'md:[transform:perspective(1600px)_rotateY(-14deg)_scale(0.92)]' },
+  { src: '/screens/portfolio.webp', title: 'Portfolio', caption: 'Everything you hold, in one view.', tilt: 'md:[transform:perspective(1600px)_rotateY(14deg)_scale(0.92)]' },
+  { src: '/screens/discover.webp', title: 'Earn', caption: 'Find and compare vault strategies.', tilt: '', featured: true },
+  { src: '/screens/confirm.webp', title: 'Confirm', caption: 'Review every move before you approve.', tilt: 'md:[transform:perspective(1600px)_rotateY(-14deg)_scale(0.92)]' },
 ]
 
 export default function AppScreens() {
@@ -30,7 +30,7 @@ export default function AppScreens() {
               <figure className={screen.featured ? 'md:-translate-y-10' : ''}>
                 <PhoneFrame
                   src={screen.src}
-                  alt={`Gizu ${screen.title.toLowerCase()} screen`}
+                  alt={`Gizu ${screen.title.toLowerCase()} interface preview with sample data`}
                   className={screen.tilt}
                 />
                 <figcaption className="mt-8 text-center">
@@ -41,6 +41,7 @@ export default function AppScreens() {
             </Reveal>
           ))}
         </div>
+        <p className="mt-10 text-center text-xs leading-relaxed text-white/35">App interface preview. Balances, rates and transactions are illustrative.</p>
       </div>
     </section>
   )

@@ -5,4 +5,5 @@ import path from 'node:path'
 export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+  build: { rollupOptions: { input: { main: path.resolve(__dirname, 'index.html'), demo: path.resolve(__dirname, 'demo.html') } } },
 })

@@ -1,15 +1,15 @@
 import AsciiChameleon from '../chameleon/AsciiChameleon'
 import Reveal from './Reveal'
-import { APP_URL, DOCS_URL, REPOSITORY_URL } from '../links'
+import { DOCS_URL, REPOSITORY_URL } from '../links'
+import EarlyAccessButton from './EarlyAccessButton'
 
 const LINKS = [
-  { label: 'How it works', href: '#money' },
   { label: 'FAQ', href: '#faq' },
   { label: 'Docs', href: DOCS_URL },
   { label: 'GitHub', href: REPOSITORY_URL },
 ]
 
-export default function Footer() {
+export default function Footer({ onEarlyAccess }: { onEarlyAccess: () => void }) {
   return (
     <footer className="relative overflow-hidden border-t border-white/[0.07]">
       <div className="shell relative pt-16">
@@ -21,9 +21,7 @@ export default function Footer() {
 
           <div className="flex flex-wrap items-center gap-5">
             <p className="text-sm text-white/60">Gizu for iOS and Android.</p>
-            <a href={APP_URL} className="btn-neon">
-              Get early access
-            </a>
+            <EarlyAccessButton onClick={onEarlyAccess} />
           </div>
         </Reveal>
       </div>

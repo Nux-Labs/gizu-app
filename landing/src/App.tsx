@@ -10,9 +10,13 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import Splash, { shouldShowIntro } from './components/Splash'
 import { useScrollAnimations } from './useScrollAnimations'
 import { setScrollPaused } from './smoothScroll'
+import EarlyAccessDialog from './components/EarlyAccessDialog'
+import type { AccessPlatform, AccessRequest, AccessSource } from './services/earlyAccess'
 
 export default function App() {
   const [intro, setIntro] = useState(shouldShowIntro)
+  const [access, setAccess] = useState<AccessRequest | null>(null)
+  const openAccess = (source: AccessSource, platform: AccessPlatform = 'both') => setAccess({ source, platform })
   const content = useRef<HTMLDivElement>(null)
   const completeIntro = useCallback(() => setIntro(false), [])
   useScrollAnimations(content)
@@ -28,14 +32,15 @@ export default function App() {
         <a href="#money" className="sr-only fixed left-4 top-4 z-[60] rounded-lg bg-neon px-5 py-3 text-ink focus:not-sr-only">Skip to how it works</a>
         <Nav />
         <main>
-          <Hero paused={intro} />
+          <Hero paused={intro || !!access} onEarlyAccess={openAccess} />
           <SupportedNetworks />
           <HowItWorks />
           <AppScreens />
           <Faq />
         </main>
-        <Footer />
+        <Footer onEarlyAccess={() => openAccess('landing-footer')} />
       </div>
+      <AnimatePresence>{access && <EarlyAccessDialog key="early-access" request={access} onClose={() => setAccess(null)} />}</AnimatePresence>
     </MotionConfig>
   )
 }

@@ -1,0 +1,135 @@
+.early-access-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 28px;
+  min-height: 54px;
+  padding: 15px 22px;
+  border: 1px solid #d1f1f2;
+  border-radius: 10px;
+  background: #c2edf0;
+  color: #071015;
+  font: 500 15px/1.3 var(--font-sans);
+  letter-spacing: -0.015em;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+.early-access-button:hover {
+  background: #ddf7f8;
+  border-color: #ddf7f8;
+}
+.early-access-button svg {
+  flex-shrink: 0;
+}
+.early-access-dialog {
+  position: fixed;
+  inset: 0;
+  width: min(500px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  overflow: auto;
+  border: 1px solid #ffffff1a;
+  border-radius: 22px;
+  background: #0b1018;
+  color: #f1f4f8;
+  box-shadow: 0 24px 100px #0008;
+}
+.early-access-dialog[open] {
+  animation: access-panel-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.early-access-dialog[open][data-closing] {
+  animation: access-panel-out 0.22s ease-out both;
+  pointer-events: none;
+}
+.early-access-dialog::backdrop {
+  background: #04060ad9;
+  backdrop-filter: blur(6px);
+  animation: access-backdrop-in 0.34s ease-out both;
+}
+.early-access-dialog[data-closing]::backdrop {
+  animation: access-backdrop-out 0.22s ease-out both;
+}
+@keyframes access-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes access-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+}
+@keyframes access-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes access-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.access-close {
+  position: absolute;
+  right: 18px;
+  top: 18px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: #ffffff80;
+  border-radius: 10px;
+}
+.access-close:hover {
+  color: white;
+  background: #ffffff08;
+}
+.access-input {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid #ffffff1a;
+  border-radius: 10px;
+  background: #04060a;
+  padding: 12px 15px;
+  font: 400 16px/1.5 var(--font-sans);
+}
+.access-input::placeholder {
+  color: #ffffff40;
+}
+.access-platform {
+  display: grid;
+  min-height: 46px;
+  cursor: pointer;
+  place-items: center;
+  border: 1px solid #ffffff14;
+  border-radius: 9px;
+  background: #ffffff03;
+  font-size: 14px;
+  color: #ffffff80;
+}
+.access-platform.is-selected {
+  color: #7ce8f2;
+  border-color: #7ce8f266;
+  background: #7ce8f208;
+}
+.access-platform:has(:focus-visible) {
+  outline: 2px solid #7ce8f2;
+  outline-offset: 3px;
+}

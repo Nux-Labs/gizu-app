@@ -25,7 +25,11 @@ jobs:
       - name: Test packaging and failed-release recovery
         run: node --test deploy/landing/test/*.test.mjs
       - run: npm --prefix landing ci
+      - run: npm --prefix landing test
       - run: npm --prefix landing run build
+        env:
+          VITE_EARLY_ACCESS_ENDPOINT: ${{ vars.LANDING_EARLY_ACCESS_ENDPOINT }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.LANDING_SUPABASE_PUBLISHABLE_KEY }}
       - name: Package landing and canonical passkey associations
         env:
           RELEASE: ${{ github.sha }}
