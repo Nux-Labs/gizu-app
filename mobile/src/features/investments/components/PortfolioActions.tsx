@@ -1,5 +1,5 @@
 import { Text, View, useWindowDimensions } from "react-native";
-import { ArrowDownLeft, ArrowUpRight, MoreHorizontal, type LucideIcon } from "lucide-react-native";
+import { ArrowUpRight, MoreHorizontal, Plus, type LucideIcon } from "lucide-react-native";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import colors from "@/theme/colors.json";
 
@@ -33,7 +33,7 @@ function TransferButton({
   );
 }
 
-/** Frontend Home quick actions: glass Receive / Send and a glass-soft activity tile. */
+/** Frontend Home quick actions: glass Add funds / Send and a glass-soft activity tile. */
 export function PortfolioActions({
   onDeposit,
   onWithdraw,
@@ -45,7 +45,7 @@ export function PortfolioActions({
 }) {
   return (
     <View className="flex-row gap-3">
-      <TransferButton icon={ArrowDownLeft} label="Receive" onPress={onDeposit} />
+      <TransferButton icon={Plus} label="Add funds" onPress={onDeposit} />
       <TransferButton icon={ArrowUpRight} label="Send" onPress={onWithdraw} />
       {/* Frontend: `glass-soft flex w-14 items-center justify-center rounded-2xl text-white/50`. */}
       <PressableScale
