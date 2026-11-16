@@ -74,7 +74,7 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
       }}
     >
       <Animated.View
-        className="self-center rounded-[28px] border border-glassBorder bg-rail p-1.5"
+        className="w-full max-w-[320px] self-center rounded-[28px] border border-glassBorder bg-rail p-1.5"
         style={entranceStyle}
       >
         {/* Keep measured tabs and the absolute pill in the same border-free coordinates. */}
@@ -141,7 +141,7 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
                   }
                 }}
                 onLongPress={() => navigation.emit({ type: "tabLongPress", target: route.key })}
-                className="h-14 w-[68px] items-center justify-center gap-1 rounded-[22px]"
+                className="min-h-14 min-w-0 flex-1 items-center justify-center gap-1 rounded-[22px] py-2"
               >
                 <View
                   pointerEvents="none"
@@ -158,7 +158,7 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
                   maxFontSizeMultiplier={1.3}
                   accessibilityElementsHidden
                   importantForAccessibility="no-hide-descendants"
-                  className={`font-mono text-[10px] ${selected ? "text-text" : "text-fg-45"}`}
+                  className={`font-mono text-[10px] leading-[14px] ${selected ? "text-text" : "text-fg-45"}`}
                 >
                   {titles[route.name as keyof typeof titles]}
                 </Text>

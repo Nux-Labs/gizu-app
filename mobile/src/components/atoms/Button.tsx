@@ -64,7 +64,7 @@ export function Button({
       <View
         collapsable={false}
         pointerEvents="none"
-        className="relative z-10 w-full min-w-0 flex-row items-center justify-center gap-3"
+        className="relative z-10 min-w-0 max-w-full flex-row items-center justify-center gap-3"
       >
         {loading ? <Spinner size="sm" color={foreground} /> : icon}
         <Text

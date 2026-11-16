@@ -129,7 +129,7 @@ export function ConfidentialWithdrawalScreen() {
                   </View>
                 </View>
                 <View className="gap-1">
-                  <Typography variant="value" className="!text-[28px]">
+                  <Typography variant="value" className="!text-[28px] !leading-9">
                     {formatUsdc(op.amountAtoms)} USDC
                   </Typography>
                   <Typography variant="caption">Private → Public · Monad</Typography>

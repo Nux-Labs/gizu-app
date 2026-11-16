@@ -42,7 +42,7 @@ export function InfiniteListScreen<T>({
   useEffect(() => {
     ref.current?.scrollToOffset({ offset: 0, animated: false });
   }, [queryKey]);
-  const cellClass = layout === "list" ? "w-full" : layout === "grid" ? "w-1/2" : "w-full xs:w-1/2";
+  const cellClass = layout === "list" ? "w-full" : "w-full xs:w-1/2";
   return (
     <ScreenFrame>
       <FlatList
@@ -60,7 +60,7 @@ export function InfiniteListScreen<T>({
             ))}
           </View>
         )}
-        contentContainerClassName="grow px-5 py-4"
+        contentContainerClassName="grow w-full max-w-[680px] self-center px-5 py-4"
         contentContainerStyle={
           bottomPadding === undefined ? undefined : { paddingBottom: bottomPadding }
         }
@@ -124,6 +124,8 @@ export function InfiniteListScreen<T>({
         refreshing={list.refreshing}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustsScrollIndicatorInsets={false}
         showsVerticalScrollIndicator={false}
         initialNumToRender={6}
         maxToRenderPerBatch={6}

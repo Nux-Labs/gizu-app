@@ -118,8 +118,10 @@ export function NativeSwapScreen({
                   placeholder="0"
                   placeholderTextColor={colors.fg["20"]}
                   maxLength={21}
-                  className="font-sans min-h-14 flex-1 text-[36px] text-text"
-                  style={{ fontVariant: ["tabular-nums"] }}
+                  className="font-sans min-h-14 min-w-0 flex-1 text-[36px] text-text"
+                  selectionColor={colors.accent}
+                  cursorColor={colors.accent}
+                  style={{ fontVariant: ["tabular-nums"], includeFontPadding: false }}
                 />
                 <Typography variant="rowTitle" className="!text-fg-55">
                   USDC

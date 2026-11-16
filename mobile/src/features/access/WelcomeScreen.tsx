@@ -1,4 +1,4 @@
-import { Pressable, View, type TextStyle } from "react-native";
+import { Pressable, ScrollView, View, type TextStyle } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Fingerprint } from "lucide-react-native";
 import { Button } from "@/components/atoms/Button";
@@ -47,14 +47,19 @@ export function WelcomeScreen({
     <View className="flex-1 bg-ink">
       <WelcomeBackdrop paused={!animate} />
       <View className="flex-1 pb-safe pl-safe pr-safe pt-safe">
-        <View className="flex-1 px-6 pb-6 pt-6">
+        <ScrollView
+          className="flex-1"
+          contentContainerClassName="grow w-full max-w-[520px] self-center px-6 pb-6 pt-6"
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <Reveal offset={-8} className="flex-row items-center gap-2.5">
             <GizuLogo width={(LOGO_HEIGHT * 638) / 866} height={LOGO_HEIGHT} />
             <Typography variant="row" style={wordmark}>
               Gizu
             </Typography>
           </Reveal>
-          <View className="mt-auto">
+          <View className="mt-auto pt-16">
             <WelcomeHeading animate={animate} />
             <Reveal delay={1500} duration={300} offset={0}>
               <Typography className="mt-6 max-w-[310px]" style={tagline}>
@@ -102,7 +107,7 @@ export function WelcomeScreen({
               </Pressable>
             )}
           </View>
-        </View>
+        </ScrollView>
       </View>
       {controller.pending && (
         <SignStatus layout="overlay" orb="access" state="signing" label="Waiting for passkey">

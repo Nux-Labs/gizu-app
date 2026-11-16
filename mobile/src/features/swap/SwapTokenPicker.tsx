@@ -44,10 +44,10 @@ export function SwapTokenPicker({
         info={estimate && !estimate.loading ? ESTIMATE_INFO : undefined}
       >
         <Typography
-          variant="rowTitle"
+          variant="amount"
           numberOfLines={1}
           adjustsFontSizeToFit
-          className={`flex-1 !text-[36px] ${estimate && !estimate.loading ? "" : "!text-fg-20"}`}
+          className={`min-w-0 flex-1 ${estimate && !estimate.loading ? "" : "!text-fg-20"}`}
           style={{ fontVariant: ["tabular-nums"] }}
         >
           {estimate && !estimate.loading ? estimate.text : estimate ? "…" : "0"}
@@ -58,7 +58,7 @@ export function SwapTokenPicker({
           accessibilityState={{ disabled, expanded: open }}
           disabled={disabled}
           onPress={() => setOpen(true)}
-          className="flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2"
+          className="min-h-11 max-w-[52%] flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2"
         >
           <Typography variant="rowTitle" className="!text-neon">
             {selected?.symbol ?? "Choose"}

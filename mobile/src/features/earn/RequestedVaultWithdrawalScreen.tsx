@@ -40,7 +40,7 @@ export function RequestedVaultWithdrawalScreen({
       <Surface>
         <View className="gap-3 p-5">
           <Typography variant="label11">Your vault position</Typography>
-          <Typography variant="value" className="!text-[28px]">
+          <Typography variant="value" className="!text-[28px] !leading-9">
             {invested !== null ? `${formatUsdc(invested)} USDG` : "Checking deposited amount…"}
           </Typography>
           <Typography variant="caption">

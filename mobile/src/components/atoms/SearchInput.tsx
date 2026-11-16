@@ -15,15 +15,17 @@ export function SearchInput({
     <TextInput
       accessibilityLabel={label}
       placeholder={label}
-      placeholderTextColor={colors.fg["35"]}
+      placeholderTextColor={colors.muted}
       selectionColor={colors.accent}
+      cursorColor={colors.accent}
       value={value}
       maxLength={maxLength}
       onChangeText={onChangeText}
       autoCorrect={false}
       autoCapitalize="none"
       returnKeyType="search"
-      className="font-sans min-h-11 rounded-2xl border border-borderSoft bg-glassSoft px-4 py-3 text-[14px] text-text"
+      className="font-sans min-h-12 rounded-2xl border border-cardEdge bg-glassSoft px-4 py-3 text-[16px] leading-6 text-text focus:border-neon/60"
+      style={{ includeFontPadding: false }}
     />
   );
 }

@@ -22,11 +22,12 @@ export function Choice({
       accessibilityState={{ checked: selected, disabled }}
       disabled={disabled}
       onPress={onPress}
-      className={`min-h-11 justify-center rounded-full border px-4 py-2.5 ${selected ? "border-transparent bg-neon/10" : "border-borderSoft bg-glassSoft"} ${disabled ? "opacity-50" : ""}`}
+      className={`min-h-11 max-w-full justify-center rounded-full border px-4 py-2.5 ${selected ? "border-neon/25 bg-neon/10" : "border-cardEdge bg-glassSoft"} ${disabled ? "opacity-50" : ""}`}
     >
       <Text
         key={fontScale}
-        className={`font-sans text-[12px] ${selected ? "text-neon" : "text-fg-45"}`}
+        className={`font-sans text-center text-[12px] leading-[18px] ${selected ? "text-neon" : "text-muted"}`}
+        style={{ includeFontPadding: false }}
       >
         {label}
       </Text>

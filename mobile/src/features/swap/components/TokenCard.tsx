@@ -51,7 +51,7 @@ export function TokenCard({ token }: { token: CatalogToken }) {
         <Typography variant="label11">USD price</Typography>
         <Typography
           variant="rowTitle"
-          className="!text-[20px]"
+          className="!text-[20px] !leading-7"
           style={{ fontVariant: ["tabular-nums"] }}
         >
           {price ?? "Unavailable"}

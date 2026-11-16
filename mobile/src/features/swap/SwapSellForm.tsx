@@ -85,10 +85,10 @@ export function SwapSellForm({
               />
             ) : (
               <Typography
-                variant="rowTitle"
+                variant="amount"
                 numberOfLines={1}
                 adjustsFontSizeToFit
-                className={`flex-1 !text-[36px] ${holding ? "" : "!text-fg-20"}`}
+                className={`min-w-0 flex-1 ${holding ? "" : "!text-fg-20"}`}
                 style={{ fontVariant: ["tabular-nums"] }}
               >
                 {holding ? holdingAmount(holding.balanceAtoms, holding.decimals) : "0"}
@@ -123,13 +123,13 @@ export function SwapSellForm({
             info={estimate?.kind === "ready" ? ESTIMATE_INFO : undefined}
           >
             <Typography
-              variant="rowTitle"
+              variant="amount"
               numberOfLines={1}
               adjustsFontSizeToFit
               accessibilityLabel={
                 estimate?.kind === "ready" ? `Estimated ${estimate.text} USDC` : undefined
               }
-              className={`flex-1 !text-[36px] ${estimate?.kind === "ready" ? "" : "!text-fg-20"}`}
+              className={`min-w-0 flex-1 ${estimate?.kind === "ready" ? "" : "!text-fg-20"}`}
               style={{ fontVariant: ["tabular-nums"] }}
             >
               {estimate?.kind === "ready"

@@ -87,6 +87,14 @@ installation's in-flight execution journal. See [portfolio contract](../internal
 
 ## Mobile presentation
 
+Web entry and native primary actions share the cyan-to-violet fill, dark label,
+56 px minimum height and 24 px radius. Native labels render above the decorative
+fill without clipping the parent. Screen content is bounded to 680 px on wider
+devices; catalog grids use one column below 370 px. Welcome content scrolls when
+short screens or large text require it, and the floating tab bar adapts to the
+available width. See [UI verification](../internal/UI_UX_VERIFICATION.md) for browser
+checks and outstanding device validation.
+
 Deposit, withdrawal and wallet recovery keep the amount, current status, fees,
 limits and next action prominent. Wallet addresses, routing explanations and scan
 settings open through labelled details controls. Recovery errors and the active

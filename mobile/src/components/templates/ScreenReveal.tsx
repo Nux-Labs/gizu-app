@@ -1,6 +1,11 @@
 import { useContext, useEffect, type PropsWithChildren } from "react";
 import { NavigationContext } from "@react-navigation/native";
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { timing } from "@/theme/motion";
 
 /**
@@ -10,11 +15,16 @@ import { timing } from "@/theme/motion";
  */
 export function ScreenReveal({ children, className }: PropsWithChildren<{ className?: string }>) {
   const navigation = useContext(NavigationContext);
-  const progress = useSharedValue(navigation ? 0 : 1);
+  const reduce = useReducedMotion();
+  const progress = useSharedValue(navigation && !reduce ? 0 : 1);
   useEffect(() => {
     if (!navigation) return;
     let last = 0;
     const play = () => {
+      if (reduce) {
+        progress.value = 1;
+        return;
+      }
       // Mount and the first focus event arrive together; play once.
       if (Date.now() - last < 250) return;
       last = Date.now();
@@ -23,7 +33,7 @@ export function ScreenReveal({ children, className }: PropsWithChildren<{ classN
     };
     if (navigation.isFocused()) play();
     return navigation.addListener("focus", play);
-  }, [navigation, progress]);
+  }, [navigation, progress, reduce]);
   const style = useAnimatedStyle(() => ({
     opacity: 0.25 + 0.75 * progress.value,
     transform: [
