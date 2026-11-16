@@ -1,12 +1,12 @@
 import { ArrowUpRight } from 'lucide-react'
 import AsciiChameleon from '../chameleon/AsciiChameleon'
+import { APP_URL, DOCS_URL, REPOSITORY_URL } from '../links'
 
 const LINKS = [
   { label: 'How it works', href: '#money' },
   { label: 'FAQ', href: '#faq' },
-  { label: 'Docs', href: '#top' },
-  { label: 'X', href: '#top' },
-  { label: 'GitHub', href: '#top' },
+  { label: 'Docs', href: DOCS_URL },
+  { label: 'GitHub', href: REPOSITORY_URL },
 ]
 
 export default function Footer() {
@@ -19,20 +19,13 @@ export default function Footer() {
             <span className="text-[17px] font-medium tracking-tight">Gizu</span>
           </div>
 
-          <form
-            onSubmit={(e) => e.preventDefault()}
-            className="flex w-full max-w-[380px] items-center gap-2 rounded-full border border-white/10 p-1.5 pl-5"
-          >
-            <input
-              type="email"
-              placeholder="Email address"
-              className="h-10 w-full min-w-0 bg-transparent text-[14px] outline-none placeholder:text-white/30"
-            />
-            <button className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] px-5 text-[13px] font-semibold text-ink">
-              Join
+          <div className="flex flex-wrap items-center gap-5">
+            <p className="text-sm text-white/60">Your next chapter starts here.</p>
+            <a href={APP_URL} className="btn-neon">
+              Get mobile access
               <ArrowUpRight size={15} strokeWidth={2.6} />
-            </button>
-          </form>
+            </a>
+          </div>
         </div>
       </div>
 
@@ -46,9 +39,9 @@ export default function Footer() {
 
       <div className="shell relative pb-12">
         <div className="flex flex-col gap-5 border-t border-white/[0.06] pt-7 sm:flex-row sm:items-center sm:justify-between">
-          <nav className="flex flex-wrap items-center gap-x-7 gap-y-3">
+          <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-7 gap-y-3">
             {LINKS.map((l) => (
-              <a key={l.label} href={l.href} className="text-[13.5px] text-white/50 hover:text-white">
+              <a key={l.label} href={l.href} className="inline-flex min-h-11 items-center text-[13.5px] text-white/60 hover:text-white">
                 {l.label}
               </a>
             ))}

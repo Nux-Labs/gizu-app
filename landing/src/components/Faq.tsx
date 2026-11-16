@@ -13,11 +13,11 @@ import Reveal from './Reveal'
 const ITEMS = [
   {
     q: 'How do you make my investments private?',
-    a: 'Your funding account sits on Monad. Aurora confidentially routes funds to a separate Ethereum investing account. Zama encrypts your balances and investment amounts. Deposits enter Morpho vaults in batches, and you receive encrypted shares.',
+    a: 'Gizu uses confidential routing and separate investment accounts to reduce the direct public connection between your funding wallet and your holdings. Your passkey controls access, and you approve transactions on your device.',
   },
   {
     q: 'What can other people see?',
-    a: 'Some activity remains public: an account joining a vault, batch totals, and amounts entering or leaving encryption. Small batches and funding patterns can make individual amounts easier to infer.',
+    a: 'Source funding and destination transfers remain public. Confidential credit protects the middle segment, while providers can observe parts of the route. Timing and amounts can still reveal relationships.',
   },
   {
     q: 'Who controls my money?',
@@ -25,7 +25,7 @@ const ITEMS = [
   },
   {
     q: 'Where do returns come from?',
-    a: 'The underlying curated Morpho strategies. Returns vary and are not guaranteed.',
+    a: 'The underlying strategy of your selected vault. Review its curator, assets and risks before investing. Returns vary and are not guaranteed.',
   },
   {
     q: 'How long does it take?',
@@ -78,6 +78,10 @@ export default function Faq() {
                   <RuleFill p={p} from={i * step} to={(i + 1) * step} />
                 </div>
                 <button
+                  type="button"
+                  id={`faq-question-${i}`}
+                  aria-expanded={isOpen}
+                  aria-controls={`faq-answer-${i}`}
                   onClick={() => setOpen(isOpen ? null : i)}
                   className="flex w-full items-start gap-6 py-7 text-left"
                 >
@@ -93,6 +97,7 @@ export default function Faq() {
                   </motion.span>
                 </button>
 
+                <div id={`faq-answer-${i}`} role="region" aria-labelledby={`faq-question-${i}`}>
                 <AnimatePresence initial={false}>
                   {isOpen && (
                     <motion.div
@@ -102,12 +107,13 @@ export default function Faq() {
                       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                       className="overflow-hidden"
                     >
-                      <p className="max-w-[62ch] pb-8 pr-14 text-[16px] leading-relaxed text-white/45">
+                      <p className="max-w-[62ch] pb-8 pr-4 text-[16px] leading-relaxed text-white/60 sm:pr-14">
                         {item.a}
                       </p>
                     </motion.div>
                   )}
                 </AnimatePresence>
+                </div>
               </Reveal>
             )
           })}

@@ -38,8 +38,40 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-html {
-  scroll-behavior: smooth;
+html { scroll-padding-top: 88px; }
+
+::selection { background: #7ce8f233; color: #f1f4f8; }
+
+:focus-visible { outline: 2px solid var(--neon); outline-offset: 5px; }
+
+.how-stage { min-height: 0; }
+.story-visual .step-stage { height: 260px; }
+@media (min-width: 380px) { .story-visual .step-stage { height: 300px; } }
+.story-arrow {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 50%;
+  color: #f1f4f8;
+  transition: background 160ms, border-color 160ms;
+}
+.story-arrow:hover:not(:disabled) { background: #7ce8f214; border-color: #7ce8f280; }
+.story-arrow:disabled { opacity: 0.25; cursor: not-allowed; }
+
+@media (min-width: 640px) {
+  .story-visual .step-stage { height: 400px; }
+}
+
+@media (min-width: 1024px) and (min-height: 820px) and (prefers-reduced-motion: no-preference) {
+  .how-story { height: 1360svh; }
+  .how-stage { position: sticky; top: 0; height: 100svh; padding-top: 72px; }
+  .how-stage > .shell { padding-block: 24px; }
+  .how-stage #how-title { font-size: 36px; }
+  .story-visual .step-stage { height: clamp(300px, 36svh, 440px); }
+  .story-scroll-hint { display: flex; }
 }
 
 body {
@@ -69,6 +101,11 @@ body {
   backdrop-filter: blur(calc(var(--nav-p) * 20px)) saturate(1.1);
   -webkit-backdrop-filter: blur(calc(var(--nav-p) * 20px)) saturate(1.1);
   transition: none;
+}
+
+@media (max-width: 767px) {
+  .nav-bar { padding-inline: 16px; }
+  .nav-cta { padding-inline: 16px; font-size: 12px; }
 }
 
 .nav-links {
@@ -103,10 +140,10 @@ body {
     @apply font-medium uppercase tracking-[0.22em] text-[11px] text-white/35;
   }
   .btn-neon {
-    @apply inline-flex h-[52px] items-center justify-center gap-2 rounded-full bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] px-7 text-[15px] font-semibold text-ink transition-transform;
+    @apply inline-flex min-h-[52px] items-center justify-center gap-2 rounded-full bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] px-7 py-3 text-center text-[15px] font-semibold text-ink transition-transform hover:-translate-y-0.5 active:translate-y-0;
   }
   .btn-ghost {
-    @apply inline-flex h-[52px] items-center justify-center gap-2 rounded-full border border-white/10 px-7 text-[15px] font-medium text-white/80;
+    @apply inline-flex min-h-[52px] items-center justify-center gap-2 rounded-full border border-white/15 px-7 py-3 text-center text-[15px] font-medium text-white/80 transition-colors hover:border-white/30 hover:bg-white/5;
   }
 }
 
@@ -118,12 +155,6 @@ body {
   display: none;
 }
 
-::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
-
 /* The step box glides first, then everything inside it arrives. Fill is
    backwards so the element's own animations take over once this is done. */
 @keyframes step-in {
@@ -132,10 +163,11 @@ body {
 }
 
 .step-stage *:not([data-carrier]):not(:has([data-carrier])) {
-  animation: step-in 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.5s backwards;
+  animation: step-in 0.3s ease-out backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   .step-stage *:not([data-carrier]):not(:has([data-carrier])) {
     animation: none;
   }

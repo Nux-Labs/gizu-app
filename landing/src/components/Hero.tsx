@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { ArrowUpRight } from 'lucide-react'
 import AsciiField from './AsciiField'
+import { APP_URL } from '../links'
 
 export default function Hero() {
   return (
@@ -28,8 +29,8 @@ export default function Hero() {
               className="block"
             >
               {/* the promise stays encrypted until you look at it */}
-              <span className="group inline-block cursor-default">
-                <span className="text-gradient inline-block blur-[10px] transition-[filter,opacity] duration-700 ease-out group-hover:blur-0 opacity-70 group-hover:opacity-100 motion-reduce:blur-0">
+              <span className="inline-block">
+                <span className="text-gradient inline-block">
                   Now private.
                 </span>
               </span>
@@ -42,7 +43,7 @@ export default function Hero() {
             transition={{ duration: 0.7, delay: 0.5 }}
             className="mx-auto mt-7 max-w-[52ch] text-[18px] leading-relaxed text-white/55"
           >
-            Encrypted balances. Encrypted positions. Encrypted returns.
+            Your wallet. Your investments. A more private way to move between them.
           </motion.p>
 
           <motion.div
@@ -51,12 +52,17 @@ export default function Hero() {
             transition={{ duration: 0.7, delay: 0.62 }}
             className="mt-11 flex flex-wrap items-center justify-center gap-3"
           >
-            <a href="#top" className="btn-neon">
+            <a href={APP_URL} className="btn-neon">
               Explore the app
               <ArrowUpRight size={17} strokeWidth={2.4} />
             </a>
             <a href="#money" className="btn-ghost">How it works</a>
           </motion.div>
+          <div className="mt-12 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 font-mono text-[11px] text-white/50">
+            {['Passkey access', 'Keys on your device', 'Private routing'].map((label) => (
+              <span key={label} className="inline-flex items-center gap-2"><span className="h-1 w-1 rounded-full bg-neon/70" />{label}</span>
+            ))}
+          </div>
         </div>
 
       </div>

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { ArrowUpRight } from 'lucide-react'
+import { APP_URL } from '../links'
 
 const LINKS = [
   { href: '#money', label: 'How it works' },
@@ -55,7 +56,7 @@ export default function Nav() {
         </ul>
 
         <a
-          href="#top"
+          href={APP_URL}
           className="nav-cta ml-auto inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] text-[14px] font-semibold text-ink"
         >
           Explore the app

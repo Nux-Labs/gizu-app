@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useReducedMotion } from 'framer-motion'
 
 // ASCII wave field, ported from mimir/HeroAscii and tuned for Gizu.
 // Two things keep a full screen field cheap: drawing is batched into runs of
@@ -33,6 +34,7 @@ export default function AsciiField({
   pointer = 0.4,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const reduce = useReducedMotion()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -112,7 +114,10 @@ export default function AsciiField({
     let resizeTimer = 0
     const onResize = () => {
       window.clearTimeout(resizeTimer)
-      resizeTimer = window.setTimeout(resize, 120)
+      resizeTimer = window.setTimeout(() => {
+        resize()
+        if (reduce) draw(performance.now())
+      }, 120)
     }
     const onScroll = () => {
       top = baseTop - window.scrollY
@@ -141,7 +146,7 @@ export default function AsciiField({
 
     let frame = 0
     let raf = 0
-    let running = true
+    let running = !reduce
     let last = 0
     const step = 1000 / 30
     const reach2 = pointer * pointer
@@ -234,7 +239,7 @@ export default function AsciiField({
     // decoration only, so it stops while off screen
     const io = new IntersectionObserver(
       ([entry]) => {
-        running = entry.isIntersecting
+        running = entry.isIntersecting && !reduce
         if (running && !raf) raf = requestAnimationFrame(draw)
         if (!running && raf) {
           cancelAnimationFrame(raf)
@@ -255,7 +260,7 @@ export default function AsciiField({
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerleave', onLeave)
     }
-  }, [fontSize, speed, opacity, pointer])
+  }, [fontSize, speed, opacity, pointer, reduce])
 
   return (
     <canvas

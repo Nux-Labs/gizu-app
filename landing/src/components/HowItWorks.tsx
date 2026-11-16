@@ -1,130 +1,137 @@
-import { useEffect, useRef, useState } from 'react'
-import { motion, useMotionValueEvent, useScroll, useSpring, useTransform } from 'framer-motion'
+import { useRef, useState } from 'react'
+import { motion, useMotionValueEvent, useScroll } from 'framer-motion'
+import { ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react'
 import StepVisual, { type VisualKind } from './StepVisual'
+import { scrollToPosition } from '../smoothScroll'
 
-type Step = {
-  title: string
-  body: string
-  visual: VisualKind
-}
+type Step = { title: string; body: string; visual: VisualKind; phase: string }
 
 const STEPS: Step[] = [
   {
-    title: 'Your wallet',
-    body: 'Connect the wallet you already use. Nothing about it changes and nothing leaves it yet.',
-    visual: 'wallet',
+    title: 'Start with your wallet.',
+    body: 'Open Gizu with a passkey. Your keys stay on your device, and you approve the actions that move your funds.',
+    visual: 'wallet', phase: 'Your access',
   },
   {
-    title: 'Funding account',
-    body: 'Your balance lands on a funding account that only your passkey controls.',
-    visual: 'funding',
+    title: 'One place to fund.',
+    body: 'Receive USDC in your funding account. See your available balance before choosing your next investment.',
+    visual: 'funding', phase: 'Your access',
   },
   {
-    title: 'Confidential transfer',
-    body: 'The same address keeps the value, only now nobody can read what it holds.',
-    visual: 'route',
+    title: 'A more private route.',
+    body: 'A confidential middle step reduces the direct public connection between your funding account and your investments.',
+    visual: 'route', phase: 'Private routing',
   },
   {
-    title: 'Anonym invested accounts',
-    body: 'Separate accounts hold your positions, all derived from the same passkey.',
-    visual: 'keys',
+    title: 'Separate investment accounts.',
+    body: 'Your positions live in separate accounts, controlled through the same native wallet. One experience, with less public linkage.',
+    visual: 'keys', phase: 'Private routing',
   },
   {
-    title: 'Your deposit',
-    body: 'You choose an amount. Nothing else about you is attached to it.',
-    visual: 'deposit',
+    title: 'Choose your amount.',
+    body: 'Explore a supported vault and enter how much you want to invest. Review the route, limits and fees before continuing.',
+    visual: 'deposit', phase: 'Your investment',
   },
   {
-    title: 'Encryption',
-    body: 'The amount is encrypted before it touches a vault, and stays encrypted on chain.',
-    visual: 'encrypt',
+    title: 'Confidential in transit.',
+    body: 'Confidential credit protects the private segment of the route. Source funding and destination transfers remain public.',
+    visual: 'encrypt', phase: 'Your investment',
   },
   {
-    title: 'Combined with other deposits',
-    body: 'One deposit is split across anonym invested accounts, so no entry traces back to you.',
-    visual: 'batch',
+    title: 'Distributed with care.',
+    body: 'Supported deposits can be distributed across investment accounts. Gizu keeps track of the route and its progress for you.',
+    visual: 'batch', phase: 'Your investment',
   },
   {
-    title: 'Curated vault',
-    body: 'The batch enters a curated strategy with a named curator and a published mandate.',
-    visual: 'vault',
+    title: 'Put your capital to work.',
+    body: 'Your deposit enters the selected vault. Review its strategy and curator, and remember that returns vary and capital is at risk.',
+    visual: 'vault', phase: 'Your position',
   },
   {
-    title: 'Your anonym position',
-    body: 'You hold anonym shares. Only you can read the balance, the yield and the exit.',
-    visual: 'shield',
+    title: 'Stay close to your position.',
+    body: 'Track your holdings in Gizu and choose when to withdraw. Supported withdrawals return to private USDC before you make it public.',
+    visual: 'shield', phase: 'Your position',
   },
 ]
 
-/** Mounts the visual at rest, then lets it play, so every step animates.
- *  The shared carrier inside each visual morphs into the next one. */
-function Frame({ visual, index }: { visual: VisualKind; index: number }) {
-  const [on, setOn] = useState(false)
-
-  // the box finishes gliding before anything inside it starts
-  useEffect(() => {
-    const id = window.setTimeout(() => setOn(true), 520)
-    return () => window.clearTimeout(id)
-  }, [index])
-
-  return <StepVisual kind={visual} on={on} />
-}
+// Short screens and reduced-motion users get a normal, self-paced section.
+const SCROLL_STORY = '(min-width: 1024px) and (min-height: 820px) and (prefers-reduced-motion: no-preference)'
 
 export default function HowItWorks() {
   const ref = useRef<HTMLElement>(null)
-  const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] })
-  const progress = useSpring(scrollYProgress, { stiffness: 140, damping: 30, mass: 0.4 })
   const [index, setIndex] = useState(0)
+  const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] })
 
-  useMotionValueEvent(scrollYProgress, 'change', (v) => {
-    setIndex(Math.min(STEPS.length - 1, Math.max(0, Math.floor(v * STEPS.length))))
+  useMotionValueEvent(scrollYProgress, 'change', (value) => {
+    if (window.matchMedia(SCROLL_STORY).matches) {
+      setIndex(Math.min(STEPS.length - 1, Math.max(0, Math.floor(value * STEPS.length))))
+    }
   })
 
-  // the room behind the stage drifts, so it never reads as flat black
-  const glowX = useTransform(progress, [0, 1], ['-18%', '18%'])
+  const selectStep = (next: number) => {
+    if (next < 0 || next >= STEPS.length) return
+    if (ref.current && window.matchMedia(SCROLL_STORY).matches) {
+      const top = ref.current.getBoundingClientRect().top + window.scrollY
+      const travel = ref.current.offsetHeight - window.innerHeight
+      scrollToPosition(top + travel * ((next + 0.3) / STEPS.length))
+    } else {
+      setIndex(next)
+    }
+  }
+
   const step = STEPS[index]
 
   return (
-    <section
-      ref={ref}
-      id="money"
-      className="relative"
-      style={{ height: `${STEPS.length * 95 + 60}vh` }}
-    >
-      <div className="sticky top-0 flex h-[100svh] flex-col overflow-hidden">
-        {/* depth behind everything */}
-        <div className="pointer-events-none absolute inset-0 bg-[#07090e]" />
-        <motion.div
-          style={{ x: glowX }}
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_45%,rgba(124,232,242,0.1),transparent_70%)]"
-        />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle,rgba(255,255,255,0.05)_1px,transparent_1px)] opacity-40 [background-size:26px_26px]" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(75%_60%_at_50%_50%,transparent,#04060a)]" />
-
-        <div className="shell relative pt-24 text-center md:pt-28">
-          <p className="eyebrow">How it works</p>
-          <h2 className="mx-auto mt-3 max-w-[22ch] text-[clamp(24px,3vw,38px)] font-semibold leading-[1.05] tracking-[-0.025em]">
-            From your wallet to an anonym position
-          </h2>
-        </div>
-
-        <div className="shell relative flex flex-1 flex-col items-center justify-center gap-6 pb-14">
-          <Frame key={index} visual={step.visual} index={index} />
-
-          <div key={`text-${index}`} className="text-center">
-            <motion.div
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <h3 className="text-[clamp(24px,2.8vw,36px)] font-semibold leading-[1.1] tracking-[-0.02em]">
-                {step.title}
-              </h3>
-              <p className="mx-auto mt-3 max-w-[46ch] text-[15px] leading-relaxed text-white/45 md:text-[17px]">
-                {step.body}
-              </p>
-            </motion.div>
+    <section ref={ref} id="money" aria-labelledby="how-title" className="how-story relative scroll-mt-20">
+      <div className="how-stage relative flex flex-col justify-center overflow-hidden border-y border-white/[0.07] bg-[#070a10]">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_75%_50%,rgba(124,232,242,0.08),transparent_65%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle,rgba(255,255,255,0.045)_1px,transparent_1px)] [background-size:28px_28px]" />
+        <div className="shell relative py-12 lg:py-10">
+          <div className="flex flex-wrap items-end justify-between gap-5 border-b border-white/10 pb-7">
+            <div>
+              <p className="eyebrow text-neon/80">How it works</p>
+              <h2 id="how-title" className="mt-4 max-w-[22ch] text-[clamp(30px,3.7vw,52px)] font-medium leading-[1.08] tracking-[-0.035em]">
+                A little less public.<br />A lot more yours.
+              </h2>
+            </div>
+            <a href="#strategies" className="inline-flex min-h-11 items-center gap-2 text-sm text-white/60 transition-colors hover:text-neon">
+              Explore Gizu <ArrowDown size={16} aria-hidden="true" />
+            </a>
           </div>
+          <div className="grid items-center gap-5 py-7 lg:grid-cols-[0.8fr_1.2fr] lg:gap-12 lg:py-8">
+            <div className="order-2 lg:order-1">
+              <p className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.16em] text-neon/80">
+                <span className="h-px w-7 bg-neon/50" /> {step.phase}
+              </p>
+              <motion.div key={index} initial={{ opacity: 0.6, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+                <h3 id="step-title" className="mt-5 max-w-[15ch] text-[clamp(30px,3.5vw,48px)] font-medium leading-[1.08] tracking-[-0.035em]">{step.title}</h3>
+                <p className="mt-5 max-w-[37ch] text-base leading-[1.75] text-white/60 lg:text-[17px]">{step.body}</p>
+              </motion.div>
+              <div className="mt-7 flex items-center gap-3">
+                <button type="button" aria-label="Previous step" disabled={index === 0} onClick={() => selectStep(index - 1)} className="story-arrow">
+                  <ArrowLeft size={18} aria-hidden="true" />
+                </button>
+                <span className="min-w-16 text-center font-mono text-xs tabular-nums text-white/60">
+                  <span className="text-white">{String(index + 1).padStart(2, '0')}</span> / {String(STEPS.length).padStart(2, '0')}
+                </span>
+                <button type="button" aria-label="Next step" disabled={index === STEPS.length - 1} onClick={() => selectStep(index + 1)} className="story-arrow">
+                  <ArrowRight size={18} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+            <div aria-hidden="true" className="story-visual order-1 min-w-0 rounded-[28px] border border-white/[0.08] bg-ink/50 lg:order-2">
+              <StepVisual key={step.visual} kind={step.visual} on />
+            </div>
+          </div>
+          <nav aria-label="How it works steps" className="flex gap-1.5 overflow-x-auto border-t border-white/10 pt-5">
+            {STEPS.map((item, i) => (
+              <button key={item.visual} type="button" aria-label={`Step ${i + 1}: ${item.title}`} aria-current={index === i ? 'step' : undefined} onClick={() => selectStep(i)} className="group min-h-11 min-w-11 flex-1 py-2 text-left">
+                <span className={`block h-1 rounded-full transition-colors duration-300 ${i === index ? 'bg-neon shadow-[0_0_14px_#7ce8f240]' : i < index ? 'bg-neon/35' : 'bg-white/10 group-hover:bg-white/30'}`} />
+                <span className={`mt-3 block font-mono text-[10px] ${index === i ? 'text-neon' : 'text-white/40'}`}>{String(i + 1).padStart(2, '0')}</span>
+              </button>
+            ))}
+          </nav>
+          <p className="story-scroll-hint mt-2 hidden items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-white/40"><ArrowDown size={12} aria-hidden="true" /> Scroll to explore, or choose a step</p>
         </div>
       </div>
     </section>

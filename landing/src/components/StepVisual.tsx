@@ -515,7 +515,7 @@ function Encrypt({ on }: { on: boolean }) {
         <motion.div layoutId="carrier"
       data-carrier transition={{ layout: LAYOUT }} className="flex gap-1 rounded-xl border border-white/[0.07] bg-[#0b0f16] px-3 py-2">
           {PLAIN.split('').map((c, i) => (
-            <span key={i} className="relative block h-14 w-[36px] [perspective:400px]">
+            <span key={i} className="relative block h-14 w-[28px] min-[380px]:w-[36px] [perspective:400px]">
               <motion.span
                 initial={false}
                 animate={{ rotateX: on ? -180 : 0 }}
@@ -566,7 +566,7 @@ function Batch({ on }: { on: boolean }) {
         {/* fixed box, so the drawing and the html sit in one coordinate space.
             it is centred by transform, not by flow, so it can be wider than
             the stage without pushing the layout around */}
-        <div className="absolute left-1/2 top-1/2 h-[240px] w-[520px] -translate-x-1/2 -translate-y-1/2 scale-[0.6] sm:scale-[0.9] lg:scale-[1.28]">
+        <div className="absolute left-1/2 top-1/2 h-[240px] w-[520px] -translate-x-1/2 -translate-y-1/2 scale-[0.48] min-[380px]:scale-[0.6] sm:scale-[0.9] lg:scale-[1.1]">
           <svg
             className="absolute inset-0 h-full w-full"
             viewBox="0 0 520 240"
