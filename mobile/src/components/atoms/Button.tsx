@@ -1,4 +1,5 @@
-import { Text, useWindowDimensions } from "react-native";
+import type { ReactNode } from "react";
+import { Text, View, useWindowDimensions } from "react-native";
 import { PrimaryFill } from "./PrimaryFill";
 import { haptic } from "@/theme/haptics";
 import colors from "@/theme/colors.json";
@@ -13,6 +14,7 @@ type Props = {
   disabled?: boolean;
   loading?: boolean;
   variant?: Variant;
+  icon?: ReactNode;
 };
 
 const surfaces: Record<Variant, string> = {
@@ -23,18 +25,11 @@ const surfaces: Record<Variant, string> = {
   quiet: "",
 };
 const foregrounds: Record<Variant, string> = {
-  primary: "text-ctaText",
-  sell: "text-sellText",
-  secondary: "text-text",
-  destructive: "text-danger",
-  quiet: "text-fg-70",
-};
-const spinners: Record<Variant, string> = {
   primary: colors.ctaText,
   sell: colors.sellText,
-  secondary: colors.accent,
+  secondary: colors.text,
   destructive: colors.danger,
-  quiet: colors.accent,
+  quiet: colors.fg["70"],
 };
 
 export function Button({
@@ -44,6 +39,7 @@ export function Button({
   disabled = false,
   loading = false,
   variant = "primary",
+  icon,
 }: Props) {
   // Remeasure native text after Dynamic Type changes, including on inactive screens.
   // Remount only the text node so feature and navigation state are retained.
@@ -51,7 +47,7 @@ export function Button({
   const unavailable = disabled || loading;
   const quiet = variant === "quiet";
   const surface = disabled && !quiet ? "border border-borderSoft bg-glassSoft" : surfaces[variant];
-  const foreground = disabled ? "text-fg-35" : foregrounds[variant];
+  const foreground = disabled ? colors.muted : foregrounds[variant];
   return (
     <PressableScale
       accessibilityRole="button"
@@ -62,16 +58,23 @@ export function Button({
         if (variant === "primary" || variant === "sell") haptic.tap();
         onPress();
       }}
-      className={`flex-row items-center justify-center gap-3 rounded-button ${quiet ? "min-h-11 px-2 py-2" : "min-h-14 px-5 py-4"} ${surface}`}
+      className={`relative items-center justify-center rounded-button ${quiet ? "min-h-11 px-2 py-2" : "min-h-14 px-5 py-4"} ${surface}`}
     >
       {variant === "primary" && !disabled && <PrimaryFill />}
-      {loading && <Spinner size="sm" color={spinners[variant]} />}
-      <Text
-        key={fontScale}
-        className={`font-sans shrink text-center font-semibold ${quiet ? "text-[13px]" : "text-[15px]"} ${foreground}`}
+      <View
+        collapsable={false}
+        pointerEvents="none"
+        className="relative z-10 w-full min-w-0 flex-row items-center justify-center gap-3"
       >
-        {label}
-      </Text>
+        {loading ? <Spinner size="sm" color={foreground} /> : icon}
+        <Text
+          key={fontScale}
+          className={`font-sans shrink text-center font-semibold ${quiet ? "text-[13px] leading-5" : "text-[15px] leading-[22px]"}`}
+          style={{ color: foreground, includeFontPadding: false }}
+        >
+          {label}
+        </Text>
+      </View>
     </PressableScale>
   );
 }
