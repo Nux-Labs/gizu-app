@@ -2,8 +2,10 @@ import { motion } from 'framer-motion'
 import { ArrowUpRight } from 'lucide-react'
 import AsciiField from './AsciiField'
 import { APP_URL } from '../links'
+import { useState } from 'react'
 
 export default function Hero() {
+  const [revealed, setRevealed] = useState(false)
   return (
     <section id="top" className="relative flex min-h-[100svh] flex-col justify-center pt-28">
       <div className="pointer-events-none absolute inset-0">
@@ -29,11 +31,17 @@ export default function Hero() {
               className="block"
             >
               {/* the promise stays encrypted until you look at it */}
-              <span className="inline-block">
-                <span className="text-gradient inline-block">
+              <button
+                type="button"
+                aria-label="Reveal privacy message"
+                aria-pressed={revealed}
+                onClick={() => setRevealed(value => !value)}
+                className="group inline-block rounded-lg text-left"
+              >
+                <span className={`text-gradient inline-block transition-[filter,opacity] duration-700 ease-out group-hover:blur-0 group-hover:opacity-100 group-focus-visible:blur-0 group-focus-visible:opacity-100 motion-reduce:blur-0 ${revealed ? 'blur-0 opacity-100' : 'blur-[10px] opacity-70'}`}>
                   Now private.
                 </span>
-              </span>
+              </button>
             </motion.span>
           </h1>
 
@@ -58,9 +66,9 @@ export default function Hero() {
             </a>
             <a href="#money" className="btn-ghost">How it works</a>
           </motion.div>
-          <div className="mt-12 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 font-mono text-[11px] text-white/50">
+          <div className="mt-12 flex flex-wrap items-center justify-center gap-x-7 gap-y-3 font-mono text-[11px] text-white/50">
             {['Passkey access', 'Keys on your device', 'Private routing'].map((label) => (
-              <span key={label} className="inline-flex items-center gap-2"><span className="h-1 w-1 rounded-full bg-neon/70" />{label}</span>
+              <span key={label}>{label}</span>
             ))}
           </div>
         </div>
