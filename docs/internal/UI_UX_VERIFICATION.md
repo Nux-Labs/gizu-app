@@ -181,6 +181,10 @@ Validation for this revision:
 - The hero phone keeps its original passkey button. A small “Try it” arrow points
   to it, moves for three cycles and disappears when the demo starts. The 390 px
   welcome layout was visually checked; reduced motion disables the arrow animation.
+- All four generated bento illustrations now use 1200 × 800 RGBA PNG cutouts.
+  Alpha ranges from 0 to 255 and all four corners are fully transparent in each
+  asset. Desktop/mobile screenshots show no rectangular background; the former
+  CSS edge mask is removed. The production build passed after the asset change.
 - Eight of nine existing deployment tests passed locally. The symlink-rejection
   test cannot create its symlink on this Windows account (`EPERM`); it runs on
   Linux in CI. No deployment implementation was changed.

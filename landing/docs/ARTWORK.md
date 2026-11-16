@@ -1,8 +1,14 @@
 # Generated landing artwork
 
 Generated with the built-in image_gen tool, 2026-11-16.
-WebP delivery assets are saved in `public/art/`.
-Only format conversion and downscaling were applied after generation.
+Original WebP artwork is retained in `public/art/`. The landing uses transparent
+PNG cutouts in the same folder: `funding.png`, `investments.png`, `shielding.png`
+and `fresh-wallets.png`. Backgrounds were removed with the built-in image_gen
+tool; alpha transparency is preserved. Original generation prompts follow.
+
+## Transparent PNG edit prompt (all four assets)
+
+Use case: background-extraction. Input image: the attached Gizu landing card artwork is the edit target. Remove only the dark navy background, the ground plane and its cast shadows/reflections. Deliver a genuine transparent RGBA PNG cutout with clean anti-aliased edges. Preserve the exact subject objects, geometry, arrangement, camera angle, charcoal material, cyan and lavender highlights, and original landscape 3:2 canvas and framing. Keep all subject objects fully intact and in their existing positions. The spaces around and between separate objects must be fully transparent. Keep frosted glass within the subject and its material appearance intact. Do not replace the background with white, black, a solid color or a checkerboard graphic; actual alpha transparency is required. No new objects, no extra glow cloud, no text, no logos, no border.
 
 ## funding.webp
 

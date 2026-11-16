@@ -31,16 +31,16 @@ export default function HowItWorks() {
           <WalletArt kind="wallet" />
         </BentoCard>
         <BentoCard number="02" title="Add funds your way." body="Buy USDC with a card or bank transfer, or send it from an exchange or another wallet. Top up once, invest across any chain.">
-          <img src="/art/funding.webp" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
+          <img src="/art/funding.png" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
         </BentoCard>
         <BentoCard number="03" title="Choose where your capital goes." body="Tokenized stocks, yield vaults and more from every chain, in one place. Review the asset, fees and limits, then confirm the amount." wide>
-          <img src="/art/investments.webp" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
+          <img src="/art/investments.png" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
         </BentoCard>
         <BentoCard number="04" title="Shielded before it's invested." body="Once you confirm, your USDC moves into a confidential balance that block explorers can't read. Every investment starts from there, so it's much harder to trace back to you.">
-          <img src="/art/shielding.webp" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
+          <img src="/art/shielding.png" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
         </BentoCard>
         <BentoCard number="05" title="Spread across fresh wallets." body="Each investment lands in one to five new wallets, all controlled by your passkey. No single address shows the full picture, but Gizu shows it to you as one portfolio." wide>
-          <img src="/art/fresh-wallets.webp" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
+          <img src="/art/fresh-wallets.png" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
         </BentoCard>
         <BentoCard number="06" title="Follow your position." body="Every holding, across every wallet and chain, in one live portfolio. Check in anytime and make your next move.">
           <WalletArt kind="shield" />
