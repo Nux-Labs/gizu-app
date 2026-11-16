@@ -1,4 +1,3 @@
-import { ArrowUpRight } from 'lucide-react'
 import AsciiChameleon from '../chameleon/AsciiChameleon'
 import Reveal from './Reveal'
 import { APP_URL, DOCS_URL, REPOSITORY_URL } from '../links'
@@ -23,8 +22,7 @@ export default function Footer() {
           <div className="flex flex-wrap items-center gap-5">
             <p className="text-sm text-white/60">Gizu for iOS and Android.</p>
             <a href={APP_URL} className="btn-neon">
-              Get mobile access
-              <ArrowUpRight size={15} strokeWidth={2.6} />
+              Get early access
             </a>
           </div>
         </Reveal>

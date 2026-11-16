@@ -28,10 +28,6 @@ const ITEMS = [
     a: 'The underlying strategy of your selected vault. Review its curator, assets and risks before investing. Returns vary and are not guaranteed.',
   },
   {
-    q: 'How long does it take?',
-    a: 'Deposits and private withdrawals settle in batches. The app shows the expected timing for your chosen investment.',
-  },
-  {
     q: 'Can I lose money?',
     a: 'Yes. Encryption protects financial information; it does not remove investment risk.',
   },

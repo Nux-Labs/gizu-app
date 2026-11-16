@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, type Variants } from 'framer-motion'
 import NumberFlow from '@number-flow/react'
+import { Fingerprint } from 'lucide-react'
 
 export type VisualKind =
   | 'wallet'
@@ -186,7 +187,9 @@ function Vault({ on }: { on: boolean }) {
 
 /* ------------------------------------------------------------- the others */
 
+/** Passkey sign-in: a biometric scan creates the wallet on the device, no seed phrase. */
 function Wallet({ on }: { on: boolean }) {
+  const verified = on ? 1.7 : 0
   return (
     <Stage>
       <div className="absolute inset-0 flex items-center justify-center">
@@ -198,47 +201,50 @@ function Wallet({ on }: { on: boolean }) {
           }}
           transition={{ layout: LAYOUT, duration: 0.4, ease: EASE }}
           layoutId="carrier"
-      data-carrier
+          data-carrier
           className="relative w-[min(400px,100%)] overflow-hidden rounded-xl border bg-gradient-to-b from-[#141a24] to-[#0b0f16] p-4 shadow-lg"
         >
-          {/* a light sweeps across the card while it reads the wallet */}
-          <motion.span
-            initial={false}
-            animate={on ? { x: ['-60%', '160%'] } : { x: '-60%' }}
-            transition={{
-              duration: 2.4,
-              repeat: on ? Infinity : 0,
-              ease: 'easeInOut',
-              repeatDelay: 1,
-            }}
-            className="pointer-events-none absolute inset-y-0 w-1/3 bg-[linear-gradient(90deg,transparent,rgba(124,232,242,0.12),transparent)]"
-          />
-
-          <div className="relative flex items-center gap-3">
-            <span className="h-9 w-9 rounded-full bg-gradient-to-br from-neon/70 to-neon/20" />
-            <div className="min-w-0 flex-1">
-              <div className="font-mono text-[12px] text-white/70">0x7a4f...9c2e</div>
-              <div className="mt-1.5 h-1.5 w-16 rounded-full bg-white/[0.08]" />
-            </div>
-            <motion.span
+          {/* passkey prompt */}
+          <div className="relative flex items-center gap-4">
+            <motion.div
               initial={false}
-              animate={{ opacity: on ? 1 : 0, scale: on ? 1 : 0.6 }}
-              transition={{ duration: 0.3, delay: on ? 0.5 : 0 }}
+              animate={{
+                borderColor: on ? 'rgba(124,232,242,0.55)' : 'rgba(255,255,255,0.1)',
+                color: on ? 'rgba(124,232,242,1)' : 'rgba(255,255,255,0.45)',
+              }}
+              transition={{
+                borderColor: { duration: 0.4, delay: on ? 0.2 : 0 },
+                // the print lights up once the scan has passed: that is the confirmation
+                color: { duration: 0.35, delay: on ? verified : 0 },
+              }}
+              className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border bg-white/[0.03]"
             >
-              <CheckCircle delay={on ? 0.55 : 0} />
-            </motion.span>
+              <Fingerprint size={30} strokeWidth={1.5} />
+              {/* the scan line passes over the fingerprint before it verifies */}
+              <motion.span
+                initial={false}
+                animate={on ? { y: [-30, 30, -30, 30], opacity: [0, 1, 1, 0] } : { y: -30, opacity: 0 }}
+                transition={{ duration: 1.4, delay: on ? 0.25 : 0, ease: 'easeInOut' }}
+                className="pointer-events-none absolute inset-x-1 top-1/2 h-[2px] rounded-full bg-neon shadow-[0_0_10px_rgba(124,232,242,0.9)]"
+              />
+            </motion.div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-medium text-white/85">
+                {on ? 'Passkey verified' : 'Sign in with passkey'}
+              </div>
+              <div className="mt-1 text-[11px] text-white/40">Face ID, fingerprint or passkey manager</div>
+            </div>
           </div>
 
+          {/* the wallet that the passkey just created */}
           <motion.div
             initial={false}
-            animate={{
-              backgroundColor: on ? 'rgba(124,232,242,1)' : 'rgba(255,255,255,0.06)',
-              color: on ? '#04060a' : 'rgba(255,255,255,0.5)',
-            }}
-            transition={{ duration: 0.4 }}
-            className="relative mt-4 flex h-9 items-center justify-center rounded-md text-[12px] font-semibold"
+            animate={{ opacity: on ? 1 : 0.35, y: on ? 0 : 6 }}
+            transition={{ duration: 0.5, delay: on ? verified + 0.2 : 0 }}
+            className="relative mt-4 flex items-center gap-3 rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2.5"
           >
-            {on ? 'Connected' : 'Connect wallet'}
+            <span className="h-8 w-8 rounded-full bg-gradient-to-br from-neon/70 to-violet/40" />
+            <div className="min-w-0 flex-1 font-mono text-[12px] text-white/75">0x7a4f...9c2e</div>
           </motion.div>
         </motion.div>
       </div>

@@ -25,28 +25,28 @@ function WalletArt({ kind }: { kind: VisualKind }) {
 export default function HowItWorks() {
   return (
     <section id="money" aria-labelledby="how-title" className="shell scroll-mt-28 py-20 md:py-28">
-      <div className="mb-12 grid items-end gap-6 md:grid-cols-[1.1fr_0.9fr] md:gap-16">
-        <Reveal direction="left"><h2 id="how-title" className="text-[clamp(38px,5vw,64px)] font-medium leading-[1.02] tracking-[-0.04em]">How it works.</h2></Reveal>
-        <Reveal direction="right"><p className="max-w-[42ch] text-[17px] leading-relaxed text-white/55">From your first deposit to your next investment. A connected flow, with privacy built into the route.</p></Reveal>
-      </div>
-
+      <Reveal direction="up" className="mb-14 md:mb-20">
+        <h2 id="how-title" className="mx-auto max-w-[20ch] text-center md:max-w-none text-[clamp(30px,3.6vw,48px)] font-semibold leading-[1.08] tracking-[-0.04em]">
+          Any chain <span className="text-gradient">confidential</span> investment app.
+        </h2>
+      </Reveal>
       <div className="process-bento">
-        <BentoCard number="01" title="One passkey. Your wallet." body="Open Gizu with a passkey. Your keys stay on your device, and every transaction starts with your approval." wide>
+        <BentoCard number="01" title="A passkey wallet. No seed phrase." body="Create and unlock your wallet with Face ID, fingerprint or a supported passkey manager. Your keys stay on your device, and nothing moves without your approval." wide>
           <WalletArt kind="wallet" />
         </BentoCard>
-        <BentoCard number="02" title="Fund your account." body="Receive USDC and see your available balance. Choose how much to put to work before moving anything.">
+        <BentoCard number="02" title="Add funds your way." body="Buy USDC with a card or bank transfer, or send it from an exchange or another wallet. Top up once, invest across any chain.">
           <Suspense fallback={null}><IllosCostMeter className="bento-illustration" /></Suspense>
         </BentoCard>
-        <BentoCard number="03" title="Take a private route." body="Confidential credit protects the middle of the route, reducing the direct public link between funding and holdings.">
-          <Suspense fallback={null}><IllosApiGateway className="bento-illustration" /></Suspense>
-        </BentoCard>
-        <BentoCard number="04" title="Separate accounts. Connected experience." body="Supported deposits are distributed across investment accounts controlled by your wallet. Gizu keeps the moving parts together." wide>
-          <Suspense fallback={null}><IllosToolCalls className="bento-illustration" /></Suspense>
-        </BentoCard>
-        <BentoCard number="05" title="Choose where your capital goes." body="Explore supported vaults, review the strategy and curator, and confirm the amount. Know the route, fees and limits before you invest." wide>
+        <BentoCard number="03" title="Choose where your capital goes." body="Tokenized stocks, yield vaults and more from every chain, in one place. Review the asset, fees and limits, then confirm the amount." wide>
           <WalletArt kind="vault" />
         </BentoCard>
-        <BentoCard number="06" title="Follow your position." body="See your holdings and operation progress in one place. Supported withdrawals return to private USDC before you make it public.">
+        <BentoCard number="04" title="Shielded before it's invested." body="Once you confirm, your USDC moves into a confidential balance that block explorers can't read. Every investment starts from there, so it's much harder to trace back to you.">
+          <Suspense fallback={null}><IllosApiGateway className="bento-illustration" /></Suspense>
+        </BentoCard>
+        <BentoCard number="05" title="Spread across fresh wallets." body="Each investment lands in one to five new wallets, all controlled by your passkey. No single address shows the full picture, but Gizu shows it to you as one portfolio." wide>
+          <Suspense fallback={null}><IllosToolCalls className="bento-illustration" /></Suspense>
+        </BentoCard>
+        <BentoCard number="06" title="Follow your position." body="Every holding, across every wallet and chain, in one live portfolio. Check in anytime and make your next move.">
           <WalletArt kind="shield" />
         </BentoCard>
       </div>

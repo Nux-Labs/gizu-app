@@ -3,7 +3,8 @@ import Hero from './components/Hero'
 import HowItWorks from './components/HowItWorks'
 import Faq from './components/Faq'
 import Footer from './components/Footer'
-import Features from './components/Features'
+import AppScreens from './components/AppScreens'
+import SupportedNetworks from './components/SupportedNetworks'
 import { AnimatePresence, MotionConfig } from 'framer-motion'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import Splash, { shouldShowIntro } from './components/Splash'
@@ -28,8 +29,9 @@ export default function App() {
         <Nav />
         <main>
           <Hero paused={intro} />
+          <SupportedNetworks />
           <HowItWorks />
-          <Features />
+          <AppScreens />
           <Faq />
         </main>
         <Footer />
