@@ -1,5 +1,5 @@
 import { useRef, useState, type MouseEvent } from 'react'
-import { AnimatePresence } from 'framer-motion'
+import { AnimatePresence, MotionConfig } from 'framer-motion'
 import Shell from './components/Shell'
 import Onboarding from './components/Onboarding'
 import RequestAccess from './components/RequestAccess'
@@ -25,7 +25,7 @@ export default function App() {
   }
 
   return (
-    <>
+    <MotionConfig reducedMotion="user">
       {isDesktop ? (
         <DesktopEntry {...entryProps} />
       ) : (
@@ -45,6 +45,6 @@ export default function App() {
           />
         )}
       </AnimatePresence>
-    </>
+    </MotionConfig>
   )
 }

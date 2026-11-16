@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { motion, useAnimation, useReducedMotion } from 'framer-motion'
 
 type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -10,11 +10,10 @@ export default function BubbleUpButton({ children, className = '', disabled, ...
   const controls = useAnimation()
   const reduce = useReducedMotion()
   const intent = useRef(false)
-  const [filled, setFilled] = useState(false)
 
   const fill = async () => {
+    if (disabled) return
     intent.current = true
-    setFilled(true)
     await controls.start({
       clipPath: 'ellipse(120% 120% at 50% 100%)',
       transition: reduce ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 32 },
@@ -23,7 +22,6 @@ export default function BubbleUpButton({ children, className = '', disabled, ...
 
   const drain = async () => {
     intent.current = false
-    setFilled(false)
     await controls.start({
       clipPath: 'ellipse(120% 120% at 50% -120%)',
       transition: reduce ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 32 },
@@ -33,6 +31,7 @@ export default function BubbleUpButton({ children, className = '', disabled, ...
 
   return (
     <button
+      type="button"
       onMouseEnter={fill}
       onMouseLeave={drain}
       onFocus={fill}
@@ -41,7 +40,7 @@ export default function BubbleUpButton({ children, className = '', disabled, ...
       onPointerUp={drain}
       onPointerCancel={drain}
       disabled={disabled}
-      className={`relative isolate flex h-16 w-full cursor-pointer items-center justify-center overflow-clip rounded-3xl border border-neon/25 bg-white/[0.03] backdrop-blur-xl ${
+      className={`relative isolate flex min-h-14 w-full cursor-pointer items-center justify-center overflow-clip rounded-3xl bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] px-5 py-4 text-ink transition-transform active:scale-[0.97] ${
         disabled ? 'cursor-not-allowed opacity-50' : ''
       } ${className}`}
       {...props}
@@ -53,9 +52,7 @@ export default function BubbleUpButton({ children, className = '', disabled, ...
         aria-hidden="true"
       />
       <span
-        className={`relative flex items-center gap-2 text-[15px] font-semibold tracking-wide transition-colors duration-200 ${
-          filled ? 'text-ink' : 'text-neon'
-        }`}
+        className="relative z-10 flex min-w-0 flex-wrap items-center justify-center gap-2 text-center text-[15px] font-semibold leading-[22px] text-ink"
       >
         {children}
       </span>

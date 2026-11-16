@@ -102,7 +102,7 @@ export default function RequestAccess({
             type="button"
             aria-label="Close request access"
             onClick={onClose}
-            className="glass-soft flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/50"
+            className="glass-soft flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white/70"
           >
             <X size={15} />
           </button>
@@ -123,7 +123,7 @@ export default function RequestAccess({
               onChange={(e) => setEmail(e.target.value)}
               type="email"
               placeholder="Email address"
-              className="glass-soft mt-3 h-13 w-full rounded-2xl px-5 py-4 text-[14px] caret-neon outline-none placeholder:text-white/25"
+              className="glass-soft mt-3 h-13 w-full rounded-2xl px-5 py-4 text-[14px] caret-neon outline-none placeholder:text-white/40 focus-visible:ring-2 focus-visible:ring-neon"
             />
           </section>
 
@@ -139,8 +139,9 @@ export default function RequestAccess({
                 <button
                   type="button"
                   key={a}
+                  aria-pressed={amount === a}
                   onClick={() => setAmount(a)}
-                  className={`rounded-2xl px-4 py-3 text-left text-[13px] ${
+                  className={`min-h-11 rounded-2xl px-4 py-3 text-left text-[13px] ${
                     amount === a ? 'bg-neon/10 text-neon' : 'glass-soft text-white/60'
                   }`}
                 >
@@ -162,8 +163,9 @@ export default function RequestAccess({
                 <button
                   type="button"
                   key={p}
+                  aria-pressed={platforms.includes(p)}
                   onClick={() => toggle(p)}
-                  className={`rounded-full px-4 py-2.5 text-[13px] ${
+                  className={`min-h-11 rounded-full px-4 py-2.5 text-[13px] ${
                     platforms.includes(p) ? 'bg-neon/10 text-neon' : 'glass-soft text-white/60'
                   }`}
                 >
@@ -177,7 +179,7 @@ export default function RequestAccess({
               value={other}
               onChange={(e) => setOther(e.target.value)}
               placeholder="Other"
-              className="glass-soft mt-3 w-full rounded-2xl px-5 py-3.5 text-[13px] caret-neon outline-none placeholder:text-white/25"
+              className="glass-soft mt-3 w-full rounded-2xl px-5 py-3.5 text-[13px] caret-neon outline-none placeholder:text-white/40 focus-visible:ring-2 focus-visible:ring-neon"
             />
           </section>
         </div>

@@ -13,7 +13,7 @@ export default function Onboarding({
   onRequestAccess: MouseEventHandler<HTMLButtonElement>
 }) {
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-full flex-1 flex-col">
       <div className="pointer-events-none absolute inset-0">
         <GradientWaves
           horizonColor="#070a10"
@@ -39,7 +39,7 @@ export default function Onboarding({
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-ink/25 to-ink" />
       </div>
 
-      <div className="relative flex min-h-0 flex-1 flex-col px-6 pb-10 pt-16">
+      <div className="onboarding-content relative flex flex-1 flex-col px-6 pb-6 pt-6">
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -49,7 +49,7 @@ export default function Onboarding({
           <span className="text-[16px] font-medium tracking-tight">Gizu</span>
         </motion.div>
 
-        <div className="mt-auto">
+        <div className="mt-auto pt-16">
           <h1 className="text-[46px] font-semibold leading-[1.0] tracking-tighter">
             <motion.span
               initial={{ opacity: 0, y: 16 }}
@@ -88,7 +88,7 @@ export default function Onboarding({
             transition={{ delay: 1.5 }}
             className="mt-6 max-w-[310px] text-[15px] leading-relaxed text-white/45"
           >
-            Curated confidential vaults, settlement in minutes. Your keys stay on your device.
+            Explore investments. Protect your privacy. Stay in control.
           </motion.p>
         </div>
 
@@ -106,7 +106,7 @@ export default function Onboarding({
 
           <button
             onClick={onRequestAccess}
-            className="mt-5 w-full text-center font-mono text-xs uppercase tracking-[0.3em] text-white/35"
+            className="mt-3 min-h-11 w-full text-center text-[13px] font-medium text-white/60 transition-colors hover:text-white"
           >
             Request access
           </button>

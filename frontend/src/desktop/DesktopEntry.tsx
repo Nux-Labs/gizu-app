@@ -17,9 +17,9 @@ export default function DesktopEntry({
   const [still] = useStored('gizu:motion-paused', false)
 
   return (
-    <div className="relative flex h-[100dvh] w-full overflow-hidden bg-ink">
+    <div className="relative flex min-h-[100dvh] w-full overflow-x-clip bg-ink">
       {/* sol: ASCII bukalemun ve slogan */}
-      <div className="relative hidden min-w-0 flex-1 flex-col justify-between p-14 lg:flex">
+      <div className="relative hidden min-h-[600px] min-w-0 flex-1 flex-col justify-between p-10 xl:p-14 lg:flex">
         <div className="pointer-events-none absolute inset-0">
           <AsciiChameleon anchorX={0.58} anchorY={0.25} size={0.12} paused={still} />
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-ink/90" />
@@ -68,7 +68,7 @@ export default function DesktopEntry({
             transition={{ delay: 1.5 }}
             className="mt-7 max-w-[440px] text-[16px] leading-relaxed text-white/45"
           >
-            Curated confidential vaults, settlement in minutes. Your keys stay on your device.
+            Explore investments. Protect your privacy. Stay in control.
           </motion.p>
         </div>
 
@@ -78,7 +78,7 @@ export default function DesktopEntry({
       </div>
 
       {/* sag: giris paneli */}
-      <div className="relative flex w-full shrink-0 items-center justify-center px-10 lg:w-[520px] lg:border-l lg:border-white/[0.06]">
+      <div className="relative flex w-full shrink-0 items-center justify-center px-6 py-12 sm:px-10 lg:w-[440px] xl:w-[520px] lg:border-l lg:border-white/[0.06]">
         <div className="w-full max-w-[380px]">
           <motion.div
             initial={{ opacity: 0, y: 16 }}
@@ -101,7 +101,7 @@ export default function DesktopEntry({
             </motion.div>
             <button
               onClick={onRequestAccess}
-              className="mt-5 w-full text-center font-mono text-xs uppercase tracking-[0.3em] text-white/35"
+              className="mt-3 min-h-11 w-full text-center text-[13px] font-medium text-white/60 transition-colors hover:text-white"
             >
               Request access
             </button>

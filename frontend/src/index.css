@@ -39,6 +39,27 @@
 
 * { -webkit-tap-highlight-color: transparent; }
 
+*, *::before, *::after { box-sizing: border-box; }
+:focus-visible { outline: 2px solid var(--neon); outline-offset: 4px; }
+::selection { background: #7ce8f233; color: #f1f4f8; }
+
+.onboarding-content {
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+/* Prevent Safari's focus zoom and keep entered text readable in compact dialogs. */
+input, textarea, select { font-size: max(16px, 1em) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 html, body, #root { height: 100%; }
 
 body {

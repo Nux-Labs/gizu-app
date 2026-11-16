@@ -255,6 +255,7 @@ export default function GradientWaves({
     let raf = 0
     let visible = true
     let pageVisible = !document.hidden
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
     const t0 = performance.now()
 
     const loop = (t: number) => {
@@ -270,7 +271,7 @@ export default function GradientWaves({
     }
 
     const start = () => {
-      if (visible && pageVisible && raf === 0) raf = requestAnimationFrame(loop)
+      if (!reducedMotion.matches && visible && pageVisible && raf === 0) raf = requestAnimationFrame(loop)
     }
     const stop = () => {
       if (raf) {
@@ -288,6 +289,9 @@ export default function GradientWaves({
     )
     io.observe(container)
 
+    const onMotionChange = () => reducedMotion.matches ? stop() : start()
+    reducedMotion.addEventListener('change', onMotionChange)
+
     const onVis = () => {
       pageVisible = !document.hidden
       pageVisible ? start() : stop()
@@ -300,6 +304,7 @@ export default function GradientWaves({
       ro.disconnect()
       io.disconnect()
       document.removeEventListener('visibilitychange', onVis)
+      reducedMotion.removeEventListener('change', onMotionChange)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerleave', onLeave)
       try {

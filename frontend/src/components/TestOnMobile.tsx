@@ -3,7 +3,7 @@ import { ArrowUpRight, Check, Smartphone, X } from 'lucide-react'
 import { requestInvitation } from '../earlyAccess'
 import { API_URL } from '../apiUrl'
 
-const REPO = 'https://github.com/enliven17/gizu-app'
+const REPO = 'https://github.com/Nux-Labs/gizu-app'
 const GUIDE = `${REPO}/blob/main/docs/app-guide/MOBILE_LOCAL_DEVELOPMENT.md`
 
 export default function TestOnMobile({
@@ -68,7 +68,7 @@ export default function TestOnMobile({
             type="button"
             aria-label="Close mobile testing instructions"
             onClick={onClose}
-            className="glass-soft flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-neon"
+            className="glass-soft flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-neon"
           >
             <X size={18} />
           </button>
