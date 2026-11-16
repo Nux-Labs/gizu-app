@@ -89,7 +89,7 @@ export default function Faq() {
                   <motion.span
                     animate={{ rotate: isOpen ? 45 : 0 }}
                     transition={{ duration: 0.25 }}
-                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
+                    className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border ${
                       isOpen ? 'border-neon/40 text-neon' : 'border-white/10 text-white/40'
                     }`}
                   >

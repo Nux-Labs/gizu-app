@@ -1,0 +1,30 @@
+import type { PointerEvent, ReactNode } from 'react'
+
+/** Adapted from Wildjury's Otari bento: pointer-lit surface and masked border. */
+export default function BentoCard({
+  number, title, body, children, wide = false,
+}: {
+  number: string
+  title: string
+  body: string
+  children: ReactNode
+  wide?: boolean
+}) {
+  const track = (event: PointerEvent<HTMLElement>) => {
+    if (event.pointerType !== 'mouse') return
+    const rect = event.currentTarget.getBoundingClientRect()
+    event.currentTarget.style.setProperty('--mx', `${event.clientX - rect.left}px`)
+    event.currentTarget.style.setProperty('--my', `${event.clientY - rect.top}px`)
+  }
+
+  return (
+    <article className={`bento-tile ${wide ? 'bento-wide' : ''}`} onPointerMove={track}>
+      <div aria-hidden="true" className="bento-art">{children}</div>
+      <div className="bento-copy">
+        <span className="font-mono text-[11px] text-neon/70">{number}</span>
+        <h3 className="mt-4 text-[23px] font-medium leading-tight tracking-[-0.025em]">{title}</h3>
+        <p className="mt-3 max-w-[54ch] text-[15px] leading-[1.75] text-white/55">{body}</p>
+      </div>
+    </article>
+  )
+}

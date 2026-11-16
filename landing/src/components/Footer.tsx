@@ -20,7 +20,7 @@ export default function Footer() {
           </div>
 
           <div className="flex flex-wrap items-center gap-5">
-            <p className="text-sm text-white/60">Your next chapter starts here.</p>
+            <p className="text-sm text-white/60">Gizu for iOS and Android.</p>
             <a href={APP_URL} className="btn-neon">
               Get mobile access
               <ArrowUpRight size={15} strokeWidth={2.6} />

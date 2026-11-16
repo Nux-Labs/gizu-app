@@ -5,13 +5,17 @@ This record distinguishes browser checks, JavaScript checks and device validatio
 
 ## Presentation changes
 
-- Landing: larger two-column story, nine selectable steps, previous/next actions,
-  visible progress and longer scroll dwell on tall desktop viewports. Phones,
-  short screens and reduced-motion users get a self-paced section. The desktop
-  scroll story starts at 1024 px wide and 820 px high.
-- Landing: complete the Strategies anchor with product feature cards and a mobile
-  access CTA. Replace placeholder app/docs/repository destinations and the inert
-  footer email form. Keep the main promise readable on touchscreens.
+- Landing: six process cards in an asymmetric bento, adapted from the local
+  Wildjury site's Otari section. All stages remain available in normal document
+  flow; scrolling does not select steps or pin a stage. Cards use one column on
+  phones, two on tablets and three with alternating wide cards on desktop.
+- Landing: restore the blurred privacy message with hover, keyboard and tap
+  reveal. Remove the hero's decorative dots, capsule navigation and pill actions.
+  Use a straight header and a collapsible mobile navigation menu.
+- Landing: replace generic feature tiles with an interactive vault-discovery
+  illustration adapted from the local portfolio registry. Protocol filters and
+  vault selection are previews; charts are illustrative, with no live rates or
+  balances. App/docs/repository destinations lead to their real entry points.
 - Web entry: match the native primary button's gradient, foreground, 56 px minimum
   height and spacing. Allow short screens to scroll; respect safe areas and reduced
   motion. Keep dialog controls reachable, inputs at least 16 px and choices announced.
@@ -27,18 +31,24 @@ This record distinguishes browser checks, JavaScript checks and device validatio
 
 Local `landing` and `frontend` Vite apps were inspected with ego-browser.
 
-| Viewport | Landing overflow | Story mode | Internal anchors |
+| Viewport | Landing overflow | Process grid | Internal anchors |
 | --- | --- | --- | --- |
-| 320 x 568 | None | Self-paced | All resolve |
-| 390 x 844 | None | Self-paced | All resolve |
-| 768 x 1024 | None | Self-paced | All resolve |
-| 1280 x 720 | None | Self-paced | All resolve |
-| 1440 x 900 | None | Sticky scroll | All resolve |
+| 320 x 568 | None | One column | All resolve |
+| 390 x 844 | None | One column | All resolve |
+| 768 x 1024 | None | Two columns | All resolve |
+| 1280 x 720 | None | Three columns | All resolve |
+| 1440 x 900 | None | Three columns | All resolve |
 
-All nine steps were selected at phone width without horizontal page overflow.
-Step targets are at least 44 px wide; the phone step rail scrolls horizontally.
-Desktop next-step navigation advances the text and visual together. Enabling
-reduced motion switches the story to manual navigation and stops decorative motion.
+All six process cards remain in the document at every viewport. There is no
+sticky process scene, decorative hero dot or em dash in the main page copy.
+Mobile navigation opens, follows section links and closes. Illustrations play
+when visible and respect reduced motion; larger illustration modules are split
+into separate build chunks.
+
+Source references: Wildjury's `site/src/sections/Otari.tsx`, `site/src/styles.css`
+and `site/src/illos/`; portfolio's
+`registry/ui/widgets/confidential-vault-grid.tsx`. Illustration attribution and
+license comments are preserved in the copied source. Donor projects are unchanged.
 
 The web entry was visually inspected at 390 x 844 and 1440 x 900. At 320 x 568,
 both access dialogs fit the viewport without horizontal overflow. Mobile-testing

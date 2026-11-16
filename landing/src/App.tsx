@@ -9,7 +9,7 @@ import { MotionConfig } from 'framer-motion'
 export default function App() {
   return (
     <MotionConfig reducedMotion="user">
-      <a href="#money" className="sr-only fixed left-4 top-4 z-[60] rounded-full bg-neon px-5 py-3 text-ink focus:not-sr-only">Skip to how it works</a>
+      <a href="#money" className="sr-only fixed left-4 top-4 z-[60] rounded-lg bg-neon px-5 py-3 text-ink focus:not-sr-only">Skip to how it works</a>
       <Nav />
       <main>
         <Hero />

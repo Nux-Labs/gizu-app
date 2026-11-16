@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { ArrowUpRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ArrowUpRight, Menu, X } from 'lucide-react'
 import { APP_URL } from '../links'
 
 const LINKS = [
@@ -9,60 +9,28 @@ const LINKS = [
 ]
 
 export default function Nav() {
+  const [open, setOpen] = useState(false)
   useEffect(() => {
-    const root = document.documentElement
-    let current = 0
-    let target = 0
-    let raf = 0
-
-    const read = () => {
-      target = Math.min(1, window.scrollY / 160)
-      if (!raf) raf = requestAnimationFrame(tick)
-    }
-
-    // trails the wheel by a beat, so the morph reads as eased
-    const tick = () => {
-      current += (target - current) * 0.16
-      if (Math.abs(target - current) < 0.001) current = target
-      root.style.setProperty('--nav-p', current.toFixed(4))
-      raf = current === target ? 0 : requestAnimationFrame(tick)
-    }
-
-    read()
-    window.addEventListener('scroll', read, { passive: true })
-    return () => {
-      window.removeEventListener('scroll', read)
-      cancelAnimationFrame(raf)
-      root.style.removeProperty('--nav-p')
-    }
-  }, [])
+    if (!open) return
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [open])
 
   return (
-    <header className="nav-shell fixed inset-x-0 top-0 z-50">
-      <nav aria-label="Primary" className="nav-bar mx-auto flex items-center gap-3">
-        <a href="#top" className="flex shrink-0 items-center gap-2.5">
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.07] bg-ink/80 backdrop-blur-xl">
+      <nav aria-label="Primary" className="shell flex h-20 items-center gap-3">
+        <a href="#top" className="flex shrink-0 items-center gap-2.5" onClick={() => setOpen(false)}>
           <img src="/gizulogo.svg" alt="" className="h-6 w-auto" />
           <span className="text-[17px] font-medium tracking-tight">Gizu</span>
         </a>
-
-        <ul className="nav-links ml-10 hidden items-center md:flex">
-          {LINKS.map((l) => (
-            <li key={l.href}>
-              <a href={l.href} className="text-[14px] text-white/55 transition-colors hover:text-white">
-                {l.label}
-              </a>
-            </li>
-          ))}
+        <ul className="ml-12 hidden items-center gap-8 md:flex">
+          {LINKS.map(link => <li key={link.href}><a href={link.href} className="inline-flex min-h-11 items-center text-sm text-white/55 transition-colors hover:text-white">{link.label}</a></li>)}
         </ul>
-
-        <a
-          href={APP_URL}
-          className="nav-cta ml-auto inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] text-[14px] font-semibold text-ink"
-        >
-          Explore the app
-          <ArrowUpRight size={16} strokeWidth={2.4} />
-        </a>
+        <a href={APP_URL} className="ml-auto inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-[#bff6fb] to-[#d7ccff] px-4 text-[12px] font-semibold text-ink sm:px-5 sm:text-sm"><span className="hidden min-[360px]:inline">Explore the app</span><span className="min-[360px]:hidden">Explore app</span><ArrowUpRight size={16} aria-hidden="true" /></a>
+        <button type="button" aria-label={open ? 'Close navigation' : 'Open navigation'} aria-controls="mobile-navigation" aria-expanded={open} onClick={() => setOpen(value => !value)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/10 md:hidden">{open ? <X size={18} /> : <Menu size={18} />}</button>
       </nav>
+      {open && <nav id="mobile-navigation" aria-label="Mobile navigation" className="shell border-t border-white/10 pb-4 md:hidden">{LINKS.map(link => <a key={link.href} href={link.href} onClick={() => setOpen(false)} className="flex min-h-14 items-center justify-between border-b border-white/10 text-sm text-white/75">{link.label}<ArrowUpRight size={15} aria-hidden="true" /></a>)}</nav>}
     </header>
   )
 }
