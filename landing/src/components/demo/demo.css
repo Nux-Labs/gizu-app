@@ -129,6 +129,35 @@
   line-height: 18px;
   color: #ffffff59;
 }
+.demo-start-hint {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 7px;
+  height: 30px;
+  margin: -18px 15px 8px 0;
+  color: #a9e7ee;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  pointer-events: none;
+}
+.demo-start-hint svg {
+  width: 40px;
+  height: 30px;
+  stroke: currentColor;
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: demo-invite 1.8s ease-in-out 3;
+}
+@keyframes demo-invite {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-start-hint svg { animation: none; }
+}
 .demo-button {
   display: flex;
   align-items: center;

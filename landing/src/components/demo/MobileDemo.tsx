@@ -280,6 +280,12 @@ export default function MobileDemo({
                 <p>
                   Explore investments. Protect your privacy. Stay in control.
                 </p>
+                <div className="demo-start-hint">
+                  <span>Try it</span>
+                  <svg viewBox="0 0 40 30" fill="none" aria-hidden="true">
+                    <path d="M3 4C24 0 33 9 30 25M23 19l7 7 7-7" />
+                  </svg>
+                </div>
                 <DemoButton
                   onClick={() => {
                     go('home')

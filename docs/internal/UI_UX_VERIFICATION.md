@@ -178,6 +178,9 @@ Validation for this revision:
 - Network tracks moved in opposite directions on scroll; desktop names render
   at 56 px and mobile at 30 px. Reduced motion clears track transforms and hides
   duplicate decorative names.
+- The hero phone keeps its original passkey button. A small “Try it” arrow points
+  to it, moves for three cycles and disappears when the demo starts. The 390 px
+  welcome layout was visually checked; reduced motion disables the arrow animation.
 - Eight of nine existing deployment tests passed locally. The symlink-rejection
   test cannot create its symlink on this Windows account (`EPERM`); it runs on
   Linux in CI. No deployment implementation was changed.
