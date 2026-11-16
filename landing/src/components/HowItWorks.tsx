@@ -1,10 +1,8 @@
-import { lazy, Suspense, useId, useRef } from 'react'
+import { useId, useRef } from 'react'
 import { LayoutGroup, useInView, useReducedMotion } from 'framer-motion'
 import BentoCard from './BentoCard'
 import StepVisual, { type VisualKind } from './StepVisual'
 import Reveal from './Reveal'
-
-const IllosToolCalls = lazy(() => import('./illustrations/tool-calls').then(module => ({ default: module.IllosToolCalls })))
 
 function WalletArt({ kind }: { kind: VisualKind }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -42,7 +40,7 @@ export default function HowItWorks() {
           <img src="/art/shielding.webp" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
         </BentoCard>
         <BentoCard number="05" title="Spread across fresh wallets." body="Each investment lands in one to five new wallets, all controlled by your passkey. No single address shows the full picture, but Gizu shows it to you as one portfolio." wide>
-          <Suspense fallback={null}><IllosToolCalls className="bento-illustration" /></Suspense>
+          <img src="/art/fresh-wallets.webp" alt="" loading="lazy" width={1200} height={800} className="bento-generated-art" />
         </BentoCard>
         <BentoCard number="06" title="Follow your position." body="Every holding, across every wallet and chain, in one live portfolio. Check in anytime and make your next move.">
           <WalletArt kind="shield" />
