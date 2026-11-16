@@ -69,6 +69,7 @@
   display: none;
 }
 .demo-scroll.is-welcome {
+  overscroll-behavior: auto;
   padding: 16px 24px 32px;
 }
 .demo-wordmark {

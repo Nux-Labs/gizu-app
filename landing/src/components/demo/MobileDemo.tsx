@@ -88,9 +88,11 @@ function DemoButton({
 
 /** Browser demo of the native screens. All data and approvals stay in local memory. */
 export default function MobileDemo({
-  initialScreen = 'welcome'
+  initialScreen = 'welcome',
+  onStart
 }: {
   initialScreen?: DemoScreen
+  onStart?: () => void
 }) {
   const viewport = useRef<HTMLDivElement>(null)
   const scroll = useRef<HTMLDivElement>(null)
@@ -241,7 +243,7 @@ export default function MobileDemo({
       className="demo-viewport"
       role="region"
       aria-label="Gizu interactive app demo"
-      data-lenis-prevent
+      data-lenis-prevent={screen !== 'welcome' || undefined}
     >
       <div
         className="demo-canvas"
@@ -278,7 +280,12 @@ export default function MobileDemo({
                 <p>
                   Explore investments. Protect your privacy. Stay in control.
                 </p>
-                <DemoButton onClick={() => go('home')}>
+                <DemoButton
+                  onClick={() => {
+                    go('home')
+                    onStart?.()
+                  }}
+                >
                   <Fingerprint size={21} />
                   Continue with passkey
                   <ArrowRight size={18} />

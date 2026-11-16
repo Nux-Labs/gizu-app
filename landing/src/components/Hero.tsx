@@ -5,7 +5,8 @@ import PhoneFrame from './PhoneFrame'
 import EarlyAccessButton from './EarlyAccessButton'
 import type { AccessPlatform, AccessSource } from '../services/earlyAccess'
 import MobileDemo from './demo/MobileDemo'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { scrollToPosition } from '../smoothScroll'
 
 // Platform marks (Apple from Simple Icons, CC0). Not the official store badges:
 // those may only be used once Gizu is listed on the App Store / Google Play.
@@ -33,6 +34,7 @@ const PLATFORMS = [
 
 export default function Hero({ paused = false, onEarlyAccess }: { paused?: boolean; onEarlyAccess: (source: AccessSource, platform?: AccessPlatform) => void }) {
   const [revealed, setRevealed] = useState(false)
+  const phone = useRef<HTMLDivElement>(null)
   return (
     <section id="top" className="relative flex min-h-[100svh] flex-col justify-center pt-28">
       <div className="pointer-events-none absolute inset-0">
@@ -97,12 +99,13 @@ export default function Hero({ paused = false, onEarlyAccess }: { paused?: boole
         </div>
 
         <motion.div
+          ref={phone}
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.9, delay: 0.4, ease: [0.22, 1, 0.36, 1] }}
           className="mx-auto w-full max-w-[320px] sm:max-w-[340px] lg:mx-0 lg:w-[340px] lg:self-start"
         >
-          <PhoneFrame alt="Interactive Gizu mobile app demo"><MobileDemo /></PhoneFrame>
+          <PhoneFrame alt="Interactive Gizu mobile app demo"><MobileDemo onStart={() => { if (phone.current && window.innerWidth < 1024) scrollToPosition(phone.current, -100) }} /></PhoneFrame>
         </motion.div>
       </div>
 

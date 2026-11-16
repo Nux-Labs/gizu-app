@@ -129,3 +129,55 @@ Pre-existing local changes to `mobile/src/development/PreviewDebugApp.tsx`, its
 design previews and social videos are outside these commits. The development
 preview test still expects the committed component gallery; a locally substituted
 design preview can fail that expectation independently of production UI changes.
+
+## Landing product demo and waitlist revision
+
+The pulled landing layout now contains an interactive browser implementation of
+the mobile UI inside the hero phone. Portfolio, investment review/approval,
+swap, receive/send, activity, balance privacy and restart flows use local sample
+data. No wallet, passkey or blockchain operation is performed. The gallery images
+are captures of this demo adapted from native source, not native device captures.
+See `landing/docs/DEMO.md` for provenance and capture routes.
+
+Process cards 2/3/4 use text-appropriate Imagegen artwork, delivered as three WebP
+assets totaling about 70 KB. Images were checked to stay above card copy. Prompts
+are recorded in `landing/docs/ARTWORK.md`. The extra hero captions and footer's
+How it works link are removed. The network section uses large horizontal logo/name
+tracks driven in opposite directions by vertical scroll, without pinning. Reduced
+motion displays each of the six names once in a wrapping layout.
+
+The shared early-access modal validates email/consent, selects platform and only
+confirms a signup after the configured service returns `status: registered`.
+The Supabase connection is intentionally not configured; an environment example,
+SQL reference schema, HTTP contract and build-variable wiring are provided in
+`landing/docs/EARLY_ACCESS.md`. No emails are stored in browser storage.
+
+Validation for this revision:
+
+- Nine landing tests and the production build passed. The resulting multi-page
+  bundle includes both the landing and standalone demo.
+- Release packaging and checksum validation passed for all 30 output files,
+  including the standalone demo, three gallery captures and three art assets.
+- Browser checks passed at 320, 390, 768, 1280 and 1440 px without horizontal
+  document overflow. The 320 px modal scrolls within the viewport; email input is
+  16 px, Escape dismisses it and focus returns to the trigger.
+- A full demo investment conserved portfolio value and changed its holdings.
+  Swap, receive/send, overspending, balance privacy and reset/navigation states
+  were exercised. Gallery images loaded successfully.
+- On mobile, the welcome screen allows the page to scroll until the phone is
+  reachable. Starting the demo aligns the phone below navigation. Once inside,
+  scrolling the Earn list moved it by 250 px without moving the page. Protocol
+  filtering, empty search recovery and restart restored the initial demo balance.
+  The live canvas and device screen have matching dimensions without a blank strip.
+- A local mock HTTP service (no external persistence) verified pending/disabled
+  submission, one request despite pressing Enter again, success, 429 and 503
+  errors, retained input and retry. The unconfigured service never reports success.
+- Modal entrance uses compositor-friendly opacity/transform CSS over 340 ms;
+  eight intermediate opacity values were observed. Closing animates for 220 ms.
+  The hero canvas pauses while the modal is open. Reduced motion bypasses motion.
+- Network tracks moved in opposite directions on scroll; desktop names render
+  at 56 px and mobile at 30 px. Reduced motion clears track transforms and hides
+  duplicate decorative names.
+- Eight of nine existing deployment tests passed locally. The symlink-rejection
+  test cannot create its symlink on this Windows account (`EPERM`); it runs on
+  Linux in CI. No deployment implementation was changed.
