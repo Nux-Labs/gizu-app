@@ -158,11 +158,11 @@ test("mainnet deposit keeps the explicit USDC receiving address", async () => {
   expect(clipboard.copy).toHaveBeenCalledWith(address);
 });
 
-test("USDC withdrawal never calls the testnet transfer signer", async () => {
+test("mainnet Home has no Send action and never calls the testnet transfer signer", async () => {
   const { transfers } = setup();
   await open();
-  await userEvent.press(await screen.findByRole("button", { name: "Send" }));
-  expect(await screen.findByText(/Sending USDC directly is not available yet/)).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Add funds" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
   expect(transfers.send).not.toHaveBeenCalled();
   expect(transfers.history).not.toHaveBeenCalled();
 });
