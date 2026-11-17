@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { normalizeEmail, requestEarlyAccess } from '../src/services/earlyAccess.ts'
 
 const input = { email: '  HELLO@example.com  ', consent: true, platform: 'ios', source: 'landing-hero' }
-const config = { endpoint: 'https://project.supabase.co/functions/v1/early-access', publishableKey: 'public-key' }
+const config = { endpoint: 'https://api.gizu.io/v1/early-access' }
 
 test('normalizes the email and sends only the agreed signup fields', async () => {
   let request
@@ -14,8 +14,8 @@ test('normalizes the email and sends only the agreed signup fields', async () =>
   assert.equal(normalizeEmail(input.email), 'hello@example.com')
   assert.equal(request.url, config.endpoint)
   assert.equal(request.method, 'POST')
-  assert.equal(request.headers.apikey, 'public-key')
-  assert.deepEqual(JSON.parse(request.body), { email: 'hello@example.com', consent: true, platform: 'ios', source: 'landing-hero', consentVersion: '2026-11-16' })
+  assert.deepEqual(request.headers, { 'Content-Type': 'application/json' })
+  assert.deepEqual(JSON.parse(request.body), { email: 'hello@example.com', consent: true, platform: 'ios', source: 'landing-hero', consentVersion: '2026-11-17' })
 })
 test('rejects invalid email, absent consent and missing endpoint before networking', async () => {
   let called = false

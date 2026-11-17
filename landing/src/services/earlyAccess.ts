@@ -1,12 +1,12 @@
-export type AccessPlatform = 'ios' | 'android' | 'both'
+export type AccessPlatform = 'ios' | 'android'
 export type AccessSource =
   'landing-hero' | 'landing-footer' | 'landing-ios' | 'landing-android'
-export type AccessRequest = { platform: AccessPlatform; source: AccessSource }
+export type AccessRequest = { platform?: AccessPlatform; source: AccessSource }
 export type EarlyAccessInput = AccessRequest & {
   email: string
   consent: boolean
 }
-export type EarlyAccessConfig = { endpoint?: string; publishableKey?: string }
+export type EarlyAccessConfig = { endpoint?: string }
 
 export function normalizeEmail(email: string) {
   return email.trim().toLowerCase()
@@ -15,7 +15,7 @@ export function validEmail(email: string) {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
 
-/** A Supabase Edge Function (or equivalent server) owns validation and persistence. */
+/** The Gizu API owns validation and persistence. */
 export async function requestEarlyAccess(
   input: EarlyAccessInput,
   config: EarlyAccessConfig,
@@ -41,15 +41,14 @@ export async function requestEarlyAccess(
     response = await send(config.endpoint.trim(), {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        ...(config.publishableKey ? { apikey: config.publishableKey } : {})
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         email,
         platform: input.platform,
         source: input.source,
         consent: true,
-        consentVersion: '2026-11-16'
+        consentVersion: '2026-11-17'
       }),
       signal: requestSignal
     })

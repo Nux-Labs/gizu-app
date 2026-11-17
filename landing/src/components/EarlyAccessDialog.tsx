@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight, Check, LoaderCircle, X } from 'lucide-react'
 import {
   requestEarlyAccess,
-  type AccessPlatform,
   type AccessRequest
 } from '../services/earlyAccess'
 import { setScrollPaused } from '../smoothScroll'
@@ -18,7 +17,9 @@ export default function EarlyAccessDialog({
   const dialog = useRef<HTMLDialogElement>(null)
   const submission = useRef<AbortController | null>(null)
   const [email, setEmail] = useState('')
-  const [platform, setPlatform] = useState<AccessPlatform>(request.platform)
+  const platform = request.platform
+  const platformName = platform === 'ios' ? 'iOS' : 'Android'
+  const isInvite = Boolean(platform)
   const [consent, setConsent] = useState(false)
   const [pending, setPending] = useState(false)
   const [sent, setSent] = useState(false)
@@ -55,8 +56,7 @@ export default function EarlyAccessDialog({
       await requestEarlyAccess(
         { email, platform, consent, source: request.source },
         {
-          endpoint: import.meta.env.VITE_EARLY_ACCESS_ENDPOINT,
-          publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+          endpoint: import.meta.env.VITE_EARLY_ACCESS_ENDPOINT?.trim() || (import.meta.env.DEV ? 'http://127.0.0.1:3000/v1/early-access' : 'https://api.gizu.io/v1/early-access')
         },
         controller.signal
       )
@@ -104,15 +104,15 @@ export default function EarlyAccessDialog({
           id="access-title"
           className="pr-8 text-[32px] font-medium leading-tight tracking-[-0.04em]"
         >
-          {sent ? 'You are on the list.' : 'Your invitation starts here.'}
+          {sent ? (isInvite ? 'Invitation requested.' : 'You’re on the waitlist.') : (isInvite ? `Try Gizu on ${platformName}` : 'Join the Gizu waitlist')}
         </h2>
         <p
           id="access-description"
           className="mt-3 text-[15px] leading-relaxed text-white/50"
         >
           {sent
-            ? 'We will email you when access is available for your platform.'
-            : 'Leave your email and be among the first to try Gizu.'}
+            ? (isInvite ? `We will email you when your ${platformName} invitation is available.` : 'We will email you when Gizu is ready for you.')
+            : (isInvite ? `Leave your email to request a ${platformName} app invitation.` : 'Leave your email to hear when Gizu launches.')}
         </p>
         {sent ? (
           <div className="mt-8">
@@ -121,14 +121,14 @@ export default function EarlyAccessDialog({
               role="status"
             >
               <Check size={20} />
-              Invitation requested
+              {isInvite ? 'Invitation requested' : 'Added to the waitlist'}
             </div>
             <button
               type="button"
               onClick={onClose}
               className="early-access-button w-full justify-center"
             >
-              Back to Gizu
+              <span>Back to Gizu</span>
               <ArrowRight size={17} />
             </button>
           </div>
@@ -158,35 +158,6 @@ export default function EarlyAccessDialog({
                 className="access-input mt-2"
               />
             </div>
-            <fieldset disabled={pending}>
-              <legend className="mb-3 text-sm font-medium">
-                Where will you use Gizu?
-              </legend>
-              <div className="grid grid-cols-3 gap-2">
-                {(
-                  [
-                    ['ios', 'iOS'],
-                    ['android', 'Android'],
-                    ['both', 'Both']
-                  ] as const
-                ).map(([value, label]) => (
-                  <label
-                    key={value}
-                    className={`access-platform ${platform === value ? 'is-selected' : ''}`}
-                  >
-                    <input
-                      type="radio"
-                      name="platform"
-                      value={value}
-                      checked={platform === value}
-                      onChange={() => setPlatform(value)}
-                      className="sr-only"
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
             <label className="flex cursor-pointer items-start gap-3 text-[13px] leading-relaxed text-white/50">
               <input
                 type="checkbox"
@@ -197,8 +168,7 @@ export default function EarlyAccessDialog({
                 className="mt-0.5 h-5 w-5 shrink-0 accent-[#7ce8f2]"
               />
               <span>
-                Email me my invitation and Gizu access updates. I can
-                unsubscribe anytime.
+                {isInvite ? 'Email me my app invitation and Gizu access updates.' : 'Email me Gizu launch and waitlist updates.'}
               </span>
             </label>
             {error && (
@@ -215,7 +185,7 @@ export default function EarlyAccessDialog({
               disabled={pending}
               className="early-access-button w-full justify-between disabled:cursor-wait disabled:opacity-60"
             >
-              {pending ? 'Requesting invitation' : 'Join the early access list'}
+              <span>{pending ? (isInvite ? 'Requesting invitation' : 'Joining waitlist') : (isInvite ? 'Request app invitation' : 'Join waitlist')}</span>
               {pending ? (
                 <LoaderCircle
                   size={18}

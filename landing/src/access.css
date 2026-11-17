@@ -14,6 +14,10 @@
     background 0.2s,
     border-color 0.2s;
 }
+/* Optical alignment for Helvetica Neue LT's visible letterforms. */
+.early-access-button > span {
+  transform: translateY(2px);
+}
 .early-access-button:hover {
   background: #ddf7f8;
   border-color: #ddf7f8;

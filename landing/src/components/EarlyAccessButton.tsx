@@ -7,7 +7,7 @@ export default function EarlyAccessButton({
 }) {
   return (
     <button type="button" onClick={onClick} className="early-access-button">
-      <span>Get early access</span>
+      <span>Join waitlist</span>
       <ArrowUpRight size={18} aria-hidden="true" />
     </button>
   )

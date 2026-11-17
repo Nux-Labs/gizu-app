@@ -1,67 +1,77 @@
-# Early access handoff
+# Early access signup
 
-The landing form is ready for a Supabase Edge Function. No database, project or
-live connection is provisioned by this change. Email addresses are not stored
-in browser storage. An unset endpoint displays an honest retry message, never
-a simulated successful registration.
+The Join waitlist dialog collects email and consent without a device selector.
+The iOS and Android buttons open app-invitation dialogs with the clicked platform
+fixed; there is no Both option. These requests are distinguished by source
+(landing-hero/footer for waitlist, landing-ios/android for invitations).
 
-## Connect
+The existing Gizu dialog sends email, optional platform, source, consent and consentVersion
+(`2026-11-17`) to `POST /v1/early-access`. The API validates the complete landing
+payload and adds a server timestamp, `consentRecordedAt`. Older email-only and
+questionnaire clients remain supported; their records are not retroactively
+marked as consenting to landing updates.
 
-1. Create the table using `supabase/early_access.sql` in your Supabase project.
-2. Implement and deploy a server-side Edge Function with the contract below.
-3. Copy `.env.example` to `.env.local`. Set `VITE_EARLY_ACCESS_ENDPOINT` to
-   `https://<project>.supabase.co/functions/v1/early-access`.
-4. If your function gateway needs an `apikey`, set
-   `VITE_SUPABASE_PUBLISHABLE_KEY` to a **public/publishable** key. The client
-   sends this as `apikey`, not as an authenticated user's bearer token. Configure
-   the unauthenticated function's gateway/JWT verification accordingly.
-5. For the AWS workflow, set GitHub repository variables
-   `LANDING_EARLY_ACCESS_ENDPOINT` and, if used,
-   `LANDING_SUPABASE_PUBLISHABLE_KEY`. The build maps these to the public Vite
-   variables above. Trigger a new landing build after changing configuration.
+## Configuration
 
-Never put a service-role or secret key in a `VITE_` variable. The Edge Function
-owns database access. Anonymous clients have no direct table access.
+Development defaults to `http://127.0.0.1:3000/v1/early-access`; production defaults
+to `https://api.gizu.io/v1/early-access`. Override with `VITE_EARLY_ACCESS_ENDPOINT`
+in `.env.local`, or GitHub variable `LANDING_EARLY_ACCESS_ENDPOINT` for CI.
+No API key, Tally account or Supabase project is required. The development API
+allows localhost and 127.0.0.1 on ports 5173 and 5174; production does not.
 
-## HTTP contract
+For a signup-only local API without wallet/provider credentials, set
+`TEST_DATABASE_URL` to your local PostgreSQL database and run
+`npm --prefix backend run signups:dev`. It binds only to 127.0.0.1:3000 and
+uses the same route and storage adapter as production. Only local database
+hostnames are accepted. Run `npm --prefix landing run dev` for the UI.
 
-`POST` JSON:
+## Storage and behavior
 
-```json
-{
-  "email": "you@example.com",
-  "platform": "ios",
-  "source": "landing-hero",
-  "consent": true,
-  "consentVersion": "2026-11-16"
-}
+The existing `early_access_signups` table stores a unique normalized email,
+original creation time and JSON preferences. New landing metadata is merged
+into preferences, preserving existing questionnaire answers. The consent timestamp
+records the most recent explicit consent. No schema migration is needed.
+The application DB role still needs the existing schema/table creation permissions.
+
+Only successful persistence returns `{"status":"registered"}`. Duplicate emails
+return the same result. Errors remain retryable, and the UI never simulates a
+successful save. The existing per-process limiter allows ten attempts per minute
+per client IP. Production trusts one proxy hop: verify the actual network path
+before rollout; direct public access must not allow spoofed forwarded addresses.
+Multiple API instances each have their own limit. CORS is not bot protection.
+No signup emails or invitations are automatically sent. The UI does not claim
+an unsubscribe feature that has not been implemented.
+
+## Private CSV export
+
+From `backend/`, use a restricted operator database connection in `DATABASE_URL`
+(supply it through the approved secret environment, not a committed file):
+
+```sh
+npm run signups:export -- /private/tmp/gizu-signups.csv
 ```
 
-`platform`: `ios`, `android`, `both`.
-`source`: `landing-hero`, `landing-footer`, `landing-ios`, `landing-android`.
-Server validation must trim/lowercase the email, check its length/format,
-require consent and validate the enumerated fields. Do not trust client input.
-Upsert by normalized email so retries or repeated signups do not create duplicates.
-Return the same response for new and existing emails to avoid exposing membership.
+The output must not already exist. It is created with owner-only permissions.
+The command reads in bounded batches inside a consistent read-only transaction,
+includes consent/source/platform metadata, escapes CSV and neutralizes spreadsheet
+formulas. It prints only the count, never email addresses. Failed exports are
+removed. Keep CSVs out of Git and public folders and delete them after use.
+Legacy records have empty consent fields: do not treat these as new marketing
+consent. This is an operator command, not a public export endpoint.
 
-Only after persistence succeeds, return HTTP 200/201:
+## Verification and rollout
 
-```json
-{ "status": "registered" }
-```
+1. Run landing tests/build and backend typecheck, route/export tests.
+2. Set `TEST_DATABASE_URL` to a disposable PostgreSQL database and run
+   `backend/test/adapters/pg-early-access.test.ts` to verify persistence, duplicates,
+   consent metadata and preservation of older preferences. Tests create an isolated
+   schema inside a rolled-back transaction.
+3. Review desktop/mobile and keyboard behavior locally against the local API.
+4. Deploy the compatible API before the landing build; verify real production
+   database access and trusted proxy behavior. Confirm a controlled signup and its
+   CSV export, and verify both public landing origins.
+5. Keep the existing Tally form available until production verification passes.
+   Check its submissions before retiring it; do not silently lose or import them.
 
-Use HTTP 400 for invalid input, 429 for rate limits, 5xx for unavailable service.
-The frontend times out after 20 seconds and permits retry; account for uncertain
-responses with the unique email constraint. A cancelled browser request can still
-have been saved by the server. Do not log email bodies in application logs.
-
-Allow `OPTIONS` and `POST` from the actual landing origin (and explicitly
-configured local development origins). CORS must allow `Content-Type` and
-`apikey` when used. Add server-side rate limiting and any anti-abuse measures
-before opening the form publicly. No messages are sent by this frontend.
-
-## Verify
-
-Run `npm test` and `npm run build`. Exercise valid/invalid emails, consent,
-platform selection, duplicate signup, pending/double submission, backend failure,
-rate limits, Escape dismissal, keyboard focus restoration and mobile layout.
+Tally and Supabase configuration have been removed from the landing code/workflow.
+The external Tally form itself is not modified by these changes.

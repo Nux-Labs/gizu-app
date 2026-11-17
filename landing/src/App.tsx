@@ -16,7 +16,7 @@ import type { AccessPlatform, AccessRequest, AccessSource } from './services/ear
 export default function App() {
   const [intro, setIntro] = useState(shouldShowIntro)
   const [access, setAccess] = useState<AccessRequest | null>(null)
-  const openAccess = (source: AccessSource, platform: AccessPlatform = 'both') => setAccess({ source, platform })
+  const openAccess = (source: AccessSource, platform?: AccessPlatform) => setAccess({ source, platform })
   const content = useRef<HTMLDivElement>(null)
   const completeIntro = useCallback(() => setIntro(false), [])
   useScrollAnimations(content)
