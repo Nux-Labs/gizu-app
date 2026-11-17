@@ -4,10 +4,21 @@ import type { EarlyAccess } from "../../ports/early-access.port.ts";
 
 const signupSchema = z.object({
   email: z.string().trim().max(254).email().transform((email) => email.toLowerCase()),
+  platform: z.enum(["ios", "android", "both"]).optional(),
+  source: z.enum(["landing-hero", "landing-footer", "landing-ios", "landing-android"]).optional(),
+  consent: z.literal(true).optional(),
+  consentVersion: z.literal("2026-11-17").optional(),
   investmentRange: z.string().trim().max(100).optional(),
   platforms: z.array(z.string().trim().min(1).max(100)).max(10).optional(),
   otherPlatform: z.string().trim().max(500).optional(),
-}).strict();
+}).strict().refine((data) => {
+  const landing = [data.platform, data.source, data.consent, data.consentVersion];
+  if (landing.every((value) => value === undefined)) return true;
+  if (!data.source || !data.consent || !data.consentVersion) return false;
+  if (data.source === "landing-ios") return data.platform === "ios";
+  if (data.source === "landing-android") return data.platform === "android";
+  return true; // Waitlist signups need no device preference; older clients remain compatible.
+}, "Landing signups require source and consent; app invitations require the matching platform.");
 
 export function registerEarlyAccessRoutes(
   app: FastifyInstance,
@@ -18,6 +29,7 @@ export function registerEarlyAccessRoutes(
   if (development) {
     for (const host of ["localhost", "127.0.0.1"]) {
       origins.add(`http://${host}:5173`);
+      origins.add(`http://${host}:5174`);
     }
   }
 
@@ -65,7 +77,10 @@ export function registerEarlyAccessRoutes(
       return reply.code(400).send({ code: "VALIDATION_ERROR", message: "enter a valid email address" });
     }
     try {
-      await signups.add(signup.data);
+      await signups.add({
+        ...signup.data,
+        ...(signup.data.consent ? { consentRecordedAt: new Date().toISOString() } : {}),
+      });
       return reply.header("Cache-Control", "no-store").send({ status: "registered" });
     } catch {
       request.log.error({ code: "SIGNUP_UNAVAILABLE" }, "early access signup could not be saved");

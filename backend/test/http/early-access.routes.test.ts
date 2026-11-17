@@ -85,3 +85,78 @@ test("repeated signup attempts are rate limited", async () => {
   assert.ok(response.headers["retry-after"]);
   await app.close();
 });
+
+const landingSignup = {
+  email: "  Landing@Example.com ", platform: "ios", source: "landing-hero",
+  consent: true, consentVersion: "2026-11-17",
+};
+
+test("landing signup requires complete consent metadata and records server time", async () => {
+  const saved: unknown[] = [];
+  const app = Fastify();
+  registerEarlyAccessRoutes(app, { async add(signup) { saved.push(signup); } });
+  try {
+    for (const payload of [
+      { ...landingSignup, consent: false }, { ...landingSignup, consent: undefined },
+      { ...landingSignup, source: "unknown" }, { ...landingSignup, platform: "other" },
+      { ...landingSignup, consentVersion: "old" }, { ...landingSignup, consentRecordedAt: "forged" },
+    ]) {
+      assert.equal((await app.inject({ method: "POST", url: "/v1/early-access", payload })).statusCode, 400);
+    }
+    assert.equal(saved.length, 0);
+    const before = Date.now();
+    const result = await app.inject({ method: "POST", url: "/v1/early-access", payload: landingSignup });
+    assert.equal(result.statusCode, 200);
+    const signup = saved[0] as typeof landingSignup & { consentRecordedAt: string };
+    assert.equal(signup.email, "landing@example.com");
+    assert.ok(Date.parse(signup.consentRecordedAt) >= before);
+    assert.equal(signup.consentVersion, "2026-11-17");
+  } finally { await app.close(); }
+});
+
+test("landing local origin is allowed only in development", async () => {
+  for (const development of [true, false]) {
+    const app = Fastify();
+    registerEarlyAccessRoutes(app, { async add() {} }, development);
+    try {
+      for (const host of ["localhost", "127.0.0.1"]) {
+        const result = await app.inject({ method: "OPTIONS", url: "/v1/early-access", headers: { origin: `http://${host}:5174` } });
+        assert.equal(result.statusCode, development ? 204 : 403);
+      }
+    } finally { await app.close(); }
+  }
+});
+
+test("one trusted proxy hop keeps spoofed prefixes out of signup rate-limit keys", async () => {
+  const app = Fastify({ trustProxy: (_address, hop) => hop < 1 });
+  registerEarlyAccessRoutes(app, { async add() {} });
+  try {
+    for (let i = 0; i < 10; i++) {
+      const result = await app.inject({ method: "POST", url: "/v1/early-access", payload: { email: "test@example.com" }, headers: { "x-forwarded-for": `198.51.100.${i}, 203.0.113.10` } });
+      assert.equal(result.statusCode, 200);
+    }
+    const limited = await app.inject({ method: "POST", url: "/v1/early-access", payload: { email: "test@example.com" }, headers: { "x-forwarded-for": "198.51.100.99, 203.0.113.10" } });
+    assert.equal(limited.statusCode, 429);
+    const other = await app.inject({ method: "POST", url: "/v1/early-access", payload: { email: "test@example.com" }, headers: { "x-forwarded-for": "203.0.113.11" } });
+    assert.equal(other.statusCode, 200);
+  } finally { await app.close(); }
+});
+
+test("waitlist needs no platform and app invitation sources require their matching device", async () => {
+  const app = Fastify();
+  const saved: unknown[] = [];
+  registerEarlyAccessRoutes(app, { async add(signup) { saved.push(signup); } });
+  try {
+    const base = { email: "waitlist@example.com", consent: true, consentVersion: "2026-11-17" };
+    for (const source of ["landing-hero", "landing-footer"]) {
+      assert.equal((await app.inject({ method: "POST", url: "/v1/early-access", payload: { ...base, source } })).statusCode, 200);
+    }
+    for (const platform of ["ios", "android"]) {
+      const source = `landing-${platform}`;
+      assert.equal((await app.inject({ method: "POST", url: "/v1/early-access", payload: { ...base, source, platform } })).statusCode, 200);
+      assert.equal((await app.inject({ method: "POST", url: "/v1/early-access", payload: { ...base, source } })).statusCode, 400);
+      assert.equal((await app.inject({ method: "POST", url: "/v1/early-access", payload: { ...base, source, platform: "both" } })).statusCode, 400);
+    }
+    assert.equal(saved.length, 4);
+  } finally { await app.close(); }
+});

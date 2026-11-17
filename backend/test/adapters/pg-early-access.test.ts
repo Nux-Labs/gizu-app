@@ -33,6 +33,17 @@ test("PostgreSQL retains one signup with its original timestamp and merged prefe
     assert.equal(after.rows.length, 1);
     assert.equal(after.rows[0].created_at.toISOString(), before.rows[0].created_at.toISOString());
     assert.deepEqual(after.rows[0].preferences, { investmentRange: "Under $500", platforms: ["Aave"], otherPlatform: "Another app" });
+    const landing = { email: "TESTER@example.com", platform: "both", source: "landing-footer", consent: true, consentVersion: "2026-11-17" };
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await app.inject({ method: "POST", url: "/v1/early-access", payload: landing })).statusCode, 200);
+    }
+    const final = await client.query("select * from early_access_signups");
+    assert.equal(final.rows.length, 1);
+    assert.equal(final.rows[0].preferences.platform, "both");
+    assert.equal(final.rows[0].preferences.consent, true);
+    assert.ok(Number.isFinite(Date.parse(final.rows[0].preferences.consentRecordedAt)));
+    assert.equal(final.rows[0].preferences.investmentRange, "Under $500");
+    assert.equal(final.rows[0].created_at.toISOString(), before.rows[0].created_at.toISOString());
   } finally {
     await app.close();
     await client.query("rollback");
