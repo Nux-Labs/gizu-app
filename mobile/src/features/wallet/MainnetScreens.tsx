@@ -1,10 +1,8 @@
 import { ActivityHistory } from "./ActivityHistory";
 import type { OwnedPortfolioAsset } from "@/domain/wallet/storedSigner";
-import { holdingAmount } from "@/domain/wallet/amounts";
-import { useCallback, useState, type ReactNode } from "react";
-import { Pressable, View } from "react-native";
-import { Bell, ChevronDown, ChevronUp } from "lucide-react-native";
-import colors from "@/theme/colors.json";
+import { useCallback, type ReactNode } from "react";
+import { View } from "react-native";
+import { Bell } from "lucide-react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import type {
   NativeStackScreenProps,
@@ -25,7 +23,6 @@ import { MascotHero } from "@/components/organisms/MascotHero";
 import { ErrorNotice } from "@/components/molecules/ErrorNotice";
 import { Notice } from "@/components/molecules/Notice";
 import { AccountAddress } from "@/features/account/AccountAddress";
-import { clipboardService } from "@/services/clipboard";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
 import { useSwapAssetSweep } from "@/features/swap/useSwapAssetSweep";
@@ -51,115 +48,6 @@ function usePortfolio() {
     }, [refresh]),
   );
   return wallet;
-}
-/** Home omits the loading line: pull-to-refresh and the balance skeleton already show progress. */
-function BalanceStatus({
-  showRefresh = true,
-  showLoading = true,
-}: {
-  showRefresh?: boolean;
-  showLoading?: boolean;
-}) {
-  const wallet = useMainnetWallet();
-  return (
-    <>
-      {showLoading && wallet.loading ? (
-        <Typography variant="micro" accessibilityLiveRegion="polite">
-          Updating your balance…
-        </Typography>
-      ) : null}
-      {wallet.snapshot?.stale && !wallet.error && !wallet.loading && (
-        <Typography variant="micro">Showing your last known balance.</Typography>
-      )}
-      {wallet.error || (!wallet.loading && wallet.snapshot?.balanceComplete === false) ? (
-        <ErrorNotice
-          kind="balance"
-          message="Couldn’t refresh your balance."
-          stale={!!wallet.snapshot}
-          actionLabel="Retry balance"
-          busy={wallet.loading}
-          onAction={() => void wallet.refresh()}
-        />
-      ) : null}
-      {showRefresh && !wallet.error && wallet.snapshot?.balanceComplete !== false && (
-        <Button
-          label="Refresh balance"
-          variant="quiet"
-          disabled={wallet.loading}
-          onPress={() => void wallet.refresh()}
-        />
-      )}
-    </>
-  );
-}
-function WalletDetails() {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <View className="gap-3">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Wallet details"
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((value) => !value)}
-        className="min-h-11 flex-row items-center justify-between gap-3"
-      >
-        <Typography variant="caption">Wallet details</Typography>
-        {expanded ? (
-          <ChevronUp size={18} color={colors.text} />
-        ) : (
-          <ChevronDown size={18} color={colors.text} />
-        )}
-      </Pressable>
-      {expanded && <ReceivingAccounts />}
-    </View>
-  );
-}
-
-function ReceivingAccounts() {
-  const { snapshot, loading } = useMainnetWallet();
-  const [message, setMessage] = useState("");
-  return (
-    <View className="gap-3">
-      <Typography variant="section">USDC accounts</Typography>
-      <Typography variant="micro">
-        All these wallets count toward your USDC balance. Funds stay in their respective wallets.
-      </Typography>
-      {snapshot?.accounts.map((account) => (
-        <Surface key={account.address}>
-          <View className="gap-2 p-5">
-            <Typography variant="rowTitle">
-              {account.role === "funding" ? "Funding" : `Receiving account ${account.accountIndex}`}
-            </Typography>
-            <Typography>
-              {snapshot.balanceComplete === false
-                ? loading
-                  ? "Checking balance…"
-                  : "Balance unavailable. Refresh to retry."
-                : `${holdingAmount(account.balanceAtoms, 6)} USDC`}
-            </Typography>
-            <Typography variant="micro" selectable>
-              {account.address}
-            </Typography>
-            <Button
-              variant="quiet"
-              label={`Copy ${account.role === "funding" ? "funding" : `receiving ${account.accountIndex}`} address`}
-              onPress={() => {
-                void clipboardService.copy(account.address).then(
-                  () => setMessage("Address copied."),
-                  () => setMessage("Could not copy address."),
-                );
-              }}
-            />
-          </View>
-        </Surface>
-      ))}
-      {message ? (
-        <Typography accessibilityLiveRegion="polite" variant="micro">
-          {message}
-        </Typography>
-      ) : null}
-    </View>
-  );
 }
 
 const visible = (asset: OwnedPortfolioAsset) =>
@@ -364,7 +252,8 @@ export function MainnetPortfolioScreen({
   const actions = (
     <PortfolioActions
       onDeposit={() => root.navigate("Transaction", { kind: "deposit" })}
-      onWithdraw={() => root.navigate("Transaction", { kind: "withdraw" })}
+      onWithdraw={() => root.navigate("ConfidentialWithdrawal")}
+      withdrawLabel="Withdraw"
       onActivity={() => root.navigate("Activity")}
     />
   );
@@ -420,11 +309,6 @@ export function MainnetPortfolioScreen({
         />
       )}
       {/* Home Earn shortcut is temporarily hidden; the Earn flow remains available. */}
-      <Button
-        label="Withdraw from Gizu"
-        variant="secondary"
-        onPress={() => root.navigate("ConfidentialWithdrawal")}
-      />
       <OwnedBalances
         assets={assets}
         onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })}
@@ -450,7 +334,17 @@ export function MainnetPortfolioScreen({
 export function MainnetTransaction(
   props: NativeStackScreenProps<RootStackParamList, "Transaction">,
 ) {
-  return props.route.params.kind === "deposit" ? <MainnetAddFunds /> : <MainnetSend />;
+  return props.route.params.kind === "deposit" ? <MainnetAddFunds /> : <MainnetUnavailable />;
+}
+
+/** Mainnet has no direct send; a restored or stale route to one explains that and goes back. */
+function MainnetUnavailable() {
+  return (
+    <Screen>
+      <BackAction fallback="Home" />
+      <Notice message="This action isn’t available. Use Withdraw on Home to move private USDC." />
+    </Screen>
+  );
 }
 
 /** Add funds only shows where to send USDC; it does not read or refresh balances. */
@@ -463,22 +357,6 @@ function MainnetAddFunds() {
         Add funds
       </Typography>
       {session?.kind === "mainnet" ? <AddFunds address={session.address} /> : <AccountAddress />}
-    </Screen>
-  );
-}
-
-function MainnetSend() {
-  const wallet = usePortfolio();
-  return (
-    <Screen>
-      <BackAction fallback="Home" />
-      <Typography variant="title">Send</Typography>
-      <Notice message="Sending USDC directly is not available yet. Your funds remain in your wallets." />
-      <BalanceStatus />
-      {wallet.snapshot && wallet.snapshot.balanceComplete !== false ? (
-        <Typography>Total: {holdingAmount(wallet.snapshot.totalAtoms, 6)} USDC</Typography>
-      ) : null}
-      <WalletDetails />
     </Screen>
   );
 }

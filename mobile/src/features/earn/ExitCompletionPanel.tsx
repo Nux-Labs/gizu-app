@@ -138,7 +138,7 @@ export function ExitCompletionPanel({
       </Typography>
       <Typography variant="caption">
         {withdrawals.rows.length === 0
-          ? "Proceeds stay in your confidential USDC balance. Withdraw from Gizu separately to make a public payout."
+          ? "Proceeds stay in your confidential USDC balance. Use Withdraw on Home to make a public payout."
           : "New proceeds stay confidential. Previously authorized public withdrawals keep their saved destinations and must be reconciled."}
       </Typography>
       <Button

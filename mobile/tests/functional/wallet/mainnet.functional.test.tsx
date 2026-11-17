@@ -283,12 +283,11 @@ test("mainnet Home includes receiving USDC, Deposit uses funding address, Withdr
   expect(screen.queryByRole("button", { name: "Refresh balance" })).toBeNull();
 
   fireEvent.press(screen.getByRole("button", { name: "Back" }));
-  fireEvent.press(await screen.findByRole("button", { name: "Send" }));
-  expect(await screen.findByText(/Sending USDC directly is not available/)).toBeVisible();
-  expect(screen.queryByText("USDC accounts")).toBeNull();
-  fireEvent.press(screen.getByRole("button", { name: "Wallet details", expanded: false }));
-  expect(screen.getByText("USDC accounts")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Copy funding address" })).toBeVisible();
+  // Mainnet has no direct send: Home pairs Add funds with Withdraw.
+  expect(await screen.findByRole("button", { name: "Add funds" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Withdraw" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Withdraw from Gizu" })).toBeNull();
   expect(screen.queryByLabelText("Amount in MON")).toBeNull();
   expect(screen.queryByRole("button", { name: /Review send/ })).toBeNull();
   expect(transfers).not.toHaveBeenCalled();
@@ -326,7 +325,7 @@ test("Activity displays completed sale proceeds and no testnet transfer journal"
 });
 test("Home opens the separate confidential cashout route without starting a transfer", async () => {
   const { transfers } = await open();
-  fireEvent.press(screen.getByRole("button", { name: "Withdraw from Gizu" }));
+  fireEvent.press(screen.getByRole("button", { name: "Withdraw" }));
   await screen.findByRole("button", { name: "About public withdrawals" });
   expect(screen.queryByText(/Incoming and existing public USDC are not used/)).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "About public withdrawals" }));

@@ -33,20 +33,25 @@ function TransferButton({
   );
 }
 
-/** Frontend Home quick actions: glass Add funds / Send and a glass-soft activity tile. */
+/**
+ * Frontend Home quick actions: glass Add funds / outgoing action and a glass-soft activity tile.
+ * Testnet and demo send directly ("Send"); mainnet withdraws private USDC ("Withdraw").
+ */
 export function PortfolioActions({
   onDeposit,
   onWithdraw,
+  withdrawLabel = "Send",
   onActivity,
 }: {
   onDeposit: () => void;
   onWithdraw: () => void;
+  withdrawLabel?: "Send" | "Withdraw";
   onActivity: () => void;
 }) {
   return (
     <View className="flex-row gap-3">
       <TransferButton icon={Plus} label="Add funds" onPress={onDeposit} />
-      <TransferButton icon={ArrowUpRight} label="Send" onPress={onWithdraw} />
+      <TransferButton icon={ArrowUpRight} label={withdrawLabel} onPress={onWithdraw} />
       {/* Frontend: `glass-soft flex w-14 items-center justify-center rounded-2xl text-white/50`. */}
       <PressableScale
         accessibilityRole="button"
