@@ -87,7 +87,9 @@ export function awsStorage(env = process.env) {
   const bucket = env.LANDING_BUCKET;
   const distribution = env.LANDING_DISTRIBUTION_ID;
   const domain = env.LANDING_CLOUDFRONT_DOMAIN;
-  if (!/^gizu-landing-[0-9]{12}$/.test(bucket ?? '') || !/^[A-Z0-9]+$/.test(distribution ?? '') || !/^[a-z0-9]+\.cloudfront\.net$/.test(domain ?? '')) throw new Error('Invalid AWS landing configuration');
+  // Support both the planned bucket name and the existing Frankfurt bucket.
+  const bucketPattern = /^gizu-landing-(?:[0-9]{12}|tofu-[0-9]{12}-eu-central-1)$/;
+  if (!bucketPattern.test(bucket ?? '') || !/^[A-Z0-9]+$/.test(distribution ?? '') || !/^[a-z0-9]+\.cloudfront\.net$/.test(domain ?? '')) throw new Error('Invalid AWS landing configuration');
   function aws(args) {
     return execFileSync('aws', [...args, '--no-cli-pager'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   }

@@ -4,7 +4,20 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { packageRelease, loadBundle, deployRelease, archivedBundle, validateManifest } from '../release.mjs';
+import { packageRelease, loadBundle, deployRelease, archivedBundle, validateManifest, awsStorage } from '../release.mjs';
+
+test('AWS configuration accepts planned and existing landing buckets only', () => {
+  const env = {
+    LANDING_DISTRIBUTION_ID: 'E2LZJVH2IJQ30E',
+    LANDING_CLOUDFRONT_DOMAIN: 'dw0ey606085g5.cloudfront.net',
+  };
+  for (const bucket of ['gizu-landing-381673247521', 'gizu-landing-tofu-381673247521-eu-central-1']) {
+    assert.doesNotThrow(() => awsStorage({ ...env, LANDING_BUCKET: bucket }));
+  }
+  for (const bucket of [undefined, '', 'unrelated-bucket', 'gizu-landing-tofu-123-eu-central-1', 'gizu-landing-tofu-381673247521-eu-central-1/site']) {
+    assert.throws(() => awsStorage({ ...env, LANDING_BUCKET: bucket }), /Invalid AWS landing configuration/);
+  }
+});
 
 async function fixture(t, sha = 'a'.repeat(40)) {
   const root = await mkdtemp(join(tmpdir(), 'landing-test-'));
