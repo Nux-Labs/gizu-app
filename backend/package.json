@@ -16,7 +16,9 @@
     "test": "node --experimental-transform-types --test \"test/**/*.test.ts\" \"test/**/*.test.mjs\"",
     "gas:check": "node --experimental-transform-types scripts/gas-doctor.ts --offline",
     "gas:check:native": "node --experimental-transform-types scripts/gas-doctor.ts --offline --native",
-    "gas:doctor": "node --experimental-transform-types scripts/gas-doctor.ts"
+    "gas:doctor": "node --experimental-transform-types scripts/gas-doctor.ts",
+    "signups:export": "node scripts/export-early-access.mjs",
+    "signups:dev": "node --experimental-transform-types scripts/early-access-dev.ts"
   },
   "dependencies": {
     "@1inch/fusion-sdk": "2.4.15",
