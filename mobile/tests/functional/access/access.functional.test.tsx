@@ -139,7 +139,7 @@ test("account actions open secondary pages and the selected capsule tab is acces
   renderApp();
   await signIn();
   expect(screen.getByRole("button", { name: "Home tab", selected: true })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Receive" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Add funds" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   expect(screen.getByRole("button", { name: /Notifications, \d+ unread/ })).toBeEnabled();
   expect(screen.queryByText(/Demo mode|No real funds/)).toBeNull();

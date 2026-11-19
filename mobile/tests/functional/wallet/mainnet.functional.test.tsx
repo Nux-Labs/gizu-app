@@ -274,22 +274,46 @@ test("mainnet Home includes receiving USDC, Deposit uses funding address, Withdr
   expect(screen.getByLabelText("3 USD")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Wallet details" })).toBeNull();
   expect(screen.queryByText(/testnet MON/)).toBeNull();
-  fireEvent.press(screen.getByRole("button", { name: "Receive" }));
+  fireEvent.press(screen.getByRole("button", { name: "Add funds" }));
   expect(
-    await screen.findByText("Funding address · Receive USDC on Monad mainnet only."),
+    await screen.findByRole("button", { name: "Network: Monad. Change network" }),
   ).toBeVisible();
-  expect(screen.getByLabelText(`Account address: ${funding}`)).toBeVisible();
-  expect(screen.queryByText("USDC accounts")).toBeNull();
-  fireEvent.press(screen.getByRole("button", { name: "Wallet details", expanded: false }));
-  expect(screen.getByText("USDC accounts")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Copy funding address" })).toBeVisible();
+  expect(screen.getByLabelText(`Wallet address: ${funding}`)).toBeVisible();
+  expect(screen.getByLabelText("QR code of your wallet address")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Refresh balance" })).toBeNull();
 
   fireEvent.press(screen.getByRole("button", { name: "Back" }));
-  fireEvent.press(await screen.findByRole("button", { name: "Send" }));
-  expect(await screen.findByText(/Sending USDC directly is not available/)).toBeVisible();
+  // Mainnet has no direct send: Home pairs Add funds with Withdraw.
+  expect(await screen.findByRole("button", { name: "Add funds" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Withdraw" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Withdraw from Gizu" })).toBeNull();
   expect(screen.queryByLabelText("Amount in MON")).toBeNull();
   expect(screen.queryByRole("button", { name: /Review send/ })).toBeNull();
   expect(transfers).not.toHaveBeenCalled();
+});
+
+test("Add funds lets the user pick the deposit network and keeps Monad as the only one", async () => {
+  await open();
+  fireEvent.press(screen.getByRole("button", { name: "Add funds" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Network: Monad. Change network" }));
+  expect(await screen.findByRole("header", { name: "Choose network" })).toBeVisible();
+  expect(screen.getByText("More networks are coming soon.")).toBeVisible();
+  const monad = screen.getByRole("radio", { name: "Monad, USDC" });
+  expect(monad).toBeChecked();
+  fireEvent.press(monad);
+  await waitFor(() => expect(screen.queryByRole("header", { name: "Choose network" })).toBeNull());
+  expect(screen.getByRole("button", { name: "Network: Monad. Change network" })).toBeVisible();
+});
+
+test("Add funds shows the address without reading balances", async () => {
+  const { read } = await open();
+  const before = read.mock.calls.length;
+  fireEvent.press(screen.getByRole("button", { name: "Add funds" }));
+  expect(await screen.findByLabelText(`Wallet address: ${funding}`)).toBeVisible();
+  expect(read).toHaveBeenCalledTimes(before);
+  expect(screen.queryByText(/Couldn’t refresh your balance/)).toBeNull();
+  expect(screen.queryByText(/Updating your balance/)).toBeNull();
 });
 
 test("Activity displays completed sale proceeds and no testnet transfer journal", async () => {
@@ -301,7 +325,7 @@ test("Activity displays completed sale proceeds and no testnet transfer journal"
 });
 test("Home opens the separate confidential cashout route without starting a transfer", async () => {
   const { transfers } = await open();
-  fireEvent.press(screen.getByRole("button", { name: "Withdraw from Gizu" }));
+  fireEvent.press(screen.getByRole("button", { name: "Withdraw" }));
   await screen.findByRole("button", { name: "About public withdrawals" });
   expect(screen.queryByText(/Incoming and existing public USDC are not used/)).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "About public withdrawals" }));

@@ -151,18 +151,18 @@ test("mainnet deposit keeps the explicit USDC receiving address", async () => {
   const { clipboard } = setup();
   await open();
   await screen.findByLabelText("19.990574 USD");
-  await userEvent.press(screen.getByRole("button", { name: "Receive" }));
-  expect(await screen.findByRole("header", { name: "Receive" })).toBeVisible();
-  expect(screen.getByText("Funding address · Receive USDC on Monad mainnet only.")).toBeVisible();
-  await userEvent.press(screen.getByRole("button", { name: "Copy account address" }));
+  await userEvent.press(screen.getByRole("button", { name: "Add funds" }));
+  expect(await screen.findByRole("header", { name: "Add funds" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Network: Monad. Change network" })).toBeVisible();
+  await userEvent.press(screen.getByRole("button", { name: "Copy address" }));
   expect(clipboard.copy).toHaveBeenCalledWith(address);
 });
 
-test("USDC withdrawal never calls the testnet transfer signer", async () => {
+test("mainnet Home has no Send action and never calls the testnet transfer signer", async () => {
   const { transfers } = setup();
   await open();
-  await userEvent.press(await screen.findByRole("button", { name: "Send" }));
-  expect(await screen.findByText(/Sending USDC directly is not available yet/)).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Add funds" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
   expect(transfers.send).not.toHaveBeenCalled();
   expect(transfers.history).not.toHaveBeenCalled();
 });
