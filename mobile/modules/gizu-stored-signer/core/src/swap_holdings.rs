@@ -1,4 +1,5 @@
 //! Public holdings arithmetic and owned batch selection; never accepts signing material.
+use crate::swap::pins::{ROBINHOOD_CHAIN_ID, target_chain};
 use crate::{SignerError, decode_portfolio_balance, portfolio_account_indices};
 use alloy_primitives::{U256, hex};
 use serde::Serialize;
@@ -90,6 +91,7 @@ struct Holding {
 }
 
 /// One ABI observation per selected account, in selected order. Null means no holdings.
+/// Robinhood Chain; kept for shells that do not pass a chain yet.
 #[uniffi::export]
 pub fn build_swap_holding(
     target_address: String,
@@ -98,6 +100,27 @@ pub fn build_swap_holding(
     symbol_abi: String,
     decimals_abi: String,
 ) -> Result<String, SignerError> {
+    build_swap_holding_on_chain(
+        ROBINHOOD_CHAIN_ID,
+        target_address,
+        indices,
+        balances,
+        symbol_abi,
+        decimals_abi,
+    )
+}
+
+/// `build_swap_holding` for a token on any chain a swap may hold stock on.
+#[uniffi::export]
+pub fn build_swap_holding_on_chain(
+    chain_id: u64,
+    target_address: String,
+    indices: Vec<u32>,
+    balances: Vec<String>,
+    symbol_abi: String,
+    decimals_abi: String,
+) -> Result<String, SignerError> {
+    target_chain(chain_id).ok_or(SignerError::InvalidInput)?;
     target(&target_address)?;
     if indices.len() != balances.len()
         || indices.len() > 8189
@@ -145,7 +168,7 @@ pub fn build_swap_holding(
     }
     serde_json::to_string(&Holding {
         token: target_address,
-        chain_id: 4663,
+        chain_id,
         symbol,
         decimals,
         balance_atoms: total.to_string(),
@@ -301,5 +324,45 @@ mod tests {
         .unwrap();
         assert_eq!(incomplete["balanceAtoms"], "2");
         assert_eq!(incomplete["batches"], serde_json::json!([]));
+    }
+    #[test]
+    fn holdings_carry_the_chain_they_were_read_on() {
+        let abi = |v: u64| format!("0x{v:064x}");
+        let symbol = format!(
+            "0x{:064x}{:064x}{}{}",
+            32,
+            5,
+            hex::encode("NVDAc"),
+            "0".repeat(54)
+        );
+        let on = |chain: u64| {
+            build_swap_holding_on_chain(
+                chain,
+                TOKEN.into(),
+                vec![3, 4, 5],
+                vec![abi(1), abi(2), abi(3)],
+                symbol.clone(),
+                abi(18),
+            )
+        };
+        let base: serde_json::Value = serde_json::from_str(&on(8453).unwrap()).unwrap();
+        assert_eq!(base["chainId"], 8453);
+        assert_eq!(base["balanceAtoms"], "6");
+        let legacy: serde_json::Value = serde_json::from_str(
+            &build_swap_holding(
+                TOKEN.into(),
+                vec![3, 4, 5],
+                vec![abi(1), abi(2), abi(3)],
+                symbol.clone(),
+                abi(18),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(legacy["chainId"], 4663);
+        assert!(
+            on(1).is_err(),
+            "a chain no swap can hold stock on is refused"
+        );
     }
 }
