@@ -17,7 +17,7 @@ pub const ONEINCH_LOP: Address = address!("0x5A705DE8982235a7fa45bB83dCaCf03a211
 pub const FUSION_SETTLEMENT: Address = address!("0xb55ba9617dafae1236313c3cb7806439ceefbd13");
 
 /// Robinhood stock tokens a new buy may target, deepest USDG market first
-/// (`shared/swap-targets-v1.json`). Sell and recovery are not limited to this list.
+/// (`shared/swap-targets-v2.json`, chain 4663). Sell and recovery are not limited to this list.
 pub const ROBINHOOD_BUY_TARGETS: [Address; 25] = [
     address!("0xD5f3879160bc7c32ebb4dC785F8a4F505888de68"), // QQQ
     address!("0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC"), // NVDA

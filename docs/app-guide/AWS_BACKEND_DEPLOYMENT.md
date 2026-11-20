@@ -19,7 +19,7 @@ account and current settings before using them.
   AWS can use them. Local changes on another branch are not deployed.
 
 The Docker build context is the **repository root**, not `backend/`. Existing
-backend tests read `shared/gas-policy-v1.json` and `shared/swap-targets-v1.json`. The root `.dockerignore` allows
+backend tests read `shared/gas-policy-v1.json` and `shared/swap-targets-v2.json`. The root `.dockerignore` allows
 only build inputs and excludes local credentials and dependencies.
 
 ## Create the first image using CodeBuild

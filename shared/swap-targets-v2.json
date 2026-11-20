@@ -1,0 +1,733 @@
+{
+  "version": "gizu-swap-targets-v2",
+  "description": "Stock tokens a new buy may target, per chain, deepest market first. Each chain's list is measured with backend/scripts/measure-swap-targets.ts (1inch aggregator price impact against a 10-unit probe of the chain's settlement token). For every chain the native engine pins, the engine, the backend catalog and this file must list the same addresses in the same order.",
+  "chains": {
+    "4663": {
+      "name": "Robinhood Chain",
+      "settlementToken": {
+        "symbol": "USDG",
+        "address": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+        "decimals": 6
+      },
+      "issuer": "Robinhood",
+      "measuredAt": "2026-11-11",
+      "rule": "25 deepest USDG markets by 1inch buy impact at 25,000",
+      "targets": [
+        {
+          "symbol": "QQQ",
+          "address": "0xD5f3879160bc7c32ebb4dC785F8a4F505888de68",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 0
+          }
+        },
+        {
+          "symbol": "NVDA",
+          "address": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+          "impactBps": {
+            "1000": 0,
+            "5000": 1,
+            "25000": 2
+          }
+        },
+        {
+          "symbol": "SPCX",
+          "address": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+          "impactBps": {
+            "1000": 1,
+            "5000": 3,
+            "25000": 3
+          }
+        },
+        {
+          "symbol": "TSLA",
+          "address": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+          "impactBps": {
+            "1000": 3,
+            "5000": 0,
+            "25000": 5
+          }
+        },
+        {
+          "symbol": "META",
+          "address": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+          "impactBps": {
+            "1000": 2,
+            "5000": 3,
+            "25000": 7
+          }
+        },
+        {
+          "symbol": "USO",
+          "address": "0xa30FA36Db767ad9eD3f7a60fC79526fB4d56D344",
+          "impactBps": {
+            "1000": 9,
+            "5000": 1,
+            "25000": 8
+          }
+        },
+        {
+          "symbol": "MU",
+          "address": "0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD",
+          "impactBps": {
+            "1000": 0,
+            "5000": 3,
+            "25000": 9
+          }
+        },
+        {
+          "symbol": "GOOGL",
+          "address": "0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3",
+          "impactBps": {
+            "1000": 3,
+            "5000": 4,
+            "25000": 10
+          }
+        },
+        {
+          "symbol": "GLD",
+          "address": "0xC9a981FEE1F9DEc688bb123ccDeCc63D0deBFC4e",
+          "impactBps": {
+            "1000": 0,
+            "5000": 1,
+            "25000": 11
+          }
+        },
+        {
+          "symbol": "AAPL",
+          "address": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+          "impactBps": {
+            "1000": 9,
+            "5000": 6,
+            "25000": 11
+          }
+        },
+        {
+          "symbol": "SNDK",
+          "address": "0xB90A19fF0Af67f7779afF50A882A9CfF42446400",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 13
+          }
+        },
+        {
+          "symbol": "CRWV",
+          "address": "0x5f10A1C971B69e47e059e1dC91901B59b3fB49C3",
+          "impactBps": {
+            "1000": 0,
+            "5000": 1,
+            "25000": 24
+          }
+        },
+        {
+          "symbol": "SGOV",
+          "address": "0x92FD66527192E3e61d4DDd13322Aa222DE86F9B5",
+          "impactBps": {
+            "1000": 0,
+            "5000": 4,
+            "25000": 27
+          }
+        },
+        {
+          "symbol": "AMZN",
+          "address": "0x12f190a9F9d7D37a250758b26824B97CE941bF54",
+          "impactBps": {
+            "1000": 0,
+            "5000": 10,
+            "25000": 29
+          }
+        },
+        {
+          "symbol": "BE",
+          "address": "0x822CC93fFD030293E9842c30BBD678F530701867",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 33
+          }
+        },
+        {
+          "symbol": "AMAT",
+          "address": "0x36046893810a7E7fCE501229d57dc3FC8c8716d0",
+          "impactBps": {
+            "1000": 0,
+            "5000": 12,
+            "25000": 33
+          }
+        },
+        {
+          "symbol": "IBM",
+          "address": "0x980dcf6766FA79f5Cf0c4AAdb3ab477ff15a9619",
+          "impactBps": {
+            "1000": 0,
+            "5000": 1,
+            "25000": 34
+          }
+        },
+        {
+          "symbol": "MSFT",
+          "address": "0xe93237C50D904957Cf27E7B1133b510C669c2e74",
+          "impactBps": {
+            "1000": 0,
+            "5000": 1,
+            "25000": 35
+          }
+        },
+        {
+          "symbol": "SLV",
+          "address": "0x411eFb0E7f985935DAec3D4C3ebaEa0d0AD7D89f",
+          "impactBps": {
+            "1000": 0,
+            "5000": 2,
+            "25000": 35
+          }
+        },
+        {
+          "symbol": "LLY",
+          "address": "0x8005d266423c7ea827372c9c864491e5786600ea",
+          "impactBps": {
+            "1000": 0,
+            "5000": 2,
+            "25000": 38
+          }
+        },
+        {
+          "symbol": "RDDT",
+          "address": "0x05b37Fb53A299a1b874A619e1c4C404D52C36F4C",
+          "impactBps": {
+            "1000": 0,
+            "5000": 2,
+            "25000": 38
+          }
+        },
+        {
+          "symbol": "MRVL",
+          "address": "0x62fd0668e10D8B72339BE2DCF7643001688ff13B",
+          "impactBps": {
+            "1000": 0,
+            "5000": 11,
+            "25000": 38
+          }
+        },
+        {
+          "symbol": "TTWO",
+          "address": "0x5e81213613b6B86EaB4c6c50d718d34359459786",
+          "impactBps": {
+            "1000": 10,
+            "5000": 4,
+            "25000": 39
+          }
+        },
+        {
+          "symbol": "INTC",
+          "address": "0xc72b96e0E48ecd4DC75E1e45396e26300BC39681",
+          "impactBps": {
+            "1000": 4,
+            "5000": 6,
+            "25000": 39
+          }
+        },
+        {
+          "symbol": "AVGO",
+          "address": "0x156E175DD063a8cE274C50654eF40e0032b3fbcF",
+          "impactBps": {
+            "1000": 0,
+            "5000": 8,
+            "25000": 39
+          }
+        }
+      ]
+    },
+    "8453": {
+      "name": "Base",
+      "settlementToken": {
+        "symbol": "USDC",
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "decimals": 6
+      },
+      "issuer": "Coinbase",
+      "measuredAt": "2026-11-20",
+      "rule": "buy and sell impact at 25,000 USDC <= 100 bps against a 10 USDC probe",
+      "targets": [
+        {
+          "symbol": "GOOGLc",
+          "address": "0xb2000000000000000000002D0BA3164cc74f58B7",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 4
+          },
+          "sellImpactBps": {
+            "1000": 9,
+            "5000": 9,
+            "25000": 10
+          }
+        },
+        {
+          "symbol": "SPCXc",
+          "address": "0xb2000000000000000000007b9fcbd005511aCBd5",
+          "impactBps": {
+            "1000": 2,
+            "5000": 0,
+            "25000": 4
+          },
+          "sellImpactBps": {
+            "1000": 4,
+            "5000": 9,
+            "25000": 14
+          }
+        },
+        {
+          "symbol": "AAPLc",
+          "address": "0xb200000000000000000000C2e324d24d7eEcd1fb",
+          "impactBps": {
+            "1000": 0,
+            "5000": 2,
+            "25000": 5
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 2,
+            "25000": 5
+          }
+        },
+        {
+          "symbol": "AMZNc",
+          "address": "0xb200000000000000000000d9192b6B456483C2E8",
+          "impactBps": {
+            "1000": 4,
+            "5000": 5,
+            "25000": 8
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 3
+          }
+        },
+        {
+          "symbol": "NVDAc",
+          "address": "0xb20000000000000000000078ee7ce2fE4908108C",
+          "impactBps": {
+            "1000": 0,
+            "5000": 2,
+            "25000": 10
+          },
+          "sellImpactBps": {
+            "1000": 8,
+            "5000": 9,
+            "25000": 16
+          }
+        },
+        {
+          "symbol": "CRWVc",
+          "address": "0xB200000000000000000000F111184A74720787E6",
+          "impactBps": {
+            "1000": 1,
+            "5000": 5,
+            "25000": 10
+          },
+          "sellImpactBps": {
+            "1000": 6,
+            "5000": 32,
+            "25000": 67
+          }
+        },
+        {
+          "symbol": "METAc",
+          "address": "0xb2000000000000000000008bC8786B856E61707C",
+          "impactBps": {
+            "1000": 4,
+            "5000": 6,
+            "25000": 10
+          },
+          "sellImpactBps": {
+            "1000": 14,
+            "5000": 17,
+            "25000": 22
+          }
+        },
+        {
+          "symbol": "KOc",
+          "address": "0xb200000000000000000000ffef181DB6dC5ed6A3",
+          "impactBps": {
+            "1000": 1,
+            "5000": 5,
+            "25000": 17
+          },
+          "sellImpactBps": {
+            "1000": 2,
+            "5000": 10,
+            "25000": 24
+          }
+        },
+        {
+          "symbol": "BRK.Bc",
+          "address": "0xb20000000000000000000024170488e788CBbCb4",
+          "impactBps": {
+            "1000": 2,
+            "5000": 9,
+            "25000": 24
+          },
+          "sellImpactBps": {
+            "1000": 1,
+            "5000": 4,
+            "25000": 12
+          }
+        },
+        {
+          "symbol": "MCDc",
+          "address": "0xb200000000000000000000d2f4cf2f7DEBB244BB",
+          "impactBps": {
+            "1000": 2,
+            "5000": 9,
+            "25000": 24
+          },
+          "sellImpactBps": {
+            "1000": 2,
+            "5000": 9,
+            "25000": 24
+          }
+        },
+        {
+          "symbol": "ANTc",
+          "address": "0xb20000000000000000000016e38FD364d271Ba28",
+          "impactBps": {
+            "1000": 0,
+            "5000": 8,
+            "25000": 28
+          },
+          "sellImpactBps": {
+            "1000": 1,
+            "5000": 3,
+            "25000": 14
+          }
+        },
+        {
+          "symbol": "TSLAc",
+          "address": "0xb2000000000000000000001e800a7f5189430cD0",
+          "impactBps": {
+            "1000": 0,
+            "5000": 10,
+            "25000": 30
+          },
+          "sellImpactBps": {
+            "1000": 11,
+            "5000": 28,
+            "25000": 46
+          }
+        },
+        {
+          "symbol": "MSFTc",
+          "address": "0xB200000000000000000000Ab99cFa739E253872B",
+          "impactBps": {
+            "1000": 2,
+            "5000": 10,
+            "25000": 30
+          },
+          "sellImpactBps": {
+            "1000": 4,
+            "5000": 10,
+            "25000": 41
+          }
+        },
+        {
+          "symbol": "ORCLc",
+          "address": "0xb200000000000000000000347AFbA223D7B6b63C",
+          "impactBps": {
+            "1000": 1,
+            "5000": 19,
+            "25000": 36
+          },
+          "sellImpactBps": {
+            "1000": 4,
+            "5000": 29,
+            "25000": 83
+          }
+        },
+        {
+          "symbol": "HSAIc",
+          "address": "0xb200000000000000000000f3049F4aa834b23b64",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 47
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 62
+          }
+        },
+        {
+          "symbol": "LLYc",
+          "address": "0xB200000000000000000000f1a0F91e34892E4718",
+          "impactBps": {
+            "1000": 11,
+            "5000": 25,
+            "25000": 47
+          },
+          "sellImpactBps": {
+            "1000": 4,
+            "5000": 17,
+            "25000": 33
+          }
+        },
+        {
+          "symbol": "AVGOc",
+          "address": "0xB200000000000000000000Fc737aeA6196aB5a4c",
+          "impactBps": {
+            "1000": 31,
+            "5000": 41,
+            "25000": 48
+          },
+          "sellImpactBps": {
+            "1000": 53,
+            "5000": 71,
+            "25000": 80
+          }
+        },
+        {
+          "symbol": "BUDc",
+          "address": "0xB200000000000000000000c36ce081Dd09e86cA2",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 49
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 49
+          }
+        },
+        {
+          "symbol": "NVOc",
+          "address": "0xb2000000000000000000008D5328e9208773dC58",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 49
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 49
+          }
+        },
+        {
+          "symbol": "ULc",
+          "address": "0xB200000000000000000000349ef3Aa93a0897476",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 49
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 49
+          }
+        },
+        {
+          "symbol": "PDDc",
+          "address": "0xB200000000000000000000c8A7223510467D8563",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 50
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 46
+          }
+        },
+        {
+          "symbol": "SONYc",
+          "address": "0xb200000000000000000000a26326a922FFA87f6C",
+          "impactBps": {
+            "1000": 3,
+            "5000": 4,
+            "25000": 52
+          },
+          "sellImpactBps": {
+            "1000": 1,
+            "5000": 1,
+            "25000": 50
+          }
+        },
+        {
+          "symbol": "TTWOc",
+          "address": "0xB200000000000000000000f720C26062Bc3067Da",
+          "impactBps": {
+            "1000": 10,
+            "5000": 28,
+            "25000": 59
+          },
+          "sellImpactBps": {
+            "1000": 12,
+            "5000": 30,
+            "25000": 41
+          }
+        },
+        {
+          "symbol": "AMDc",
+          "address": "0xB2000000000000000000000d8Ce462E99ee7A47B",
+          "impactBps": {
+            "1000": 6,
+            "5000": 37,
+            "25000": 60
+          },
+          "sellImpactBps": {
+            "1000": 6,
+            "5000": 30,
+            "25000": 80
+          }
+        },
+        {
+          "symbol": "SAPc",
+          "address": "0xb200000000000000000000da6F64c306234127E0",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 65
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 49
+          }
+        },
+        {
+          "symbol": "MRNAc",
+          "address": "0xB200000000000000000000e215e9B76ecBA02468",
+          "impactBps": {
+            "1000": 52,
+            "5000": 58,
+            "25000": 65
+          },
+          "sellImpactBps": {
+            "1000": 65,
+            "5000": 74,
+            "25000": 81
+          }
+        },
+        {
+          "symbol": "INFYc",
+          "address": "0xb200000000000000000000F6b0417af5F52341FC",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 66
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 32
+          }
+        },
+        {
+          "symbol": "LIc",
+          "address": "0xb200000000000000000000D61eFD9F54A23ef9eB",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 69
+          },
+          "sellImpactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 29
+          }
+        },
+        {
+          "symbol": "NOKc",
+          "address": "0xB2000000000000000000005ac674f707E357409c",
+          "impactBps": {
+            "1000": 0,
+            "5000": 0,
+            "25000": 70
+          },
+          "sellImpactBps": {
+            "1000": 37,
+            "5000": 38,
+            "25000": 66
+          }
+        },
+        {
+          "symbol": "MSTRc",
+          "address": "0xb2000000000000000000004884b426556b92883d",
+          "impactBps": {
+            "1000": 45,
+            "5000": 49,
+            "25000": 71
+          },
+          "sellImpactBps": {
+            "1000": 4,
+            "5000": 9,
+            "25000": 30
+          }
+        },
+        {
+          "symbol": "MRVLc",
+          "address": "0xB200000000000000000000eC3c4c7395Cc609813",
+          "impactBps": {
+            "1000": 62,
+            "5000": 68,
+            "25000": 74
+          },
+          "sellImpactBps": {
+            "1000": 50,
+            "5000": 84,
+            "25000": 99
+          }
+        },
+        {
+          "symbol": "CRCLc",
+          "address": "0xB20000000000000000000019f6E7C675b73C2e4D",
+          "impactBps": {
+            "1000": 68,
+            "5000": 77,
+            "25000": 84
+          },
+          "sellImpactBps": {
+            "1000": 64,
+            "5000": 70,
+            "25000": 76
+          }
+        },
+        {
+          "symbol": "PLTRc",
+          "address": "0xb2000000000000000000007d16372840dF4dAbbe",
+          "impactBps": {
+            "1000": 13,
+            "5000": 58,
+            "25000": 85
+          },
+          "sellImpactBps": {
+            "1000": 21,
+            "5000": 46,
+            "25000": 57
+          }
+        },
+        {
+          "symbol": "HOODc",
+          "address": "0xb2000000000000000000006F944897540579D3f2",
+          "impactBps": {
+            "1000": 40,
+            "5000": 73,
+            "25000": 96
+          },
+          "sellImpactBps": {
+            "1000": 52,
+            "5000": 60,
+            "25000": 67
+          }
+        }
+      ]
+    }
+  }
+}
