@@ -25,12 +25,22 @@ Robinhood stocks in the `4663` list of [`shared/swap-targets-v2.json`](../../sha
 ranked by 1inch price impact at 25,000, 5,000 and 1,000 USDG. The Rust engine
 (`pins.rs`), the backend catalog (`swap-targets.ts`) and that list must hold the same
 addresses; tests in both languages compare them. The file also holds a measured `8453`
-(Base, Coinbase-issued, USDC) list that nothing executes yet; regenerate a chain's list
-with `npm --prefix backend run swap:measure -- --chain <id> [--write]`. Sell and recovery are not limited, so a
+(Base, Coinbase-issued, USDC) list; regenerate a chain's list with
+`npm --prefix backend run swap:measure -- --chain <id> [--write]`. Sell and recovery are not limited, so a
 holding stays sellable after its token leaves the list. The per-order liquidity check in
 Fusion preview still runs for every buy.
 The current execution path uses Monad USDC, confidential credit and Robinhood USDG
 as the intermediate asset for a Fusion token trade.
+
+A plan may name its target chain with `chainId`; a plan without one is Robinhood (4663).
+The engine resolves it to a pinned `TargetChain` (`pins.rs`) on start and on restore, and
+refuses any other chain. That record fixes the target RPC, the Aurora payout asset, the
+stablecoin, the permit and order EIP-712 domains, the LOP spender and the Fusion settlement
+contract, and the chain's own buy list. Base (8453) pays out USDC through Aurora's `base`
+asset and uses the canonical LOP v4 (`0x1111…0A65`) with settlement `0x2Ad5…1Ef5`. Robinhood
+gateway bodies stay byte-identical because the deployed gateway rejects unknown fields; a Base
+body adds `chainId` and, for a buy, the USDC source. The native shells do not pass a chain
+and the gateway does not accept one yet, so only Robinhood executes today.
 
 ## Ownership and authority
 
