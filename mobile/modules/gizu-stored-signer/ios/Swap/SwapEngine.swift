@@ -22,10 +22,12 @@ internal final class StoredSwapEngine {
     self.gateway = gateway
   }
 
-  func start(record: WalletRecord, target: String, amountAtoms: String?, payout: Bool = false)
-    throws
-  {
+  func start(
+    record: WalletRecord, target: String, amountAtoms: String?, payout: Bool = false,
+    chainId: UInt64 = SwapChain.robinhood.rawValue
+  ) throws {
     try require(record.verified && record.id == saved.walletId && operation == nil)
+    try require(SwapChain(rawValue: chainId) != nil)
     if let existing = try saved.load(), let state = existing["state"] as? String {
       let previous = try SwapOperation.restore(state: state, gateway: gateway)
       let phase = try statusObject(previous.publicStatus())["phase"] as? String
@@ -52,7 +54,7 @@ internal final class StoredSwapEngine {
     try storage.persistRegistry(reserved.registry, expectedId: record.id)
     var plan: [String: Any] = [
       "kind": payout ? "confidentialPayout" : "confidentialSwap", "target": target,
-      "recipientIndices": reserved.indices.map { Int($0) },
+      "chainId": chainId, "recipientIndices": reserved.indices.map { Int($0) },
     ]
     if let legs { plan["weights"] = legs.weights.map { Int($0) } }
     if let amountAtoms { plan["amountAtoms"] = amountAtoms }
@@ -76,10 +78,13 @@ internal final class StoredSwapEngine {
     }
     let target: String
     let holders: [UInt32]
+    let chainId: UInt64
     if let holdingId {
+      // A holding ID names its token; the ledger knows which chain that token lives on.
+      chainId = try saved.portfolio.chainOf(String(holdingId.prefix { $0 != ":" }))
       let selected = try selectSwapHolding(
         id: holdingId, registry: record.roleRegistry, excluded: SwapHoldings.excluded(record),
-        tracked: saved.portfolio.targets())
+        tracked: saved.portfolio.targets(chainId: chainId))
       target = selected.target
       holders = selected.indices
     } else {
@@ -91,9 +96,10 @@ internal final class StoredSwapEngine {
       else { throw WalletFailure.invalid }
       let previous = try SwapOperation.restore(state: state, gateway: gateway)
       try require(try swapObject(previous.publicStatus())["phase"] as? String == "COMPLETE")
+      chainId = try SwapPortfolioStore.chainId(plan["chainId"])
       let selected = try selectSwapHolding(
         id: "\(token.lowercased()):all", registry: record.roleRegistry,
-        excluded: SwapHoldings.excluded(record), tracked: saved.portfolio.targets())
+        excluded: SwapHoldings.excluded(record), tracked: saved.portfolio.targets(chainId: chainId))
       target = selected.target
       holders = selected.indices
     }
@@ -103,7 +109,7 @@ internal final class StoredSwapEngine {
       // Private sales need no new public receiving accounts.
       next = [
         "kind": "confidentialSell", "completionTarget": "confidential", "target": target,
-        "holderIndices": holders, "recipientIndices": holders,
+        "chainId": chainId, "holderIndices": holders, "recipientIndices": holders,
       ]
     } else {
       let owned = Set(
@@ -123,8 +129,8 @@ internal final class StoredSwapEngine {
       }
       try storage.persistRegistry(reserved.registry, expectedId: record.id)
       next = [
-        "kind": "confidentialSell", "target": target, "holderIndices": holders,
-        "recipientIndices": reserved.indices,
+        "kind": "confidentialSell", "target": target, "chainId": chainId,
+        "holderIndices": holders, "recipientIndices": reserved.indices,
       ]
       if Self.randomLegs {
         next["legsRandom"] = try randomBytes(32).map { String(format: "%02x", $0) }.joined()
@@ -138,8 +144,11 @@ internal final class StoredSwapEngine {
     try persist()
   }
 
-  func startRecovery(record: WalletRecord, target: String) throws {
+  func startRecovery(
+    record: WalletRecord, target: String, chainId: UInt64 = SwapChain.robinhood.rawValue
+  ) throws {
     try require(record.verified && record.id == saved.walletId && operation == nil)
+    try require(SwapChain(rawValue: chainId) != nil)
     try SwapPortfolioStore.validateTarget(target.lowercased())
     if let root = try saved.load(), let state = root["state"] as? String {
       let previous = try SwapOperation.restore(state: state, gateway: gateway)
@@ -157,7 +166,7 @@ internal final class StoredSwapEngine {
     try require(end >= 6 && end <= 8192)
     let plan: [String: Any] = [
       "kind": "confidentialRecovery", "target": target,
-      "recipientIndices": [3, 4, 5], "scanTo": end,
+      "chainId": chainId, "recipientIndices": [3, 4, 5], "scanTo": end,
     ]
     fundingAddress = try deriveAccountAddressRange(entropy: record.entropy, start: 1, count: 1)
       .first

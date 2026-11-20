@@ -279,17 +279,19 @@ public final class GizuStoredSignerModule: Module {
         try await MainnetPortfolio(rpc: NativeMainnetPortfolioRPC()).read(store: scope.store)
       }
     }
+    // `chainId` names the chain the target trades on. JS omits it for Robinhood, so builds on
+    // either side of the Base change stay compatible.
     AsyncFunction("startSwap") {
-      (target: String, amountAtoms: String, gateway: String, promise: Promise) in
+      (target: String, amountAtoms: String, gateway: String, chainId: Int?, promise: Promise) in
       self.run(promise, operation: "startSwap", timeout: 900_000_000_000) {
         try await $0.startSwap(
-          target: target, amountAtoms: amountAtoms.isEmpty ? nil : amountAtoms, gateway: gateway)
+          target: target, amountAtoms: amountAtoms.isEmpty ? nil : amountAtoms, gateway: gateway,
+          chainId: UInt64(clamping: chainId ?? 4663))
       }
     }
-    AsyncFunction("getSwapHoldings") { (target: String, promise: Promise) in
+    AsyncFunction("getSwapHoldings") { (target: String, chainId: Int?, promise: Promise) in
       self.run(promise, operation: "getSwapHoldings") { scope in
-        try await SwapHoldings(rpc: NativeMainnetPortfolioRPC(network: .robinhood))
-          .read(store: scope.store, target: target)
+        try await SwapHoldings.readAll(store: scope.store, target: target, chainId: UInt64(clamping: chainId ?? 4663))
       }
     }
     AsyncFunction("sellSwapHolding") { (id: String, gateway: String, promise: Promise) in
@@ -297,14 +299,16 @@ public final class GizuStoredSignerModule: Module {
         try await $0.sellSwapHolding(id: id, gateway: gateway)
       }
     }
-    AsyncFunction("startRecovery") { (target: String, gateway: String, promise: Promise) in
+    AsyncFunction("startRecovery") {
+      (target: String, gateway: String, chainId: Int?, promise: Promise) in
       self.run(promise, operation: "startRecovery", timeout: 900_000_000_000) {
-        try await $0.startRecovery(target: target, gateway: gateway)
+        try await $0.startRecovery(target: target, gateway: gateway, chainId: UInt64(clamping: chainId ?? 4663))
       }
     }
-    AsyncFunction("startPayout") { (target: String, gateway: String, promise: Promise) in
+    AsyncFunction("startPayout") {
+      (target: String, gateway: String, chainId: Int?, promise: Promise) in
       self.run(promise, operation: "startPayout", timeout: 900_000_000_000) {
-        try await $0.startPayout(target: target, gateway: gateway)
+        try await $0.startPayout(target: target, gateway: gateway, chainId: UInt64(clamping: chainId ?? 4663))
       }
     }
     AsyncFunction("startSell") { (gateway: String, promise: Promise) in

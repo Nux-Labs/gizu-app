@@ -1,6 +1,11 @@
 import { requireOptionalNativeModule } from "expo";
 import type { StoredWalletBridge } from "./storedAccess";
-import type { StoredSignerContract, StoredSignerCapabilities } from "@/domain/wallet/storedSigner";
+import {
+  ROBINHOOD_SWAP_CHAIN,
+  type StoredSignerContract,
+  type StoredSignerCapabilities,
+  type SwapChainId,
+} from "@/domain/wallet/storedSigner";
 import { AppState, Platform } from "react-native";
 import { NativeCallQueue } from "./nativeCallQueue";
 
@@ -158,6 +163,14 @@ async function checked(
     throw new WalletUnavailableError();
 }
 // Scheduling occurs at the native boundary so reads also coordinate with user actions.
+/**
+ * Native swap calls take the chain as an optional trailing argument. Robinhood omits it, so a JS
+ * bundle and a native build from either side of the Base change still agree on arity.
+ */
+function swapChainArgs(chainId?: SwapChainId): [] | [SwapChainId] {
+  return chainId === undefined || chainId === ROBINHOOD_SWAP_CHAIN ? [] : [chainId];
+}
+
 function readNative<T>(work: () => Promise<T>): Promise<T> {
   return work();
 }
@@ -315,9 +328,9 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
         return native.getSwapDeposit();
       });
     },
-    async startSwap(target, amountAtoms, gateway) {
+    async startSwap(target, amountAtoms, gateway, chainId) {
       await checked(native, "swaps");
-      return native.startSwap(target, amountAtoms, gateway);
+      return native.startSwap(target, amountAtoms, gateway, ...swapChainArgs(chainId));
     },
     getMainnetPortfolio() {
       return readNative(async () => {
@@ -327,12 +340,12 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
         return native.getMainnetPortfolio();
       });
     },
-    getSwapHoldings(target) {
+    getSwapHoldings(target, chainId) {
       return readNative(async () => {
         await checked(native, "swaps");
         if (typeof native.getSwapHoldings !== "function")
           throw new Error("Token holdings need an updated native build.");
-        return native.getSwapHoldings(target);
+        return native.getSwapHoldings(target, ...swapChainArgs(chainId));
       });
     },
     ...(typeof native.sweepSwapAssets === "function"
@@ -357,17 +370,17 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
       await checked(native, "confidentialSaleProceeds");
       return native.startSell(gateway);
     },
-    async startPayout(target, gateway) {
+    async startPayout(target, gateway, chainId) {
       await checked(native, "swaps");
       if (typeof native.startPayout !== "function")
         throw new Error("Buying from the private balance is not available in this build.");
-      return native.startPayout(target, gateway);
+      return native.startPayout(target, gateway, ...swapChainArgs(chainId));
     },
-    async startRecovery(target, gateway) {
+    async startRecovery(target, gateway, chainId) {
       await checked(native, "swaps");
       if (typeof native.startRecovery !== "function")
         throw new Error("Swap recovery is not available in this build.");
-      return native.startRecovery(target, gateway);
+      return native.startRecovery(target, gateway, ...swapChainArgs(chainId));
     },
     async resumeSwap(gateway) {
       await checked(native, "swaps");

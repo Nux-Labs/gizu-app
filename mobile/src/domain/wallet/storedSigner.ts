@@ -94,9 +94,13 @@ export type StoredSwapView = {
   kind?: string;
 };
 
+/** Chains a swap may hold stock on: Robinhood Chain (USDG) and Base (USDC). */
+export type SwapChainId = 4663 | 8453;
+export const ROBINHOOD_SWAP_CHAIN: SwapChainId = 4663;
+
 export type SwapHolding = {
   token: string;
-  chainId: 4663;
+  chainId: SwapChainId;
   symbol: string;
   decimals: number;
   balanceAtoms: string;
@@ -105,7 +109,9 @@ export type SwapHolding = {
 export type SwapHoldingsSnapshot = {
   holdings: SwapHolding[];
   checkedAt: number;
+  /** Robinhood Chain head; `blocks` pins every chain read, keyed by chain id. */
   block: string;
+  blocks?: Record<string, string>;
 };
 /** `swept` is false when native skipped a chain checked within its schedule. */
 export type SwapAssetSweepResult = { swept: boolean; added: string[] };
@@ -237,8 +243,15 @@ export interface StoredSignerContract {
     operationId: string;
   }): Promise<unknown>;
   getSwapDeposit(): Promise<{ fundingAddress: string }>;
-  startSwap(target: string, amountAtoms: string, gateway: string): Promise<StoredSwapView>;
-  getSwapHoldings(target: string): Promise<SwapHoldingsSnapshot>;
+  /** `chainId` is the chain `target` trades on; omitted means Robinhood Chain. */
+  startSwap(
+    target: string,
+    amountAtoms: string,
+    gateway: string,
+    chainId?: SwapChainId,
+  ): Promise<StoredSwapView>;
+  /** Reads every chain the native ledger tracks; `target` on `chainId` is added to it. */
+  getSwapHoldings(target: string, chainId?: SwapChainId): Promise<SwapHoldingsSnapshot>;
   /**
    * Read-only recovery sweep: native checks the public catalogue `tokens` against the wallet's own
    * swap recipients on `chainId` and adds held tokens to its asset ledger. Android only for now.
@@ -247,9 +260,9 @@ export interface StoredSignerContract {
   sellSwapHolding(holdingId: string, gateway: string): Promise<StoredSwapView>;
   startSell(gateway: string): Promise<StoredSwapView>;
   /** Buy `target` with the private balance C already holds; nothing is sent from Monad. */
-  startPayout(target: string, gateway: string): Promise<StoredSwapView>;
-  /** Temporary: finish Fusion buys for allocated recipients still holding USDG. */
-  startRecovery(target: string, gateway: string): Promise<StoredSwapView>;
+  startPayout(target: string, gateway: string, chainId?: SwapChainId): Promise<StoredSwapView>;
+  /** Temporary: finish Fusion buys for allocated recipients still holding USDG or Base USDC. */
+  startRecovery(target: string, gateway: string, chainId?: SwapChainId): Promise<StoredSwapView>;
   resumeSwap(gateway: string): Promise<StoredSwapView>;
   getSwapStatus(gateway: string): Promise<StoredSwapView | { phase: "NONE" }>;
   cancelSwap(gateway: string): Promise<StoredSwapView>;

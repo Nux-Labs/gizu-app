@@ -16,10 +16,17 @@ internal object SwapChains {
   /** Multicall3 has the same address on every chain it is deployed to. */
   const val MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11"
   val ROBINHOOD = SwapChain(4663, "https://rpc.mainnet.chain.robinhood.com", MULTICALL3)
-  val all = listOf(ROBINHOOD)
+  val BASE = SwapChain(8453, "https://mainnet.base.org", MULTICALL3)
+  val all = listOf(ROBINHOOD, BASE)
 
   fun of(chainId: Long): SwapChain? = all.firstOrNull { it.chainId == chainId }
+
+  /** The supported chain [chainId] names; anything else fails the JS call that named it. */
+  fun require(chainId: Long): SwapChain = requireNotNull(of(chainId)) { "Unsupported swap chain" }
 }
+
+/** A bridge `chainId` argument; JS omits it for Robinhood Chain. */
+internal fun swapChainArg(chainId: Int?): Long = chainId?.toLong() ?: SwapChains.ROBINHOOD.chainId
 
 /** One read: `data` is called on `target` and the raw ABI result is kept as 0x hex. */
 internal data class SwapCall(val target: String, val data: String)

@@ -51,6 +51,7 @@ internal class NativeOwnedPortfolio(
           1L -> "https://ethereum-rpc.publicnode.com"
           143L -> "https://rpc.monad.xyz"
           4663L -> "https://rpc.mainnet.chain.robinhood.com"
+          8453L -> "https://mainnet.base.org"
           else -> error("Unsupported portfolio chain")
         }
       )
@@ -173,7 +174,7 @@ internal class NativeOwnedPortfolio(
 
   /** Invalidate affected assets only; old observations remain visible as stale. */
   fun invalidateTokens(record: WalletRecord, chain: Long, tokens: Set<String>) {
-    require(chain in setOf(1L, 143L, 4663L) && tokens.size <= 256)
+    require(chain in SWAP_CHAINS && tokens.size <= 256)
     val normalized = tokens.map(String::lowercase).toSet()
     require(normalized.all { it == "native" || it.matches(Regex("0x[0-9a-f]{40}")) })
     if (normalized.isEmpty()) return
@@ -359,7 +360,7 @@ internal class NativeOwnedPortfolio(
           "checkedAt" to snapshot.checkedAt,
           "valueUsdcAtoms" to null,
           "valuationUnavailable" to true,
-          "observationFinality" to if (group.chain == 4663L) "latest" else "finalized",
+          "observationFinality" to if (group.chain in LATEST_CHAINS) "latest" else "finalized",
         )
       if (group.underlying == null) {
         if (group.symbol == "USDC" && complete && !stale) {
@@ -526,7 +527,7 @@ internal class NativeOwnedPortfolio(
     chain: Long,
     number: String,
   ): Pair<String, JSONObject> {
-    if (chain != 4663L) return number to pinned(rpc, number)
+    if (chain !in LATEST_CHAINS) return number to pinned(rpc, number)
     val header =
       rpc.call("eth_getBlockByNumber", JSONArray().put("latest").put(false)) as JSONObject
     val current = header.getString("number")
@@ -680,7 +681,7 @@ internal class NativeOwnedPortfolio(
             rpc(chain)
               .call(
                 "eth_getBlockByNumber",
-                JSONArray().put(if (chain == 4663L) "latest" else "finalized").put(false),
+                JSONArray().put(if (chain in LATEST_CHAINS) "latest" else "finalized").put(false),
               ) as JSONObject
           block.put("number", header.getString("number")).put("hash", header.getString("hash"))
           require(block.getString("hash").matches(Regex("0x[0-9a-fA-F]{64}")))
@@ -746,14 +747,19 @@ internal class NativeOwnedPortfolio(
           "checkedAt" to (observations.minOfOrNull { it.getLong("checkedAt") } ?: 0L),
           "valueUsdcAtoms" to null,
           "valuationUnavailable" to true,
-          "observationFinality" to if (chain == 4663L) "latest" else "finalized",
+          "observationFinality" to if (chain in LATEST_CHAINS) "latest" else "finalized",
         )
       }
   }
 
   companion object {
     /** Chains this reader has an RPC for; swap ledger assets elsewhere are not observed here. */
-    private val SWAP_CHAINS = setOf(1L, 143L, 4663L)
+    private val SWAP_CHAINS = setOf(1L, 143L, 4663L, 8453L)
+    /**
+     * Rollups whose `finalized` tag trails by many minutes (L1 finality); they are observed at
+     * `latest`, pinned by block hash with `requireCanonical`.
+     */
+    private val LATEST_CHAINS = setOf(4663L, 8453L)
     private const val TTL = 30_000L
     private const val TOKEN_GROUP_BUDGET = 6
     private const val NATIVE_READ_BUDGET = 8
