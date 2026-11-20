@@ -1,4 +1,4 @@
-// Generated from shared/swap-targets-v1.json; a test keeps the two identical.
+// Generated from the 4663 list in shared/swap-targets-v2.json; a test keeps the two identical.
 // Robinhood stock tokens a new buy may target, deepest USDG market first. The native engine pins the same list.
 export const ROBINHOOD_BUY_TARGETS: readonly { symbol: string; address: string }[] = [
   { symbol: "QQQ", address: "0xD5f3879160bc7c32ebb4dC785F8a4F505888de68" },

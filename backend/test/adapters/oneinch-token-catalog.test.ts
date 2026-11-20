@@ -128,10 +128,10 @@ test("only curated liquid Robinhood stocks are buyable and they lead in liquidit
 });
 
 test("backend buy targets match the shared liquidity list the native engine pins", () => {
-  const shared = JSON.parse(readFileSync(new URL("../../../shared/swap-targets-v1.json", import.meta.url), "utf8")) as { version: string; chainId: number; targets: Array<{ symbol: string; address: string }> };
-  assert.equal(shared.version, "gizu-swap-targets-v1");
-  assert.equal(shared.chainId, 4663);
-  assert.deepEqual(ROBINHOOD_BUY_TARGETS.map(({ symbol, address }) => ({ symbol, address })), shared.targets.map(({ symbol, address }) => ({ symbol, address })));
-  assert.equal(robinhoodBuyRank(shared.targets[0]!.address.toUpperCase().replace("0X", "0x")), 0);
+  const shared = JSON.parse(readFileSync(new URL("../../../shared/swap-targets-v2.json", import.meta.url), "utf8")) as { version: string; chains: Record<string, { targets: Array<{ symbol: string; address: string }> }> };
+  assert.equal(shared.version, "gizu-swap-targets-v2");
+  const robinhood = shared.chains["4663"]!.targets;
+  assert.deepEqual(ROBINHOOD_BUY_TARGETS.map(({ symbol, address }) => ({ symbol, address })), robinhood.map(({ symbol, address }) => ({ symbol, address })));
+  assert.equal(robinhoodBuyRank(robinhood[0]!.address.toUpperCase().replace("0X", "0x")), 0);
   assert.equal(robinhoodBuyRank(unlisted), undefined);
 });

@@ -21,10 +21,12 @@ execution pipeline or the retired signer. Catalog browsing across multiple netwo
 does not expand executable swap support: the inspected UI gates selections to
 chain 4663, `swapListed` and `buyable`, and native/provider policy is separately enforced.
 A new buy (`confidentialSwap`, `confidentialPayout`) may only target one of the 25
-Robinhood stocks in [`shared/swap-targets-v1.json`](../../shared/swap-targets-v1.json),
+Robinhood stocks in the `4663` list of [`shared/swap-targets-v2.json`](../../shared/swap-targets-v2.json),
 ranked by 1inch price impact at 25,000, 5,000 and 1,000 USDG. The Rust engine
-(`pins.rs`), the backend catalog (`swap-targets.ts`) and that file must list the same
-addresses; tests in both languages compare them. Sell and recovery are not limited, so a
+(`pins.rs`), the backend catalog (`swap-targets.ts`) and that list must hold the same
+addresses; tests in both languages compare them. The file also holds a measured `8453`
+(Base, Coinbase-issued, USDC) list that nothing executes yet; regenerate a chain's list
+with `npm --prefix backend run swap:measure -- --chain <id> [--write]`. Sell and recovery are not limited, so a
 holding stays sellable after its token leaves the list. The per-order liquidity check in
 Fusion preview still runs for every buy.
 The current execution path uses Monad USDC, confidential credit and Robinhood USDG

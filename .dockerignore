@@ -14,7 +14,7 @@
 !backend/test/**
 !shared/
 !shared/gas-policy-v1.json
-!shared/swap-targets-v1.json
+!shared/swap-targets-v2.json
 
 **/node_modules
 **/.env

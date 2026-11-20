@@ -2992,12 +2992,11 @@ fn a_new_buy_only_targets_a_curated_liquid_stock() {
 fn buy_targets_match_the_shared_liquidity_list() {
     let fixture: Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../../shared/swap-targets-v1.json"
+        "/../../../../shared/swap-targets-v2.json"
     )))
     .unwrap();
-    assert_eq!(fixture["version"], "gizu-swap-targets-v1");
-    assert_eq!(fixture["chainId"], ROBINHOOD_CHAIN_ID);
-    let shared: Vec<Address> = fixture["targets"]
+    assert_eq!(fixture["version"], "gizu-swap-targets-v2");
+    let shared: Vec<Address> = fixture["chains"][ROBINHOOD_CHAIN_ID.to_string()]["targets"]
         .as_array()
         .unwrap()
         .iter()
