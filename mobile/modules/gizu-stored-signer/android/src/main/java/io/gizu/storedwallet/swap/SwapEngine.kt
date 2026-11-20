@@ -59,8 +59,10 @@ internal class SwapEngine(
     target: String,
     amountAtoms: String?,
     kind: String = "confidentialSwap",
+    chainId: Long = SwapChains.ROBINHOOD.chainId,
   ) {
     check(kind == "confidentialSwap" || (kind == "confidentialPayout" && amountAtoms == null))
+    checkNotNull(SwapChains.of(chainId)) { "Unsupported swap chain" }
     check(record.verified && record.id == saved.walletId)
     assertExecutionAvailable(record)
     check(operation == null)
@@ -108,6 +110,7 @@ internal class SwapEngine(
             JSONObject()
               .put("kind", kind)
               .put("target", target)
+              .put("chainId", chainId)
               .put("sourceIndex", leg.getInt("sourceIndex"))
               .put("amountAtoms", leg.getString("budgetAtoms"))
               .put("recipientIndices", JSONArray(reserved.indices.map { it.toInt() }))
@@ -161,6 +164,7 @@ internal class SwapEngine(
         JSONObject()
           .put("kind", kind)
           .put("target", target)
+          .put("chainId", chainId)
           .put("recipientIndices", JSONArray(reserved.indices.map { it.toInt() }))
       fundingAddress = deriveAccountAddressRange(record.entropy, 1u, 1u).single()
       operation = SwapOperation.start(plan.toString(), record.entropy, gateway, now())
@@ -169,7 +173,12 @@ internal class SwapEngine(
   }
 
   /** Temporary: finish Fusion buys for already allocated recipients that still hold USDG. */
-  fun startRecovery(record: WalletRecord, target: String) {
+  fun startRecovery(
+    record: WalletRecord,
+    target: String,
+    chainId: Long = SwapChains.ROBINHOOD.chainId,
+  ) {
+    checkNotNull(SwapChains.of(chainId)) { "Unsupported swap chain" }
     check(record.verified && record.id == saved.walletId)
     assertExecutionAvailable(record)
     check(operation == null)
@@ -200,6 +209,7 @@ internal class SwapEngine(
       JSONObject()
         .put("kind", "confidentialRecovery")
         .put("target", target)
+        .put("chainId", chainId)
         .put("recipientIndices", JSONArray(listOf(3, 4, 5)))
         .put("scanTo", scanTo)
     fundingAddress = deriveAccountAddressRange(record.entropy, 1u, 1u).single()
@@ -228,16 +238,18 @@ internal class SwapEngine(
         previous.close()
       }
     }
-    val (target, holders) =
+    val (target, holders, chainId) =
       if (holdingId != null) {
+        // A holding ID names its token; the ledger knows which chain that token lives on.
+        val chainId = saved.portfolio.chainOf(holdingId.substringBefore(':'))
         val selected =
           SwapHoldings.selection(
             holdingId,
             JSONObject(record.roleRegistry).getInt("nextRecipient"),
-            saved.portfolio.targets(),
+            saved.portfolio.targets(chainId),
             earnWithdrawalIndices(record),
           )
-        selected.first to JSONArray(selected.second)
+        Triple(selected.first, JSONArray(selected.second), chainId)
       } else {
         val state = JSONObject(checkNotNull(existing).getString("state"))
         val plan = state.getJSONObject("plan")
@@ -248,18 +260,19 @@ internal class SwapEngine(
         } finally {
           previous.close()
         }
+        val chainId = plan.optLong("chainId", SwapChains.ROBINHOOD.chainId)
         val selected =
           SwapHoldings.selection(
             plan.getString("target").lowercase() + ":all",
             JSONObject(record.roleRegistry).getInt("nextRecipient"),
-            saved.portfolio.targets(),
+            saved.portfolio.targets(chainId),
             earnWithdrawalIndices(record),
           )
-        selected.first to JSONArray(selected.second)
+        Triple(selected.first, JSONArray(selected.second), chainId)
       }
     // New sales stop privately. The core uses existing holder indices only as
     // internal order slots; no public recipient roles or randomness are reserved.
-    val next = confidentialSalePlan(target, holders)
+    val next = confidentialSalePlan(target, holders, chainId)
     fundingAddress = deriveAccountAddressRange(record.entropy, 1u, 1u).single()
     operation = SwapOperation.start(next.toString(), record.entropy, gateway, now())
     persist()
@@ -743,11 +756,12 @@ internal class SwapEngine(
       // Dirty the origin observations before publishing newly verified private
       // credit, so an interrupted refresh cannot retain both as fresh value.
       store.load().use { record ->
+        val plan = JSONObject(state).getJSONObject("plan")
         NativeOwnedPortfolio(saved.context)
           .invalidateTokens(
             record,
-            4663,
-            setOf(JSONObject(state).getJSONObject("plan").getString("target")),
+            plan.optLong("chainId", SwapChains.ROBINHOOD.chainId),
+            setOf(plan.getString("target")),
           )
       }
       lastInvalidatedPublicSaleProgress = progress
@@ -996,8 +1010,13 @@ private fun swapBatchCanonical(value: Any?): String =
   }
 
 /** Private sale plans contain existing holders, never freshly allocated receivers. */
-internal fun confidentialSalePlan(target: String, holders: JSONArray): JSONObject {
+internal fun confidentialSalePlan(
+  target: String,
+  holders: JSONArray,
+  chainId: Long = SwapChains.ROBINHOOD.chainId,
+): JSONObject {
   require(target.matches(Regex("0x[0-9a-fA-F]{40}")))
+  require(SwapChains.of(chainId) != null)
   require(holders.length() in 1..8189)
   val indices =
     (0 until holders.length()).map { index ->
@@ -1010,6 +1029,7 @@ internal fun confidentialSalePlan(target: String, holders: JSONArray): JSONObjec
     .put("kind", "confidentialSell")
     .put("completionTarget", "confidential")
     .put("target", target)
+    .put("chainId", chainId)
     .put("holderIndices", JSONArray(indices))
     .put("recipientIndices", JSONArray(indices))
 }

@@ -39,8 +39,17 @@ stablecoin, the permit and order EIP-712 domains, the LOP spender and the Fusion
 contract, and the chain's own buy list. Base (8453) pays out USDC through Aurora's `base`
 asset and uses the canonical LOP v4 (`0x1111…0A65`) with settlement `0x2Ad5…1Ef5`. Robinhood
 gateway bodies stay byte-identical because the deployed gateway rejects unknown fields; a Base
-body adds `chainId` and, for a buy, the USDC source. The native shells do not pass a chain
-and the gateway does not accept one yet, so only Robinhood executes today.
+body adds `chainId` and, for a buy, the USDC source. The gateway does not accept a chain yet,
+so only Robinhood executes today.
+
+The native bridge takes the chain as an optional trailing `chainId` on `startSwap`,
+`startPayout`, `startRecovery` and `getSwapHoldings`; JS omits it for Robinhood so a bundle and
+a native build from either side of the change agree on arity. Both shells keep the swap ledger per
+chain (iOS moves its version 1 file to version 2, Robinhood), read holdings on every tracked chain
+and report each holding's `chainId`. A sell resolves its chain from the ledger entry of the
+holding's token, so holding IDs stay `token:index`. Android's owned portfolio reads Base at
+`latest`, pinned by block hash, like Robinhood, and wallet restore scans Base USDC as well as
+Robinhood USDG for used recipients.
 
 ## Ownership and authority
 

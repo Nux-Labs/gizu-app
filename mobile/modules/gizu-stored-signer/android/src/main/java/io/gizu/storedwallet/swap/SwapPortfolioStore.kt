@@ -73,6 +73,15 @@ internal class SwapPortfolioStore(
   fun targets(chainId: Long = ROBINHOOD): List<String> =
     assets().filter { it.chainId == chainId }.map { it.token }
 
+  /**
+   * The one chain whose ledger tracks [token]. Issuers deploy at distinct addresses, so a token on
+   * two chains means a forged or corrupt ledger and is refused rather than guessed.
+   */
+  fun chainOf(token: String): Long {
+    val chains = assets().filter { it.token == token.lowercase() }.map { it.chainId }.distinct()
+    return chains.singleOrNull() ?: error("Unknown swap holding")
+  }
+
   fun history(): List<Map<String, Any?>> {
     val history = load().getJSONObject("history")
     return history
@@ -113,12 +122,15 @@ internal class SwapPortfolioStore(
 
   fun remember(state: String, status: String) {
     val plan = JSONObject(state).getJSONObject("plan")
-    watch(plan.getString("target"))
+    // Plans saved before Base support carry no chain and are Robinhood.
+    val chainId = plan.optLong("chainId", ROBINHOOD)
+    watch(plan.getString("target"), chainId)
     val view = JSONObject(status)
     if (view.getString("phase") !in listOf("COMPLETE", "CANCELLED")) return
     val root = load()
     // Public summaries survive later starts/cancellations; never archive secret-bearing state.
     view.put("target", plan.getString("target"))
+    view.put("chainId", chainId)
     view.put("recipientIndices", plan.getJSONArray("recipientIndices"))
     view.put("recordedAt", clock())
     archive(root.getJSONObject("history"), view)
@@ -274,6 +286,7 @@ internal class SwapPortfolioStore(
           item.optString("completionTarget") == "confidential"
       return mapOf(
         "operationId" to id,
+        "chainId" to item.optLong("chainId", ROBINHOOD),
         "phase" to item.getString("phase"),
         "direction" to item.getString("direction"),
         "symbol" to item.optString("targetSymbol"),
