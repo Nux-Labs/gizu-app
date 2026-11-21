@@ -146,9 +146,13 @@ Rust selects all eligible allocated holders, including partial groups, excluding
 recipients. After fresh balance reads the plan freezes the funded holders and native
 review lists the real sales. There can be up to 8,189 eligible indices (3–8191),
 subject to the wallet registry. The sale has `completionTarget: "confidential"`,
-no new public recipients, no random payout weights and zero payout legs. Each sale's
-Fusion transfers must match authenticated Aurora operation history before USDC credit
-is counted. Aggregate private-balance growth or public route SUCCESS is insufficient.
+no new public recipients, no random payout weights and zero payout legs. After
+approval the core reads C's authenticated private balance before any sale; sales run
+one at a time, and each is credited with the balance growth over the previous reading,
+bounded below by its quote minimum (scaled to the deposit) and above by the stablecoin
+it deposited (Earn's `balance-delta-v1` method; Aurora's operation history is
+invite-only). Growth outside that range pauses the sale rather than attributing other
+private cash to it; public route SUCCESS alone is insufficient.
 The resulting `privateCreditedAtoms` remains in confidential Account 2 until a separate,
 capability-checked [public withdrawal](../internal/CONFIDENTIAL_WITHDRAWALS.md).
 

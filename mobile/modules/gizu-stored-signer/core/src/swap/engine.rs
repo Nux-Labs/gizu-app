@@ -350,6 +350,58 @@ struct Data {
     leg: usize,
     #[serde(default)]
     sale_inbounds: Vec<SaleInbound>,
+    /// Confidential sell: C's private balance before the pending sale could reach it, read
+    /// after approval and moved forward by each credit. Journals without it keep the
+    /// operation-history check for their sales.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    private_baseline: Option<U256>,
+}
+
+/// One sale's credit from C's balance growth, as Earn's balance-delta-v1 settlement does.
+enum BalanceCredit {
+    /// Below the sale's guaranteed minimum: Aurora has not finished crediting C.
+    Pending,
+    /// Shrunk, or grew by more than the sale deposited: other private cash moved meanwhile.
+    Ambiguous,
+    Credited(U256),
+}
+
+/// The least credit a sale's deposit guarantees. The inbound quote is EXACT_INPUT for the
+/// Fusion minimum, and Aurora converts only that quoted amount even when the fill deposits more
+/// (seen on mainnet 2026-11-21: 1.081163 USDG deposited, credit matched a 1.03477 input). So
+/// a larger deposit never raises the minimum; a smaller one lowers it pro rata.
+fn sale_minimum(inbound: &SaleInbound) -> Result<U256, SignerError> {
+    if inbound.input >= inbound.quote.amount_in {
+        return Ok(inbound.quote.min_amount_out);
+    }
+    Ok(inbound
+        .quote
+        .min_amount_out
+        .checked_mul(inbound.input)
+        .ok_or(SignerError::InvalidInput)?
+        .div_ceil(inbound.quote.amount_in))
+}
+
+/// Sales are sequential, so growth over the baseline belongs to the pending sale only while it
+/// stays within what that sale can produce: at least the quote's guaranteed minimum (see
+/// [sale_minimum]), at most the stablecoin deposited (the 1:1 route never credits more). Unrelated
+/// cash that lands meanwhile can hide only inside that fee gap; anything larger stops the sale.
+fn sale_balance_credit(
+    inbound: &SaleInbound,
+    baseline: U256,
+    available: U256,
+) -> Result<BalanceCredit, SignerError> {
+    let Some(delta) = available.checked_sub(baseline) else {
+        return Ok(BalanceCredit::Ambiguous);
+    };
+    let minimum = sale_minimum(inbound)?;
+    if delta.is_zero() || delta < minimum {
+        return Ok(BalanceCredit::Pending);
+    }
+    if delta > inbound.input || delta > U256::from(MAX_SOURCE_ATOMS) {
+        return Ok(BalanceCredit::Ambiguous);
+    }
+    Ok(BalanceCredit::Credited(delta))
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -602,6 +654,10 @@ impl Engine {
         self.m.plan.kind == "confidentialSell"
             && self.m.plan.completion_target.as_deref() == Some("confidential")
     }
+    /// A confidential sell reads C's balance once after approval, before any sale exists.
+    fn needs_sale_baseline(&self) -> bool {
+        self.m.data.private_baseline.is_none() && self.m.data.sale_inbounds.is_empty()
+    }
     fn pooled_sell(&self) -> bool {
         self.m.plan.kind == "confidentialSell" && self.m.plan.legs_random.is_some()
     }
@@ -774,7 +830,10 @@ impl Engine {
             Step::Review => {
                 if self.m.approved_ms.is_some() {
                     self.m.data.prepared = None;
-                    if self.sell() {
+                    if self.private_sell() && self.needs_sale_baseline() {
+                        // Snapshot C's private balance before the first sale can reach it.
+                        self.go(Step::AuthSalt);
+                    } else if self.sell() {
                         let index = self.next_sell_index(0).ok_or(SignerError::InvalidInput)?;
                         self.go(Step::FusionPreview { index });
                     } else if self.payout_only() {
@@ -859,13 +918,21 @@ impl Engine {
                 self.post("/v1/swap/aurora/authenticate", json!({"payload": payload, "signature": aurora::encode_signature(&sig)}))
             }
             Step::PrivateHistoryProbe => {
-                let token = d.access_token.clone().ok_or(SignerError::InvalidInput)?;
-                self.post("/v1/swap/aurora/history", json!({"accessToken":token,"depositAddress":format!("{:#x}",self.m.confidential)}))
+                // Journals planned before balance-delta credit stopped here; planning no longer
+                // needs operation history, so they continue with the holder scan.
+                self.m.data.access_token = None;
+                self.go(Step::Holdings);
+                return self.next(now);
             }
             Step::PrivateCredit { index } => {
                 let inbound = d.sale_inbounds.get(index).ok_or(SignerError::InvalidInput)?;
                 let token = d.access_token.clone().ok_or(SignerError::InvalidInput)?;
-                self.post("/v1/swap/aurora/history", json!({"accessToken": token, "depositAddress": inbound.quote.deposit_address}))
+                if d.private_baseline.is_some() {
+                    self.post("/v1/swap/aurora/balances", json!({"accessToken": token}))
+                } else {
+                    // A sale started before balance-delta credit has no baseline to compare with.
+                    self.post("/v1/swap/aurora/history", json!({"accessToken": token, "depositAddress": inbound.quote.deposit_address}))
+                }
             }
             Step::Balances => {
                 let token = d.access_token.clone().ok_or(SignerError::InvalidInput)?;
@@ -1116,10 +1183,6 @@ impl Engine {
             return Err(SignerError::InvalidInput);
         }
         self.m.pending = None;
-        if self.m.step == Step::PrivateHistoryProbe && !(200..300).contains(&status) {
-            self.m.paused = Some("PRIVATE_CREDIT_UNAVAILABLE".into());
-            return Ok(());
-        }
         let result = outcome(status, body);
         if let Outcome::Transient = result {
             let submit = matches!(
@@ -1200,9 +1263,7 @@ impl Engine {
                 }
                 self.m.data.target_symbol = abi_string(&value, 1)?;
                 self.m.data.target_decimals = decimals.to::<u8>();
-                self.go(if self.private_sell() {
-                    Step::AuthSalt
-                } else if self.sell() {
+                self.go(if self.sell() {
                     Step::Holdings
                 } else if self.payout_only() {
                     Step::AuthSalt
@@ -1563,9 +1624,15 @@ impl Engine {
                 self.go(Step::Authenticate { salt });
             }
             (Step::Authenticate { .. }, None) => {
-                self.m.data.access_token = Some(text(&value, "accessToken")?.to_string());
-                self.go(if self.private_sell() && self.m.approved_ms.is_none() {
-                    Step::PrivateHistoryProbe
+                let planning = self.private_sell() && self.m.approved_ms.is_none();
+                // Journals that authenticated while planning a sell read nothing before review.
+                self.m.data.access_token = (!planning)
+                    .then(|| text(&value, "accessToken").map(str::to_string))
+                    .transpose()?;
+                self.go(if planning {
+                    Step::Holdings
+                } else if self.private_sell() && self.needs_sale_baseline() {
+                    Step::Balances
                 } else if self.private_sell() {
                     Step::PrivateCredit {
                         index: self
@@ -1580,7 +1647,9 @@ impl Engine {
                     Step::Balances
                 });
             }
-            (Step::Authenticate { .. }, Some(401)) | (Step::PrivateCredit { .. }, Some(401))
+            (Step::Authenticate { .. }, Some(401))
+            | (Step::PrivateCredit { .. }, Some(401))
+            | (Step::Balances, Some(401))
                 if self.private_sell() =>
             {
                 self.m.data.access_token = None;
@@ -1604,17 +1673,6 @@ impl Engine {
                     .min_amount_out;
                 self.credit(minimum, "route_success_minimum")?;
             }
-            (Step::PrivateHistoryProbe, None) => {
-                if value
-                    .get("items")
-                    .and_then(Value::as_array)
-                    .is_none_or(|rows| rows.len() > 100 || rows.iter().any(|row| !row.is_object()))
-                {
-                    return Err(SignerError::InvalidInput);
-                }
-                self.m.data.access_token = None;
-                self.go(Step::Holdings);
-            }
             (Step::PrivateCredit { index }, None) => {
                 let inbound = self
                     .m
@@ -1623,9 +1681,36 @@ impl Engine {
                     .get(index)
                     .ok_or(SignerError::InvalidInput)?
                     .clone();
-                let Some(credited) = self.sale_credit(&inbound, &value, now)? else {
-                    self.wait(now, POLL_MS * 2);
-                    return Ok(());
+                let (credited, basis) = match self.m.data.private_baseline {
+                    Some(baseline) => {
+                        let available =
+                            aurora::private_available(&value, &self.m.data.source_asset)?;
+                        match sale_balance_credit(&inbound, baseline, available)? {
+                            BalanceCredit::Pending => {
+                                self.wait(now, POLL_MS * 2);
+                                return Ok(());
+                            }
+                            BalanceCredit::Ambiguous => {
+                                // Other private cash moved while this sale settled. Funds stay
+                                // in C; nothing is attributed to the sale without proof.
+                                self.m.data.access_token = None;
+                                self.m.paused = Some("SALE_CREDIT_AMBIGUOUS".into());
+                                return Ok(());
+                            }
+                            BalanceCredit::Credited(credited) => {
+                                // The next sale is measured from the balance this one left.
+                                self.m.data.private_baseline = Some(available);
+                                (credited, "authenticated_balance_delta")
+                            }
+                        }
+                    }
+                    None => {
+                        let Some(credited) = self.sale_credit(&inbound, &value, now)? else {
+                            self.wait(now, POLL_MS * 2);
+                            return Ok(());
+                        };
+                        (credited, "authenticated_operation_history")
+                    }
                 };
                 self.m.data.sale_inbounds[index].credited = credited;
                 self.m.data.available =
@@ -1637,7 +1722,7 @@ impl Engine {
                             sum.checked_add(row.credited)
                                 .ok_or(SignerError::InvalidInput)
                         })?;
-                self.m.data.credit_basis = Some("authenticated_operation_history".into());
+                self.m.data.credit_basis = Some(basis.into());
                 self.m.data.access_token = None;
                 if inbound.exhausted {
                     self.m.paused = Some(format!("FUSION_{}_UNFILLED", inbound.order_index + 1));
@@ -1652,6 +1737,17 @@ impl Engine {
             }
             (Step::Balances, None) => {
                 let available = aurora::private_available(&value, &self.m.data.source_asset)?;
+                if self.private_sell() {
+                    // Baseline for the first sale's credit; no Fusion order exists yet.
+                    if !self.needs_sale_baseline() {
+                        return Err(SignerError::InvalidInput);
+                    }
+                    self.m.data.private_baseline = Some(available);
+                    self.m.data.access_token = None;
+                    let index = self.next_sell_index(0).ok_or(SignerError::InvalidInput)?;
+                    self.go(Step::FusionPreview { index });
+                    return Ok(());
+                }
                 if !self.payout_only() {
                     // Public-funded buys authorize only their guaranteed route credit.
                     // Existing private cash (including Earn proceeds) stays in Account 2.
@@ -2422,12 +2518,7 @@ impl Engine {
         };
         let input = formatted("amountInFormatted")?;
         let output = formatted("amountOutFormatted")?;
-        let minimum = inbound
-            .quote
-            .min_amount_out
-            .checked_mul(inbound.input)
-            .ok_or(SignerError::InvalidInput)?
-            .div_ceil(inbound.quote.amount_in);
+        let minimum = sale_minimum(inbound)?;
         if input != inbound.input
             || output.is_zero()
             || output < minimum
@@ -2739,7 +2830,7 @@ impl Engine {
                 }
             }
             out.push_str(&self.skipped_note());
-            out.push_str("\nEach inbound credit requires authenticated operation history matching the verified Fusion transfers. Private USDC remains in Gizu until you separately choose Withdraw from Gizu. One approval covers these sale steps for 15 minutes; submitted steps cannot be undone.");
+            out.push_str("\nEach sale is credited from your private balance's growth, between its guaranteed minimum and the amount it deposited; if other private funds move meanwhile, the sale pauses without counting them. Private USDC remains in Gizu until you separately choose Withdraw from Gizu. One approval covers these sale steps for 15 minutes; submitted steps cannot be undone.");
             return out;
         }
         let d = &self.m.data;
