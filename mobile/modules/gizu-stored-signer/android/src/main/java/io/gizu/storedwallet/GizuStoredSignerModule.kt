@@ -209,7 +209,8 @@ class GizuStoredSignerModule : Module() {
       )
       dialog = alert
       alert.window?.apply {
-        addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Debug builds allow screenshots of review dialogs for device testing.
+        if (!BuildConfig.DEBUG) addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         if (fullReview) addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (Build.VERSION.SDK_INT >= 31) setHideOverlayWindows(true)
         setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
