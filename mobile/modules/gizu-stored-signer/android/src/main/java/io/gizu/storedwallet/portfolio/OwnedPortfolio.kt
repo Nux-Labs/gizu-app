@@ -755,11 +755,8 @@ internal class NativeOwnedPortfolio(
   companion object {
     /** Chains this reader has an RPC for; swap ledger assets elsewhere are not observed here. */
     private val SWAP_CHAINS = setOf(1L, 143L, 4663L, 8453L)
-    /**
-     * Rollups whose `finalized` tag trails by many minutes (L1 finality); they are observed at
-     * `latest`, pinned by block hash with `requireCanonical`.
-     */
-    private val LATEST_CHAINS = setOf(4663L, 8453L)
+    /** Token balances and native reads share one finality policy. */
+    private val LATEST_CHAINS = TokenBalanceSync.LATEST_CHAINS
     private const val TTL = 30_000L
     private const val TOKEN_GROUP_BUDGET = 6
     private const val NATIVE_READ_BUDGET = 8

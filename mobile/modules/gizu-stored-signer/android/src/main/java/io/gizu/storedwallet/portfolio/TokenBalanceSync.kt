@@ -20,6 +20,7 @@ internal class NativePortfolioRpc(endpoint: String, post: (suspend (String) -> S
     when (endpoint) {
       "https://rpc.monad.xyz" -> 143L
       "https://rpc.mainnet.chain.robinhood.com" -> 4663L
+      "https://mainnet.base.org" -> 8453L
       "https://ethereum-rpc.publicnode.com" -> 1L
       else -> null
     }
@@ -254,13 +255,16 @@ internal class TokenBalanceSync(
         check(quantity(header.getString("number")) == number)
         return header.getString("hash").also { check(it.matches(Regex("0x[0-9a-fA-F]{64}"))) }
       }
-      // Robinhood's public endpoint prunes contract state at finalized heights. This mode is
-      // strictly for display observations; execution and settlement retain their own gates.
+      // Rollup `finalized` heads trail by L1 finality (Base ~15-20 minutes) and Robinhood's
+      // public endpoint prunes contract state at finalized heights, so these chains are observed
+      // at `latest`. This mode is strictly for display observations; execution and settlement
+      // retain their own gates.
+      val latest = chainId in LATEST_CHAINS
       stage = PortfolioDiagnostics.Stage.TOKEN_HEAD
       val head =
         rpc.call(
           "eth_getBlockByNumber",
-          JSONArray().put(if (chainId == 4663L) "latest" else "finalized").put(false),
+          JSONArray().put(if (latest) "latest" else "finalized").put(false),
         ) as JSONObject
       val headNumber = quantity(head.getString("number"))
       val headHash = validHeader(head, headNumber)
@@ -325,7 +329,12 @@ internal class TokenBalanceSync(
       ) {
         reconcile()
       }
-      if (!root.has("reconcile") && !root.has("scan")) {
+      // A small latest-observed catalogue samples every owner at one canonical block below, which
+      // supersedes any log range. Skipping eth_getLogs also keeps Base's public RPC, which
+      // rate-limits getLogs, from failing every refresh.
+      val fullSample = latest && addresses.size in 1..80
+      if (fullSample) root.remove("scan")
+      if (!fullSample && !root.has("reconcile") && !root.has("scan")) {
         val from = quantity(root.getString("block"))
         if (headNumber > from) {
           val to = headNumber.min(from + BigInteger.valueOf(if (chainId == 143L) 100 else 4096))
@@ -411,15 +420,15 @@ internal class TokenBalanceSync(
       // state without advancing that range's checkpoint past any unscanned owner bucket.
       stage = PortfolioDiagnostics.Stage.TOKEN_SAMPLE
       val sample =
-        if (chainId == 4663L)
+        if (latest)
           rpc.call("eth_getBlockByNumber", JSONArray().put("latest").put(false)) as JSONObject
         else null
       val sampleBlock = sample?.getString("number") ?: readBlock
       val sampleHash = sample?.let { validHeader(it, quantity(sampleBlock)) } ?: readHash
       stage = PortfolioDiagnostics.Stage.TOKEN_BALANCES
-      // Small Robinhood catalogues fit the existing bounded balance budget. A full same-block
+      // Small latest-observed catalogues fit the existing bounded balance budget. A full same-block
       // observation also covers transfers after the log scan's head, even as latest advances.
-      if (chainId == 4663L && addresses.size in 1..80) pending.addAll(addresses)
+      if (fullSample) pending.addAll(addresses)
       val sampledOwners = mutableSetOf<String>()
       for (chunk in pending.take(80).chunked(40)) {
         val requests =
@@ -511,6 +520,12 @@ internal class TokenBalanceSync(
   }
 
   companion object {
+    /**
+     * Rollups whose `finalized` tag trails by many minutes (L1 finality); they are observed at
+     * `latest`, pinned by block hash with `requireCanonical`. Shared with [OwnedPortfolio].
+     */
+    internal val LATEST_CHAINS = setOf(4663L, 8453L)
+
     private fun stageMethod(stage: PortfolioDiagnostics.Stage) =
       when (stage) {
         PortfolioDiagnostics.Stage.TOKEN_CHAIN -> "eth_chainId"
