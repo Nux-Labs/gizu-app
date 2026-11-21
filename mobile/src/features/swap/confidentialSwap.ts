@@ -15,6 +15,10 @@ export type ListedToken = {
   decimals: number;
   swapListed: boolean;
   buyable?: boolean;
+  /** Remote catalog logo; absent or null when the catalog has none. */
+  logoURI?: string | null;
+  /** Catalog USD price; absent or null when no market price is available right now. */
+  priceUsd?: number | null;
 };
 
 export function sourceAtoms(amount: string): string | null {
@@ -104,6 +108,10 @@ export async function loadSwapTokens(fetchImpl: typeof fetch = fetch): Promise<L
         decimals: typeof token.decimals === "number" ? token.decimals : 0,
         swapListed: true,
         ...(typeof token.buyable === "boolean" ? { buyable: token.buyable } : {}),
+        ...(typeof token.logoURI === "string" ? { logoURI: token.logoURI } : {}),
+        ...(typeof token.priceUsd === "number" && Number.isFinite(token.priceUsd)
+          ? { priceUsd: token.priceUsd }
+          : {}),
       },
     ];
   });
