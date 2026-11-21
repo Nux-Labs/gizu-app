@@ -2,7 +2,7 @@ import { z } from "zod";
 import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
 import { BASE_USDC, ROBINHOOD_USDG } from "./fusion.ts";
 import { BUY_TARGETS, buyRank } from "./swap-targets.ts";
-import { TOKEN_PROFILES, type TokenKind } from "./token-profiles.ts";
+import { TOKEN_PROFILES, baseTokenProfile, type TokenKind } from "./token-profiles.ts";
 
 export const DETAIL_PERIODS = ["1D", "1W", "1M", "1Y"] as const;
 export type DetailPeriod = (typeof DETAIL_PERIODS)[number];
@@ -187,14 +187,16 @@ export class StockTokenDetails {
       this.chart(8453, address, period),
     ]);
     const multiplier = asset.multiplier === undefined ? undefined : String(asset.multiplier);
+    // Our own copy matches the Robinhood pages; Coinbase's text covers a token without one.
+    const profile = baseTokenProfile(symbol);
     return {
       chainId: 8453,
       address,
       symbol: asset.symbol,
       name: asset.name,
       logoURI: asset.icon_url ?? "",
-      kind: "stock",
-      description: asset.description?.trim() ?? "",
+      kind: profile?.kind ?? "stock",
+      description: profile?.description ?? asset.description?.trim() ?? "",
       isin: asset.isin?.trim() || null,
       sharesPerToken: multiplier && decimal.safeParse(multiplier).success ? multiplier : null,
       sessions: null,
