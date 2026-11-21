@@ -11,6 +11,18 @@ const ONEINCH_PERIOD: Record<DetailPeriod, string> = { "1D": "24H", "1W": "1W", 
 const ASSETS_TTL_MS = 10 * 60_000;
 const PRICE_TTL_MS = 60_000;
 const CHART_TTL_MS = 10 * 60_000;
+const POOL_TTL_MS = 6 * 60 * 60_000;
+
+/**
+ * GeckoTerminal candles per period. Hours without trades have no candle, so each request reaches
+ * further back than the period and the series is trimmed to the period's window.
+ */
+const GECKO_CANDLES: Record<DetailPeriod, { timeframe: "minute" | "hour" | "day"; aggregate: number; limit: number; windowMs: number }> = {
+  "1D": { timeframe: "minute", aggregate: 15, limit: 300, windowMs: 24 * 60 * 60_000 },
+  "1W": { timeframe: "hour", aggregate: 1, limit: 500, windowMs: 7 * 24 * 60 * 60_000 },
+  "1M": { timeframe: "hour", aggregate: 4, limit: 500, windowMs: 30 * 24 * 60 * 60_000 },
+  "1Y": { timeframe: "day", aggregate: 1, limit: 365, windowMs: 365 * 24 * 60 * 60_000 },
+};
 
 const decimal = z.string().regex(/^\d+(\.\d+)?$/);
 const session = z.object({ whole: z.string().optional(), fractional: z.string().optional() }).optional();
@@ -43,6 +55,12 @@ type CoinbaseAsset = z.infer<typeof coinbaseSchema>["tokens"][number];
 const QUOTE_TOKEN: Record<StockChainId, string> = { 4663: ROBINHOOD_USDG, 8453: BASE_USDC };
 export type StockChainId = 4663 | 8453;
 const chartSchema = z.object({ data: z.array(z.object({ time: z.number().int().positive(), value: z.number().positive() })) });
+const geckoPoolsSchema = z.object({ data: z.array(z.object({ attributes: z.object({ address: z.string().regex(/^0x[a-fA-F0-9]{40}$/) }) })) });
+const geckoOhlcvSchema = z.object({
+  data: z.object({ attributes: z.object({ ohlcv_list: z.array(z.array(z.number()).min(5)) }) }),
+});
+/** GeckoTerminal network ids for chains whose charts 1inch may not serve. */
+const GECKO_NETWORK: Partial<Record<StockChainId, string>> = { 8453: "base" };
 
 type Asset = z.infer<typeof robinhoodSchema>["assets"][number];
 export type TokenDetails = {
@@ -60,7 +78,8 @@ export type TokenDetails = {
   sessions: { regular: boolean; extended: boolean; overnight: boolean } | null;
   /** USD price of the token on its chain; null when 1inch has none right now. */
   priceUsd: number | null;
-  chart: { period: DetailPeriod; points: Array<{ time: number; price: number }> } | null;
+  /** `source` names the provider, for the attribution GeckoTerminal asks for. */
+  chart: { period: DetailPeriod; source: "1inch" | "geckoterminal"; points: Array<{ time: number; price: number }> } | null;
 };
 
 type Cached<T> = { until: number; value: T };
@@ -72,7 +91,8 @@ const usdPrice = (raw: unknown): number | null => {
 
 /**
  * Detail page data for a buyable stock token: the issuer's record (Robinhood, or Coinbase on Base)
- * plus 1inch price and chart on the token's chain.
+ * plus 1inch price and chart on the token's chain. Most Coinbase tokens have no 1inch chart, so Base
+ * charts fall back to GeckoTerminal candles from the token's most liquid pool.
  */
 export class StockTokenDetails {
   private assets: Cached<Map<string, Asset>> | null = null;
@@ -81,6 +101,7 @@ export class StockTokenDetails {
   private readonly priceCache = new Map<string, Cached<number | null>>();
   private readonly priceRefresh = new Map<StockChainId, Promise<void>>();
   private readonly charts = new Map<string, Cached<TokenDetails["chart"]>>();
+  private readonly geckoPools = new Map<string, Cached<string | null>>();
 
   constructor(
     private readonly key: string,
@@ -243,12 +264,45 @@ export class StockTokenDetails {
 
   private async chart(chainId: StockChainId, address: string, period: DetailPeriod): Promise<TokenDetails["chart"]> {
     return this.cached(this.charts, `${chainId}:${address}:${period}`, CHART_TTL_MS, async () => {
-      const body = chartSchema.parse(await this.oneInch(
-        `https://api.1inch.com/charts/v1.0/chart/line/${address}/${QUOTE_TOKEN[chainId]}/${ONEINCH_PERIOD[period]}/${chainId}`,
-      ));
-      const points = body.data.map(({ time, value }) => ({ time, price: value })).sort((a, b) => a.time - b.time);
-      return points.length >= 2 ? { period, points } : null;
+      const oneInch = await this.oneInchChart(chainId, address, period).catch(() => null);
+      if (oneInch) return oneInch;
+      const network = GECKO_NETWORK[chainId];
+      return network ? this.geckoChart(network, address, period) : null;
     });
+  }
+
+  private async oneInchChart(chainId: StockChainId, address: string, period: DetailPeriod): Promise<TokenDetails["chart"]> {
+    const body = chartSchema.parse(await this.oneInch(
+      `https://api.1inch.com/charts/v1.0/chart/line/${address}/${QUOTE_TOKEN[chainId]}/${ONEINCH_PERIOD[period]}/${chainId}`,
+    ));
+    const points = body.data.map(({ time, value }) => ({ time, price: value })).sort((a, b) => a.time - b.time);
+    return points.length >= 2 ? { period, source: "1inch", points } : null;
+  }
+
+  /** USD closes of the token in its most liquid pool, oldest first, trimmed to the period. */
+  private async geckoChart(network: string, address: string, period: DetailPeriod): Promise<TokenDetails["chart"]> {
+    const pool = await this.cached(this.geckoPools, `${network}:${address.toLowerCase()}`, POOL_TTL_MS, async () => {
+      const body = geckoPoolsSchema.parse(await this.gecko(
+        `https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${address}/pools?page=1&sort=h24_volume_usd_liquidity_desc`,
+      ));
+      return body.data[0]?.attributes.address ?? null;
+    });
+    if (!pool) return null;
+    const { timeframe, aggregate, limit, windowMs } = GECKO_CANDLES[period];
+    const body = geckoOhlcvSchema.parse(await this.gecko(
+      `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/ohlcv/${timeframe}?aggregate=${aggregate}&limit=${limit}&currency=usd&token=${address}`,
+    ));
+    const candles = body.data.attributes.ohlcv_list
+      .map(([time, , , , close]) => ({ time: time!, price: close! }))
+      .filter(({ time, price }) => Number.isSafeInteger(time) && time > 0 && Number.isFinite(price) && price > 0)
+      .sort((a, b) => a.time - b.time)
+      .filter((point, index, all) => index === 0 || point.time > all[index - 1]!.time);
+    const start = Math.floor((this.now() - windowMs) / 1000);
+    const inside = candles.filter(({ time }) => time >= start);
+    // Without trades the price holds, so the last close before the window opens the line at its start.
+    const before = candles.findLast(({ time }) => time < start);
+    const points = before && inside[0]?.time !== start ? [{ time: start, price: before.price }, ...inside] : inside;
+    return points.length >= 2 ? { period, source: "geckoterminal", points } : null;
   }
 
   private async cached<T>(cache: Map<string, Cached<T | null>>, key: string, ttl: number, load: () => Promise<T | null>): Promise<T | null> {
@@ -271,6 +325,16 @@ export class StockTokenDetails {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error(`1inch data unavailable (${response.status})`);
+    return response.json();
+  }
+
+  // Keyless public API (30 calls a minute); charts and pools are cached so pages stay well below it.
+  private async gecko(url: string): Promise<unknown> {
+    const response = await this.fetchImpl(url, {
+      headers: { accept: "application/json;version=20230203" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`GeckoTerminal data unavailable (${response.status})`);
     return response.json();
   }
 }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Image, Text, View, useWindowDimensions } from "react-native";
+import { Image, Linking, Pressable, Text, View, useWindowDimensions } from "react-native";
 import { ChevronLeft } from "lucide-react-native";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
@@ -220,6 +220,17 @@ function Loaded({
             ) : status === "ready" ? (
               <Typography variant="micro">Price history isn’t available for this token.</Typography>
             ) : null}
+            {chart?.source === "geckoterminal" && (
+              <Pressable
+                accessibilityRole="link"
+                onPress={() =>
+                  void Linking.openURL("https://www.geckoterminal.com").catch(() => {})
+                }
+                className="self-start"
+              >
+                <Typography variant="micro">Chart data by GeckoTerminal</Typography>
+              </Pressable>
+            )}
             <View className="flex-row items-center justify-between gap-3">
               <PeriodPills options={detailPeriods} selected={period} onSelect={onPeriod} />
               {status === "loading" && <Spinner size="sm" />}
