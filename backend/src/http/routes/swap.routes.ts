@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from "@fastify/type-provider-zod";
 import { getAddress, type Address, type Hex } from "viem";
 import { z } from "zod";
 import type { AuroraIntents } from "../../adapters/aurora/aurora-intents.ts";
-import type { OneInchFusion } from "../../adapters/oneinch/fusion.ts";
+import { ROBINHOOD_CHAIN_ID, type OneInchFusion, type SwapChainId } from "../../adapters/oneinch/fusion.ts";
 import type { PimlicoMonadFunding } from "../../adapters/pimlico/monad-funding.ts";
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/).transform((value) => getAddress(value) as Address);
@@ -13,6 +13,8 @@ const quantity = z.string().regex(/^0x[a-fA-F0-9]+$/);
 const atoms = z.string().regex(/^[1-9]\d{0,38}$/).transform(BigInt);
 const preset = z.enum(["fast", "medium", "slow"]);
 const auroraRecipient = z.string().min(1).max(128);
+// Robinhood bodies predate chains and stay valid without one; any other chain names itself.
+const chainId = z.union([z.literal(4663), z.literal(8453)]).optional();
 
 const quoteBody = z.object({
   dry: z.literal(false),
@@ -73,8 +75,10 @@ const limitOrder = z.object({
 type Gateway = {
   aurora: Pick<AuroraIntents, "tokens" | "quote" | "generateIntent" | "submitIntent" | "status" | "authSalt" | "authenticate" | "balances"> & Partial<Pick<AuroraIntents, "history">>;
   funding: Pick<PimlicoMonadFunding, "prepare" | "submit" | "receipt">;
-  fusion: Pick<OneInchFusion, "preview" | "permitContext" | "createOrder" | "submit" | "status">;
+  /** One Fusion adapter per chain a swap may hold stock on. */
+  fusion: Record<SwapChainId, FusionPort>;
 };
+type FusionPort = Pick<OneInchFusion, "preview" | "permitContext" | "createOrder" | "submit" | "status">;
 
 // Addresses travel only in POST bodies so request logs never carry wallet links.
 export function registerSwapRoutes(app: FastifyInstance, gateway: Gateway) {
@@ -85,6 +89,7 @@ export function registerSwapRoutes(app: FastifyInstance, gateway: Gateway) {
     }
   });
   const routes = app.withTypeProvider<ZodTypeProvider>();
+  const fusion = (chain: SwapChainId = ROBINHOOD_CHAIN_ID) => gateway.fusion[chain];
 
   routes.get("/v1/swap/aurora/tokens", async () => ({ tokens: await gateway.aurora.tokens() }));
   routes.post("/v1/swap/aurora/quote", { schema: { body: quoteBody } }, async (request) => gateway.aurora.quote(request.body));
@@ -137,8 +142,8 @@ export function registerSwapRoutes(app: FastifyInstance, gateway: Gateway) {
 
   routes.post(
     "/v1/swap/fusion/preview",
-    { schema: { body: z.object({ wallet: address, dstToken: address, amount: atoms, preset, srcToken: address.optional() }).strict() } },
-    async (request) => gateway.fusion.preview(
+    { schema: { body: z.object({ wallet: address, dstToken: address, amount: atoms, preset, srcToken: address.optional(), chainId }).strict() } },
+    async (request) => fusion(request.body.chainId).preview(
       request.body.wallet,
       request.body.dstToken,
       request.body.amount,
@@ -148,13 +153,13 @@ export function registerSwapRoutes(app: FastifyInstance, gateway: Gateway) {
   );
   routes.post(
     "/v1/swap/fusion/permit-context",
-    { schema: { body: z.object({ owner: address, token: address.optional() }).strict() } },
-    async (request) => gateway.fusion.permitContext(request.body.owner, request.body.token),
+    { schema: { body: z.object({ owner: address, token: address.optional(), chainId }).strict() } },
+    async (request) => fusion(request.body.chainId).permitContext(request.body.owner, request.body.token),
   );
   routes.post(
     "/v1/swap/fusion/order",
-    { schema: { body: z.object({ wallet: address, dstToken: address, amount: atoms, permit: z.string().regex(/^0x[a-fA-F0-9]{448}$/), preset, srcToken: address.optional(), receiver: address.optional() }).strict() } },
-    async (request) => gateway.fusion.createOrder(
+    { schema: { body: z.object({ wallet: address, dstToken: address, amount: atoms, permit: z.string().regex(/^0x[a-fA-F0-9]{448}$/), preset, srcToken: address.optional(), receiver: address.optional(), chainId }).strict() } },
+    async (request) => fusion(request.body.chainId).createOrder(
       request.body.wallet,
       request.body.dstToken,
       request.body.amount,
@@ -166,17 +171,18 @@ export function registerSwapRoutes(app: FastifyInstance, gateway: Gateway) {
   );
   routes.post(
     "/v1/swap/fusion/submit",
-    { schema: { body: z.object({ order: limitOrder, signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/), quoteId: z.string().min(1).max(200), extension: hex }).strict() } },
+    { schema: { body: z.object({ order: limitOrder, signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/), quoteId: z.string().min(1).max(200), extension: hex, chainId }).strict() } },
     async (request, reply) => {
-      await gateway.fusion.submit({ ...request.body, signature: request.body.signature as Hex });
+      const { chainId: chain, ...signed } = request.body;
+      await fusion(chain).submit({ ...signed, signature: signed.signature as Hex });
       return reply.code(202).send({ accepted: true });
     },
   );
   routes.post(
     "/v1/swap/fusion/status",
-    { schema: { body: z.object({ orderHash: hash }).strict() } },
+    { schema: { body: z.object({ orderHash: hash, chainId }).strict() } },
     async (request, reply) => {
-      const status = await gateway.fusion.status(request.body.orderHash);
+      const status = await fusion(request.body.chainId).status(request.body.orderHash);
       if (!status) return reply.code(404).send({ code: "FUSION_NOT_FOUND", message: "relayer does not know the order" });
       return status;
     },

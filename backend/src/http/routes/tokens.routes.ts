@@ -2,10 +2,13 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "@fastify/type-provider-zod";
 import { z } from "zod";
 import type { CatalogCategory, CatalogToken } from "../../adapters/oneinch/token-catalog.ts";
-import { DETAIL_PERIODS, type RobinhoodTokenDetails } from "../../adapters/oneinch/token-details.ts";
+import { DETAIL_PERIODS, type StockChainId, type StockTokenDetails } from "../../adapters/oneinch/token-details.ts";
 
-// Robinhood first: its stock tokens are the only swap targets, so they lead a cross-chain list.
-const CATALOG_CHAIN_IDS = [4663, 143, 1];
+const CATALOG_CHAIN_IDS = [4663, 8453, 143, 1];
+// A list without a chain keeps the chains it always returned, Robinhood first, so clients that
+// predate Base never meet its chain or issuer. Base is listed when asked for by chain.
+const DEFAULT_CHAIN_IDS = [4663, 143, 1];
+const STOCK_CHAIN_IDS: readonly StockChainId[] = [4663, 8453];
 
 const querySchema = z.object({
   chainId: z.coerce.number().int().refine((id) => CATALOG_CHAIN_IDS.includes(id)).optional(),
@@ -20,14 +23,14 @@ const querySchema = z.object({
 export function registerTokenRoutes(
   app: FastifyInstance,
   catalog: { list(chainId: number, category: CatalogCategory): Promise<CatalogToken[]> },
-  details?: Pick<RobinhoodTokenDetails, "details" | "prices">,
+  details?: Pick<StockTokenDetails, "details" | "prices">,
 ) {
   app.withTypeProvider<ZodTypeProvider>().get(
     "/v1/tokens",
     { schema: { querystring: querySchema } },
     async (request, reply) => {
       const { chainId, category } = request.query;
-      const chainIds = chainId === undefined ? CATALOG_CHAIN_IDS : [chainId];
+      const chainIds = chainId === undefined ? DEFAULT_CHAIN_IDS : [chainId];
       const tokens = (await Promise.all(chainIds.map((id) => catalog.list(id, category)))).flat();
       const search = request.query.search.trim().toLowerCase();
       const liquidOnly = request.query.liquidOnly === "true";
@@ -40,8 +43,11 @@ export function registerTokenRoutes(
       );
       const { page, items } = request.query;
       const slice = matches.slice(page * items, (page + 1) * items);
-      // Buyable stocks carry their Robinhood Chain price; a missing price never fails the list.
-      const prices = details && slice.some((token) => token.buyable) ? await details.prices() : undefined;
+      // Buyable stocks carry their price on their own chain; a missing price never fails the list.
+      const chains = STOCK_CHAIN_IDS.filter((id) => slice.some((token) => token.buyable && token.chainId === id));
+      const prices = details && chains.length > 0
+        ? new Map((await Promise.all(chains.map((id) => details.prices(id)))).flatMap((map) => [...map]))
+        : undefined;
       const list = prices
         ? slice.map((token) => token.buyable ? { ...token, priceUsd: prices.get(token.address.toLowerCase()) ?? null } : token)
         : slice;
@@ -71,15 +77,18 @@ export function registerTokenRoutes(
   if (!details) return;
   // Token addresses are public, so unlike wallet routes this one can carry its address in the path.
   app.withTypeProvider<ZodTypeProvider>().get(
-    "/v1/tokens/4663/:address/details",
+    "/v1/tokens/:chainId/:address/details",
     {
       schema: {
-        params: z.object({ address: z.string().regex(/^0x[a-fA-F0-9]{40}$/) }),
+        params: z.object({
+          chainId: z.enum(["4663", "8453"]).transform((id) => Number(id) as StockChainId),
+          address: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+        }),
         querystring: z.object({ period: z.enum(DETAIL_PERIODS).default("1M") }),
       },
     },
     async (request, reply) => {
-      const found = await details.details(request.params.address, request.query.period);
+      const found = await details.details(request.params.address, request.query.period, request.params.chainId);
       if (!found) return reply.code(404).send({ code: "TOKEN_NOT_BUYABLE", message: "token is not a swap target" });
       return reply.code(200).send(found);
     },

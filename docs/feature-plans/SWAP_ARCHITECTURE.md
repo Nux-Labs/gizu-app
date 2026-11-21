@@ -39,8 +39,18 @@ stablecoin, the permit and order EIP-712 domains, the LOP spender and the Fusion
 contract, and the chain's own buy list. Base (8453) pays out USDC through Aurora's `base`
 asset and uses the canonical LOP v4 (`0x1111…0A65`) with settlement `0x2Ad5…1Ef5`. Robinhood
 gateway bodies stay byte-identical because the deployed gateway rejects unknown fields; a Base
-body adds `chainId` and, for a buy, the USDC source. The gateway does not accept a chain yet,
-so only Robinhood executes today.
+body adds `chainId` and, for a buy, the USDC source.
+
+The gateway's `/v1/swap/fusion/*` bodies take that optional `chainId` (4663 or 8453; absent
+means Robinhood) and route to one Fusion adapter per chain. The Base adapter uses Fusion network
+8453, Base USDC as the buy-side stablecoin and liquidity reference, and `BASE_RPC_URL` (default
+`https://mainnet.base.org`) for permit reads. `/v1/tokens?chainId=8453` lists Base with Coinbase
+stock tokens marked `issuer: "Coinbase"`; only the pinned list is `buyable`, and a token Coinbase
+has paused is not. A list without `chainId` still returns 4663, 143 and 1 only, so older clients
+never see Base. `/v1/tokens/8453/:address/details` serves Coinbase's record (no trading
+sessions, `sessions: null`) with 1inch price and a chart against Base USDC; when Coinbase is
+unreachable the catalog still marks the pinned list and the page falls back to the pinned symbol.
+There is no server-side switch: Base buys run as soon as a client sends a Base plan.
 
 The native bridge takes the chain as an optional trailing `chainId` on `startSwap`,
 `startPayout`, `startRecovery` and `getSwapHoldings`; JS omits it for Robinhood so a bundle and

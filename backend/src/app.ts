@@ -26,9 +26,9 @@ import {
 } from "@fastify/type-provider-zod";
 import { AuroraIntents } from "./adapters/aurora/aurora-intents.ts";
 import { diagnosticAuroraFetch } from "./adapters/aurora/diagnostics.ts";
-import { OneInchFusion } from "./adapters/oneinch/fusion.ts";
+import { BASE_CHAIN_ID, BASE_FUSION, OneInchFusion, ROBINHOOD_CHAIN_ID } from "./adapters/oneinch/fusion.ts";
 import { OneInchTokenCatalog } from "./adapters/oneinch/token-catalog.ts";
-import { RobinhoodTokenDetails } from "./adapters/oneinch/token-details.ts";
+import { StockTokenDetails } from "./adapters/oneinch/token-details.ts";
 import { PimlicoMonadFunding } from "./adapters/pimlico/monad-funding.ts";
 import { registerSwapRoutes } from "./http/routes/swap.routes.ts";
 import { registerTokenRoutes } from "./http/routes/tokens.routes.ts";
@@ -119,11 +119,14 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
 
   registerHealthRoutes(app, healthController);
   registerEarlyAccessRoutes(app, new PgEarlyAccess(pgPool), secret.NODE_ENV === "local");
-  registerTokenRoutes(app, new OneInchTokenCatalog(secret.ONEINCH_API_KEY), new RobinhoodTokenDetails(secret.ONEINCH_API_KEY));
+  registerTokenRoutes(app, new OneInchTokenCatalog(secret.ONEINCH_API_KEY), new StockTokenDetails(secret.ONEINCH_API_KEY));
   registerSwapRoutes(app, {
     aurora: new AuroraIntents(secret.AURORA_API_KEY, diagnosticAuroraFetch((event) => app.log.info(event, "swap provider request"))),
     funding: new PimlicoMonadFunding(secret.PIMLICO_API_KEY),
-    fusion: new OneInchFusion(secret.ONEINCH_API_KEY),
+    fusion: {
+      [ROBINHOOD_CHAIN_ID]: new OneInchFusion(secret.ONEINCH_API_KEY),
+      [BASE_CHAIN_ID]: new OneInchFusion(secret.ONEINCH_API_KEY, fetch, secret.BASE_RPC_URL, undefined, BASE_FUSION),
+    },
   });
   registerEarnRoutes(app, new EarnPreflight(), new ConfidentialBalance(secret.AURORA_API_KEY,fetch,Date.now,(event)=>app.log.info({event:event.event,code:"EARN_PRIVATE_BALANCE_UNAVAILABLE",status:event.httpStatus},"earn private balance read failed")));
   const ethereumPlannerConfig={rpcUrl:secret.ETHEREUM_RPC_URL??"https://ethereum-rpc.publicnode.com",oneInchApiKey:secret.ONEINCH_API_KEY,anvilPath:secret.EARN_ANVIL_PATH};
