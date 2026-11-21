@@ -39,7 +39,7 @@ test("combines Robinhood's record, the 1inch price and an oldest-first chart", a
     chainId: 4663, address: nvda.address, symbol: "NVDA", name: "NVDA • Robinhood Token", logoURI: "https://cdn.robinhood.com/NVDA.png",
     kind: "stock", description: TOKEN_PROFILES.NVDA!.description, isin: "US67066G1040", sharesPerToken: "1.000775159164630595",
     sessions: { regular: true, extended: true, overnight: false }, priceUsd: 176.22,
-    chart: { period: "1D", points: [{ time: 1_791_936_000, price: 170.2 }, { time: 1_792_022_400, price: 179.6 }] },
+    chart: { period: "1D", source: "1inch", points: [{ time: 1_791_936_000, price: 170.2 }, { time: 1_792_022_400, price: 179.6 }] },
   });
   assert.ok(calls.some((url) => url.endsWith(`/charts/v1.0/chart/line/${nvda.address}/0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168/24H/4663`)));
 });
@@ -146,7 +146,7 @@ test("a Base page combines Coinbase's record with the 1inch price and a chart ag
   assert.deepEqual(details, {
     chainId: 8453, address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc.", logoURI: "https://cdn.coinbase.com/googl.png",
     kind: "stock", description: "Alphabet is the parent of Google.", isin: "US02079K3059", sharesPerToken: "1", sessions: null, priceUsd: 301.5,
-    chart: { period: "1W", points: [{ time: 1, price: 300 }, { time: 2, price: 302 }] },
+    chart: { period: "1W", source: "1inch", points: [{ time: 1, price: 300 }, { time: 2, price: 302 }] },
   });
   assert.ok(calls.some((url) => url.endsWith(`/charts/v1.0/chart/line/${googl.address}/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913/1W/8453`)));
   assert.ok(calls.some((url) => url.startsWith(`https://api.1inch.com/price/v1.1/8453/${googl.address}`)));
@@ -171,4 +171,59 @@ test("Base prices come from one batched request on chain 8453", async () => {
   assert.equal(prices.get(BASE_BUY_TARGETS[0]!.address.toLowerCase()), 301.5);
   assert.equal(calls.length, 1);
   assert.ok(calls[0]!.startsWith("https://api.1inch.com/price/v1.1/8453/"));
+});
+
+test("a Base token without a 1inch chart is charted from its most liquid GeckoTerminal pool", async () => {
+  const crwv = BASE_BUY_TARGETS.find((t) => t.symbol === "CRWVc")!;
+  const pool = "0x4d942b4239e0894e5a80ca2b3944e3467f4ee464";
+  const now = 1_795_300_000_000;
+  const hour = 3_600;
+  const start = now / 1000 - 7 * 24 * hour;
+  const calls: string[] = [];
+  let geckoUp = true;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes("coinbase.com")) return Response.json({ tokens: [{ contract_address: crwv.address, symbol: "CRWVc", name: "CoreWeave, Inc." }] });
+    if (url.includes("/price/")) return Response.json({ [crwv.address.toLowerCase()]: "40.99" });
+    if (url.includes("api.1inch.com/charts")) return Response.json({ error: "charts not supported for chosen tokens" }, { status: 400 });
+    assert.equal(new Headers(init?.headers).get("authorization"), null, "the 1inch key never reaches GeckoTerminal");
+    if (!geckoUp) return new Response("", { status: 429 });
+    if (url.includes("/pools?")) return Response.json({ data: [{ attributes: { address: pool } }, { attributes: { address: "0x" + "1".repeat(40) } }] });
+    // Newest first, with a gap where nothing traded and one candle from before the week.
+    return Response.json({ data: { attributes: { ohlcv_list: [
+      [start + 100 * hour, 41, 42, 40, 41.26, 10],
+      [start + 2 * hour, 48, 49, 47, 48.5, 3],
+      [start + 2 * hour, 48, 49, 47, 48.5, 3],
+      [start - 30 * hour, 50, 51, 49, 49.25, 2],
+    ] } } });
+  };
+  const service = new StockTokenDetails("key", fetchImpl, () => now);
+  const details = await service.details(crwv.address, "1W", 8453);
+  assert.equal(details?.priceUsd, 40.99);
+  assert.deepEqual(details?.chart, {
+    period: "1W",
+    source: "geckoterminal",
+    points: [{ time: start, price: 49.25 }, { time: start + 2 * hour, price: 48.5 }, { time: start + 100 * hour, price: 41.26 }],
+  });
+  assert.ok(calls.includes(`https://api.geckoterminal.com/api/v2/networks/base/tokens/${crwv.address}/pools?page=1&sort=h24_volume_usd_liquidity_desc`));
+  assert.ok(calls.includes(`https://api.geckoterminal.com/api/v2/networks/base/pools/${pool}/ohlcv/hour?aggregate=1&limit=500&currency=usd&token=${crwv.address}`));
+  // The pool is looked up once per token; each period then costs one candle request, cached ten minutes.
+  await service.details(crwv.address, "1Y", 8453);
+  await service.details(crwv.address, "1W", 8453);
+  assert.equal(calls.filter((url) => url.includes("/pools?")).length, 1);
+  assert.equal(calls.filter((url) => url.includes("/ohlcv/")).length, 2);
+  assert.ok(calls.some((url) => url.includes("/ohlcv/day?aggregate=1&limit=365")));
+  // GeckoTerminal being down or rate limited only leaves the chart empty.
+  geckoUp = false;
+  const fresh = await new StockTokenDetails("key", fetchImpl, () => now).details(crwv.address, "1M", 8453);
+  assert.equal(fresh?.chart, null);
+  assert.equal(fresh?.symbol, "CRWVc");
+});
+
+test("a 1inch chart is kept and Robinhood tokens never ask GeckoTerminal", async () => {
+  const calls: string[] = [];
+  const service = new StockTokenDetails("key", fakeFetch(calls, { chart: () => new Response("", { status: 400 }) }));
+  assert.equal((await service.details(nvda.address, "1M"))?.chart, null);
+  assert.ok(!calls.some((url) => url.includes("geckoterminal")));
 });

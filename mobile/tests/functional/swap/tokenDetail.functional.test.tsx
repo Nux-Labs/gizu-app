@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
-import { Modal } from "react-native";
+import { Linking, Modal } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NativeSwapScreen } from "@/features/swap/NativeSwapScreen";
 import { tokenCatalogService } from "@/services/tokenCatalog";
@@ -169,6 +169,22 @@ test("choosing a period reloads the chart and Select makes the token the swap ta
   expect(await screen.findByRole("button", { name: "Choose receive token" })).toBeVisible();
   expect(screen.queryByText("Back to tokens")).toBeNull();
   expect(screen.getByText("GOOGL")).toBeVisible();
+});
+
+test("a GeckoTerminal chart credits GeckoTerminal with a link; a 1inch chart has no credit", async () => {
+  const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+  let source: "1inch" | "geckoterminal" = "geckoterminal";
+  details.mockImplementation(async (_address, period) => ({
+    ...tokenDetails,
+    chart: { ...tokenDetails.chart!, period, source },
+  }));
+  await openDetails("GOOGL");
+  fireEvent.press(await screen.findByRole("link", { name: "Chart data by GeckoTerminal" }));
+  expect(open).toHaveBeenCalledWith("https://www.geckoterminal.com");
+  source = "1inch";
+  fireEvent.press(screen.getByRole("radio", { name: "1W" }));
+  await screen.findByText("+4.13% · 1W");
+  expect(screen.queryByText("Chart data by GeckoTerminal")).toBeNull();
 });
 
 test("a fund without price history says so instead of drawing a chart", async () => {

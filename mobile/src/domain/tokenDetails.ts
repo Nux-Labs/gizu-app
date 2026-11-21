@@ -19,7 +19,12 @@ export interface TokenDetails {
   sessions: { regular: boolean; extended: boolean; overnight: boolean } | null;
   /** USD price of the token on its chain, not the exchange price. */
   priceUsd: number | null;
-  chart: { period: DetailPeriod; points: { time: number; price: number }[] } | null;
+  /** `source` is "geckoterminal" when the chart needs GeckoTerminal's attribution. */
+  chart: {
+    period: DetailPeriod;
+    source?: "1inch" | "geckoterminal";
+    points: { time: number; price: number }[];
+  } | null;
 }
 
 export interface TokenDetailsService {
