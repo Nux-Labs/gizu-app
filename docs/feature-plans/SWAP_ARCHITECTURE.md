@@ -52,6 +52,16 @@ sessions, `sessions: null`) with 1inch price and a chart against Base USDC; when
 unreachable the catalog still marks the pinned list and the page falls back to the pinned symbol.
 There is no server-side switch: Base buys run as soon as a client sends a Base plan.
 
+In the app, the swap picker asks `/v1/tokens?chainIds=4663,8453&liquidOnly=true`, so Robinhood
+and Base stocks share one list (Robinhood first); a stock on both chains appears once per chain,
+Robinhood rows with the Robinhood Chain mark and Base rows with a "Base" badge. The buy controller
+reads the chosen token's chain from its list entry (stock addresses are unique across chains) and
+passes it to the estimate (`chainId` and Base USDC as `srcToken`) and to `startSwap`/`startPayout`.
+Detail pages load `/v1/tokens/:chainId/:address/details`; a Base page names Base as the price
+venue and shows "Onchain, any time" for trading. The sell estimate prices a holding into its own
+chain's stablecoin, the Home "Sell" shortcut covers both chains, and the asset sweep runs on 4663
+and 8453.
+
 The native bridge takes the chain as an optional trailing `chainId` on `startSwap`,
 `startPayout`, `startRecovery` and `getSwapHoldings`; JS omits it for Robinhood so a bundle and
 a native build from either side of the change agree on arity. Both shells keep the swap ledger per

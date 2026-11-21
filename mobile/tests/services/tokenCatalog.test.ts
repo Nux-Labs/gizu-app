@@ -181,3 +181,23 @@ test.each([
     "Invalid token catalog response.",
   );
 });
+test("lists several swap chains in one request and accepts Coinbase-issued Base stocks", async () => {
+  const base = {
+    ...catalogToken,
+    chainId: 8453 as const,
+    issuer: "Coinbase" as const,
+    address: "0xb2000000000000000000002d0ba3164cc74f58b7",
+  };
+  const page = { list: [catalogToken, base], page: 0, items: 20, total: 2 };
+  response(page);
+  const both = { ...query, chainId: null, chainIds: [4663, 8453] as const, liquidOnly: true };
+  expect(await service.list(both, new AbortController().signal)).toEqual(page);
+  expect(fetch).toHaveBeenCalledWith(
+    "https://api.example.com/v1/tokens?chainIds=4663,8453&category=rwa&search=&page=0&items=20&liquidOnly=true",
+    { signal: expect.anything() },
+  );
+  // A row from a chain the query did not ask for fails the page.
+  await expect(
+    service.list({ ...both, chainIds: [4663] }, new AbortController().signal),
+  ).rejects.toThrow();
+});

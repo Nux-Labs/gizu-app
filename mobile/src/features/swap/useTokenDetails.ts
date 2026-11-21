@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import type { SwapChain } from "@/domain/tokenCatalog";
 import type { DetailPeriod, TokenDetails, TokenDetailsService } from "@/domain/tokenDetails";
 import { tokenDetailsService } from "@/services/tokenDetails";
 
@@ -14,14 +15,18 @@ export type TokenDetailsLoad = {
 type Settled = { key: string; details: TokenDetails | null; failed: boolean };
 
 /** Loads one token's detail page for a period; stale responses are dropped after a change. */
-export function useTokenDetails(address: string, period: DetailPeriod): TokenDetailsLoad {
+export function useTokenDetails(
+  address: string,
+  period: DetailPeriod,
+  chainId: SwapChain = 4663,
+): TokenDetailsLoad {
   const service = useContext(TokenDetailsContext);
   const [attempt, setAttempt] = useState(0);
-  const key = `${address.toLowerCase()}:${period}:${attempt}`;
+  const key = `${chainId}:${address.toLowerCase()}:${period}:${attempt}`;
   const [settled, setSettled] = useState<Settled>({ key: "", details: null, failed: false });
   useEffect(() => {
     const controller = new AbortController();
-    service.details(address, period, controller.signal).then(
+    service.details(address, period, controller.signal, chainId).then(
       (details) => {
         if (!controller.signal.aborted) setSettled({ key, details, failed: false });
       },
@@ -31,7 +36,7 @@ export function useTokenDetails(address: string, period: DetailPeriod): TokenDet
       },
     );
     return () => controller.abort();
-  }, [service, address, period, key]);
+  }, [service, address, period, chainId, key]);
   // Only this token's earlier details may stay on screen while the next request runs.
   const details =
     settled.details?.address.toLowerCase() === address.toLowerCase() ? settled.details : null;

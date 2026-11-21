@@ -9,7 +9,7 @@ import { Surface } from "@/components/molecules/Surface";
 import { Screen } from "@/components/templates/Screen";
 import colors from "@/theme/colors.json";
 import { parseTokenAmount } from "@/domain/swap";
-import type { CatalogToken } from "@/domain/tokenCatalog";
+import { isSwapChain, type CatalogToken } from "@/domain/tokenCatalog";
 import { holdingAmount } from "@/domain/wallet/amounts";
 import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
 import { TokenChoices } from "./SwapTokenPicker";
@@ -53,6 +53,8 @@ export function SwapSellForm({
     previewToken && previewToken.decimals > 0
       ? parseTokenAmount(previewAmount, previewToken.decimals)
       : null;
+  const previewChain =
+    previewToken && isSwapChain(previewToken.chainId) ? previewToken.chainId : undefined;
   const estimate = useSellEstimate(
     fundingAddress,
     previewing ? previewToken?.address : holding?.token,
@@ -61,6 +63,7 @@ export function SwapSellForm({
         ? previewAtoms.toString()
         : null
       : (holding?.balanceAtoms ?? null),
+    previewing ? previewChain : holding?.chainId,
   );
   return (
     <>

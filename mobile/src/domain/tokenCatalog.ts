@@ -2,13 +2,21 @@ export const tokenNetworks = [
   { chainId: 1, name: "Ethereum" },
   { chainId: 143, name: "Monad" },
   { chainId: 4663, name: "Robinhood" },
+  { chainId: 8453, name: "Base" },
 ] as const;
+/** Chains whose stock tokens a swap can buy: Robinhood Chain (USDG) and Base (USDC). */
+export const swapChains = [4663, 8453] as const;
+export type SwapChain = (typeof swapChains)[number];
+export function isSwapChain(chainId: number): chainId is SwapChain {
+  return (swapChains as readonly number[]).includes(chainId);
+}
 export const TOKEN_PAGE_SIZE = 20;
 export type TokenChainId = (typeof tokenNetworks)[number]["chainId"];
 export type TokenCategory = "all" | CatalogToken["category"];
 export interface TokenQuery {
-  /** `null` browses every catalog network. */
+  /** `null` browses every catalog network; `chainIds` lists several in that order instead. */
   chainId: TokenChainId | null;
+  chainIds?: readonly TokenChainId[];
   category: TokenCategory;
   search: string;
   page: number;
@@ -23,11 +31,11 @@ export interface CatalogToken {
   decimals: number;
   logoURI: string | null;
   category: "rwa" | "other";
-  issuer: "Robinhood" | null;
+  issuer: "Robinhood" | "Coinbase" | null;
   swapListed: boolean;
   /** `false` marks a listed stock outside the curated liquid set; older gateways omit it. */
   buyable?: boolean;
-  /** USD price on Robinhood Chain for buyable stocks; null when 1inch has none right now. */
+  /** USD price on the token's chain for buyable stocks; null when 1inch has none right now. */
   priceUsd?: number | null;
   fusionStatus: "quote-required";
 }

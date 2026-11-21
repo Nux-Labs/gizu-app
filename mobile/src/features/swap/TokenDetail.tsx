@@ -12,7 +12,7 @@ import { Surface } from "@/components/molecules/Surface";
 import { LineChart } from "@/components/molecules/chart/LineChart";
 import { PeriodPills } from "@/components/molecules/chart/PeriodPills";
 import { Screen } from "@/components/templates/Screen";
-import { tokenDisplayName } from "@/domain/tokenCatalog";
+import { tokenDisplayName, tokenNetworks, type SwapChain } from "@/domain/tokenCatalog";
 import {
   detailPeriods,
   periodChange,
@@ -48,19 +48,29 @@ const shortAddress = (address: string) => `${address.slice(0, 6)}…${address.sl
  * One swappable Robinhood stock or fund: price on Robinhood Chain, its history, a short
  * description and Robinhood's facts, with an action to choose it as the swap target.
  */
+/** "Robinhood Chain" or "Base": where the token's price is quoted. */
+function chainName(chainId: SwapChain): string {
+  return chainId === 4663
+    ? "Robinhood Chain"
+    : (tokenNetworks.find((network) => network.chainId === chainId)?.name ?? "");
+}
+
 export function TokenDetail({
   address,
+  chainId = 4663,
   disabled,
   onBack,
   onSelect,
 }: {
   address: string;
+  /** The chain the token trades on; defaults to Robinhood Chain. */
+  chainId?: SwapChain;
   disabled: boolean;
   onBack: () => void;
   onSelect: () => void;
 }) {
   const [period, setPeriod] = useState<DetailPeriod>("1M");
-  const { details, status, retry } = useTokenDetails(address, period);
+  const { details, status, retry } = useTokenDetails(address, period, chainId);
   return (
     <Screen>
       <View className="flex-row items-center gap-3">
@@ -122,6 +132,7 @@ function Loaded({
   const change = periodChange(details);
   const up = change === null || change >= 0;
   const sessions = sessionNames(details.sessions);
+  const chain = chainName(details.chainId);
   const stats = [
     { label: "Type", value: details.kind === "fund" ? "Fund" : "Stock" },
     ...(details.sharesPerToken
@@ -134,7 +145,13 @@ function Loaded({
     { label: "Contract", value: shortAddress(details.address) },
     {
       label: "Trading",
-      value: sessions.length > 0 ? sessions.join(" · ") : "Not trading right now",
+      // Coinbase publishes no market sessions; its tokens trade onchain at any hour.
+      value:
+        details.sessions === null
+          ? "Onchain, any time"
+          : sessions.length > 0
+            ? sessions.join(" · ")
+            : "Not trading right now",
     },
   ];
   return (
@@ -154,7 +171,7 @@ function Loaded({
               </Typography>
               <View className="flex-row items-center gap-2">
                 <Badge label={details.kind === "fund" ? "Fund" : "Stock"} />
-                <RobinhoodChainMark />
+                {details.chainId === 4663 ? <RobinhoodChainMark /> : <Badge label={chain} />}
               </View>
             </View>
           </View>
@@ -167,7 +184,7 @@ function Loaded({
             }
             className="gap-1"
           >
-            <Typography variant="label11">Price on Robinhood Chain</Typography>
+            <Typography variant="label11">Price on {chain}</Typography>
             <Text
               key={fontScale}
               className="font-sans text-[36px] leading-[40px] ios:tracking-tight text-text"
@@ -214,8 +231,8 @@ function Loaded({
               </View>
             )}
             <Typography variant="micro">
-              Price of the token on Robinhood Chain. It can differ from the exchange price,
-              especially outside market hours.
+              Price of the token on {chain}. It can differ from the exchange price, especially
+              outside market hours.
             </Typography>
           </View>
         </View>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatTokenAtoms, previewSellOut } from "./confidentialSwap";
 import { groupDigits } from "@/domain/wallet/amounts";
+import type { SwapChain } from "@/domain/tokenCatalog";
 
 export type SellEstimate =
   { kind: "loading" } | { kind: "ready"; text: string } | { kind: "unavailable" };
@@ -13,6 +14,7 @@ export function useSellEstimate(
   wallet: string,
   token: string | undefined,
   tokenAtoms: string | null,
+  chainId: SwapChain = 4663,
 ): SellEstimate | null {
   const [result, setResult] = useState<{ key: string; text: string } | null>(null);
   const valid =
@@ -20,12 +22,12 @@ export function useSellEstimate(
     tokenAtoms !== "0" &&
     /^0x[0-9a-fA-F]{40}$/.test(wallet) &&
     /^0x[0-9a-fA-F]{40}$/.test(token ?? "");
-  const key = `${token}:${tokenAtoms}`;
+  const key = `${chainId}:${token}:${tokenAtoms}`;
   useEffect(() => {
     if (!valid || !token || !tokenAtoms) return;
     let live = true;
     const timer = setTimeout(() => {
-      previewSellOut(wallet, token, tokenAtoms)
+      previewSellOut(wallet, token, tokenAtoms, undefined, chainId)
         .then((out) => {
           if (live) setResult({ key, text: groupDigits(formatTokenAtoms(out, 6)) });
         })
@@ -37,7 +39,7 @@ export function useSellEstimate(
       live = false;
       clearTimeout(timer);
     };
-  }, [valid, wallet, token, tokenAtoms, key]);
+  }, [valid, wallet, token, tokenAtoms, chainId, key]);
   // Only a result for the current token and amount is shown.
   if (!valid) return null;
   if (result?.key !== key) return { kind: "loading" };

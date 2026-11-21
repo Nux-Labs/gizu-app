@@ -35,6 +35,7 @@ test("token list keeps only swap-listed assets", async () => {
   });
   await expect(loadSwapTokens(fetchImpl as unknown as typeof fetch)).resolves.toEqual([
     {
+      chainId: 4663,
       address: "0x12f190a9F9d7D37a250758b26824B97CE941bF54",
       symbol: "AMZN",
       name: "Amazon",

@@ -149,7 +149,7 @@ test("the info button opens a stock's details without selecting it, and Back ret
   expect(screen.getByLabelText("Shares per token: 1.0005")).toBeVisible();
   expect(screen.getByLabelText("Trading: Regular hours · Extended hours")).toBeVisible();
   expect(screen.getByText(/can differ from the exchange price/)).toBeVisible();
-  expect(details).toHaveBeenCalledWith(googl, "1M", expect.anything());
+  expect(details).toHaveBeenCalledWith(googl, "1M", expect.anything(), 4663);
   fireEvent.press(screen.getByRole("button", { name: "Back to tokens" }));
   expect(
     await screen.findByRole("radio", { name: "COIN · Coinbase", checked: true }),
@@ -164,7 +164,7 @@ test("choosing a period reloads the chart and Select makes the token the swap ta
   await screen.findByText("+4.13% · 1M");
   fireEvent.press(screen.getByRole("radio", { name: "1W" }));
   expect(await screen.findByText("+4.13% · 1W")).toBeVisible();
-  expect(details).toHaveBeenLastCalledWith(googl, "1W", expect.anything());
+  expect(details).toHaveBeenLastCalledWith(googl, "1W", expect.anything(), 4663);
   fireEvent.press(screen.getByRole("button", { name: "Select GOOGL" }));
   expect(await screen.findByRole("button", { name: "Choose receive token" })).toBeVisible();
   expect(screen.queryByText("Back to tokens")).toBeNull();
