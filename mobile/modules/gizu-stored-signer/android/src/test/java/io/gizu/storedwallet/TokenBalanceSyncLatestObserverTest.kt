@@ -21,9 +21,16 @@ class TokenBalanceSyncLatestObserverTest {
     }
   }
 
-  /** The public provider exposes headers/logs but no old contract state. */
-  private class Rpc : PortfolioRpc {
+  /**
+   * The public provider exposes headers/logs but contract state only at [stateBlock]: latest by
+   * default, like Robinhood's pruned endpoint and a Base buy that `finalized` has not reached.
+   */
+  private class Rpc(val chainId: Long = 4663) : PortfolioRpc {
     var head = 100
+    var finalizedState = false
+
+    fun stateBlock() = if (finalizedState) head - 20 else head
+
     var advanceDuringRead = false
     var latestHeaders = 0
     var fork = "a"
@@ -42,7 +49,7 @@ class TokenBalanceSyncLatestObserverTest {
 
     override suspend fun call(method: String, params: JSONArray): Any =
       when (method) {
-        "eth_chainId" -> "0x1237"
+        "eth_chainId" -> "0x" + chainId.toString(16)
         "eth_getBlockByNumber" -> {
           val tag = params.getString(0)
           val number =
@@ -58,7 +65,7 @@ class TokenBalanceSyncLatestObserverTest {
           JSONObject().put("number", "0x${number.toString(16)}").put("hash", hash(number))
         }
         "eth_call" -> {
-          check(params.getJSONObject(1).getString("blockHash") == hash(head)) {
+          check(params.getJSONObject(1).getString("blockHash") == hash(stateBlock())) {
             "Historical state unavailable"
           }
           check(params.getJSONObject(1).getBoolean("requireCanonical"))
@@ -88,13 +95,13 @@ class TokenBalanceSyncLatestObserverTest {
       }
   }
 
-  private class Fixture(count: Int) {
+  private class Fixture(count: Int, val chainId: Long = 4663) {
     val file = File()
-    val rpc = Rpc()
+    val rpc = Rpc(chainId)
     val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
     val owners = (1..count).map { "0x" + it.toString(16).padStart(40, '0') }
 
-    fun sync() = TokenBalanceSync(file, { key }, "wallet", 4663, TOKEN, rpc)
+    fun sync() = TokenBalanceSync(file, { key }, "wallet", chainId, TOKEN, rpc)
 
     suspend fun initial() {
       repeat((owners.size + 79) / 80) { sync().read(owners, it.toLong()) }
@@ -216,6 +223,45 @@ class TokenBalanceSyncLatestObserverTest {
     repeat(2) { index -> snapshot = f.sync().read(f.owners, 31_010 + index.toLong()) }
     assertTrue(snapshot.complete)
     assertTrue(f.rpc.batches.all { it <= 40 })
+  }
+
+  @Test
+  fun baseBuyNotYetFinalizedIsObservedAtLatest() = runBlocking {
+    // A swap split across three recipients minutes ago: `finalized` still predates the buy.
+    val f = Fixture(3, chainId = 8453)
+    f.rpc.amount = "0x2"
+    val snapshot = f.sync().read(f.owners, 0)
+    assertTrue(f.rpc.latestHeaders > 0)
+    assertTrue(snapshot.complete)
+    assertFalse(snapshot.syncPending)
+    assertEquals("0x64", snapshot.block)
+    assertEquals(listOf("2", "2", "2"), f.owners.map { snapshot.balances[it] })
+  }
+
+  @Test
+  fun baseSmallCatalogueRefreshesEveryOwnerAtTheAdvancingLatestSample() = runBlocking {
+    val f = Fixture(3, chainId = 8453)
+    f.initial()
+    f.rpc.head = 140
+    f.rpc.amount = "0x5"
+    val before = f.rpc.reads
+    val refreshed = f.sync().read(f.owners, 31_000)
+    assertEquals(3, f.rpc.reads - before)
+    assertEquals("Every owner is sampled, so no log range is scanned", 0, f.rpc.logs)
+    assertTrue(refreshed.complete)
+    assertEquals("0x8c", refreshed.block)
+    assertEquals(refreshed.sampleBlock, refreshed.block)
+    assertTrue(refreshed.balances.values.all { it == "5" })
+  }
+
+  @Test
+  fun finalizedChainsKeepTheFinalizedHead() = runBlocking {
+    val f = Fixture(3, chainId = 1)
+    f.rpc.finalizedState = true
+    val snapshot = f.sync().read(f.owners, 0)
+    assertEquals(0, f.rpc.latestHeaders)
+    assertTrue(snapshot.complete)
+    assertEquals("0x50", snapshot.block)
   }
 
   companion object {
