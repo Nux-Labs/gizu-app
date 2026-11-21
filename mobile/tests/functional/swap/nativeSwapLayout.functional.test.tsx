@@ -217,6 +217,7 @@ test("picker hides stocks outside the liquid set and never defaults to one", asy
           decimals: 18,
           swapListed: true,
           buyable: true,
+          priceUsd: 1234.5,
         },
       ],
     }),
@@ -232,8 +233,9 @@ test("picker hides stocks outside the liquid set and never defaults to one", asy
     await screen.findByRole("radio", { name: "GOOGL · Alphabet", checked: true }),
   ).toBeEnabled();
   expect(screen.queryByRole("radio", { name: "COIN · Coinbase" })).toBeNull();
-  // The list row and the "You receive" note both drop Robinhood's name suffix.
-  expect(screen.getAllByText("Alphabet").length).toBeGreaterThanOrEqual(2);
+  // The list row drops Robinhood's name suffix; the "You receive" row shows the unit price instead.
+  expect(screen.getByText("Alphabet")).toBeVisible();
+  expect(screen.getByText("1 GOOGL = $1,234.50")).toBeVisible();
   expect(screen.queryByText(/Robinhood Token/)).toBeNull();
   expect(screen.queryByText(/most liquid Robinhood stocks/)).toBeNull();
   expect(screen.getByText("$1,234.50")).toBeVisible();

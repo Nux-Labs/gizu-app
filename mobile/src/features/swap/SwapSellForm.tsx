@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
 import { Modal, TextInput, View } from "react-native";
-import { ChevronDown } from "lucide-react-native";
 import { Button } from "@/components/atoms/Button";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { Typography } from "@/components/atoms/Typography";
@@ -14,6 +13,9 @@ import type { CatalogToken } from "@/domain/tokenCatalog";
 import { holdingAmount } from "@/domain/wallet/amounts";
 import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
 import { TokenChoices } from "./SwapTokenPicker";
+import { TokenPill } from "./components/TokenPill";
+import type { ListedToken } from "./confidentialSwap";
+import usdcLogo from "../../../assets/logos/tokens/usdc.png";
 import { useSellEstimate } from "./useSellEstimate";
 import { useSwapHoldings } from "./useSwapHoldings";
 
@@ -26,14 +28,19 @@ export function SwapSellForm({
   fundingAddress,
   onSettled,
   initialToken,
+  tokens = [],
 }: {
   flip: ReactNode;
+  /** Swap token list, used only to show logos for held tokens. */
+  tokens?: ListedToken[];
   fundingAddress: string;
   onSettled: () => void;
   /** A held token to choose first, e.g. from a Home asset row; ignored when not held. */
   initialToken?: string;
 }) {
   const holdings = useSwapHoldings(onSettled);
+  const logoFor = (address: string) =>
+    tokens.find((token) => token.address.toLowerCase() === address.toLowerCase())?.logoURI;
   const list = holdings.snapshot?.holdings ?? [];
   const [chosen, setChosen] = useState(initialToken ?? "");
   const holding = list.find((item) => item.token === chosen) ?? list[0];
@@ -95,25 +102,27 @@ export function SwapSellForm({
               </Typography>
             )}
             {previewing || list.length > 1 ? (
-              <PressableScale
-                accessibilityRole="button"
+              <TokenPill
+                symbol={(previewing ? previewToken?.symbol : holding?.symbol) ?? "Choose"}
+                logo={
+                  previewing
+                    ? previewToken
+                      ? { uri: previewToken.logoURI }
+                      : undefined
+                    : holding
+                      ? { uri: logoFor(holding.token) }
+                      : undefined
+                }
                 accessibilityLabel={previewing ? "Choose token to sell" : "Choose held token"}
-                accessibilityState={{ expanded: picking, disabled: holdings.busy }}
                 disabled={holdings.busy}
+                expanded={picking}
                 onPress={() => setPicking(true)}
-                className="flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2"
-              >
-                <Typography variant="rowTitle" className="!text-neon">
-                  {(previewing ? previewToken?.symbol : holding?.symbol) ?? "Choose"}
-                </Typography>
-                <ChevronDown size={14} color={colors.fg["70"]} />
-              </PressableScale>
+              />
             ) : (
-              <View className="rounded-full bg-neon/15 px-3 py-2">
-                <Typography variant="rowTitle" className="!text-neon">
-                  {holding?.symbol ?? "—"}
-                </Typography>
-              </View>
+              <TokenPill
+                symbol={holding?.symbol ?? "—"}
+                logo={holding ? { uri: logoFor(holding.token) } : undefined}
+              />
             )}
           </SwapAmountBox>
           {flip}
@@ -138,11 +147,7 @@ export function SwapSellForm({
                   ? "…"
                   : "0"}
             </Typography>
-            <View className="rounded-full bg-neon/15 px-3 py-2">
-              <Typography variant="rowTitle" className="!text-neon">
-                USDC
-              </Typography>
-            </View>
+            <TokenPill symbol="USDC" logo={{ source: usdcLogo }} />
           </SwapAmountBox>
         </View>
       </Surface>

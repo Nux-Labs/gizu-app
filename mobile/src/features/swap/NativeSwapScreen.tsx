@@ -90,6 +90,7 @@ export function NativeSwapScreen({
         <SwapSellForm
           key={sellToken ?? "default"}
           initialToken={sellToken}
+          tokens={swap.tokens}
           flip={flip}
           fundingAddress={swap.fundingAddress}
           onSettled={() => void swap.refresh()}

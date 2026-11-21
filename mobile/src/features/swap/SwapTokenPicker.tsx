@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, Info } from "lucide-react-native";
+import { Info } from "lucide-react-native";
 import colors from "@/theme/colors.json";
 import { Modal, View } from "react-native";
 import { Button } from "@/components/atoms/Button";
@@ -18,8 +18,16 @@ import { useTokenCatalog } from "./useTokenCatalog";
 import type { ListedToken } from "./confidentialSwap";
 import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
 import { RobinhoodChainMark } from "./components/RobinhoodChainMark";
+import { TokenPill } from "./components/TokenPill";
 import { TokenDetail } from "./TokenDetail";
 import { formatUsd } from "./formatUsd";
+
+/** "1 AAPL = $227.40" for the receive row; nothing when the catalog has no market price. */
+function unitPrice(token: ListedToken): string | undefined {
+  return typeof token.priceUsd === "number" && Number.isFinite(token.priceUsd) && token.priceUsd > 0
+    ? `1 ${token.symbol} = ${formatUsd(token.priceUsd)}`
+    : undefined;
+}
 
 export function SwapTokenPicker({
   tokens,
@@ -40,7 +48,7 @@ export function SwapTokenPicker({
     <>
       <SwapAmountBox
         label="You receive"
-        note={selected && tokenDisplayName(selected.name)}
+        note={selected ? unitPrice(selected) : undefined}
         info={estimate && !estimate.loading ? ESTIMATE_INFO : undefined}
       >
         <Typography
@@ -52,19 +60,15 @@ export function SwapTokenPicker({
         >
           {estimate && !estimate.loading ? estimate.text : estimate ? "…" : "0"}
         </Typography>
-        <PressableScale
-          accessibilityRole="button"
+        <TokenPill
+          symbol={selected?.symbol ?? "Choose"}
+          logo={selected ? { uri: selected.logoURI } : undefined}
           accessibilityLabel="Choose receive token"
-          accessibilityState={{ disabled, expanded: open }}
           disabled={disabled}
+          expanded={open}
           onPress={() => setOpen(true)}
-          className="min-h-11 max-w-[52%] flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2"
-        >
-          <Typography variant="rowTitle" className="!text-neon">
-            {selected?.symbol ?? "Choose"}
-          </Typography>
-          <ChevronDown size={14} color={colors.fg["70"]} />
-        </PressableScale>
+          className="max-w-[52%]"
+        />
       </SwapAmountBox>
       {open && (
         <TokenChoices
