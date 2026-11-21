@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { InfrastructureError } from "../../src/domain/errors/infrastructure-error.ts";
 import { BASE_BUY_TARGETS, ROBINHOOD_BUY_TARGETS } from "../../src/adapters/oneinch/swap-targets.ts";
 import { StockTokenDetails } from "../../src/adapters/oneinch/token-details.ts";
-import { TOKEN_PROFILES } from "../../src/adapters/oneinch/token-profiles.ts";
+import { TOKEN_PROFILES, baseTokenProfile } from "../../src/adapters/oneinch/token-profiles.ts";
 
 const nvda = ROBINHOOD_BUY_TARGETS.find((t) => t.symbol === "NVDA")!;
 const qqq = ROBINHOOD_BUY_TARGETS.find((t) => t.symbol === "QQQ")!;
@@ -96,7 +96,13 @@ test("every buy target has a kind and a description", () => {
     assert.ok(profile, target.symbol);
     assert.ok(profile.description.length >= 40 && profile.description.length <= 200, target.symbol);
   }
-  assert.deepEqual(Object.keys(TOKEN_PROFILES).sort(), ROBINHOOD_BUY_TARGETS.map((t) => t.symbol).sort());
+  for (const target of BASE_BUY_TARGETS) {
+    const profile = baseTokenProfile(target.symbol);
+    assert.ok(profile, target.symbol);
+    assert.ok(profile.description.length >= 40 && profile.description.length <= 200, target.symbol);
+  }
+  const tickers = new Set([...ROBINHOOD_BUY_TARGETS.map((t) => t.symbol), ...BASE_BUY_TARGETS.map((t) => t.symbol.slice(0, -1))]);
+  assert.deepEqual(Object.keys(TOKEN_PROFILES).sort(), [...tickers].sort(), "no profile outlives its buy target");
 });
 
 test("one batched request prices every buy target, refreshes after a minute and feeds the detail page", async () => {
@@ -125,7 +131,7 @@ test("a failed batch leaves every price null without throwing", async () => {
   assert.ok([...prices.values()].every((price) => price === null));
 });
 
-test("a Base page combines Coinbase's record with the 1inch price and a chart against Base USDC", async () => {
+test("a Base page combines Coinbase's record, our description, the 1inch price and a chart against Base USDC", async () => {
   const googl = BASE_BUY_TARGETS[0]!;
   const calls: string[] = [];
   let coinbaseUp = true;
@@ -145,7 +151,7 @@ test("a Base page combines Coinbase's record with the 1inch price and a chart ag
   const details = await service.details(googl.address, "1W", 8453);
   assert.deepEqual(details, {
     chainId: 8453, address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc.", logoURI: "https://cdn.coinbase.com/googl.png",
-    kind: "stock", description: "Alphabet is the parent of Google.", isin: "US02079K3059", sharesPerToken: "1", sessions: null, priceUsd: 301.5,
+    kind: "stock", description: TOKEN_PROFILES.GOOGL!.description, isin: "US02079K3059", sharesPerToken: "1", sessions: null, priceUsd: 301.5,
     chart: { period: "1W", source: "1inch", points: [{ time: 1, price: 300 }, { time: 2, price: 302 }] },
   });
   assert.ok(calls.some((url) => url.endsWith(`/charts/v1.0/chart/line/${googl.address}/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913/1W/8453`)));
@@ -155,11 +161,11 @@ test("a Base page combines Coinbase's record with the 1inch price and a chart ag
   coinbaseUp = false;
   now += 11 * 60_000;
   assert.equal((await service.details(googl.address, "1W", 8453))?.symbol, "GOOGLc");
-  // With no Coinbase list at all, the page keeps the pinned symbol and the 1inch price and chart.
+  // With no Coinbase list at all, the page keeps the pinned symbol, our description and the 1inch price and chart.
   const fallback = await new StockTokenDetails("key", fetchImpl).details(googl.address, "1W", 8453);
   assert.deepEqual(
     { symbol: fallback?.symbol, name: fallback?.name, isin: fallback?.isin, description: fallback?.description, priceUsd: fallback?.priceUsd },
-    { symbol: "GOOGLc", name: "GOOGLc", isin: null, description: "", priceUsd: 301.5 },
+    { symbol: "GOOGLc", name: "GOOGLc", isin: null, description: TOKEN_PROFILES.GOOGL!.description, priceUsd: 301.5 },
   );
 });
 
