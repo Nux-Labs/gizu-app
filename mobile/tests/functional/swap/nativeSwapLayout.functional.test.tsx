@@ -302,7 +302,7 @@ test("a Base stock sits beside its Robinhood twin and a buy of it names Base", a
   fireEvent.press(screen.getByRole("button", { name: "Choose receive token" }));
   expect(await screen.findByRole("radio", { name: "GOOGL · Alphabet" })).toBeEnabled();
   expect(screen.getByLabelText("Robinhood Chain")).toBeVisible();
-  expect(screen.getByText("Base")).toBeVisible();
+  expect(screen.getByLabelText("Base")).toBeVisible();
   fireEvent.press(screen.getByRole("radio", { name: "GOOGLc · Alphabet Inc." }));
   fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "2");
   // The estimate asks the gateway for a Base quote that spends Base USDC.

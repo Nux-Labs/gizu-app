@@ -20,7 +20,7 @@ import {
   type DetailPeriod,
   type TokenDetails,
 } from "@/domain/tokenDetails";
-import { RobinhoodChainMark } from "./components/RobinhoodChainMark";
+import { ChainMark } from "./components/ChainMark";
 import { formatUsd } from "./formatUsd";
 import { useTokenDetails } from "./useTokenDetails";
 
@@ -171,7 +171,7 @@ function Loaded({
               </Typography>
               <View className="flex-row items-center gap-2">
                 <Badge label={details.kind === "fund" ? "Fund" : "Stock"} />
-                {details.chainId === 4663 ? <RobinhoodChainMark /> : <Badge label={chain} />}
+                <ChainMark chainId={details.chainId} fallback={<Badge label={chain} />} />
               </View>
             </View>
           </View>
