@@ -203,11 +203,19 @@ impl World {
                 } else {
                     self.credit_ready_ms.is_some_and(|t| now >= t)
                 };
-                if done
-                    && self.credited.insert(deposit.clone())
+                let first = done && self.credited.insert(deposit.clone());
+                if first
                     && let Some((recipient, _, out, true)) = self.deposits.get(&deposit).cloned()
                 {
                     *self.usdg.entry(recipient).or_default() += out;
+                }
+                if first && self.inbound_quotes.contains_key(&deposit) {
+                    let output = self.sale_output(&deposit);
+                    if self.pool_credit {
+                        self.credit += output;
+                    } else {
+                        self.credit = output;
+                    }
                 }
                 ok(json!({"status": if done { "SUCCESS" } else { "PENDING_DEPOSIT" }}))
             }
@@ -235,7 +243,7 @@ impl World {
                 let input = fills
                     .iter()
                     .fold(U256::ZERO, |sum, (_, _, _, amount, _, _)| sum + *amount);
-                let output = input.saturating_sub(U256::from(20));
+                let output = self.sale_output(deposit);
                 ok(
                     json!({"items": if input.is_zero() { vec![] } else { vec![json!({
                     "depositAddress": deposit, "status":"SUCCESS", "depositType":"ORIGIN_CHAIN", "recipientType":"CONFIDENTIAL_INTENTS", "refundType":"ORIGIN_CHAIN",
@@ -493,6 +501,15 @@ impl World {
         })
     }
 
+    /// What Aurora credits C for a sale: the stablecoin its fills deposited, less a fixed fee.
+    fn sale_output(&self, deposit: &str) -> U256 {
+        self.fills
+            .values()
+            .filter(|(_, _, _, _, to, _)| to.to_checksum(None).eq_ignore_ascii_case(deposit))
+            .fold(U256::ZERO, |sum, (_, _, _, amount, _, _)| sum + *amount)
+            .saturating_sub(U256::from(20))
+    }
+
     fn quote(&mut self, request: Value, now: u64) -> Value {
         let amount = evm::decimal(request["amount"].as_str().unwrap()).unwrap();
         let dest_usdg = request["destinationAsset"] == self.dst();
@@ -503,7 +520,11 @@ impl World {
             } else {
                 (amount - U256::from(20)) * U256::from(self.funding_credit_bps) / U256::from(10_000)
             };
-            if self.pool_credit && !destination {
+            let sale_inbound = request["originAsset"] == self.dst()
+                && request["recipientType"] == "CONFIDENTIAL_INTENTS";
+            // A sale's proceeds reach C when its route settles, from what the fills deposited.
+            if sale_inbound {
+            } else if self.pool_credit && !destination {
                 self.credit += out;
             } else {
                 self.credit = out;
@@ -2315,46 +2336,82 @@ fn a_confidential_sale_finishes_at_verified_credit_without_spending_existing_pri
     assert_eq!(public["payoutsSubmitted"], 0);
     assert_eq!(public["ordersComplete"], 3);
     assert_eq!(world.intents, 0);
+    assert_eq!(
+        world.credit,
+        initial + credited,
+        "existing private cash is untouched"
+    );
     assert!(
         !world
             .paths
             .iter()
-            .any(|p| p.ends_with("/balances") || p.contains("intent"))
+            .any(|p| p.ends_with("/history") || p.contains("intent"))
     );
     assert!(world.monad_usdc.is_empty());
 }
 
 #[test]
-fn confidential_sales_probe_authenticated_history_before_any_fusion_signature() {
-    for failure in [404, 503] {
-        let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
-        let sale = start_plan(confidential_sale_plan());
-        let step = drive_until(&sale, &mut world, &mut now, |url| {
-            url.ends_with("/aurora/history")
-        });
-        assert_eq!(
-            world.orders, 0,
-            "missing history must be discovered before selling"
-        );
-        assert_eq!(status(&sale)["approved"], false);
-        let SwapStep::Request { id, .. } = step else {
-            panic!()
-        };
-        sale.on_response(id, failure, "{}".into(), now).unwrap();
-        assert!(matches!(
-            sale.next_step(now).unwrap(),
-            SwapStep::Paused { .. }
-        ));
-        assert_eq!(world.orders, 0);
-        let state: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
-        assert!(
-            state["data"]["orders"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|row| row["permit"].is_null() && row["signature"].is_null())
-        );
-    }
+fn confidential_sales_read_the_private_baseline_after_approval_before_any_fusion_signature() {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    let sale = start_plan(confidential_sale_plan());
+    review(&sale, &mut world, &mut now);
+    assert!(
+        !world.paths.iter().any(|p| p.contains("/aurora/auth")
+            || p.ends_with("/balances")
+            || p.ends_with("/history")),
+        "planning a sale reads no private account"
+    );
+    sale.approve(now).unwrap();
+    let step = drive_until(&sale, &mut world, &mut now, |url| {
+        url.ends_with("/aurora/balances")
+    });
+    assert_eq!(world.orders, 0, "the baseline precedes every sale");
+    let SwapStep::Request { id, .. } = step else {
+        panic!()
+    };
+    sale.on_response(id, 401, "{}".into(), now).unwrap();
+    assert_eq!(status(&sale)["pausedCode"], "PRIVATE_CREDIT_AUTH_REQUIRED");
+    assert_eq!(world.orders, 0);
+    let state: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+    assert!(state["data"].get("privateBaseline").is_none());
+    assert!(
+        state["data"]["orders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["permit"].is_null() && row["signature"].is_null())
+    );
+    sale.retry();
+    assert_eq!(drive(&sale, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!(world.orders, 3);
+}
+
+fn has_sale_inbound(op: &SwapOperation) -> bool {
+    let state: Value = serde_json::from_str(&op.export_state().unwrap()).unwrap();
+    state["data"]["saleInbounds"]
+        .as_array()
+        .is_some_and(|rows| !rows.is_empty())
+}
+
+/// Drives to the private balance read that credits the first sale (not the baseline read).
+fn sale_credit_request(op: &SwapOperation, world: &mut World, now: &mut u64) -> SwapStep {
+    drive_until(op, world, now, |url| {
+        url.ends_with("/aurora/balances") && has_sale_inbound(op)
+    })
+}
+
+fn private_balance(available: U256) -> String {
+    json!({"balances": [{"tokenId": SRC, "available": available.to_string(), "source": "private"}]})
+        .to_string()
+}
+
+fn sale_state(op: &SwapOperation) -> (U256, U256) {
+    let state: Value = serde_json::from_str(&op.export_state().unwrap()).unwrap();
+    let quantity = |v: &Value| evm::quantity(v.as_str().unwrap()).unwrap();
+    (
+        quantity(&state["data"]["privateBaseline"]),
+        quantity(&state["data"]["saleInbounds"][0]["input"]),
+    )
 }
 
 fn confidential_credit_request() -> (Arc<SwapOperation>, World, u64, SwapStep) {
@@ -2362,57 +2419,112 @@ fn confidential_credit_request() -> (Arc<SwapOperation>, World, u64, SwapStep) {
     let sale = start_plan(confidential_sale_plan());
     review(&sale, &mut world, &mut now);
     sale.approve(now).unwrap();
-    let request = drive_until(&sale, &mut world, &mut now, |url| {
-        url.ends_with("/aurora/history")
-    });
+    let request = sale_credit_request(&sale, &mut world, &mut now);
     (sale, world, now, request)
 }
 
 #[test]
-fn confidential_sale_rejects_foreign_duplicate_stale_or_malformed_credit() {
-    for tamper in 0..14 {
-        let (sale, mut world, now, request) = confidential_credit_request();
-        let SwapStep::Request { id, url, body, .. } = request else {
+fn confidential_sale_never_attributes_shrinking_oversized_or_malformed_balance_growth() {
+    for tamper in 0..4 {
+        let (sale, _world, now, request) = confidential_credit_request();
+        let SwapStep::Request { id, .. } = request else {
             panic!()
         };
-        let (_, response) = world.handle(&url, body.as_deref(), now);
-        let mut value: Value = serde_json::from_str(&response).unwrap();
-        match tamper {
-            0 => value["items"][0]["recipient"] = json!(format!("{:#x}", addr(20))),
-            1 => value["items"][0]["refundTo"] = json!(format!("{:#x}", addr(20))),
-            2 => value["items"][0]["originAsset"] = json!(SRC),
-            3 => value["items"][0]["destinationAsset"] = json!(DST),
-            4 => value["items"][0]["amountInFormatted"] = json!("1000000"),
-            5 => value["items"][0]["amountOutFormatted"] = json!("0.000001"),
-            6 => value["items"][0]["createdAt"] = json!(iso_string(T0 - 60_000)),
-            7 => value["items"][0]["createdAt"] = json!(iso_string(now + 60_000)),
-            8 => {
-                value["items"][0]["quoteTransactions"][0]["txHash"] =
-                    json!(format!("{:#x}", keccak256(b"foreign")))
-            }
-            9 => {
-                let duplicate = value["items"][0].clone();
-                value["items"].as_array_mut().unwrap().push(duplicate);
-            }
-            10 => {
-                let duplicate = value["items"][0]["quoteTransactions"][0].clone();
-                value["items"][0]["quoteTransactions"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(duplicate);
-            }
-            11 => value["items"][0]["depositMemo"] = json!("foreign memo"),
-            12 => value["items"][0]["status"] = json!("PENDING_DEPOSIT"),
-            _ => value["items"][0]["amountOutFormatted"] = json!("1e6"),
+        let (baseline, input) = sale_state(&sale);
+        let reply = match tamper {
+            // Private cash left C while the sale settled.
+            0 => private_balance(baseline - U256::from(1)),
+            // More arrived than the sale deposited: unrelated cash landed meanwhile.
+            1 => private_balance(baseline + input + U256::from(1)),
+            2 => json!({"balances": [
+                {"tokenId": SRC, "available": baseline.to_string(), "source": "private"},
+                {"tokenId": SRC, "available": input.to_string(), "source": "private"},
+            ]})
+            .to_string(),
+            _ => json!({"balances": [{"tokenId": SRC, "available": "0x10", "source": "private"}]})
+                .to_string(),
+        };
+        let result = sale.on_response(id, 200, reply, now);
+        if tamper < 2 {
+            result.unwrap();
+            assert_eq!(
+                status(&sale)["pausedCode"],
+                "SALE_CREDIT_AMBIGUOUS",
+                "tamper {tamper}"
+            );
+        } else {
+            assert!(result.is_err(), "tamper {tamper}");
         }
-        assert!(
-            sale.on_response(id, 200, value.to_string(), now).is_err(),
-            "tamper {tamper}"
-        );
         assert_ne!(status(&sale)["phase"], "COMPLETE");
         assert_eq!(status(&sale)["privateCreditedAtoms"], "0");
-        assert_eq!(world.intents, 0);
+        assert_eq!(sale_state(&sale).0, baseline, "tamper {tamper}");
     }
+}
+
+#[test]
+fn confidential_sale_credit_is_the_balance_growth_within_the_deposit() {
+    let (sale, _world, now, request) = confidential_credit_request();
+    let SwapStep::Request { id, .. } = request else {
+        panic!()
+    };
+    let (baseline, input) = sale_state(&sale);
+    // The whole deposit is the most one sale can add.
+    sale.on_response(id, 200, private_balance(baseline + input), now)
+        .unwrap();
+    assert_eq!(status_private_amount(&sale), input);
+    assert_eq!(sale_state(&sale).0, baseline + input);
+}
+
+#[test]
+fn a_fill_above_the_quoted_input_is_credited_from_the_quoted_amount_only() {
+    // Mainnet 2026-11-21: the Fusion fill deposited 1.081163 USDG for an EXACT_INPUT quote of
+    // 1.03477; Aurora credited 1.029073, the quote's output for the quoted input only.
+    let (sale, _world, _now, _) = confidential_credit_request();
+    let state: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+    let mut inbound: SaleInbound =
+        serde_json::from_value(state["data"]["saleInbounds"][0].clone()).unwrap();
+    inbound.quote.amount_in = U256::from(1_034_770u64);
+    inbound.quote.amount_out = U256::from(1_029_075u64);
+    inbound.quote.min_amount_out = U256::from(1_018_784u64);
+    inbound.input = U256::from(1_081_163u64);
+    let baseline = U256::from(5u64);
+    let credit = |inbound: &SaleInbound, grown: u64| {
+        sale_balance_credit(inbound, baseline, baseline + U256::from(grown))
+    };
+    assert!(matches!(
+        credit(&inbound, 1_029_073).unwrap(),
+        BalanceCredit::Credited(c) if c == U256::from(1_029_073u64)
+    ));
+    assert!(matches!(
+        credit(&inbound, 1_018_783).unwrap(),
+        BalanceCredit::Pending
+    ));
+    assert!(matches!(
+        credit(&inbound, 1_081_164).unwrap(),
+        BalanceCredit::Ambiguous
+    ));
+    // A short fill lowers the guaranteed minimum pro rata.
+    inbound.input = U256::from(517_385u64);
+    assert!(matches!(
+        credit(&inbound, 509_400).unwrap(),
+        BalanceCredit::Credited(_)
+    ));
+}
+
+#[test]
+fn a_sale_started_with_operation_history_keeps_that_check_after_upgrade() {
+    let (sale, _world, now, _) = confidential_credit_request();
+    let mut state: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+    state["data"]
+        .as_object_mut()
+        .unwrap()
+        .remove("privateBaseline");
+    let restored = SwapOperation::restore(state.to_string(), GATEWAY.into()).unwrap();
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    let SwapStep::Request { url, .. } = restored.next_step(now).unwrap() else {
+        panic!()
+    };
+    assert!(url.ends_with("/aurora/history"), "{url}");
 }
 
 #[test]
@@ -2421,9 +2533,12 @@ fn missing_private_credit_stays_pending_across_restore_without_repeating_sale() 
     let SwapStep::Request { id, .. } = request else {
         panic!()
     };
-    sale.on_response(id, 200, json!({"items":[]}).to_string(), now)
+    // Route SUCCESS before C shows the credit: nothing is counted yet.
+    let (baseline, _) = sale_state(&sale);
+    sale.on_response(id, 200, private_balance(baseline), now)
         .unwrap();
     assert_ne!(status(&sale)["phase"], "COMPLETE");
+    assert_eq!(status(&sale)["privateCreditedAtoms"], "0");
     let restored = SwapOperation::restore(sale.export_state().unwrap(), GATEWAY.into()).unwrap();
     restored.unlock(ENTROPY.to_vec(), now).unwrap();
     assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
@@ -2445,7 +2560,7 @@ fn private_credit_auth_failure_never_falls_back_to_route_minimum_or_account_bala
     restored.unlock(ENTROPY.to_vec(), now).unwrap();
     assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
     assert_eq!((world.orders, world.intents), (3, 0));
-    assert!(!world.paths.iter().any(|path| path.ends_with("/balances")));
+    assert!(!world.paths.iter().any(|path| path.ends_with("/history")));
 }
 
 #[test]
@@ -2511,9 +2626,8 @@ fn partial_confidential_sale_keeps_every_inbound_across_restart_and_never_reroll
     let sale = start_plan(confidential_sale_plan());
     review(&sale, &mut world, &mut now);
     sale.approve(now).unwrap();
-    let SwapStep::Request { id, url, body, .. } = drive_until(&sale, &mut world, &mut now, |url| {
-        url.ends_with("/aurora/history")
-    }) else {
+    let SwapStep::Request { id, url, body, .. } = sale_credit_request(&sale, &mut world, &mut now)
+    else {
         panic!()
     };
     let (status, reply) = world.handle(&url, body.as_deref(), now);
@@ -2858,9 +2972,8 @@ fn all_wallet_sale_resumes_after_first_credit_and_sells_later_groups_once() {
         "last wallet must be reviewed: {text}"
     );
     sale.approve(now).unwrap();
-    let SwapStep::Request { id, url, body, .. } = drive_until(&sale, &mut world, &mut now, |url| {
-        url.ends_with("/aurora/history")
-    }) else {
+    let SwapStep::Request { id, url, body, .. } = sale_credit_request(&sale, &mut world, &mut now)
+    else {
         panic!()
     };
     let (code, reply) = world.handle(&url, body.as_deref(), now);
