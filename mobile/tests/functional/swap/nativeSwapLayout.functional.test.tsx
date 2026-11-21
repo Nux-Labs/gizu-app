@@ -113,7 +113,7 @@ test("selects a searched token and reviews the exact amount without exposing tec
   expect(start).not.toHaveBeenCalled();
   fireEvent.press(screen.getByRole("button", { name: "Swap" }));
   await waitFor(() =>
-    expect(start).toHaveBeenCalledWith(secondToken, "1250000", expect.any(String)),
+    expect(start).toHaveBeenCalledWith(secondToken, "1250000", expect.any(String), 4663),
   );
   expect(await screen.findByText("Swap paused")).toBeVisible();
   expect(screen.queryByText(/QUOTE_REJECTED/)).toBeNull();
@@ -163,7 +163,7 @@ test("pull-to-refresh reloads saved swap status without a refresh button", async
   expect(readStatus).toHaveBeenCalledTimes(2);
 });
 
-test("picker lists only Robinhood stocks without a token type switch", async () => {
+test("picker lists stocks from every swap chain without a token type switch", async () => {
   render(
     <SafeAreaProvider>
       <NativeSwapScreen />
@@ -177,7 +177,13 @@ test("picker lists only Robinhood stocks without a token type switch", async () 
   expect(screen.getAllByLabelText("Robinhood Chain")).toHaveLength(2);
   expect(screen.queryByText("Robinhood")).toBeNull();
   expect(tokenCatalogService.list).toHaveBeenCalledWith(
-    expect.objectContaining({ chainId: 4663, category: "rwa", liquidOnly: true, page: 0 }),
+    expect.objectContaining({
+      chainId: null,
+      chainIds: [4663, 8453],
+      category: "rwa",
+      liquidOnly: true,
+      page: 0,
+    }),
     expect.anything(),
   );
   expect(start).not.toHaveBeenCalled();
@@ -240,8 +246,79 @@ test("picker hides stocks outside the liquid set and never defaults to one", asy
   expect(screen.queryByText(/most liquid Robinhood stocks/)).toBeNull();
   expect(screen.getByText("$1,234.50")).toBeVisible();
   expect(tokenCatalogService.list).toHaveBeenCalledWith(
-    expect.objectContaining({ chainId: 4663, category: "rwa", liquidOnly: true }),
+    expect.objectContaining({ chainIds: [4663, 8453], category: "rwa", liquidOnly: true }),
     expect.anything(),
+  );
+});
+
+test("a Base stock sits beside its Robinhood twin and a buy of it names Base", async () => {
+  const baseToken = "0x" + "c".repeat(40);
+  jest.mocked(tokenCatalogService.list).mockImplementation(async (query) => {
+    const tokens = [
+      { ...catalogToken, address: secondToken, symbol: "GOOGL", name: "Alphabet", buyable: true },
+      {
+        ...catalogToken,
+        chainId: 8453 as const,
+        issuer: "Coinbase" as const,
+        address: baseToken,
+        symbol: "GOOGLc",
+        name: "Alphabet Inc.",
+        buyable: true,
+      },
+    ].filter((item) => `${item.symbol}`.toLowerCase().includes(query.search.toLowerCase()));
+    return { list: tokens, total: tokens.length, items: 20, page: query.page };
+  });
+  const fetchMock = jest.mocked(globalThis.fetch).mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      list: [
+        {
+          chainId: 4663,
+          address: secondToken,
+          symbol: "GOOGL",
+          name: "Alphabet",
+          decimals: 18,
+          swapListed: true,
+          buyable: true,
+        },
+        {
+          chainId: 8453,
+          address: baseToken,
+          symbol: "GOOGLc",
+          name: "Alphabet Inc.",
+          decimals: 18,
+          swapListed: true,
+          buyable: true,
+        },
+      ],
+    }),
+  } as Response);
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  await screen.findByText("GOOGL");
+  fireEvent.press(screen.getByRole("button", { name: "Choose receive token" }));
+  expect(await screen.findByRole("radio", { name: "GOOGL · Alphabet" })).toBeEnabled();
+  expect(screen.getByLabelText("Robinhood Chain")).toBeVisible();
+  expect(screen.getByText("Base")).toBeVisible();
+  fireEvent.press(screen.getByRole("radio", { name: "GOOGLc · Alphabet Inc." }));
+  fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "2");
+  // The estimate asks the gateway for a Base quote that spends Base USDC.
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith("/v1/swap/fusion/preview") &&
+          JSON.parse(String(init?.body)).chainId === 8453 &&
+          JSON.parse(String(init?.body)).srcToken === "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      ),
+    ).toBe(true),
+  );
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(baseToken, "2000000", expect.any(String), 8453),
   );
 });
 

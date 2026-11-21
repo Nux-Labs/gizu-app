@@ -9,6 +9,8 @@ import { PressableScale } from "@/components/atoms/PressableScale";
 import { InfiniteListScreen } from "@/components/templates/InfiniteListScreen";
 import { Badge } from "@/components/atoms/Badge";
 import {
+  isSwapChain,
+  swapChains,
   tokenDisplayName,
   tokenIdentity,
   tokenNetworks,
@@ -96,10 +98,12 @@ export function TokenChoices({
   onClose: () => void;
   onSelect: (token: CatalogToken) => void;
 }) {
-  // Swap buys only Robinhood stocks, so the picker lists nothing a buy cannot target.
+  // Swap buys stocks on Robinhood Chain and Base, so the picker lists both chains (Robinhood
+  // first) and nothing a buy cannot target. A stock on both chains appears once per chain.
   const { query, queryKey, list, change } = useTokenCatalog({
     category: "rwa",
-    chainId: 4663,
+    chainId: null,
+    chainIds: swapChains,
     liquidOnly: true,
   });
   // The list's data and query live here, so returning from a detail page keeps them.
@@ -107,6 +111,7 @@ export function TokenChoices({
   const content = detail ? (
     <TokenDetail
       address={detail.address}
+      chainId={isSwapChain(detail.chainId) ? detail.chainId : undefined}
       disabled={disabled}
       onBack={() => setDetail(null)}
       onSelect={() => onSelect(detail)}
@@ -137,12 +142,12 @@ export function TokenChoices({
       }
       renderItem={(item) => {
         const selectable =
-          item.chainId === 4663 &&
+          isSwapChain(item.chainId) &&
           item.category === "rwa" &&
           item.swapListed &&
           item.buyable !== false;
         const checked =
-          item.chainId === 4663 && item.address.toLowerCase() === target.toLowerCase();
+          isSwapChain(item.chainId) && item.address.toLowerCase() === target.toLowerCase();
         const price = typeof item.priceUsd === "number" ? formatUsd(item.priceUsd) : null;
         return (
           <View className="mb-2 flex-row items-stretch gap-2">

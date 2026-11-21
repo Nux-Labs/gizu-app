@@ -15,9 +15,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isToken(value: unknown, query: TokenQuery): value is CatalogToken {
   return (
     isRecord(value) &&
-    (query.chainId === null
-      ? tokenNetworks.some((network) => network.chainId === value.chainId)
-      : value.chainId === query.chainId) &&
+    (query.chainIds
+      ? (query.chainIds as readonly unknown[]).includes(value.chainId)
+      : query.chainId === null
+        ? tokenNetworks.some((network) => network.chainId === value.chainId)
+        : value.chainId === query.chainId) &&
     typeof value.address === "string" &&
     /^0x[0-9a-fA-F]{40}$/.test(value.address) &&
     typeof value.symbol === "string" &&
@@ -28,7 +30,7 @@ function isToken(value: unknown, query: TokenQuery): value is CatalogToken {
     (value.logoURI === null || typeof value.logoURI === "string") &&
     (value.category === "rwa" || value.category === "other") &&
     (query.category === "all" || value.category === query.category) &&
-    (value.issuer === null || value.issuer === "Robinhood") &&
+    (value.issuer === null || value.issuer === "Robinhood" || value.issuer === "Coinbase") &&
     typeof value.swapListed === "boolean" &&
     (value.buyable === undefined || typeof value.buyable === "boolean") &&
     (value.priceUsd === undefined ||
@@ -62,7 +64,11 @@ export function createTokenCatalogService(baseUrl: string): TokenCatalogService 
   return {
     async list(query, signal) {
       if (!root) throw new Error("Token catalog is not configured.");
-      const chain = query.chainId === null ? "" : `chainId=${query.chainId}&`;
+      const chain = query.chainIds
+        ? `chainIds=${query.chainIds.join(",")}&`
+        : query.chainId === null
+          ? ""
+          : `chainId=${query.chainId}&`;
       const liquid = query.liquidOnly ? "&liquidOnly=true" : "";
       const params = `${chain}category=${query.category}&search=${encodeURIComponent(query.search)}&page=${query.page}&items=${TOKEN_PAGE_SIZE}${liquid}`;
       const body = await getJson(

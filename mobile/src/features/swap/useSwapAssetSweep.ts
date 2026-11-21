@@ -4,7 +4,7 @@ import { getStoredSwapSigner } from "@/services/wallet/nativeBridge";
 import { TokenCatalogContext } from "./useTokenCatalog";
 
 /** Chains swaps can deliver to. Native keeps its own matching list and rejects any other chain. */
-export const SWAP_SWEEP_CHAINS: readonly TokenChainId[] = [4663];
+export const SWAP_SWEEP_CHAINS: readonly TokenChainId[] = [4663, 8453];
 
 /**
  * Recovery sweep for the swap asset ledger, run once per mount after the first balance read.

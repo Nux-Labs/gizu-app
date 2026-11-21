@@ -29,6 +29,7 @@ import { clipboardService } from "@/services/clipboard";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
 import { useSwapAssetSweep } from "@/features/swap/useSwapAssetSweep";
+import { isSwapChain } from "@/domain/tokenCatalog";
 import { WithdrawalStatusNotice } from "@/features/earn/WithdrawalStatusNotice";
 import { useSharedWithdrawalState } from "@/features/earn/useVaultPosition";
 import { useMainnetWallet } from "./MainnetWalletProvider";
@@ -182,8 +183,8 @@ type AssetNavigation = {
 
 /** Only stocks get a row shortcut; Receive, Send and Withdraw already sit above Assets. */
 function assetActions(asset: NamedPortfolioAsset, go: AssetNavigation): PortfolioAssetAction[] {
-  // Swap sells Robinhood Chain holdings; the sell form picks this token.
-  if (asset.fromSwap && asset.chainId === 4663)
+  // Swap sells Robinhood Chain and Base holdings; the sell form picks this token.
+  if (asset.fromSwap && isSwapChain(asset.chainId))
     return [
       {
         label: "Sell",
