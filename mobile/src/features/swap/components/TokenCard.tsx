@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Image, View } from "react-native";
 import { Typography } from "@/components/atoms/Typography";
 import { tokenDisplayName, tokenNetworks, type CatalogToken } from "@/domain/tokenCatalog";
-import { RobinhoodChainMark } from "./RobinhoodChainMark";
+import { ChainMark } from "./ChainMark";
 import { formatUsd } from "../formatUsd";
 function TokenLogo({ token }: { token: CatalogToken }) {
   const [failed, setFailed] = useState(false);
@@ -31,13 +31,14 @@ export function TokenCard({ token }: { token: CatalogToken }) {
     <View className="flex-1 gap-4 rounded-card border border-cardEdge bg-card p-4">
       <View className="flex-row items-center justify-between gap-2">
         <TokenLogo key={token.logoURI} token={token} />
-        {token.chainId === 4663 ? (
-          <RobinhoodChainMark />
-        ) : (
-          <Typography variant="micro">
-            {tokenNetworks.find((n) => n.chainId === token.chainId)?.name}
-          </Typography>
-        )}
+        <ChainMark
+          chainId={token.chainId}
+          fallback={
+            <Typography variant="micro">
+              {tokenNetworks.find((n) => n.chainId === token.chainId)?.name}
+            </Typography>
+          }
+        />
       </View>
       <View className="gap-1">
         <Typography variant="value" numberOfLines={1}>

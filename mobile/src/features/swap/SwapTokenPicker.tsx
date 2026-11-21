@@ -19,7 +19,7 @@ import {
 import { useTokenCatalog } from "./useTokenCatalog";
 import type { ListedToken } from "./confidentialSwap";
 import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
-import { RobinhoodChainMark } from "./components/RobinhoodChainMark";
+import { ChainMark } from "./components/ChainMark";
 import { TokenPill } from "./components/TokenPill";
 import { TokenDetail } from "./TokenDetail";
 import { formatUsd } from "./formatUsd";
@@ -171,15 +171,17 @@ export function TokenChoices({
                     {price}
                   </Typography>
                 )}
-                {item.chainId === 4663 ? (
-                  <RobinhoodChainMark />
-                ) : (
-                  <Badge
-                    label={
-                      tokenNetworks.find((network) => network.chainId === item.chainId)?.name ?? ""
-                    }
-                  />
-                )}
+                <ChainMark
+                  chainId={item.chainId}
+                  fallback={
+                    <Badge
+                      label={
+                        tokenNetworks.find((network) => network.chainId === item.chainId)?.name ??
+                        ""
+                      }
+                    />
+                  }
+                />
               </View>
               <Typography variant="micro">{tokenDisplayName(item.name)}</Typography>
               {!selectable && <Typography variant="micro">Not available for swaps</Typography>}
