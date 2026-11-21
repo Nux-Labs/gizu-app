@@ -12,6 +12,13 @@ const STOCK_CHAIN_IDS: readonly StockChainId[] = [4663, 8453];
 
 const querySchema = z.object({
   chainId: z.coerce.number().int().refine((id) => CATALOG_CHAIN_IDS.includes(id)).optional(),
+  // Several chains in one list, in the order given, e.g. the swap picker's "4663,8453".
+  chainIds: z
+    .string()
+    .regex(/^\d+(,\d+){0,3}$/)
+    .transform((value) => value.split(",").map(Number))
+    .refine((ids) => new Set(ids).size === ids.length && ids.every((id) => CATALOG_CHAIN_IDS.includes(id)))
+    .optional(),
   category: z.enum(["all", "rwa", "other"]),
   search: z.string().max(200),
   page: z.coerce.number().int().nonnegative(),
@@ -27,10 +34,10 @@ export function registerTokenRoutes(
 ) {
   app.withTypeProvider<ZodTypeProvider>().get(
     "/v1/tokens",
-    { schema: { querystring: querySchema } },
+    { schema: { querystring: querySchema.refine((query) => query.chainId === undefined || query.chainIds === undefined) } },
     async (request, reply) => {
       const { chainId, category } = request.query;
-      const chainIds = chainId === undefined ? DEFAULT_CHAIN_IDS : [chainId];
+      const chainIds = chainId !== undefined ? [chainId] : request.query.chainIds ?? DEFAULT_CHAIN_IDS;
       const tokens = (await Promise.all(chainIds.map((id) => catalog.list(id, category)))).flat();
       const search = request.query.search.trim().toLowerCase();
       const liquidOnly = request.query.liquidOnly === "true";

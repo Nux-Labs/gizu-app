@@ -154,6 +154,15 @@ test("Base is listed and priced only when asked for by chain, and has its own de
   });
   await app.inject("/v1/tokens?category=rwa&search=&page=0&items=10");
   assert.deepEqual(listed, [4663, 143, 1], "a list without a chain stays as it was before Base");
+  listed.length = 0;
+  const both = (await app.inject("/v1/tokens?chainIds=4663,8453&category=rwa&search=&page=0&items=10")).json();
+  assert.deepEqual(listed, [4663, 8453]);
+  assert.deepEqual(both.list.map((t: { symbol: string }) => t.symbol), ["GOOGLc"]);
+  for (const bad of ["chainIds=4663,4663", "chainIds=4663,999", "chainIds=x", "chainId=4663&chainIds=8453"]) {
+    assert.equal((await app.inject(`/v1/tokens?${bad}&category=rwa&search=&page=0&items=10`)).statusCode, 400, bad);
+  }
+  listed.length = 0;
+  priced.length = 0;
   const base = (await app.inject("/v1/tokens?chainId=8453&category=rwa&search=&page=0&items=10&liquidOnly=true")).json();
   assert.deepEqual(base.list.map((t: { symbol: string; priceUsd: number }) => [t.symbol, t.priceUsd]), [["GOOGLc", 301.5]]);
   assert.deepEqual(priced, [8453]);
