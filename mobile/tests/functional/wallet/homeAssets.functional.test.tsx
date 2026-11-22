@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, userEvent, within } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, userEvent, within } from "@testing-library/react-native";
 import { Linking, Platform, RefreshControl } from "react-native";
 import { requireOptionalNativeModule } from "expo";
 import { AppRoot } from "@/application/AppRoot";
@@ -252,20 +252,59 @@ test("only stocks get a row shortcut; USDC and USDG rows add no duplicate action
   expect(screen.queryByRole("button", { name: "Withdraw USDC" })).toBeNull();
 });
 
-test("an empty portfolio invites a first stock instead of hiding Assets", async () => {
+test("an empty portfolio keeps Assets and starts with receiving USDC", async () => {
   setup({ ...mainnetPortfolio(walletId, address, "0"), ownedAssets: [], positions: [] });
   await open();
-  const empty = await screen.findByText("No assets yet");
-  expect(empty).toBeVisible();
+  expect(await screen.findByText("No assets yet")).toBeVisible();
+  expect(screen.getByRole("header", { name: "Assets" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Receive USDC" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Buy a stock" })).toBeNull();
+  await userEvent.press(screen.getByRole("button", { name: "Browse stocks" }));
+  expect(await screen.findByRole("button", { name: "Reverse direction" })).toBeVisible();
+});
+
+test("public USDC without stocks keeps Assets and invites a first buy", async () => {
+  setup({ ...mainnetPortfolio(walletId, address, "153834"), ownedAssets: [], positions: [] });
+  await open();
+  expect(await screen.findByText("No stocks yet")).toBeVisible();
+  expect(screen.queryByText("No assets yet")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Receive USDC" })).toBeNull();
   await userEvent.press(screen.getByRole("button", { name: "Buy a stock" }));
   expect(await screen.findByRole("button", { name: "Reverse direction" })).toBeVisible();
 });
 
-test("public USDC alone is not shown as an empty portfolio", async () => {
-  setup({ ...mainnetPortfolio(walletId, address, "153834"), ownedAssets: [], positions: [] });
+test("an incomplete token read never claims an empty portfolio and offers a retry", async () => {
+  const { portfolio } = setup({
+    ...mainnetPortfolio(walletId, address, "0"),
+    ownedAssets: [],
+    positions: [],
+    ownedBalanceComplete: false,
+  });
   await open();
-  expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
+  expect(await screen.findByText("Assets couldn’t be loaded")).toBeVisible();
   expect(screen.queryByText("No assets yet")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry token balances and positions" })).toBeNull();
+  portfolio.getMainnetPortfolio.mockResolvedValue({
+    ...mainnetPortfolio(walletId, address, "0"),
+    ownedAssets: [],
+    positions: [],
+  });
+  await userEvent.press(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("No assets yet")).toBeVisible();
+});
+
+test("Assets shows placeholders, not an empty state, until the first read lands", async () => {
+  let land: (snapshot: ReturnType<typeof mainnetPortfolio>) => void = () => undefined;
+  const { portfolio } = setup();
+  portfolio.getMainnetPortfolio.mockReturnValue(new Promise((resolve) => (land = resolve)));
+  await open();
+  expect(await screen.findByLabelText("Loading your assets")).toBeVisible();
+  expect(screen.getByRole("header", { name: "Assets" })).toBeVisible();
+  expect(screen.queryByText("No assets yet")).toBeNull();
+  await act(async () =>
+    land({ ...mainnetPortfolio(walletId, address, "0"), ownedAssets: [], positions: [] }),
+  );
+  expect(await screen.findByText("No assets yet")).toBeVisible();
 });
 
 test("market value rounds down at the token's precision", () => {
