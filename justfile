@@ -182,6 +182,26 @@ backend-test:
 backend-build:
     npm --prefix backend run build
 
+# --- Contracts (Foundry; install it with foundryup) ---
+
+# Install pinned forge-std into contracts/lib, which Git ignores.
+[working-directory("contracts")]
+contracts-install:
+    forge install foundry-rs/forge-std@v1.17.0 --no-git --shallow
+
+# Check formatting and run the StrategyRegistry tests against shared/strategy-commit-vectors.json.
+[working-directory("contracts")]
+contracts-test:
+    forge fmt --check
+    forge test
+
+# Deploy StrategyRegistry; broadcasts a transaction. rpc: RPC URL; account: a `cast wallet` keystore name.
+[unix]
+[positional-arguments]
+[working-directory("contracts")]
+contracts-deploy rpc account:
+    forge script script/DeployStrategyRegistry.s.sol:DeployStrategyRegistry --rpc-url "$1" --account "$2" --broadcast
+
 # --- Frontend and landing page ---
 
 # Install web frontend dependencies.

@@ -1,0 +1,85 @@
+{
+  "description": "Sealed Strategies vectors shared by contracts/test and the native signer. Values were computed with cast, independently of both implementations. The mnemonic is the public all-zero 32-byte entropy test wallet used across the signer tests.",
+  "entropyHex": "0000000000000000000000000000000000000000000000000000000000000000",
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+  "signers": [
+    {
+      "chainId": 8453,
+      "index": 0,
+      "path": "m/44'/60'/146'/8453'/0",
+      "address": "0x8faDD28c803dbB9FD4584C29347664b0aDD84B50"
+    },
+    {
+      "chainId": 8453,
+      "index": 1,
+      "path": "m/44'/60'/146'/8453'/1",
+      "address": "0x4a43b75Aa97144A561e488C42D30eEca6e237041"
+    },
+    {
+      "chainId": 84532,
+      "index": 0,
+      "path": "m/44'/60'/146'/84532'/0",
+      "address": "0x1cED07C44A78772081bc6490A05584dD4bfF15B5"
+    }
+  ],
+  "domain": {
+    "name": "GizuStrategyRegistry",
+    "version": "1",
+    "chainId": 8453,
+    "verifyingContract": "0x0000000000000000000000000000000000005eA1",
+    "separator": "0xfb109b98bd4b4b17d25dc656d7964c878299079ebc2dfa3c0a7f824b84a81624"
+  },
+  "basket": {
+    "strategyId": 1,
+    "seq": 0,
+    "salt": "0x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "assets": [
+      {
+        "label": "Robinhood USDG vault",
+        "chainId": 4663,
+        "kind": 1,
+        "address": "0xBeEff033F34C046626B8D0A041844C5d1A5409dd",
+        "assetId": "0x4ccf9d6f2621032d57a2a108f3cc8f9b81739691bfb41696b9f6a98494cc5ea8",
+        "weightBps": 1000
+      },
+      {
+        "label": "NVDAc on Base",
+        "chainId": 8453,
+        "kind": 0,
+        "address": "0xb20000000000000000000078ee7ce2fE4908108C",
+        "assetId": "0x7cd58d7de3f946b18c2f4a35b074b689b2483016b5c1c6bf416cce96e0ac8b50",
+        "weightBps": 4000
+      },
+      {
+        "label": "GOOGLc on Base",
+        "chainId": 8453,
+        "kind": 0,
+        "address": "0xb2000000000000000000002D0BA3164cc74f58B7",
+        "assetId": "0x9ba80d83c930efa71427fe37ed6468c91dc2c30754626bc6b0bda9c4802bb326",
+        "weightBps": 3500
+      },
+      {
+        "label": "Base USDC",
+        "chainId": 8453,
+        "kind": 0,
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "assetId": "0xd9590258d90223cba1318c7fa60df91e979ab93491d624d6e8d2e8d9dce645a8",
+        "weightBps": 1500
+      }
+    ],
+    "assetsHash": "0x9130e921e119cf124557b812c546162b68c120c30365a0f8b93d000461fea2a2",
+    "weightsHash": "0x752182c1f78687998f4683e1650cea6aba9113bfd5389560a526422723b95ed3",
+    "commitment": "0x8f49d4b7aba844174b04fe9b7ea9d0b51e3137cb978d11943b67da6207388af3"
+  },
+  "create": {
+    "signerIndex": 0,
+    "embargo": 604800,
+    "metadataHash": "0xdefb44d971b01a07b52cf187cb83969eee541cc8a0d140ed87d04570e4d2dfea",
+    "deadline": 2000000000,
+    "digest": "0x95d8a72ac3762376b80d6f4eafaad746039caf68078a013c0c00e76b6020f79c"
+  },
+  "commit": {
+    "deadline": 2000000000,
+    "digest": "0x53213d703fa6e4007c4c734afbec90f4b18d02982f4f2d7a38d4e8d676838eb8"
+  }
+}
