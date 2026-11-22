@@ -120,7 +120,9 @@ requests `:all`. Status/history `completionTarget` separates the completion cont
 Buy allocation reserves whole blocks of three indices and uses the requested count,
 so unused indices stay unfunded. Legacy three-holder batch IDs remain readable;
 they do not limit the current full-holding sell or require sequential user sales.
-A buy from existing private balance currently retains three recipients. A public-funded
+A buy from existing private balance currently retains three recipients. The buy form offers
+it as a "Private" pay source whenever the portfolio shows private USDC; the plan takes no
+amount, so the form locks the amount to the whole private balance and says so. A public-funded
 buy authorizes its guaranteed route credit only, leaving pre-existing private cash alone.
 
 ## Shared engine versus platform orchestration

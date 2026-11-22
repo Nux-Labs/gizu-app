@@ -584,3 +584,94 @@ test("a swap balance shortfall is shown explicitly and refreshes the shared obse
   ).toBeVisible();
   expect(await screen.findByText("Available: 1 USDC")).toBeVisible();
 });
+
+function privatePortfolio(address: string, publicAtoms: string, privateAtoms: string) {
+  const portfolio = mainnetPortfolio("wallet", address, publicAtoms);
+  portfolio.ownedAssets = [
+    {
+      assetId: "private-usdc",
+      chainId: 143,
+      token: "confidential:monad-usdc",
+      symbol: "USDC (private)",
+      decimals: 6,
+      balanceAtoms: privateAtoms,
+      observedAtoms: privateAtoms,
+      valueUsdcAtoms: privateAtoms,
+      checkedAt: Date.now(),
+      complete: true,
+      stale: false,
+      valuationUnavailable: false,
+    },
+  ];
+  return portfolio;
+}
+
+function renderWithPortfolio(snapshot: ReturnType<typeof mainnetPortfolio>) {
+  const address = status.fundingAddress;
+  render(
+    <MainnetWalletProvider
+      session={{
+        kind: "mainnet",
+        walletId: "wallet",
+        address,
+        accountId: address,
+        accountIndex: 1,
+        chainId: 143,
+        method: "Passkey",
+      }}
+      service={{ getMainnetPortfolio: jest.fn().mockResolvedValue(snapshot) }}
+    >
+      <SafeAreaProvider>
+        <NativeSwapScreen />
+      </SafeAreaProvider>
+    </MainnetWalletProvider>,
+  );
+}
+
+test("sale proceeds held privately can pay for a buy without touching wallet USDC", async () => {
+  const startPayout = jest.fn().mockResolvedValue({
+    ...status,
+    phase: "REVIEW",
+    direction: "buy",
+    targetSymbol: "COIN",
+  });
+  jest.mocked(getStoredSwapSigner).mockReturnValue({
+    getSwapDeposit: jest.fn().mockResolvedValue({ fundingAddress: status.fundingAddress }),
+    getSwapStatus: readStatus,
+    startSwap: start,
+    startPayout,
+  } as unknown as NonNullable<ReturnType<typeof getStoredSwapSigner>>);
+  renderWithPortfolio(privatePortfolio(status.fundingAddress, "153834", "1029073"));
+  await screen.findByText("Available: 0.153834 USDC");
+  await screen.findByText("COIN");
+  const toggle = await screen.findByRole("switch", { name: "Pay with private USDC" });
+  fireEvent.press(toggle);
+  expect(await screen.findByText("Private: 1.029073 USDC")).toBeVisible();
+  // The private buy spends the whole private balance, so the amount is fixed and Max is gone.
+  expect(screen.getByLabelText("Amount in USDC")).toHaveDisplayValue("1.029073");
+  expect(screen.getByLabelText("Amount in USDC")).not.toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Use maximum USDC amount" })).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "About paying privately" }));
+  expect(screen.getByText(/whole private USDC balance/)).toBeVisible();
+  fireEvent.press(screen.getByRole("button", { name: /^Swap$/ }));
+  await waitFor(() => expect(startPayout).toHaveBeenCalledWith(token, expect.any(String)));
+  expect(start).not.toHaveBeenCalled();
+});
+
+test("switching back to wallet USDC restores the editable amount and its balance", async () => {
+  renderWithPortfolio(privatePortfolio(status.fundingAddress, "3000000", "1029073"));
+  const toggle = await screen.findByRole("switch", { name: "Pay with private USDC" });
+  fireEvent.press(toggle);
+  await screen.findByText("Private: 1.029073 USDC");
+  fireEvent.press(toggle);
+  expect(await screen.findByText("Available: 3 USDC")).toBeVisible();
+  expect(screen.getByLabelText("Amount in USDC")).toHaveDisplayValue("");
+  expect(screen.getByLabelText("Amount in USDC")).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Use maximum USDC amount" })).toBeVisible();
+});
+
+test("without a private balance the buy form offers only wallet USDC", async () => {
+  renderWithPortfolio(privatePortfolio(status.fundingAddress, "3000000", "0"));
+  await screen.findByText("Available: 3 USDC");
+  expect(screen.queryByRole("switch", { name: "Pay with private USDC" })).toBeNull();
+});

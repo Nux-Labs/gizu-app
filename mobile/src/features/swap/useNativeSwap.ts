@@ -165,6 +165,8 @@ export function useNativeSwap() {
       run("payout", async () => {
         setStatus(parseSwapView(await swapSigner().startPayout(target, swapGateway)));
       }),
+    // A buy from the private balance (`payout`): native reads it, reviews it and spends all of it.
+    canPayPrivate: /^0x[0-9a-fA-F]{40}$/.test(target) && !busy,
     resume: () =>
       run("resume", async () =>
         setStatus(parseSwapView(await swapSigner().resumeSwap(swapGateway))),

@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { MainTabParamList } from "@/navigation/types";
 import { TextInput, View } from "react-native";
-import { ArrowDown } from "lucide-react-native";
+import { ArrowDown, Lock } from "lucide-react-native";
 import { Button } from "@/components/atoms/Button";
 import { SwapTokenPicker } from "./SwapTokenPicker";
 import { SwapSellForm } from "./SwapSellForm";
@@ -16,9 +16,17 @@ import { ActiveSwapCard, LastSwapButton, LastSwapSummary, isFinished } from "./S
 import { Screen } from "@/components/templates/Screen";
 import { formatSwapAmount } from "@/domain/swap";
 import { groupDigits } from "@/domain/wallet/amounts";
-import { portfolioPublicUsdcAtoms } from "@/domain/wallet/portfolioValue";
+import {
+  portfolioPrivateUsdcAtoms,
+  portfolioPublicUsdcAtoms,
+} from "@/domain/wallet/portfolioValue";
 import colors from "@/theme/colors.json";
 import { useNativeSwap } from "./useNativeSwap";
+
+const PRIVATE_PAY_INFO = {
+  label: "About paying privately",
+  text: "Uses your whole private USDC balance, including sale proceeds and Earn returns, in one buy. Nothing is taken from your wallet USDC.",
+};
 
 export function NativeSwapScreen({
   route,
@@ -38,6 +46,20 @@ export function NativeSwapScreen({
   const wallet = useOptionalMainnetWallet();
   const publicAtoms = wallet?.snapshot ? portfolioPublicUsdcAtoms(wallet.snapshot) : null;
   const maxAmount = publicAtoms !== null ? formatSwapAmount(BigInt(publicAtoms)) : null;
+  // Sale proceeds and Earn returns stay private. A buy can spend them directly; the engine's
+  // private-balance buy takes no amount, so it always uses the whole private balance.
+  const privateAtoms = portfolioPrivateUsdcAtoms(wallet?.snapshot);
+  const privateAmount =
+    privateAtoms !== null && BigInt(privateAtoms) > 0n
+      ? formatSwapAmount(BigInt(privateAtoms))
+      : null;
+  const [payFrom, setPayFrom] = useState<"wallet" | "private">("wallet");
+  const fromPrivate = payFrom === "private" && privateAmount !== null;
+  const choosePayFrom = (next: "wallet" | "private") => {
+    if (swap.busy || next === payFrom) return;
+    setPayFrom(next);
+    swap.setAmount(next === "private" && privateAmount !== null ? privateAmount : "");
+  };
   const selected = swap.tokens.find((token) => token.address === swap.target);
   const active =
     swap.status !== null && swap.status.phase !== "COMPLETE" && swap.status.phase !== "CANCELLED";
@@ -104,16 +126,19 @@ export function NativeSwapScreen({
                 note={
                   !wallet
                     ? undefined
-                    : publicAtoms !== null
-                      ? `Available: ${groupDigits(formatSwapAmount(BigInt(publicAtoms)))} USDC`
-                      : "Checking available USDC…"
+                    : fromPrivate
+                      ? `Private: ${groupDigits(privateAmount)} USDC`
+                      : publicAtoms !== null
+                        ? `Available: ${groupDigits(formatSwapAmount(BigInt(publicAtoms)))} USDC`
+                        : "Checking available USDC…"
                 }
+                info={fromPrivate ? PRIVATE_PAY_INFO : undefined}
               >
                 <TextInput
                   accessibilityLabel="Amount in USDC"
-                  value={swap.amount}
+                  value={fromPrivate ? privateAmount : swap.amount}
                   onChangeText={swap.setAmount}
-                  editable={!swap.busy}
+                  editable={!swap.busy && !fromPrivate}
                   keyboardType="decimal-pad"
                   placeholder="0"
                   placeholderTextColor={colors.fg["20"]}
@@ -123,18 +148,40 @@ export function NativeSwapScreen({
                   cursorColor={colors.accent}
                   style={{ fontVariant: ["tabular-nums"], includeFontPadding: false }}
                 />
-                <Typography variant="rowTitle" className="!text-fg-55">
-                  USDC
-                </Typography>
-                <Button
-                  label="Max"
-                  accessibilityLabel="Use maximum USDC amount"
-                  variant="quiet"
-                  disabled={swap.busy || maxAmount === null}
-                  onPress={() => {
-                    if (maxAmount !== null) swap.setAmount(maxAmount);
-                  }}
-                />
+                {privateAmount !== null ? (
+                  <PressableScale
+                    accessibilityRole="switch"
+                    accessibilityLabel="Pay with private USDC"
+                    accessibilityState={{ checked: fromPrivate, disabled: swap.busy }}
+                    disabled={swap.busy}
+                    hitSlop={8}
+                    onPress={() => choosePayFrom(fromPrivate ? "wallet" : "private")}
+                    className={`flex-row items-center gap-1.5 rounded-full px-3 py-1.5 ${fromPrivate ? "bg-neon/10" : "bg-card"}`}
+                  >
+                    {fromPrivate ? <Lock size={13} color={colors.accent} /> : null}
+                    <Typography
+                      variant="rowTitle"
+                      className={fromPrivate ? "!text-neon" : "!text-fg-55"}
+                    >
+                      {fromPrivate ? "Private" : "USDC"}
+                    </Typography>
+                  </PressableScale>
+                ) : (
+                  <Typography variant="rowTitle" className="!text-fg-55">
+                    USDC
+                  </Typography>
+                )}
+                {fromPrivate ? null : (
+                  <Button
+                    label="Max"
+                    accessibilityLabel="Use maximum USDC amount"
+                    variant="quiet"
+                    disabled={swap.busy || maxAmount === null}
+                    onPress={() => {
+                      if (maxAmount !== null) swap.setAmount(maxAmount);
+                    }}
+                  />
+                )}
               </SwapAmountBox>
               {flip}
               <SwapTokenPicker
@@ -148,19 +195,21 @@ export function NativeSwapScreen({
           </Surface>
           <Button
             label={swap.busy ? "Preparing…" : "Swap"}
-            onPress={swap.start}
-            disabled={!swap.canStart}
+            onPress={fromPrivate ? swap.payout : swap.start}
+            disabled={fromPrivate ? !swap.canPayPrivate : !swap.canStart}
           />
-          {!swap.busy && !swap.canStart && (!swap.target || Number(swap.amount) > 0) && (
-            // Say why review is unavailable; an empty amount field needs no prompt.
-            <Typography
-              variant="micro"
-              className="-mt-2 px-1 text-center"
-              accessibilityLiveRegion="polite"
-            >
-              {!swap.target ? "Choose a token to receive." : "Check the amount to pay."}
-            </Typography>
-          )}
+          {!swap.busy &&
+            !(fromPrivate ? swap.canPayPrivate : swap.canStart) &&
+            (!swap.target || Number(swap.amount) > 0) && (
+              // Say why review is unavailable; an empty amount field needs no prompt.
+              <Typography
+                variant="micro"
+                className="-mt-2 px-1 text-center"
+                accessibilityLiveRegion="polite"
+              >
+                {!swap.target ? "Choose a token to receive." : "Check the amount to pay."}
+              </Typography>
+            )}
         </>
       )}
       {swap.error ? <Notice message={swap.error} error /> : null}
