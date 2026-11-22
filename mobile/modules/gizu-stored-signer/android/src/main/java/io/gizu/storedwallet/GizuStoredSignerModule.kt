@@ -160,6 +160,41 @@ class GizuStoredSignerModule : Module() {
       "Create a passkey and a new wallet stored encrypted on this phone. A verified backup is required before this wallet can be used.",
     )
 
+  /** JS numbers arrive as doubles; accept only exact integers that fit a JS safe integer. */
+  private fun wholeNumber(value: Double, min: Double) =
+    value >= min && value <= 9_007_199_254_740_991.0 && value == Math.floor(value)
+
+  private fun strategyAsset(
+    entry: Map<String, Any?>
+  ): uniffi.gizu_stored_signer_core.StrategyAsset {
+    check(entry.keys == setOf("chainId", "kind", "address", "weightBps"))
+    val chain = (entry["chainId"] as? Number)?.toDouble() ?: error("Missing asset chain")
+    val kind = (entry["kind"] as? Number)?.toDouble() ?: error("Missing asset kind")
+    val weight = (entry["weightBps"] as? Number)?.toDouble() ?: error("Missing asset weight")
+    val address = entry["address"] as? String ?: error("Missing asset address")
+    require(
+      wholeNumber(chain, 1.0) &&
+        wholeNumber(kind, 0.0) &&
+        kind <= 1.0 &&
+        wholeNumber(weight, 1.0) &&
+        weight <= 10_000.0
+    )
+    return uniffi.gizu_stored_signer_core.StrategyAsset(
+      chain.toLong().toULong(),
+      kind.toInt().toUByte(),
+      address,
+      weight.toInt().toUShort(),
+    )
+  }
+
+  private fun embargoText(seconds: Int): String =
+    when {
+      seconds % 86_400 == 0 -> "${seconds / 86_400}-day"
+      seconds % 3_600 == 0 -> "${seconds / 3_600}-hour"
+      seconds % 60 == 0 -> "${seconds / 60}-minute"
+      else -> "$seconds-second"
+    }
+
   private suspend fun confirm(
     activity: Activity,
     title: String,
@@ -465,6 +500,7 @@ class GizuStoredSignerModule : Module() {
           "earnDepositPrivateFunding" to eligible(appContext.currentActivity),
           "earnBalanceDeltaSettlement" to eligible(appContext.currentActivity),
           "earnPartialWithdrawals" to eligible(appContext.currentActivity),
+          "strategySigning" to eligible(appContext.currentActivity),
         )
       )
     }
@@ -919,6 +955,142 @@ class GizuStoredSignerModule : Module() {
         currentCoroutineContext().ensureActive()
         store.load().use { store.allocateEarnCycle(it, chain, budgetAtoms) }
         store.load().use { earnPublic(it) }
+      }
+    }
+    // Sealed Strategies: public signer addresses, then passkey-approved registry signatures.
+    // Rust pins the registry and asset universe; these functions only pass public basket data.
+    AsyncFunction("strategyAddresses") {
+      walletId: String,
+      chainId: Int,
+      start: Int,
+      count: Int,
+      promise: Promise ->
+      runCeremony(promise, readOnly = true) { _, store ->
+        require(start >= 0 && count in 1..32)
+        withContext(Dispatchers.IO) {
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            uniffi.gizu_stored_signer_core.strategyAddresses(
+              record.entropy,
+              chainId.toULong(),
+              start.toUInt(),
+              count.toUInt(),
+            )
+          }
+        }
+      }
+    }
+    AsyncFunction("createStrategy") {
+      walletId: String,
+      chainId: Int,
+      index: Int,
+      embargo: Int,
+      metadataHash: String,
+      deadline: Double,
+      promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        require(index >= 0 && embargo > 0 && wholeNumber(deadline, 1.0))
+        require(Regex("^0x[0-9a-fA-F]{64}$").matches(metadataHash))
+        val credential =
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            record.credential
+          }
+        confirm(
+          activity,
+          "Publish strategy",
+          "Publish this strategy on Base with a ${embargoText(embargo)} embargo. Its name and prices become public. Your wallets, balances and identity are not shared. No funds move.",
+        )
+        withProviderUi(activity) {
+          PasskeyGate(activity)
+            .authorize(
+              credential,
+              walletId,
+              "strategy-create:v1:$chainId:$index:$embargo:${metadataHash.lowercase()}",
+            )
+        }
+        currentCoroutineContext().ensureActive()
+        val signed =
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            uniffi.gizu_stored_signer_core.strategyCreateSignature(
+              record.entropy,
+              chainId.toULong(),
+              index.toUInt(),
+              embargo.toUInt(),
+              metadataHash,
+              deadline.toLong().toULong(),
+              System.currentTimeMillis().toULong(),
+            )
+          }
+        mapOf("signer" to signed.signer, "signature" to signed.signature)
+      }
+    }
+    AsyncFunction("sealStrategyCommit") {
+      walletId: String,
+      chainId: Int,
+      index: Int,
+      strategyId: Double,
+      seq: Double,
+      assets: List<Map<String, Any?>>,
+      deadline: Double,
+      promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        require(
+          index >= 0 &&
+            wholeNumber(strategyId, 1.0) &&
+            wholeNumber(seq, 0.0) &&
+            wholeNumber(deadline, 1.0)
+        )
+        val basket = assets.map(::strategyAsset)
+        require(basket.size in 1..10)
+        val credential =
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            record.credential
+          }
+        val request =
+          basket.joinToString(";") {
+            "${it.chainId}:${it.kind}:${it.address.lowercase()}:${it.weightBps}"
+          }
+        val requestHash =
+          java.security.MessageDigest.getInstance("SHA-256")
+            .digest("${strategyId.toLong()}:${seq.toLong()}:$request".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        confirm(
+          activity,
+          "Send update to subscribers",
+          "Seal the new weights of ${basket.size} assets on Base and share them with your subscribers. Amounts, wallets and identity stay private. No funds move.",
+        )
+        withProviderUi(activity) {
+          PasskeyGate(activity)
+            .authorize(credential, walletId, "strategy-commit:v1:$chainId:$index:$requestHash")
+        }
+        currentCoroutineContext().ensureActive()
+        val salt = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val sealed =
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            uniffi.gizu_stored_signer_core.strategySealCommit(
+              record.entropy,
+              chainId.toULong(),
+              index.toUInt(),
+              strategyId.toLong().toULong(),
+              seq.toLong().toULong(),
+              basket,
+              salt,
+              deadline.toLong().toULong(),
+              System.currentTimeMillis().toULong(),
+            )
+          }
+        mapOf(
+          "signer" to sealed.signer,
+          "assetIds" to sealed.assetIds,
+          "weightsBps" to sealed.weightsBps.map { it.toInt() },
+          "commitment" to sealed.commitment,
+          "signature" to sealed.signature,
+          "salt" to "0x" + salt.joinToString("") { "%02x".format(it) },
+        )
       }
     }
     AsyncFunction("prepareNewEarnIntent") { walletId: String, profile: String, promise: Promise ->

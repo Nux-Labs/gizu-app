@@ -100,8 +100,10 @@ mod earn_sponsored;
 pub use earn_sponsored::*;
 mod earn_execution;
 pub use earn_execution::*;
+mod strategy;
 mod transfers;
 pub use roles::*;
+pub use strategy::*;
 pub use swap::*;
 pub use transfers::*;
 

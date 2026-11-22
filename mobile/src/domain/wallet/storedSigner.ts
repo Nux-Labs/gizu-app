@@ -37,6 +37,8 @@ export type StoredSignerCapabilities = {
   confidentialSaleProceeds?: boolean;
   earnBalanceDeltaSettlement?: boolean;
   earnPartialWithdrawals?: boolean;
+  /** Sealed Strategies registry signatures; Android only. */
+  strategySigning?: boolean;
   reason?: "notImplemented" | "unsupportedPlatform" | "unsupportedProvider";
 };
 export type StoredTransferProposal = {
@@ -182,12 +184,55 @@ export type MainnetPortfolioSnapshot = {
   }[];
 };
 
+/** Registry chain whose StrategyRegistry the native signer pins (Base Sepolia for now). */
+export type StrategyRegistryChainId = 84532;
+/** One basket entry; `kind` 0 is a token, 1 an Earn vault. Weights are basis points. */
+export type StrategyAssetInput = {
+  chainId: number;
+  kind: 0 | 1;
+  address: string;
+  weightBps: number;
+};
+export type StrategyCreateSignature = { signer: string; signature: string };
+/** The sorted basket the commitment covers, with the salt the backend keeps for the reveal. */
+export type SealedStrategyCommit = {
+  signer: string;
+  assetIds: string[];
+  weightsBps: number[];
+  commitment: string;
+  signature: string;
+  salt: string;
+};
+
 /** All dialogs, file IO and authorization originate natively. No JS approve/export API. */
 export interface StoredSignerContract {
   prepareNewEarnDistributionIntent?(
     walletId: string,
     profile: string,
     budgetAtoms: string,
+  ): Promise<unknown>;
+  strategyAddresses?(
+    walletId: string,
+    chainId: StrategyRegistryChainId,
+    start: number,
+    count: number,
+  ): Promise<unknown>;
+  createStrategy?(
+    walletId: string,
+    chainId: StrategyRegistryChainId,
+    index: number,
+    embargo: number,
+    metadataHash: string,
+    deadline: number,
+  ): Promise<unknown>;
+  sealStrategyCommit?(
+    walletId: string,
+    chainId: StrategyRegistryChainId,
+    index: number,
+    strategyId: number,
+    seq: number,
+    assets: StrategyAssetInput[],
+    deadline: number,
   ): Promise<unknown>;
   selectEarnInvestmentSlot?(walletId: string, intentId: string, slot: number): Promise<unknown>;
   getWalletRecoveryStatus?(walletId: string): Promise<unknown>;

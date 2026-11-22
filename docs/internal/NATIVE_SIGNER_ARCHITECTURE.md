@@ -57,6 +57,11 @@ valid shared private-read grant; explicit lock also clears that grant.
   Chains 1 and 4663 are distinct. New cycles persist `privateAccount: "shared"`
   and use Account 2 for private cash; legacy identities and saved operations keep
   their original bindings.
+- Sealed Strategies signing keys use `m/44'/60'/146'/{registryChainId}'/{index}` for
+  registry chains 8453 and 84532 (`core/src/strategy.rs`). They hold no funds and
+  only sign the registry's `CreateStrategy` and `Commit` structures for the pinned
+  registry; a relayer submits them. No counter is persisted: the next index is the
+  first derived address with no strategy recorded, so restore needs no metadata.
 
 Passkeys authorize use of randomly generated local entropy; PRF encrypts backups
 and does not determine addresses. Old signer state/provider passkeys are neither

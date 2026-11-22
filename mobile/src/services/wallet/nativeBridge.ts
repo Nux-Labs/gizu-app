@@ -2,8 +2,12 @@ import { requireOptionalNativeModule } from "expo";
 import type { StoredWalletBridge } from "./storedAccess";
 import {
   ROBINHOOD_SWAP_CHAIN,
+  type SealedStrategyCommit,
   type StoredSignerContract,
   type StoredSignerCapabilities,
+  type StrategyAssetInput,
+  type StrategyCreateSignature,
+  type StrategyRegistryChainId,
   type SwapChainId,
 } from "@/domain/wallet/storedSigner";
 import { AppState, Platform } from "react-native";
@@ -116,6 +120,12 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
       earnDepositDistribution: Platform.OS === "android" && result.earnDepositDistribution === true,
       earnDepositPrivateFunding:
         Platform.OS === "android" && result.earnDepositPrivateFunding === true,
+      strategySigning:
+        Platform.OS === "android" &&
+        result.strategySigning === true &&
+        typeof native.strategyAddresses === "function" &&
+        typeof native.createStrategy === "function" &&
+        typeof native.sealStrategyCommit === "function",
       confidentialWithdrawals:
         result.confidentialWithdrawals === true &&
         typeof native.getConfidentialWithdrawal === "function" &&
@@ -154,7 +164,8 @@ async function checked(
     | "earnPrivatePayoutExecution"
     | "earnDepositJourney"
     | "confidentialWithdrawals"
-    | "confidentialSaleProceeds",
+    | "confidentialSaleProceeds"
+    | "strategySigning",
 ) {
   const generation = authorizationGeneration;
   const value = await native.getCapabilities();
@@ -900,6 +911,125 @@ export function getStoredConfidentialWithdrawalSigner():
     async cancelConfidentialWithdrawal(request) {
       await checked(native, "confidentialWithdrawals");
       return native.cancelConfidentialWithdrawal!(request);
+    },
+  };
+}
+
+const STRATEGY_WORD = /^0x[0-9a-fA-F]{64}$/;
+const STRATEGY_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const STRATEGY_SIGNATURE = /^0x[0-9a-fA-F]{130}$/;
+const MAX_STRATEGY_ASSETS = 10;
+
+function strategyRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Invalid native strategy response.");
+  return value as Record<string, unknown>;
+}
+function strategyString(value: unknown, pattern: RegExp): string {
+  if (typeof value !== "string" || !pattern.test(value))
+    throw new Error("Invalid native strategy response.");
+  return value;
+}
+function parseStrategyAddresses(value: unknown, count: number): string[] {
+  if (!Array.isArray(value) || value.length !== count)
+    throw new Error("Invalid native strategy response.");
+  return value.map((address) => strategyString(address, STRATEGY_ADDRESS));
+}
+function parseStrategyCreate(value: unknown): StrategyCreateSignature {
+  const result = strategyRecord(value);
+  return {
+    signer: strategyString(result.signer, STRATEGY_ADDRESS),
+    signature: strategyString(result.signature, STRATEGY_SIGNATURE),
+  };
+}
+function parseSealedStrategyCommit(value: unknown, assets: number): SealedStrategyCommit {
+  const result = strategyRecord(value);
+  const { assetIds, weightsBps } = result;
+  if (
+    !Array.isArray(assetIds) ||
+    !Array.isArray(weightsBps) ||
+    assetIds.length !== assets ||
+    weightsBps.length !== assets ||
+    !weightsBps.every((weight) => Number.isInteger(weight) && weight > 0 && weight <= 10_000)
+  )
+    throw new Error("Invalid native strategy response.");
+  return {
+    signer: strategyString(result.signer, STRATEGY_ADDRESS),
+    assetIds: assetIds.map((id) => strategyString(id, STRATEGY_WORD)),
+    weightsBps: weightsBps as number[],
+    commitment: strategyString(result.commitment, STRATEGY_WORD),
+    signature: strategyString(result.signature, STRATEGY_SIGNATURE),
+    salt: strategyString(result.salt, STRATEGY_WORD),
+  };
+}
+
+/**
+ * Sealed Strategies signing. Native code pins the registry and asset universe, shows the review
+ * and requires a passkey for each signature; JS supplies public basket data and validates results.
+ */
+export function getStoredStrategySigner() {
+  const native = nativeModule();
+  if (!native?.strategyAddresses || !native.createStrategy || !native.sealStrategyCommit)
+    return null;
+  return {
+    async strategyAddresses(
+      walletId: string,
+      chainId: StrategyRegistryChainId,
+      start: number,
+      count: number,
+    ): Promise<string[]> {
+      if (
+        !Number.isInteger(start) ||
+        start < 0 ||
+        !Number.isInteger(count) ||
+        count < 1 ||
+        count > 32
+      )
+        throw new Error("Invalid strategy address range.");
+      await checked(native, "strategySigning");
+      const value = await readNative(() =>
+        native.strategyAddresses!(walletId, chainId, start, count),
+      );
+      return parseStrategyAddresses(value, count);
+    },
+    async createStrategy(
+      walletId: string,
+      chainId: StrategyRegistryChainId,
+      index: number,
+      embargo: number,
+      metadataHash: string,
+      deadline: number,
+    ): Promise<StrategyCreateSignature> {
+      if (!STRATEGY_WORD.test(metadataHash)) throw new Error("Invalid strategy metadata hash.");
+      await checked(native, "strategySigning");
+      return parseStrategyCreate(
+        await native.createStrategy!(walletId, chainId, index, embargo, metadataHash, deadline),
+      );
+    },
+    async sealStrategyCommit(
+      walletId: string,
+      chainId: StrategyRegistryChainId,
+      index: number,
+      strategyId: number,
+      seq: number,
+      assets: StrategyAssetInput[],
+      deadline: number,
+    ): Promise<SealedStrategyCommit> {
+      if (assets.length < 1 || assets.length > MAX_STRATEGY_ASSETS)
+        throw new Error("A strategy holds one to ten assets.");
+      await checked(native, "strategySigning");
+      return parseSealedStrategyCommit(
+        await native.sealStrategyCommit!(
+          walletId,
+          chainId,
+          index,
+          strategyId,
+          seq,
+          assets,
+          deadline,
+        ),
+        assets.length,
+      );
     },
   };
 }
