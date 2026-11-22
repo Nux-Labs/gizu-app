@@ -111,6 +111,14 @@ export function NativeSwapScreen({
                       ? `Available: ${groupDigits(formatSwapAmount(BigInt(publicAtoms)))} USDC`
                       : "Checking available USDC…"
                 }
+                action={{
+                  label: "Max",
+                  accessibilityLabel: "Use maximum USDC amount",
+                  disabled: swap.busy || maxAmount === null,
+                  onPress: () => {
+                    if (maxAmount !== null) swap.setAmount(maxAmount);
+                  },
+                }}
               >
                 <TextInput
                   accessibilityLabel="Amount in USDC"
@@ -127,15 +135,6 @@ export function NativeSwapScreen({
                   style={{ fontVariant: ["tabular-nums"], includeFontPadding: false }}
                 />
                 <TokenPill symbol="USDC" logo={{ source: usdcLogo }} />
-                <Button
-                  label="Max"
-                  accessibilityLabel="Use maximum USDC amount"
-                  variant="quiet"
-                  disabled={swap.busy || maxAmount === null}
-                  onPress={() => {
-                    if (maxAmount !== null) swap.setAmount(maxAmount);
-                  }}
-                />
               </SwapAmountBox>
               {flip}
               <SwapTokenPicker
