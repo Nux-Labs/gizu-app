@@ -8,6 +8,8 @@ import { Button } from "@/components/atoms/Button";
 import { SwapTokenPicker } from "./SwapTokenPicker";
 import { SwapSellForm } from "./SwapSellForm";
 import { SwapAmountBox } from "./SwapAmountBox";
+import { TokenPill } from "./components/TokenPill";
+import usdcLogo from "../../../assets/logos/tokens/usdc.png";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { Typography } from "@/components/atoms/Typography";
 import { Notice } from "@/components/molecules/Notice";
@@ -124,9 +126,7 @@ export function NativeSwapScreen({
                   cursorColor={colors.accent}
                   style={{ fontVariant: ["tabular-nums"], includeFontPadding: false }}
                 />
-                <Typography variant="rowTitle" className="!text-fg-55">
-                  USDC
-                </Typography>
+                <TokenPill symbol="USDC" logo={{ source: usdcLogo }} />
                 <Button
                   label="Max"
                   accessibilityLabel="Use maximum USDC amount"
