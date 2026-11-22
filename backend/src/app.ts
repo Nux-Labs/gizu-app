@@ -58,6 +58,19 @@ import { registerEarnExitRoutes } from "./http/routes/earn-exit.routes.ts";
 import { registerEarnPayoutRoutes } from "./http/routes/earn-payout.routes.ts";
 import { PgCache } from "./adapters/postgres/pg-cache.ts";
 import { PgEarlyAccess } from "./adapters/postgres/pg-early-access.ts";
+import { createPublicClient } from "viem";
+import { mainnet } from "viem/chains";
+import { robinhoodChain } from "./adapters/earn/robinhood-vault.ts";
+import { evmReadTransport } from "./adapters/evm/read-transport.ts";
+import { ViemStrategyRegistry } from "./adapters/evm/strategy-registry.ts";
+import { PgStrategies } from "./adapters/postgres/pg-strategies.ts";
+import { StrategyPrices, type VaultReader } from "./adapters/strategies/strategy-prices.ts";
+import { registerPushRoutes } from "./http/routes/push.routes.ts";
+import { registerStrategyRoutes } from "./http/routes/strategies.routes.ts";
+import { CreateStrategyUseCase } from "./usecase/strategies/create-strategy.usecase.ts";
+import { StrategyQueries } from "./usecase/strategies/strategy-queries.usecase.ts";
+import { StrategyRelay } from "./usecase/strategies/strategy-relay.usecase.ts";
+import { SubmitCommitUseCase } from "./usecase/strategies/submit-commit.usecase.ts";
 import { registerEarlyAccessRoutes } from "./http/routes/early-access.routes.ts";
 import { PgDatabaseProbe } from "./adapters/postgres/pg-database-probe.ts";
 import { createPgPool } from "./adapters/postgres/pg-pool.ts";
@@ -74,6 +87,8 @@ import { GetOpportunityUseCase } from "./usecase/opportunities/get-opportunity.u
 import { ListOpportunitiesUseCase } from "./usecase/opportunities/list-opportunities.usecase.ts";
 
 const CACHE_PURGE_INTERVAL_MS = 5 * 60 * 1000;
+/** Relays delayed commitments and reveals due ones; short enough for minute-long demo embargoes. */
+const STRATEGY_WORKER_INTERVAL_MS = 20 * 1000;
 
 export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   let loggerOptions: FastifyServerOptions["logger"] = {
@@ -119,7 +134,8 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
 
   registerHealthRoutes(app, healthController);
   registerEarlyAccessRoutes(app, new PgEarlyAccess(pgPool), secret.NODE_ENV === "local");
-  registerTokenRoutes(app, new OneInchTokenCatalog(secret.ONEINCH_API_KEY), new StockTokenDetails(secret.ONEINCH_API_KEY));
+  const stockDetails = new StockTokenDetails(secret.ONEINCH_API_KEY);
+  registerTokenRoutes(app, new OneInchTokenCatalog(secret.ONEINCH_API_KEY), stockDetails);
   registerSwapRoutes(app, {
     aurora: new AuroraIntents(secret.AURORA_API_KEY, diagnosticAuroraFetch((event) => app.log.info(event, "swap provider request"))),
     funding: new PimlicoMonadFunding(secret.PIMLICO_API_KEY),
@@ -177,6 +193,36 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
     ),
     chains,
   );
+  let strategyTimer: NodeJS.Timeout | undefined;
+  if (secret.STRATEGY_REGISTRY_ADDRESS && secret.STRATEGY_CHAIN_ID && secret.STRATEGY_RELAYER_KEY) {
+    const strategyStore = new PgStrategies(pgPool, pgPool);
+    const registry = new ViemStrategyRegistry(
+      secret.STRATEGY_CHAIN_ID,
+      secret.STRATEGY_REGISTRY_ADDRESS as `0x${string}`,
+      secret.STRATEGY_RELAYER_KEY,
+      secret.STRATEGY_RPC_URL,
+    );
+    const vaultReaders = new Map<number, VaultReader>([
+      [4663, createPublicClient({ chain: robinhoodChain, transport: evmReadTransport(secret.ROBINHOOD_RPC_URL ?? "https://rpc.mainnet.chain.robinhood.com") }) as VaultReader],
+      [1, createPublicClient({ chain: mainnet, transport: evmReadTransport(ethereumPlannerConfig.rpcUrl) }) as VaultReader],
+    ]);
+    const relay = new StrategyRelay(
+      strategyStore,
+      registry,
+      new StrategyPrices(stockDetails, vaultReaders),
+      (event) => app.log.info({ event: "strategy.relay", ...event }, "strategy relay"),
+    );
+    registerStrategyRoutes(app, {
+      create: new CreateStrategyUseCase(strategyStore, registry),
+      submit: new SubmitCommitUseCase(strategyStore, registry, relay, secret.STRATEGY_COMMIT_JITTER_MAX_SECONDS ?? 0),
+      queries: new StrategyQueries(strategyStore, registry),
+    });
+    registerPushRoutes(app, strategyStore);
+    strategyTimer = setInterval(() => {
+      void relay.runOnce().catch(() => app.log.error({ code: "STRATEGY_WORKER_FAILED" }, "strategy worker failed"));
+    }, STRATEGY_WORKER_INTERVAL_MS);
+    strategyTimer.unref();
+  }
   app.setErrorHandler(mapRequestError);
 
   const purgeExpiredCache = new PurgeExpiredCacheUseCase(cache);
@@ -198,6 +244,7 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
 
   app.addHook("onClose", async () => {
     clearInterval(purgeTimer);
+    if (strategyTimer) clearInterval(strategyTimer);
     await pgPool.end();
   });
 

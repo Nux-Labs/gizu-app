@@ -26,7 +26,7 @@
     "name": "GizuStrategyRegistry",
     "version": "1",
     "chainId": 8453,
-    "verifyingContract": "0x0000000000000000000000000000000000005eA1",
+    "verifyingContract": "0x0000000000000000000000000000000000005EA1",
     "separator": "0xfb109b98bd4b4b17d25dc656d7964c878299079ebc2dfa3c0a7f824b84a81624"
   },
   "basket": {

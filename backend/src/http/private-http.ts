@@ -11,6 +11,9 @@ export function isPrivateRoute(url: string | undefined) {
     !!url &&
     (url.startsWith("/wallet-recovery/") ||
       url.startsWith("/v1/earn/") ||
+      url.startsWith("/v1/push/") ||
+      // Commit bodies carry plaintext weights and salt; signals and keys are paid content.
+      /^\/v1\/strategies\/[^/?]+\/(commits|subscriptions|signal)(?:[/?]|$)/.test(url) ||
       (url.startsWith("/v1/swap/") && url !== "/v1/swap/aurora/tokens"))
   );
 }

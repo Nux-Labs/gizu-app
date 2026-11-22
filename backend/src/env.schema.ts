@@ -48,8 +48,40 @@ const apiEnvSchema = z
       .url()
       .refine((value) => value.startsWith("https://"))
       .optional(),
+    // Sealed Strategies. All three of registry, chain and relayer key enable the routes together.
+    STRATEGY_REGISTRY_ADDRESS: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{40}$/)
+      .optional(),
+    STRATEGY_CHAIN_ID: z
+      .enum(["8453", "84532"])
+      .transform((value) => Number(value) as 8453 | 84532)
+      .optional(),
+    STRATEGY_RPC_URL: z
+      .url()
+      .refine((value) => value.startsWith("https://"))
+      .optional(),
+    /** Relayer key paying registry gas; it holds no user funds. */
+    STRATEGY_RELAYER_KEY: z
+      .string()
+      .regex(/^(0x)?[0-9a-fA-F]{64}$/)
+      .transform((value) => (value.startsWith("0x") ? value : `0x${value}`) as `0x${string}`)
+      .optional(),
+    STRATEGY_COMMIT_JITTER_MAX_SECONDS: z.coerce.number().int().min(0).max(600).optional(),
   })
   .superRefine((env, context) => {
+    const strategyKeys = [
+      env.STRATEGY_REGISTRY_ADDRESS,
+      env.STRATEGY_CHAIN_ID,
+      env.STRATEGY_RELAYER_KEY,
+    ];
+    if (strategyKeys.some((value) => value !== undefined) && strategyKeys.some((value) => value === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["STRATEGY_REGISTRY_ADDRESS"],
+        message: "STRATEGY_REGISTRY_ADDRESS, STRATEGY_CHAIN_ID and STRATEGY_RELAYER_KEY are set together",
+      });
+    }
     const known = new Set(
       (env.VAULT_CHAINS
         ? [...defaultCatalogChains, ...(env.CATALOG_CHAINS_JSON ?? [])]

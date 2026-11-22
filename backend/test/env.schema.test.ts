@@ -188,3 +188,20 @@ test('recovery upload admission and global storage limits accept bounded configu
   assert.equal(parseApiEnv({...apiEnv,RECOVERY_UPLOAD_CALLS_PER_MINUTE:'1024'}).RECOVERY_UPLOAD_CALLS_PER_MINUTE,1024);
   for(const name of ['RECOVERY_UPLOAD_CALLS_PER_MINUTE','RECOVERY_UPLOAD_BYTES_PER_MINUTE','RECOVERY_UPLOAD_BYTES_PER_DAY','RECOVERY_UPLOAD_MAX_CLIENTS','RECOVERY_STORAGE_MAX_BYTES','RECOVERY_STORAGE_MAX_OBJECTS'])assert.throws(()=>parseApiEnv({...apiEnv,[name]:'-1'}));
 });
+
+test("enables Sealed Strategies only with registry, chain and relayer key together", () => {
+  const strategy = {
+    STRATEGY_REGISTRY_ADDRESS: "0x6db1131C8d833CA0F167f7B8DBd24a93cA22Abf7",
+    STRATEGY_CHAIN_ID: "84532",
+    STRATEGY_RELAYER_KEY: "11".repeat(32),
+    STRATEGY_COMMIT_JITTER_MAX_SECONDS: "120",
+  };
+  const parsed = parseApiEnv({ ...apiEnv, ...strategy });
+  assert.equal(parsed.STRATEGY_CHAIN_ID, 84532);
+  assert.equal(parsed.STRATEGY_RELAYER_KEY, `0x${"11".repeat(32)}`);
+  assert.equal(parsed.STRATEGY_COMMIT_JITTER_MAX_SECONDS, 120);
+  const { STRATEGY_RELAYER_KEY: _key, ...withoutKey } = strategy;
+  assert.throws(() => parseApiEnv({ ...apiEnv, ...withoutKey }), /set together/);
+  assert.throws(() => parseApiEnv({ ...apiEnv, ...strategy, STRATEGY_CHAIN_ID: "1" }), /STRATEGY_CHAIN_ID/);
+  assert.throws(() => parseApiEnv({ ...apiEnv, ...strategy, STRATEGY_COMMIT_JITTER_MAX_SECONDS: "601" }), /JITTER/);
+});
