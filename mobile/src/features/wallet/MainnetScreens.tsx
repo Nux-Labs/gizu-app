@@ -3,7 +3,7 @@ import type { OwnedPortfolioAsset } from "@/domain/wallet/storedSigner";
 import { holdingAmount } from "@/domain/wallet/amounts";
 import { useCallback, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
-import { Bell, ChevronDown, ChevronUp } from "lucide-react-native";
+import { Bell, ChevronDown, ChevronUp, TrendingUp, Wallet } from "lucide-react-native";
 import colors from "@/theme/colors.json";
 import { useFocusEffect } from "@react-navigation/native";
 import type {
@@ -21,6 +21,7 @@ import { Button } from "@/components/atoms/Button";
 import { Skeleton } from "@/components/atoms/Skeleton";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Surface } from "@/components/molecules/Surface";
+import { RowListSkeleton } from "@/components/molecules/CardSkeleton";
 import { MascotHero } from "@/components/organisms/MascotHero";
 import { ErrorNotice } from "@/components/molecules/ErrorNotice";
 import { Notice } from "@/components/molecules/Notice";
@@ -195,6 +196,51 @@ function assetActions(asset: NamedPortfolioAsset, go: AssetNavigation): Portfoli
   return [];
 }
 
+/**
+ * Assets with nothing held. Without USDC the first step is receiving it; with USDC it is a first
+ * stock. Shown only after a complete read, so a slow or failed read never claims "nothing".
+ */
+function AssetsEmptyState({
+  hasUsdc,
+  onBuy,
+  onReceive,
+}: {
+  hasUsdc: boolean;
+  onBuy: () => void;
+  onReceive: () => void;
+}) {
+  const Icon = hasUsdc ? TrendingUp : Wallet;
+  return (
+    <Surface>
+      <View className="items-center gap-4 px-6 py-7">
+        <View className="h-12 w-12 items-center justify-center rounded-full bg-neon/10">
+          <Icon size={22} color={colors.accent} />
+        </View>
+        <View className="items-center gap-1.5">
+          <Typography variant="cardTitle" className="text-center">
+            {hasUsdc ? "No stocks yet" : "No assets yet"}
+          </Typography>
+          <Typography variant="caption" className="text-center">
+            {hasUsdc
+              ? "Your USDC is ready. Buy your first stock in a few taps and it will show up here."
+              : "Stocks you buy and tokens you receive will show up here. Add USDC to get started."}
+          </Typography>
+        </View>
+        <View className="w-full gap-2">
+          {hasUsdc ? (
+            <Button label="Buy a stock" onPress={onBuy} />
+          ) : (
+            <>
+              <Button label="Receive USDC" onPress={onReceive} />
+              <Button label="Browse stocks" variant="quiet" onPress={onBuy} />
+            </>
+          )}
+        </View>
+      </View>
+    </Surface>
+  );
+}
+
 function OwnedBalances({
   assets,
   onOpenVault,
@@ -210,16 +256,9 @@ function OwnedBalances({
 }) {
   const { snapshot, loading, refresh } = useMainnetWallet();
   const withdrawal = useSharedWithdrawalState();
-  if (!snapshot?.ownedAssets && !snapshot?.positions) return null;
-  const positions = snapshot.positions?.filter(visible) ?? [];
-  // Only a complete read with nothing held, including no public USDC, is an empty portfolio.
-  const empty =
-    !loading &&
-    snapshot.ownedBalanceComplete !== false &&
-    snapshot.balanceComplete !== false &&
-    snapshot.totalAtoms === "0" &&
-    assets.length === 0 &&
-    positions.length === 0;
+  const positions = snapshot?.positions?.filter(visible) ?? [];
+  // Assets always has a section. "Nothing held" needs a complete token read; until then it loads.
+  const settled = !!snapshot?.ownedAssets && !loading && snapshot.ownedBalanceComplete !== false;
   return (
     <View className="gap-5">
       <WithdrawalStatusNotice
@@ -232,27 +271,6 @@ function OwnedBalances({
           if (withdrawal.historyProfile) onCheckPastReturn(withdrawal.historyProfile);
         }}
       />
-      {empty && (
-        <View className="gap-3">
-          <Typography variant="section">Assets</Typography>
-          <Surface>
-            <View className="gap-3 p-5">
-              <Typography variant="rowTitle">No assets yet</Typography>
-              <Typography variant="caption">
-                Buy a stock with USDC, or receive USDC to get started.
-              </Typography>
-              <View className="flex-row gap-3 pt-1">
-                <View className="flex-1">
-                  <Button label="Buy a stock" onPress={navigation.onBuy} />
-                </View>
-                <View className="flex-1">
-                  <Button label="Receive USDC" variant="secondary" onPress={navigation.onReceive} />
-                </View>
-              </View>
-            </View>
-          </Surface>
-        </View>
-      )}
       {positions.length > 0 && (
         <View className="gap-3">
           <Typography variant="section">Your vaults</Typography>
@@ -276,9 +294,9 @@ function OwnedBalances({
           })}
         </View>
       )}
-      {assets.length > 0 && (
-        <View className="gap-3">
-          <Typography variant="section">Assets</Typography>
+      <View className="gap-3">
+        <Typography variant="section">Assets</Typography>
+        {assets.length > 0 && snapshot ? (
           <Surface>
             <View className="px-5">
               {assets.map((asset) => (
@@ -295,11 +313,32 @@ function OwnedBalances({
               ))}
             </View>
           </Surface>
-        </View>
-      )}
+        ) : settled ? (
+          <AssetsEmptyState
+            hasUsdc={snapshot.totalAtoms !== "0"}
+            onBuy={navigation.onBuy}
+            onReceive={navigation.onReceive}
+          />
+        ) : loading || !snapshot ? (
+          <RowListSkeleton count={2} label="Loading your assets" />
+        ) : (
+          <Surface>
+            <View className="gap-1 p-5">
+              <Typography variant="rowTitle">Assets couldn’t be loaded</Typography>
+              <Typography variant="caption">
+                Your holdings are safe; only this view is out of date.
+              </Typography>
+              <View className="items-start pt-2">
+                <Button label="Try again" variant="quiet" onPress={() => void refresh()} />
+              </View>
+            </View>
+          </Surface>
+        )}
+      </View>
       <View className="gap-2">
-        <PrivateBalanceRefresh />
-        {snapshot.ownedBalanceComplete === false && !loading && (
+        {snapshot ? <PrivateBalanceRefresh /> : null}
+        {/* Without asset rows the Assets card above carries the retry. */}
+        {snapshot?.ownedBalanceComplete === false && !loading && assets.length > 0 && (
           <Button
             label="Retry token balances and positions"
             variant="quiet"
