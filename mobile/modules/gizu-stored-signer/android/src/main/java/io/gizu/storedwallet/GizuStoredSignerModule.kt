@@ -20,6 +20,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.Promise
+import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import io.gizu.storedwallet.swap.SwapEngine
@@ -29,6 +31,7 @@ import io.gizu.storedwallet.swap.swapChainArg
 import java.security.SecureRandom
 import java.util.UUID
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import org.json.JSONObject
@@ -44,6 +47,13 @@ class GizuStoredSignerModule : Module() {
     private const val CEREMONY_TIMEOUT_MS = 120000L
     /** The registry's maximum; checked before the review rather than after the passkey. */
     private const val MAX_STRATEGY_EMBARGO_SECONDS = 30 * 86_400
+    /** One wallet publishes one strategy, with strategy key 0. */
+    private const val WALLET_STRATEGY_INDEX = 0
+    /** The backend's sign-in challenge must be issued within this of the device clock. */
+    private const val SOCIAL_ISSUED_AT_WINDOW_MS = 600_000.0
+    /** USDC base units up to twelve digits, as Rust and the API check them. */
+    private val PRICE_ATOMS = Regex("^(0|[1-9][0-9]{0,11})$")
+    private val SOCIAL_NONCE = Regex("^0x[0-9a-fA-F]{64}$")
     private const val FOCUS_TIMEOUT_MS = 10000L
     private const val FOCUS_POLL_INTERVAL_MS = 50L
   }
@@ -409,6 +419,27 @@ class GizuStoredSignerModule : Module() {
     }
   }
 
+  /**
+   * [runCeremony] for functions with more arguments than Expo's promise overloads accept: the same
+   * ceremony, its result returned to a coroutine and any rejection rethrown with its code.
+   */
+  private suspend fun ceremonyResult(block: suspend (Activity, WalletStore) -> Any?): Any? =
+    suspendCancellableCoroutine { continuation ->
+      runCeremony(
+        object : Promise {
+          override fun resolve(value: Any?) {
+            if (continuation.isActive) continuation.resume(value)
+          }
+
+          override fun reject(code: String?, message: String?, cause: Throwable?) {
+            if (continuation.isActive)
+              continuation.resumeWithException(CodedException(code, message, cause))
+          }
+        },
+        block = block,
+      )
+    }
+
   private suspend fun <T> withProviderUi(activity: Activity, action: suspend () -> T): T {
     withTimeout(FOCUS_TIMEOUT_MS) {
       while (foreground && !activity.hasWindowFocus()) delay(FOCUS_POLL_INTERVAL_MS)
@@ -526,6 +557,8 @@ class GizuStoredSignerModule : Module() {
           "earnBalanceDeltaSettlement" to eligible(appContext.currentActivity),
           "earnPartialWithdrawals" to eligible(appContext.currentActivity),
           "strategySigning" to eligible(appContext.currentActivity),
+          "socialSigning" to eligible(appContext.currentActivity),
+          "strategyPricing" to eligible(appContext.currentActivity),
         )
       )
     }
@@ -1015,7 +1048,9 @@ class GizuStoredSignerModule : Module() {
       promise: Promise ->
       runCeremony(promise) { activity, store ->
         require(
-          index >= 0 && embargo in 1..MAX_STRATEGY_EMBARGO_SECONDS && wholeNumber(deadline, 1.0)
+          index == WALLET_STRATEGY_INDEX &&
+            embargo in 1..MAX_STRATEGY_EMBARGO_SECONDS &&
+            wholeNumber(deadline, 1.0)
         )
         // Rust validates the terms and hashes them before the review, so the review shows
         // exactly what the signature commits to and the approval is bound to that hash.
@@ -1143,6 +1178,141 @@ class GizuStoredSignerModule : Module() {
         )
       }
     }
+    // Social sign-in: the social key (no funds, own branch) signs the backend's challenge; an owner
+    // also links it to their strategy with strategy key 0. Rust derives every signed field but the
+    // challenge, so the approval cannot be redirected to another structure or address.
+    AsyncFunction("socialAddress") { walletId: String, chainId: Int, promise: Promise ->
+      runCeremony(promise, readOnly = true) { _, store ->
+        withContext(Dispatchers.IO) {
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            uniffi.gizu_stored_signer_core.socialAddress(record.entropy, chainId.toULong())
+          }
+        }
+      }
+    }
+    AsyncFunction("socialSignIn") {
+      walletId: String,
+      chainId: Int,
+      nonce: String,
+      issuedAt: Double,
+      ownerStrategyId: Double?,
+      promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        require(
+          SOCIAL_NONCE.matches(nonce) &&
+            wholeNumber(issuedAt, 1.0) &&
+            Math.abs(issuedAt * 1_000.0 - System.currentTimeMillis()) <=
+              SOCIAL_ISSUED_AT_WINDOW_MS &&
+            (ownerStrategyId == null || wholeNumber(ownerStrategyId, 1.0))
+        )
+        val challenge = nonce.lowercase()
+        val credential =
+          withContext(Dispatchers.IO) {
+            store.load().use { record ->
+              check(record.id == walletId && record.verified)
+              // Fails here, before the review, when the chain has no pinned registry.
+              uniffi.gizu_stored_signer_core.socialAddress(record.entropy, chainId.toULong())
+              record.credential
+            }
+          }
+        confirm(
+          activity,
+          "Sign in to comment",
+          "Sign in to comment and like. You appear under an automatic nickname. Your wallet, balances and identity are not shared." +
+            if (ownerStrategyId != null) "\n\nComments on your strategy show as its owner." else "",
+        )
+        withProviderUi(activity) {
+          PasskeyGate(activity)
+            .authorize(credential, walletId, "social-signin:v1:$chainId:$challenge")
+        }
+        currentCoroutineContext().ensureActive()
+        val signed =
+          withContext(Dispatchers.IO) {
+            store.load().use { record ->
+              check(record.id == walletId && record.verified)
+              uniffi.gizu_stored_signer_core.socialSignIn(
+                record.entropy,
+                chainId.toULong(),
+                challenge,
+                issuedAt.toLong().toULong(),
+                ownerStrategyId?.toLong()?.toULong(),
+                System.currentTimeMillis().toULong(),
+              )
+            }
+          }
+        check((signed.ownerSignature != null) == (ownerStrategyId != null))
+        mapOf(
+          "account" to signed.account,
+          "signature" to signed.signature,
+          "ownerSignature" to signed.ownerSignature,
+        )
+      }
+    }
+    // Price changes: strategy key 0 signs UpdatePrice under the pinned registry's domain. Eight
+    // arguments exceed Expo's promise overloads, so the ceremony result returns via a coroutine.
+    AsyncFunction("signStrategyPrice") Coroutine
+      {
+        walletId: String,
+        chainId: Int,
+        index: Int,
+        strategyId: Double,
+        version: Double,
+        monthlyPriceAtoms: String,
+        signalPriceAtoms: String,
+        deadline: Double ->
+        ceremonyResult { activity, store ->
+          require(
+            index == WALLET_STRATEGY_INDEX &&
+              wholeNumber(strategyId, 1.0) &&
+              wholeNumber(version, 1.0) &&
+              wholeNumber(deadline, 1.0) &&
+              PRICE_ATOMS.matches(monthlyPriceAtoms) &&
+              PRICE_ATOMS.matches(signalPriceAtoms)
+          )
+          val id = strategyId.toLong()
+          val priceVersion = version.toLong()
+          val network = uniffi.gizu_stored_signer_core.strategyNetworkName(chainId.toULong())
+          val credential =
+            store.load().use { record ->
+              check(record.id == walletId && record.verified)
+              record.credential
+            }
+          confirm(
+            activity,
+            "Change strategy prices",
+            "Change the prices of strategy #$id on $network.\n\n" +
+              "Subscribers will pay ${usdcText(monthlyPriceAtoms)} a month, agents ${usdcText(signalPriceAtoms)} per signal.\n\n" +
+              "The new prices apply to new subscriptions and agent signals; existing subscriptions keep running to their expiry. " +
+              "Your next price change is possible in 7 days. No funds move.",
+          )
+          withProviderUi(activity) {
+            PasskeyGate(activity)
+              .authorize(
+                credential,
+                walletId,
+                "strategy-price:v1:$chainId:$id:$priceVersion:$monthlyPriceAtoms:$signalPriceAtoms",
+              )
+          }
+          currentCoroutineContext().ensureActive()
+          val signed =
+            store.load().use { record ->
+              check(record.id == walletId && record.verified)
+              uniffi.gizu_stored_signer_core.strategyPriceSignature(
+                record.entropy,
+                chainId.toULong(),
+                index.toUInt(),
+                id.toULong(),
+                priceVersion.toULong(),
+                monthlyPriceAtoms,
+                signalPriceAtoms,
+                deadline.toLong().toULong(),
+                System.currentTimeMillis().toULong(),
+              )
+            }
+          mapOf("signer" to signed.signer, "signature" to signed.signature)
+        }
+      }
     AsyncFunction("prepareNewEarnIntent") { walletId: String, profile: String, promise: Promise ->
       runCeremony(promise) { activity, store ->
         val chain =
