@@ -1,0 +1,59 @@
+{
+  "description": "Sealed Strategies social sign-in, owner link and price-change vectors shared by the native signer and the API. Values were computed with cast (Foundry 1.10.0: cast wallet address/sign/verify, and digests rebuilt with cast abi-encode/keccak), independently of both implementations. Signatures are RFC 6979 deterministic, 65-byte r,s,v with v = 27/28 and low s, so implementations must reproduce them exactly. The mnemonic is the public all-zero 32-byte entropy test wallet used across the signer tests.",
+  "entropyHex": "0000000000000000000000000000000000000000000000000000000000000000",
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+  "chainId": 84532,
+  "social": {
+    "path": "m/44'/60'/147'/84532'/0",
+    "address": "0xa674d83fe5Aa4530c9D7B0eb94Bd9c0Ec3a2C57C"
+  },
+  "strategy": {
+    "index": 0,
+    "path": "m/44'/60'/146'/84532'/0",
+    "address": "0x1cED07C44A78772081bc6490A05584dD4bfF15B5"
+  },
+  "socialDomain": {
+    "name": "GizuSocial",
+    "version": "1",
+    "chainId": 84532,
+    "typeString": "EIP712Domain(string name,string version,uint256 chainId)",
+    "separator": "0xff332bea9475b96117d93cba7527845fe071f69166bb01fd40e80c1a97c70c49"
+  },
+  "registryDomain": {
+    "name": "GizuStrategyRegistry",
+    "version": "1",
+    "chainId": 84532,
+    "verifyingContract": "0x6db1131C8d833CA0F167f7B8DBd24a93cA22Abf7",
+    "typeString": "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+    "separator": "0x5520fe3e375a7b6a4d3c902664104476247de69f7e6dfafe20dc16fff71674dc"
+  },
+  "signIn": {
+    "typeString": "SignIn(address account,bytes32 nonce,uint64 issuedAt)",
+    "signer": "social",
+    "account": "0xa674d83fe5Aa4530c9D7B0eb94Bd9c0Ec3a2C57C",
+    "nonce": "0x101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+    "issuedAt": 1900000000,
+    "digest": "0x5dbfb689390a2989e553045a263a9ef4b40b0f600fa7017b21ccc1e1cda84d79",
+    "signature": "0xcaaa18b715e415da9ce00d652d43201772e6747b164606069c1481f9aa055e09464bc60a17dadcc06c77f6e382c94a99068e19aa2c816dc2d1a9086b56a491881b"
+  },
+  "ownerLink": {
+    "typeString": "OwnerLink(address account,uint256 strategyId,bytes32 nonce)",
+    "signer": "strategy",
+    "account": "0xa674d83fe5Aa4530c9D7B0eb94Bd9c0Ec3a2C57C",
+    "strategyId": 1,
+    "nonce": "0x101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+    "digest": "0xcaf63476020573c4cf2752ed47ed2b5c7382200c55882f782aabd7515b61ba18",
+    "signature": "0x16a3731251629fd056dd2b66553634a49526e67b3d4f8a4306529db1e5baaa9d3367eab64c1275e07a5d839c5ed00bdc1b55a82a4c9287acae54f38724b7a5d31c"
+  },
+  "updatePrice": {
+    "typeString": "UpdatePrice(uint256 strategyId,uint64 version,uint64 monthlyPriceAtoms,uint64 signalPriceAtoms,uint64 deadline)",
+    "signer": "strategy",
+    "strategyId": 1,
+    "version": 1,
+    "monthlyPriceAtoms": "10000000",
+    "signalPriceAtoms": "250000",
+    "deadline": 1900000600,
+    "digest": "0x2302d4197fcd54983b60526ec40f2ddfd80556b99e28c7eed86376a5769f1625",
+    "signature": "0x0a472967674592a61bfc897654df77b115cb02f765fdfb7d2fe320f967bb42143c160977e43599ca3d412b8d0603da0b0596159bb55d8d53f705dca08b05782a1c"
+  }
+}

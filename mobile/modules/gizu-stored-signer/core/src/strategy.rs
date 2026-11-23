@@ -1,12 +1,16 @@
-//! Sealed Strategies: per-strategy signing keys, the sealed basket commitment and the two EIP-712
-//! structures `StrategyRegistry` accepts. JS supplies public basket data only. This module checks it
-//! against the pinned asset universe, hashes it and signs, so no FFI parameter can make a strategy
-//! key sign anything but a registry creation or commitment. Formats match
-//! `contracts/src/StrategyRegistry.sol` and `shared/strategy-commit-vectors.json`.
+//! Sealed Strategies: per-strategy signing keys, the sealed basket commitment, the two EIP-712
+//! structures `StrategyRegistry` accepts and the API-only `UpdatePrice`. JS supplies public basket
+//! data only. This module checks it against the pinned asset universe, hashes it and signs, so no
+//! FFI parameter can make a strategy key sign anything but a registry creation or commitment, a
+//! price change, or the `OwnerLink` in `social.rs`. Formats match
+//! `contracts/src/StrategyRegistry.sol`, `shared/strategy-commit-vectors.json` and
+//! `shared/strategy-social-vectors.json`.
 //!
 //! Strategy keys live on their own hardened branch, `m/44'/60'/146'/{registryChain}'/{index}`, so
 //! they never share an index with funding, swap, confidential or Earn wallets. They hold no funds:
-//! a relayer submits what they sign.
+//! a relayer submits what they sign. One wallet publishes one strategy, with index 0: creation and
+//! price changes sign with index 0 only, while commitments still accept any index for strategies
+//! created before that rule.
 use crate::swap::{evm, pins};
 use crate::{SignerError, roles};
 use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
@@ -32,12 +36,16 @@ const MAX_EMBARGO_SECS: u32 = 30 * 86_400;
 /// A signed creation or commitment must land within an hour, like a swap permit.
 const SIGNATURE_LIFETIME_MS: u64 = 3_600_000;
 const MAX_STRATEGY_INDEX: u32 = 0x7fff_ffff;
+/// The only strategy key a wallet creates strategies and changes prices with.
+pub(crate) const WALLET_STRATEGY_INDEX: u32 = 0;
 const MAX_ADDRESS_BATCH: u32 = 32;
 const DOMAIN_NAME: &str = "GizuStrategyRegistry";
 const DOMAIN_VERSION: &str = "1";
 const CREATE_TYPE: &str = "CreateStrategy(uint32 embargo,bytes32 metadataHash,uint64 deadline)";
 const COMMIT_TYPE: &str =
     "Commit(uint256 strategyId,uint64 seq,bytes32 commitment,uint64 deadline)";
+/// Verified by the API only; the registry contract never sees it.
+pub(crate) const UPDATE_PRICE_TYPE: &str = "UpdatePrice(uint256 strategyId,uint64 version,uint64 monthlyPriceAtoms,uint64 signalPriceAtoms,uint64 deadline)";
 
 /// One basket entry. `kind` is 0 for a token and 1 for an Earn vault.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -62,6 +70,12 @@ pub struct StrategyMetadata {
 pub struct StrategyCreateSignature {
     pub signer: String,
     pub metadata_hash: String,
+    pub signature: String,
+}
+
+#[derive(uniffi::Record, Debug, PartialEq, Eq)]
+pub struct StrategyPriceSignature {
+    pub signer: String,
     pub signature: String,
 }
 
@@ -113,7 +127,7 @@ pub fn strategy_create_signature(
     deadline: u64,
     now_ms: u64,
 ) -> Result<StrategyCreateSignature, SignerError> {
-    if embargo == 0 || embargo > MAX_EMBARGO_SECS {
+    if index != WALLET_STRATEGY_INDEX || embargo == 0 || embargo > MAX_EMBARGO_SECS {
         return Err(SignerError::InvalidInput);
     }
     check_deadline(deadline, now_ms)?;
@@ -220,7 +234,7 @@ fn js_whitespace(c: char) -> bool {
 }
 
 /// `^(0|[1-9]\d{0,11})$`: USDC base units up to twelve digits.
-fn price_atoms(value: &str) -> bool {
+pub(crate) fn price_atoms(value: &str) -> bool {
     value == "0"
         || (!value.is_empty()
             && value.len() <= 12
@@ -292,14 +306,66 @@ pub fn strategy_seal_commit(
     )
 }
 
-fn pinned_registry(chain_id: u64) -> Result<Address, SignerError> {
+/// Signs `UpdatePrice` for strategy `strategy_id` with the wallet's strategy key (index 0) under
+/// the pinned registry's domain. `version` is 1 for the first change; prices are USDC base units.
+#[uniffi::export]
+#[allow(clippy::too_many_arguments)]
+pub fn strategy_price_signature(
+    entropy: Vec<u8>,
+    chain_id: u64,
+    index: u32,
+    strategy_id: u64,
+    version: u64,
+    monthly_price_atoms: String,
+    signal_price_atoms: String,
+    deadline: u64,
+    now_ms: u64,
+) -> Result<StrategyPriceSignature, SignerError> {
+    if index != WALLET_STRATEGY_INDEX
+        || strategy_id == 0
+        || version == 0
+        || !price_atoms(&monthly_price_atoms)
+        || !price_atoms(&signal_price_atoms)
+    {
+        return Err(SignerError::InvalidInput);
+    }
+    let monthly: u64 = monthly_price_atoms
+        .parse()
+        .map_err(|_| SignerError::InvalidInput)?;
+    let signal: u64 = signal_price_atoms
+        .parse()
+        .map_err(|_| SignerError::InvalidInput)?;
+    check_deadline(deadline, now_ms)?;
+    let registry = pinned_registry(chain_id)?;
+    let seed = roles::seed_from_entropy(entropy)?;
+    let key = strategy_key(&seed, chain_id, index)?;
+    let digest = price_digest(
+        chain_id,
+        registry,
+        strategy_id,
+        version,
+        monthly,
+        signal,
+        deadline,
+    );
+    Ok(StrategyPriceSignature {
+        signer: evm::key_address(&key).to_checksum(None),
+        signature: evm::sign(&key, digest)?.rsv_hex(),
+    })
+}
+
+pub(crate) fn pinned_registry(chain_id: u64) -> Result<Address, SignerError> {
     match chain_id {
         STRATEGY_BASE_SEPOLIA_CHAIN_ID => Ok(STRATEGY_REGISTRY_BASE_SEPOLIA),
         _ => Err(SignerError::InvalidInput),
     }
 }
 
-fn strategy_key(seed: &[u8; 64], chain_id: u64, index: u32) -> Result<XPrv, SignerError> {
+pub(crate) fn strategy_key(
+    seed: &[u8; 64],
+    chain_id: u64,
+    index: u32,
+) -> Result<XPrv, SignerError> {
     if ![pins::BASE_CHAIN_ID, STRATEGY_BASE_SEPOLIA_CHAIN_ID].contains(&chain_id)
         || index > MAX_STRATEGY_INDEX
     {
@@ -311,7 +377,7 @@ fn strategy_key(seed: &[u8; 64], chain_id: u64, index: u32) -> Result<XPrv, Sign
     XPrv::derive_from_path(seed, &path).map_err(|_| SignerError::CryptoFailed)
 }
 
-fn check_deadline(deadline_secs: u64, now_ms: u64) -> Result<(), SignerError> {
+pub(crate) fn check_deadline(deadline_secs: u64, now_ms: u64) -> Result<(), SignerError> {
     let deadline_ms = deadline_secs
         .checked_mul(1_000)
         .ok_or(SignerError::InvalidInput)?;
@@ -449,6 +515,28 @@ fn commit_digest(
             evm::word_u256(U256::from(strategy_id)),
             evm::word_u256(U256::from(seq)),
             commitment.0,
+            evm::word_u256(U256::from(deadline)),
+        ],
+    )
+}
+
+pub(crate) fn price_digest(
+    chain_id: u64,
+    registry: Address,
+    strategy_id: u64,
+    version: u64,
+    monthly_price_atoms: u64,
+    signal_price_atoms: u64,
+    deadline: u64,
+) -> B256 {
+    evm::typed_hash(
+        domain(chain_id, registry),
+        UPDATE_PRICE_TYPE,
+        &[
+            evm::word_u256(U256::from(strategy_id)),
+            evm::word_u256(U256::from(version)),
+            evm::word_u256(U256::from(monthly_price_atoms)),
+            evm::word_u256(U256::from(signal_price_atoms)),
             evm::word_u256(U256::from(deadline)),
         ],
     )
@@ -981,12 +1069,173 @@ mod tests {
         assert!(seal(0, salt.clone()).is_err());
         assert!(seal(1, salt[..31].to_vec()).is_err());
 
+        // One wallet creates one strategy, with index 0; legacy commitments keep any index.
+        for index in [1, 2, MAX_STRATEGY_INDEX] {
+            assert!(matches!(
+                strategy_create_signature(
+                    vec![0; 32],
+                    84_532,
+                    index,
+                    60,
+                    meta.clone(),
+                    ok_deadline,
+                    NOW_MS,
+                ),
+                Err(SignerError::InvalidInput)
+            ));
+        }
+        assert!(
+            strategy_seal_commit(
+                vec![0; 32],
+                84_532,
+                1,
+                1,
+                0,
+                vector_assets(&v),
+                salt.clone(),
+                ok_deadline,
+                NOW_MS,
+            )
+            .is_ok()
+        );
+
         assert!(strategy_addresses(vec![0; 32], 8453, 0, 0).is_err());
         assert!(strategy_addresses(vec![0; 32], 8453, 0, MAX_ADDRESS_BATCH + 1).is_err());
         assert!(strategy_addresses(vec![0; 32], 8453, u32::MAX, 2).is_err());
         assert!(strategy_addresses(vec![0; 32], 8453, MAX_STRATEGY_INDEX + 1, 1).is_err());
         assert!(strategy_addresses(vec![0; 31], 8453, 0, 1).is_err());
         assert!(strategy_addresses(vec![0; 32], 143, 0, 1).is_err());
+    }
+
+    #[test]
+    fn price_changes_sign_with_strategy_key_zero_for_the_pinned_registry() {
+        let deadline = NOW_MS / 1_000 + 600;
+        let signed = strategy_price_signature(
+            vec![0; 32],
+            84_532,
+            0,
+            7,
+            3,
+            "12500000".into(),
+            "250000".into(),
+            deadline,
+            NOW_MS,
+        )
+        .unwrap();
+        let signer: Address = vectors()["signers"][2]["address"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(signed.signer, signer.to_checksum(None));
+        let digest = price_digest(
+            84_532,
+            STRATEGY_REGISTRY_BASE_SEPOLIA,
+            7,
+            3,
+            12_500_000,
+            250_000,
+            deadline,
+        );
+        assert_eq!(recovered(digest, &signed.signature), signer);
+        // Every field is covered by the digest.
+        for other in [
+            price_digest(
+                84_532,
+                STRATEGY_REGISTRY_BASE_SEPOLIA,
+                8,
+                3,
+                12_500_000,
+                250_000,
+                deadline,
+            ),
+            price_digest(
+                84_532,
+                STRATEGY_REGISTRY_BASE_SEPOLIA,
+                7,
+                4,
+                12_500_000,
+                250_000,
+                deadline,
+            ),
+            price_digest(
+                84_532,
+                STRATEGY_REGISTRY_BASE_SEPOLIA,
+                7,
+                3,
+                12_500_001,
+                250_000,
+                deadline,
+            ),
+            price_digest(
+                84_532,
+                STRATEGY_REGISTRY_BASE_SEPOLIA,
+                7,
+                3,
+                12_500_000,
+                250_001,
+                deadline,
+            ),
+            price_digest(
+                84_532,
+                STRATEGY_REGISTRY_BASE_SEPOLIA,
+                7,
+                3,
+                12_500_000,
+                250_000,
+                deadline + 1,
+            ),
+        ] {
+            assert_ne!(other, digest);
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_price_changes() {
+        let ok_deadline = NOW_MS / 1_000 + 600;
+        let price = |chain, index, id, version, monthly: &str, signal: &str, deadline| {
+            strategy_price_signature(
+                vec![0; 32],
+                chain,
+                index,
+                id,
+                version,
+                monthly.into(),
+                signal.into(),
+                deadline,
+                NOW_MS,
+            )
+        };
+        assert!(price(84_532, 0, 1, 1, "0", "0", ok_deadline).is_ok());
+        assert!(price(84_532, 0, 1, 1, "999999999999", "999999999999", ok_deadline).is_ok());
+        for index in [1, MAX_STRATEGY_INDEX, u32::MAX] {
+            assert!(matches!(
+                price(84_532, index, 1, 1, "1", "1", ok_deadline),
+                Err(SignerError::InvalidInput)
+            ));
+        }
+        assert!(price(84_532, 0, 0, 1, "1", "1", ok_deadline).is_err());
+        assert!(price(84_532, 0, 1, 0, "1", "1", ok_deadline).is_err());
+        for bad in ["1000000000000", "01", "", "-1", "1.5", "1e6", " 1"] {
+            assert!(
+                price(84_532, 0, 1, 1, bad, "1", ok_deadline).is_err(),
+                "{bad:?}"
+            );
+            assert!(
+                price(84_532, 0, 1, 1, "1", bad, ok_deadline).is_err(),
+                "{bad:?}"
+            );
+        }
+        assert!(matches!(
+            price(84_532, 0, 1, 1, "1", "1", NOW_MS / 1_000),
+            Err(SignerError::Expired)
+        ));
+        assert!(matches!(
+            price(84_532, 0, 1, 1, "1", "1", NOW_MS / 1_000 + 3_601),
+            Err(SignerError::InvalidInput)
+        ));
+        assert!(price(8453, 0, 1, 1, "1", "1", ok_deadline).is_err());
+        assert!(price(1, 0, 1, 1, "1", "1", ok_deadline).is_err());
     }
 
     #[test]
