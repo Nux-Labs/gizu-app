@@ -119,3 +119,24 @@ test("only one instance runs the worker at a time", { skip: !database }, async (
     assert.equal(await other.withWorkerLock(async () => {}), true);
   });
 });
+
+test("concurrent trial sign-ups never exceed the seat limit", { skip: !database }, async () => {
+  await withSchema(async (store) => {
+    await store.saveStrategy(strategy(1, "0x1cED07C44A78772081bc6490A05584dD4bfF15B5"));
+    const results = await Promise.all(
+      ["1", "2", "3", "4", "5"].map((digit) => store.addTrialSubscription(1, word(digit), later(3600))),
+    );
+    assert.equal(results.filter(Boolean).length, 1);
+    assert.deepEqual([...(await store.seatsTaken([1], NOW))], [[1, 1]]);
+  });
+});
+
+test("the chain can correct a commitment recorded as failed", { skip: !database }, async () => {
+  await withSchema(async (store) => {
+    await store.saveStrategy(strategy(1, "0x1cED07C44A78772081bc6490A05584dD4bfF15B5"));
+    await store.addPendingCommit(commit(1, 0, "1"));
+    await store.markFailed(1, 0);
+    await store.markCommitted(1, 0, null, NOW);
+    assert.equal((await store.commits([1]))[0]!.status, "committed");
+  });
+});

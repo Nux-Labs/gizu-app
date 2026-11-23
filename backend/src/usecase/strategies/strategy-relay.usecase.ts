@@ -12,9 +12,9 @@ export type StrategyLog = (event: { code: string; strategyId?: number; seq?: num
 const BATCH = 10;
 
 /**
- * Moves commitments onto the registry and reveals them after their embargo. Every send is claimed
- * first and reconciled against the chain, so a retry after a lost receipt never marks a landed
- * commitment as failed.
+ * Moves commitments onto the registry and reveals them after their embargo. The chain is the
+ * source of truth: every send is claimed first, and both a send and a rejection are reconciled
+ * against the chain, so a commitment that landed is never left marked as failed.
  */
 export class StrategyRelay {
   constructor(
@@ -36,18 +36,8 @@ export class StrategyRelay {
     const { strategyId, seq } = commit;
     if (!(await this.store.claimRelay(strategyId, seq, now))) return "relaying";
     try {
-      const onchain = await this.registry.strategy(strategyId);
-      if (onchain.nextSeq > seq) {
-        // This sequence number is already on chain: a previous attempt landed, or it is taken.
-        const landed = await this.registry.commitAt(strategyId, seq);
-        if (landed.commitment.toLowerCase() !== commit.commitment.toLowerCase()) {
-          await this.store.markFailed(strategyId, seq);
-          this.log({ code: "STRATEGY_COMMIT_SEQ_TAKEN", strategyId, seq });
-          return "failed";
-        }
-        await this.landed(commit, null, landed.committedAt);
-        return "committed";
-      }
+      const reconciled = await this.reconcile(commit);
+      if (reconciled) return reconciled;
       if (commit.deadline * 1000 <= now.getTime()) {
         await this.store.markFailed(strategyId, seq);
         this.log({ code: "STRATEGY_COMMIT_EXPIRED", strategyId, seq });
@@ -63,6 +53,10 @@ export class StrategyRelay {
       return "committed";
     } catch (error) {
       if (error instanceof StrategyRegistryRejection) {
+        // A rejection may only mean an earlier attempt landed meanwhile (the signature binds the
+        // sequence number); check the chain again before giving the sequence number up.
+        const reconciled = await this.reconcile(commit).catch(() => null);
+        if (reconciled) return reconciled;
         await this.store.markFailed(strategyId, seq);
         this.log({ code: "STRATEGY_COMMIT_REJECTED", strategyId, seq, reason: error.reason });
         return "failed";
@@ -73,21 +67,61 @@ export class StrategyRelay {
     }
   }
 
-  async reveal(commit: StrategyCommitRecord, now = new Date()): Promise<void> {
+  /**
+   * When the chain already holds this sequence number, records the outcome from the chain:
+   * committed when it holds this commitment, failed when another one took the slot.
+   */
+  private async reconcile(commit: StrategyCommitRecord): Promise<StrategyCommitStatus | null> {
     const { strategyId, seq } = commit;
+    const onchain = await this.registry.strategy(strategyId);
+    if (onchain.nextSeq <= seq) return null;
+    const landed = await this.registry.commitAt(strategyId, seq);
+    if (landed.commitment.toLowerCase() !== commit.commitment.toLowerCase()) {
+      await this.store.markFailed(strategyId, seq);
+      this.log({ code: "STRATEGY_COMMIT_SEQ_TAKEN", strategyId, seq });
+      return "failed";
+    }
+    await this.landed(commit, commit.commitTx, landed.committedAt);
+    return "committed";
+  }
+
+  /**
+   * Reveals the commitment the registry expects next. That is normally `due`; when the chain is
+   * behind it (an earlier commitment is still unrevealed there), the earlier one is revealed first,
+   * provided its stored preimage matches what the chain holds.
+   */
+  async reveal(due: StrategyCommitRecord, now = new Date()): Promise<void> {
+    const { strategyId } = due;
     try {
       const onchain = await this.registry.strategy(strategyId);
-      if (onchain.nextRevealSeq > seq) {
-        await this.store.markRevealed(strategyId, seq, null, now);
+      if (onchain.nextRevealSeq > due.seq) {
+        await this.store.markRevealed(strategyId, due.seq, null, now);
         return;
       }
-      const result = await this.registry.reveal({ strategyId, basket: commit.basket, salt: commit.salt });
+      let target = due;
+      if (onchain.nextRevealSeq < due.seq) {
+        const expected = onchain.nextRevealSeq;
+        const earlier = (await this.store.commits([strategyId])).find((c) => c.seq === expected);
+        const landed = await this.registry.commitAt(strategyId, expected);
+        if (!earlier || earlier.commitment.toLowerCase() !== landed.commitment.toLowerCase()) {
+          this.log({ code: "STRATEGY_REVEAL_PREIMAGE_MISSING", strategyId, seq: expected });
+          return;
+        }
+        if (earlier.status !== "committed")
+          await this.store.markCommitted(strategyId, expected, earlier.commitTx, landed.committedAt);
+        target = earlier;
+      }
+      const result = await this.registry.reveal({
+        strategyId,
+        basket: target.basket,
+        salt: target.salt,
+      });
       await this.store.markRevealed(strategyId, result.seq, result.tx, result.revealedAt);
     } catch (error) {
       this.log({
         code: "STRATEGY_REVEAL_FAILED",
         strategyId,
-        seq,
+        seq: due.seq,
         ...(error instanceof StrategyRegistryRejection ? { reason: error.reason } : {}),
       });
     }
@@ -98,24 +132,22 @@ export class StrategyRelay {
     const { strategyId, seq } = commit;
     await this.store.markCommitted(strategyId, seq, tx, at);
     try {
-      await this.store.saveSnapshot({
-        strategyId,
-        seq,
-        edge: "start",
-        prices: await this.prices.prices(commit.basket),
-        takenAt: at,
-      });
+      // Prices carry the time they were read, which is later than `at` after a reconciliation.
+      const startPrices = await this.prices.prices(commit.basket);
+      await this.store.saveSnapshot({ strategyId, seq, edge: "start", prices: startPrices, takenAt: new Date() });
       const previous = (await this.store.commits([strategyId])).find(
         (c) => c.seq === seq - 1 && (c.status === "committed" || c.status === "revealed"),
       );
-      if (previous)
+      if (previous) {
+        const endPrices = await this.prices.prices(previous.basket);
         await this.store.saveSnapshot({
           strategyId,
           seq: previous.seq,
           edge: "end",
-          prices: await this.prices.prices(previous.basket),
-          takenAt: at,
+          prices: endPrices,
+          takenAt: new Date(),
         });
+      }
     } catch {
       this.log({ code: "STRATEGY_SNAPSHOT_FAILED", strategyId, seq });
     }

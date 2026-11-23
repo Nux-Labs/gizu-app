@@ -13,6 +13,8 @@ import type {
   StrategyStore,
 } from "../../ports/strategies.port.ts";
 
+const DEADLINE_MARGIN_MS = 60_000;
+
 export type CreateStrategyInput = {
   signer: Address;
   embargo: number;
@@ -57,8 +59,9 @@ export class CreateStrategyUseCase {
     let id = await this.registry.strategyOf(signer);
     let createTx: Hex | null = null;
     if (id === 0) {
-      if (input.deadline * 1000 <= now.getTime())
-        throw new DomainError("STRATEGY_SIGNATURE_EXPIRED", "The signature has expired.");
+      // Leave time to mine before the deadline; a late signature would only burn relayer gas.
+      if (input.deadline * 1000 <= now.getTime() + DEADLINE_MARGIN_MS)
+        throw new DomainError("STRATEGY_SIGNATURE_EXPIRED", "The signature expires too soon to relay.");
       ({ id, tx: createTx } = await this.registry.create({
         signer,
         embargo: input.embargo,

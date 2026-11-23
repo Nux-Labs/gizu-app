@@ -80,7 +80,9 @@ class MemoryStore implements StrategyStore {
   async releaseRelay(id: number, seq: number) { const row = this.row(id, seq); if (row.status === "relaying") row.status = "pending"; }
   async markCommitted(id: number, seq: number, tx: Hex | null, at: Date) {
     const row = this.row(id, seq);
-    if (row.status === "pending" || row.status === "relaying") Object.assign(row, { status: "committed", commitTx: tx, committedAt: at });
+    // Mirrors PgStrategies: the chain may correct a row recorded as failed.
+    if (row.status === "pending" || row.status === "relaying" || row.status === "failed")
+      Object.assign(row, { status: "committed", commitTx: tx ?? row.commitTx, committedAt: at });
   }
   async markFailed(id: number, seq: number) {
     const row = this.row(id, seq);
@@ -307,4 +309,35 @@ test("public reads show only revealed baskets; the signal needs a subscriber key
   assert.equal(revealed.revealed, 1);
   assert.equal(revealed.history[0]!.assets.length, 3);
   assert.equal(revealed.broken, false);
+});
+
+test("a rejection after the commitment landed is reconciled as committed, not failed", async () => {
+  const { create, submit, store, registry } = setup();
+  const { id } = await create.execute(await createInput(), NOW);
+  // The transaction mines, but this attempt sees a revert (the signed seq is already used).
+  registry.commit = async (input) => {
+    registry.chain.get(input.strategyId)!.commits.push({ commitment: input.commitment, committedAt: NOW });
+    throw new StrategyRegistryRejection("InvalidSignature");
+  };
+  assert.equal((await submit.execute(id, await commitInput(id, 0), NOW)).status, "committed");
+  assert.equal((await store.commits([id]))[0]!.status, "committed");
+  assert.deepEqual(store.pushes, [{ strategyId: id, seq: 0 }]);
+});
+
+test("reveals catch up when the chain still expects an earlier commitment", async () => {
+  const { create, submit, relay, store, registry } = setup();
+  const { id } = await create.execute(await createInput(), NOW);
+  await submit.execute(id, await commitInput(id, 0), NOW);
+  await submit.execute(id, await commitInput(id, 1), NOW);
+  // Simulate the earlier bug: seq 0 landed but was recorded as failed.
+  store.rows.find((c) => c.seq === 0)!.status = "failed";
+  const later = new Date(NOW.getTime() + 61_000);
+  await relay.runOnce(later);
+  assert.deepEqual(
+    (await store.commits([id])).map((c) => [c.seq, c.status]),
+    [[0, "revealed"], [1, "committed"]],
+  );
+  assert.equal(registry.chain.get(id)!.nextRevealSeq, 1);
+  await relay.runOnce(later);
+  assert.equal((await store.commits([id]))[1]!.status, "revealed");
 });

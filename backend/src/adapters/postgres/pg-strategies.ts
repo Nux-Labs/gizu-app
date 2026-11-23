@@ -22,10 +22,13 @@ type Row = Record<string, unknown>;
 export class PgStrategies implements StrategyStore {
   private schemaReady: Promise<void> | undefined;
 
-  /** `lockPool` provides a dedicated connection for the worker lock; tests may omit it. */
+  /**
+   * `connections` provides dedicated clients for the worker lock and for transactions; tests that
+   * pass a single client may omit it.
+   */
   constructor(
     private readonly pool: Pick<Pool, "query">,
-    private readonly lockPool?: Pick<Pool, "connect">,
+    private readonly connections?: Pick<Pool, "connect">,
   ) {}
 
   async saveStrategy(strategy: StrategyRecord): Promise<void> {
@@ -149,8 +152,10 @@ export class PgStrategies implements StrategyStore {
   ): Promise<void> {
     await this.ensureSchema();
     await this.pool.query(
-      `update strategy_commits set status = 'committed', commit_tx = $3, committed_at = $4
-       where strategy_id = $1 and seq = $2 and status in ('pending', 'relaying')`,
+      // The chain is the source of truth: a reconciliation may correct a row marked failed.
+      `update strategy_commits set status = 'committed', commit_tx = coalesce($3, commit_tx),
+         committed_at = $4
+       where strategy_id = $1 and seq = $2 and status in ('pending', 'relaying', 'failed')`,
       [strategyId, seq, tx, committedAt],
     );
   }
@@ -219,19 +224,48 @@ export class PgStrategies implements StrategyStore {
 
   async addTrialSubscription(strategyId: number, keyHash: Hex, expiresAt: Date): Promise<boolean> {
     await this.ensureSchema();
-    // Locking the strategy row serializes concurrent sign-ups against its seat limit.
-    const { rowCount } = await this.pool.query(
-      `with s as (
-         select id, (metadata->>'seats')::int as seats from strategies where id = $1 for update
-       )
-       insert into strategy_subscriptions (strategy_id, key_hash, kind, expires_at)
-       select s.id, $2, 'trial', $3 from s
-       where (select count(*) from strategy_subscriptions x
-              where x.strategy_id = s.id and x.expires_at > now()) < s.seats
-       on conflict do nothing`,
-      [strategyId, keyHash, expiresAt],
-    );
-    return rowCount === 1;
+    // The row lock serializes sign-ups. The count must be a separate statement: under READ
+    // COMMITTED, a statement sees only rows committed before it started, so a count inside the
+    // locking statement would miss a sign-up that committed while it waited for the lock.
+    return this.transaction(async (client) => {
+      const { rows } = await client.query(
+        "select (metadata->>'seats')::int as seats from strategies where id = $1 for update",
+        [strategyId],
+      );
+      if (!rows[0]) return false;
+      const taken = await client.query(
+        `select count(*)::int as taken from strategy_subscriptions
+         where strategy_id = $1 and expires_at > now()`,
+        [strategyId],
+      );
+      if (taken.rows[0].taken >= rows[0].seats) return false;
+      const { rowCount } = await client.query(
+        `insert into strategy_subscriptions (strategy_id, key_hash, kind, expires_at)
+         values ($1, $2, 'trial', $3) on conflict do nothing`,
+        [strategyId, keyHash, expiresAt],
+      );
+      return rowCount === 1;
+    });
+  }
+
+  /** Runs `work` in one transaction on a dedicated client, or on the single test client. */
+  private async transaction<T>(work: (client: Pick<Pool, "query">) => Promise<T>): Promise<T> {
+    if (!this.connections) return work(this.pool);
+    const client = await this.connections.connect();
+    let failure: Error | undefined;
+    try {
+      await client.query("begin");
+      const result = await work(client);
+      await client.query("commit");
+      return result;
+    } catch (error) {
+      await client.query("rollback").catch((rollback: Error) => {
+        failure = rollback;
+      });
+      throw error;
+    } finally {
+      client.release(failure);
+    }
   }
 
   async hasSubscription(strategyId: number, keyHash: Hex, now: Date): Promise<boolean> {
@@ -311,11 +345,18 @@ export class PgStrategies implements StrategyStore {
 
   async withWorkerLock(work: () => Promise<void>): Promise<boolean> {
     await this.ensureSchema();
-    if (!this.lockPool) {
+    if (!this.connections) {
       await work();
       return true;
     }
-    const client = await this.lockPool.connect();
+    const client = await this.connections.connect();
+    // The pool stops listening for errors on a checked-out client, and the lock client idles for
+    // the whole pass; an unhandled 'error' from a dropped connection would crash the process.
+    let broken: Error | undefined;
+    const onError = (error: Error) => {
+      broken = error;
+    };
+    client.on("error", onError);
     try {
       const { rows } = await client.query("select pg_try_advisory_lock($1) as locked", [
         WORKER_LOCK_KEY.toString(),
@@ -324,11 +365,17 @@ export class PgStrategies implements StrategyStore {
       try {
         await work();
       } finally {
-        await client.query("select pg_advisory_unlock($1)", [WORKER_LOCK_KEY.toString()]);
+        await client
+          .query("select pg_advisory_unlock($1)", [WORKER_LOCK_KEY.toString()])
+          .catch((error: Error) => {
+            broken = error;
+          });
       }
       return true;
     } finally {
-      client.release();
+      client.off("error", onError);
+      // A client that may still hold the lock is destroyed rather than returned to the pool.
+      client.release(broken);
     }
   }
 

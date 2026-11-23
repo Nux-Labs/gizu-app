@@ -124,7 +124,10 @@ export class ViemStrategyRegistry implements StrategyRegistryGateway {
       BigInt(input.deadline),
       input.signature,
     ]);
-    const event = parseEventLogs({ abi: strategyRegistryAbi, eventName: "StrategyCreated", logs })[0];
+    // Only this registry's event for this signer counts; a replaced transaction carries others.
+    const event = this.ours(
+      parseEventLogs({ abi: strategyRegistryAbi, eventName: "StrategyCreated", logs }),
+    ).find((log) => log.args.signer.toLowerCase() === input.signer.toLowerCase());
     if (!event) throw relayFailure("STRATEGY_CREATE_UNCONFIRMED");
     return { id: Number(event.args.id), tx };
   }
@@ -141,7 +144,13 @@ export class ViemStrategyRegistry implements StrategyRegistryGateway {
       BigInt(input.deadline),
       input.signature,
     ]);
-    const event = parseEventLogs({ abi: strategyRegistryAbi, eventName: "Committed", logs })[0];
+    const event = this.ours(
+      parseEventLogs({ abi: strategyRegistryAbi, eventName: "Committed", logs }),
+    ).find(
+      (log) =>
+        log.args.id === BigInt(input.strategyId) &&
+        log.args.commitment.toLowerCase() === input.commitment.toLowerCase(),
+    );
     if (!event) throw relayFailure("STRATEGY_COMMIT_UNCONFIRMED");
     return { seq: Number(event.args.seq), tx, committedAt: timestamp };
   }
@@ -157,9 +166,15 @@ export class ViemStrategyRegistry implements StrategyRegistryGateway {
       input.basket.map((asset) => asset.weightBps),
       input.salt,
     ]);
-    const event = parseEventLogs({ abi: strategyRegistryAbi, eventName: "Revealed", logs })[0];
+    const event = this.ours(
+      parseEventLogs({ abi: strategyRegistryAbi, eventName: "Revealed", logs }),
+    ).find((log) => log.args.id === BigInt(input.strategyId));
     if (!event) throw relayFailure("STRATEGY_REVEAL_UNCONFIRMED");
     return { seq: Number(event.args.seq), tx, revealedAt: timestamp };
+  }
+
+  private ours<T extends { address: Address }>(logs: T[]): T[] {
+    return logs.filter((log) => log.address.toLowerCase() === this.address.toLowerCase());
   }
 
   /** Simulates first so a registry rejection costs no gas, then waits for one confirmation. */

@@ -72,7 +72,8 @@ const HOUR_MS = 3_600_000;
 export const strategyRouteLimits: Record<"create" | "commit" | "subscribe", RateLimit> = {
   create: { perIp: 10, total: 100, windowMs: HOUR_MS },
   commit: { perIp: 60, total: 600, windowMs: HOUR_MS },
-  subscribe: { perIp: 20, windowMs: HOUR_MS },
+  // Seats are scarce and a trial reveals the current basket, so all callers share a cap too.
+  subscribe: { perIp: 20, total: 200, windowMs: HOUR_MS },
 };
 
 export function registerStrategyRoutes(
