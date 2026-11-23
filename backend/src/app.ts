@@ -71,6 +71,9 @@ import { CreateStrategyUseCase } from "./usecase/strategies/create-strategy.usec
 import { StrategyQueries } from "./usecase/strategies/strategy-queries.usecase.ts";
 import { StrategyRelay } from "./usecase/strategies/strategy-relay.usecase.ts";
 import { SubmitCommitUseCase } from "./usecase/strategies/submit-commit.usecase.ts";
+import { PurchaseSignalUseCase } from "./usecase/strategies/purchase-signal.usecase.ts";
+import { X402SignalPaywall } from "./adapters/x402/x402-signal-paywall.ts";
+import { HTTPFacilitatorClient } from "@x402/core/server";
 import { registerEarlyAccessRoutes } from "./http/routes/early-access.routes.ts";
 import { PgDatabaseProbe } from "./adapters/postgres/pg-database-probe.ts";
 import { createPgPool } from "./adapters/postgres/pg-pool.ts";
@@ -212,10 +215,26 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
       new StrategyPrices(stockDetails, vaultReaders),
       (event) => app.log.info({ event: "strategy.relay", ...event }, "strategy relay"),
     );
+    const queries = new StrategyQueries(strategyStore, registry);
+    // Agents buy signals with x402 in the registry network's USDC; without a payee only trial
+    // subscriber keys can read signals.
+    const paywall = secret.X402_PAY_TO
+      ? new X402SignalPaywall(
+          secret.STRATEGY_CHAIN_ID === 8453 ? "eip155:8453" : "eip155:84532",
+          secret.X402_PAY_TO as `0x${string}`,
+          new HTTPFacilitatorClient({
+            url: secret.X402_FACILITATOR_URL ?? "https://x402.org/facilitator",
+            timeoutMs: 30_000,
+          }),
+        )
+      : null;
     registerStrategyRoutes(app, {
       create: new CreateStrategyUseCase(strategyStore, registry),
       submit: new SubmitCommitUseCase(strategyStore, registry, relay, secret.STRATEGY_COMMIT_JITTER_MAX_SECONDS ?? 0),
-      queries: new StrategyQueries(strategyStore, registry),
+      queries,
+      purchase: new PurchaseSignalUseCase(strategyStore, queries, paywall, (event) =>
+        app.log.error({ event: "strategy.payment", ...event }, "settled payment not booked"),
+      ),
     });
     registerPushRoutes(app, strategyStore);
     strategyTimer = setInterval(() => {

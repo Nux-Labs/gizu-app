@@ -79,6 +79,13 @@ export interface StrategyStore {
   hasSubscription(strategyId: number, keyHash: Hex, now: Date): Promise<boolean>;
   seatsTaken(strategyIds: readonly number[], now: Date): Promise<Map<number, number>>;
   earnedAtoms(strategyIds: readonly number[]): Promise<Map<number, bigint>>;
+  /** Books revenue once per settlement reference; false when that reference was already booked. */
+  recordPayment(payment: {
+    strategyId: number;
+    kind: "x402";
+    amountAtoms: string;
+    reference: string;
+  }): Promise<boolean>;
   registerPushDevice(token: string, platform: "android" | "ios"): Promise<string>;
   followWithDevice(deviceId: string, strategyId: number): Promise<boolean>;
   removePushDevice(deviceId: string): Promise<void>;
@@ -125,4 +132,43 @@ export interface StrategyRegistryGateway {
 export interface StrategyPriceSource {
   /** USD price per asset id; null for any asset that could not be priced. */
   prices(assets: readonly SealedStrategyAsset[]): Promise<AssetPrices>;
+}
+
+/** What a paid signal request must satisfy, ready for the 402 response. */
+export type SignalPaymentRequired = {
+  /** Base64 `PAYMENT-REQUIRED` header value. */
+  header: string;
+  body: unknown;
+  /** Opaque to callers; passed back to `settle`. */
+  requirements: unknown;
+};
+
+export type SignalPaymentSettled = {
+  payer: string;
+  transaction: string;
+  amountAtoms: string;
+  /** Base64 `PAYMENT-RESPONSE` header value. */
+  responseHeader: string;
+};
+
+/** x402 payment for one signal: build the requirements, then verify and settle a payment. */
+export interface SignalPaywall {
+  required(input: {
+    priceAtoms: string;
+    resourceUrl: string;
+    description: string;
+    error?: string;
+  }): Promise<SignalPaymentRequired>;
+  /** Throws `SignalPaymentRejected` when the payment is invalid or does not settle. */
+  settle(input: {
+    paymentHeader: string;
+    required: SignalPaymentRequired;
+  }): Promise<SignalPaymentSettled>;
+}
+
+export class SignalPaymentRejected extends Error {
+  constructor(readonly reason: string) {
+    super(`The payment was not accepted (${reason}).`);
+    this.name = "SignalPaymentRejected";
+  }
 }

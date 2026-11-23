@@ -300,6 +300,22 @@ export class PgStrategies implements StrategyStore {
     return new Map(rows.map((row: Row) => [Number(row.strategy_id), BigInt(String(row.earned))]));
   }
 
+  async recordPayment(payment: {
+    strategyId: number;
+    kind: "x402";
+    amountAtoms: string;
+    reference: string;
+  }): Promise<boolean> {
+    await this.ensureSchema();
+    // The settlement transaction is the reference; a replayed receipt is never booked twice.
+    const { rowCount } = await this.pool.query(
+      `insert into strategy_payments (strategy_id, kind, amount_atoms, reference)
+       values ($1, $2, $3, $4) on conflict (reference) do nothing`,
+      [payment.strategyId, payment.kind, payment.amountAtoms, payment.reference.toLowerCase()],
+    );
+    return rowCount === 1;
+  }
+
   async registerPushDevice(token: string, platform: "android" | "ios"): Promise<string> {
     await this.ensureSchema();
     const { rows } = await this.pool.query(

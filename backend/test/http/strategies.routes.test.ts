@@ -32,10 +32,15 @@ function build() {
       list: async (signers) => { calls.list!.push(signers); return []; },
       detail: async (id) => ({ id }) as never,
       subscribe: async () => ({ subscriberKey: word as `0x${string}`, expiresAt: "2026-12-23T00:00:00.000Z" }),
-      signal: async (id, key) => {
-        calls.signal!.push([id, key]);
-        if (!key) throw paymentRequired();
-        return { strategyId: id, registry: { chainId: 84532, address: signer }, signal: null };
+    },
+    purchase: {
+      execute: async (input) => {
+        calls.signal!.push([input.strategyId, input.subscriberKey ?? null, input.paymentHeader ?? null, input.resourceUrl]);
+        const signal = { strategyId: input.strategyId, registry: { chainId: 84532, address: signer as `0x${string}` }, signal: null };
+        if (input.subscriberKey) return { kind: "signal", signal, paymentResponse: null };
+        if (input.paymentHeader === "signed-payment") return { kind: "signal", signal, paymentResponse: "settlement-receipt" };
+        if (input.strategyId === 9) throw paymentRequired();
+        return { kind: "payment-required", header: "payment-offer", body: { x402Version: 2, accepts: [] } };
       },
     },
   });
@@ -98,13 +103,24 @@ test("commit, subscription and signal routes are private: no-store and sanitized
   assert.equal(invalid.statusCode, 400);
   assert.equal(invalid.json().code, "VALIDATION_ERROR");
 
+  // x402: an unpaid request gets the offer in PAYMENT-REQUIRED and the body.
   const unpaid = await app.inject("/v1/strategies/7/signal");
   assert.equal(unpaid.statusCode, 402);
-  assert.equal(unpaid.json().code, "PAYMENT_REQUIRED");
+  assert.equal(unpaid.headers["payment-required"], "payment-offer");
+  assert.deepEqual(unpaid.json(), { x402Version: 2, accepts: [] });
   assert.equal(unpaid.headers["cache-control"], "no-store");
-  const paid = await app.inject({ url: "/v1/strategies/7/signal", headers: { "x-subscriber-key": word } });
-  assert.equal(paid.statusCode, 200);
-  assert.deepEqual(calls.signal!.at(-1), [7, word]);
+  assert.deepEqual(calls.signal!.at(-1), [7, null, null, "http://localhost:80/v1/strategies/7/signal"]);
+  const bought = await app.inject({ url: "/v1/strategies/7/signal", headers: { "payment-signature": "signed-payment" } });
+  assert.equal(bought.statusCode, 200);
+  assert.equal(bought.headers["payment-response"], "settlement-receipt");
+  // Without a paywall the route still answers 402 with a sanitized code.
+  const noPaywall = await app.inject("/v1/strategies/9/signal");
+  assert.equal(noPaywall.statusCode, 402);
+  assert.equal(noPaywall.json().code, "PAYMENT_REQUIRED");
+  const keyed = await app.inject({ url: "/v1/strategies/7/signal", headers: { "x-subscriber-key": word } });
+  assert.equal(keyed.statusCode, 200);
+  assert.equal(keyed.headers["payment-response"], undefined);
+  assert.deepEqual(calls.signal!.at(-1), [7, word, null, "http://localhost:80/v1/strategies/7/signal"]);
 
   const subscription = await app.inject({ method: "POST", url: "/v1/strategies/7/subscriptions" });
   assert.equal(subscription.statusCode, 201);
@@ -155,13 +171,20 @@ test("strategy creation is limited per IP and in total, since it spends relayer 
         list: async () => [],
         detail: async (id) => ({ id }) as never,
         subscribe: async () => ({ subscriberKey: word as `0x${string}`, expiresAt: "" }),
-        signal: async () => ({ strategyId: 1, registry: { chainId: 84532, address: signer }, signal: null }),
+      },
+      purchase: {
+        execute: async () => ({
+          kind: "signal" as const,
+          signal: { strategyId: 1, registry: { chainId: 84532, address: signer as `0x${string}` }, signal: null },
+          paymentResponse: null,
+        }),
       },
     },
     {
       create: { perIp: 2, total: 3, windowMs: 60_000 },
       commit: { perIp: 1, windowMs: 60_000 },
       subscribe: { perIp: 1, windowMs: 60_000 },
+      signal: { perIp: 1, windowMs: 60_000 },
     },
   );
   app.setErrorHandler(mapRequestError);
@@ -180,5 +203,9 @@ test("strategy creation is limited per IP and in total, since it spends relayer 
   const seat = await app.inject({ method: "POST", url: "/v1/strategies/1/subscriptions" });
   assert.equal(seat.statusCode, 429);
   assert.equal(seat.headers["cache-control"], "no-store");
+
+  // Signal reads may call the facilitator, so they are limited too.
+  assert.equal((await app.inject("/v1/strategies/1/signal")).statusCode, 200);
+  assert.equal((await app.inject("/v1/strategies/1/signal")).statusCode, 429);
   await app.close();
 });

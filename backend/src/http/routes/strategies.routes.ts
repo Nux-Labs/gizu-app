@@ -4,6 +4,7 @@ import { getAddress, type Address, type Hex } from "viem";
 import { z } from "zod";
 import { rateLimit, type RateLimit } from "../rate-limit.ts";
 import type { CreateStrategyUseCase } from "../../usecase/strategies/create-strategy.usecase.ts";
+import type { PurchaseSignalUseCase } from "../../usecase/strategies/purchase-signal.usecase.ts";
 import type { StrategyQueries } from "../../usecase/strategies/strategy-queries.usecase.ts";
 import type { SubmitCommitUseCase } from "../../usecase/strategies/submit-commit.usecase.ts";
 
@@ -69,11 +70,13 @@ const listQuery = z.object({
 
 const HOUR_MS = 3_600_000;
 /** Creation and commitments spend relayer gas; trial seats are scarce. */
-export const strategyRouteLimits: Record<"create" | "commit" | "subscribe", RateLimit> = {
+export const strategyRouteLimits: Record<"create" | "commit" | "subscribe" | "signal", RateLimit> = {
   create: { perIp: 10, total: 100, windowMs: HOUR_MS },
   commit: { perIp: 60, total: 600, windowMs: HOUR_MS },
   // Seats are scarce and a trial reveals the current basket, so all callers share a cap too.
   subscribe: { perIp: 20, total: 200, windowMs: HOUR_MS },
+  // Paid reads call the facilitator; the total keeps junk payments from exhausting its quota.
+  signal: { perIp: 30, total: 600, windowMs: 60_000 },
 };
 
 export function registerStrategyRoutes(
@@ -81,7 +84,8 @@ export function registerStrategyRoutes(
   deps: {
     create: Pick<CreateStrategyUseCase, "execute">;
     submit: Pick<SubmitCommitUseCase, "execute">;
-    queries: Pick<StrategyQueries, "list" | "detail" | "subscribe" | "signal">;
+    queries: Pick<StrategyQueries, "list" | "detail" | "subscribe">;
+    purchase: Pick<PurchaseSignalUseCase, "execute">;
   },
   limits = strategyRouteLimits,
 ) {
@@ -89,6 +93,7 @@ export function registerStrategyRoutes(
   const limitCreate = rateLimit(app, limits.create);
   const limitCommit = rateLimit(app, limits.commit);
   const limitSubscribe = rateLimit(app, limits.subscribe);
+  const limitSignal = rateLimit(app, limits.signal);
 
   routes.get("/v1/strategies", { schema: { querystring: listQuery } }, async (request) => ({
     list: await deps.queries.list(request.query.signers),
@@ -122,8 +127,26 @@ export function registerStrategyRoutes(
     async (request, reply) => reply.code(201).send(await deps.queries.subscribe(request.params.id)),
   );
 
-  routes.get("/v1/strategies/:id/signal", { schema: { params: idParams } }, async (request) => {
-    const key = request.headers["x-subscriber-key"];
-    return deps.queries.signal(request.params.id, typeof key === "string" ? key : undefined);
-  });
+  // A trial subscriber key, or an x402 v2 payment: 402 with PAYMENT-REQUIRED, then a retry
+  // carrying PAYMENT-SIGNATURE, answered with the signal and PAYMENT-RESPONSE.
+  routes.get(
+    "/v1/strategies/:id/signal",
+    { schema: { params: idParams }, onRequest: limitSignal },
+    async (request, reply) => {
+      const header = (name: string) => {
+        const value = request.headers[name];
+        return typeof value === "string" && value.length > 0 ? value : undefined;
+      };
+      const result = await deps.purchase.execute({
+        strategyId: request.params.id,
+        subscriberKey: header("x-subscriber-key"),
+        paymentHeader: header("payment-signature"),
+        resourceUrl: `${request.protocol}://${request.host}/v1/strategies/${request.params.id}/signal`,
+      });
+      if (result.kind === "payment-required")
+        return reply.code(402).header("PAYMENT-REQUIRED", result.header).send(result.body);
+      if (result.paymentResponse) reply.header("PAYMENT-RESPONSE", result.paymentResponse);
+      return result.signal;
+    },
+  );
 }

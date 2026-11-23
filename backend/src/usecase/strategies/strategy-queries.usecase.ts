@@ -59,6 +59,11 @@ export type StrategySignal = {
     committedAt: string | null;
     commitTx: Hex | null;
     assets: SealedStrategyAsset[];
+    /**
+     * Lets an entitled buyer recompute the commitment and check it against the registry. It
+     * reveals nothing beyond the weights the buyer already receives.
+     */
+    salt: Hex;
   } | null;
 };
 
@@ -125,6 +130,7 @@ export class StrategyQueries {
             committedAt: latest.committedAt?.toISOString() ?? null,
             commitTx: latest.commitTx,
             assets: latest.basket,
+            salt: latest.salt,
           }
         : null,
     };

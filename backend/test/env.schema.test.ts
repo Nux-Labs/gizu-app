@@ -205,3 +205,24 @@ test("enables Sealed Strategies only with registry, chain and relayer key togeth
   assert.throws(() => parseApiEnv({ ...apiEnv, ...strategy, STRATEGY_CHAIN_ID: "1" }), /STRATEGY_CHAIN_ID/);
   assert.throws(() => parseApiEnv({ ...apiEnv, ...strategy, STRATEGY_COMMIT_JITTER_MAX_SECONDS: "601" }), /JITTER/);
 });
+
+test("x402 signal payments need a payee and the Sealed Strategies settings", () => {
+  const strategy = {
+    STRATEGY_REGISTRY_ADDRESS: "0x6db1131C8d833CA0F167f7B8DBd24a93cA22Abf7",
+    STRATEGY_CHAIN_ID: "84532",
+    STRATEGY_RELAYER_KEY: "11".repeat(32),
+  };
+  const payee = { X402_PAY_TO: "0x7a09de3500b242d260c4c621E92Ac1cE81b5535A" };
+  assert.equal(parseApiEnv({ ...apiEnv, ...strategy, ...payee }).X402_PAY_TO, payee.X402_PAY_TO);
+  assert.throws(() => parseApiEnv({ ...apiEnv, ...payee }), /Sealed Strategies settings/);
+  assert.throws(() => parseApiEnv({ ...apiEnv, ...strategy, X402_PAY_TO: "0x1234" }), /X402_PAY_TO/);
+  assert.throws(
+    () => parseApiEnv({ ...apiEnv, ...strategy, ...payee, X402_FACILITATOR_URL: "http://insecure.example" }),
+    /X402_FACILITATOR_URL/,
+  );
+  // The default facilitator is testnet-only, so mainnet must name one.
+  const mainnet = { ...strategy, STRATEGY_CHAIN_ID: "8453" };
+  assert.throws(() => parseApiEnv({ ...apiEnv, ...mainnet, ...payee }), /mainnet facilitator/);
+  const facilitator = { X402_FACILITATOR_URL: "https://facilitator.example" };
+  assert.equal(parseApiEnv({ ...apiEnv, ...mainnet, ...payee, ...facilitator }).X402_FACILITATOR_URL, facilitator.X402_FACILITATOR_URL);
+});

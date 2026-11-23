@@ -26,6 +26,8 @@
     "@fastify/type-provider-zod": "1.0.0",
     "@morpho-org/morpho-sdk": "6.0.0",
     "@scure/base": "1.2.6",
+    "@x402/core": "2.30.0",
+    "@x402/evm": "2.30.0",
     "assert": "2.1.0",
     "axios": "1.20.0",
     "dotenv": "17.4.2",
@@ -41,6 +43,7 @@
   "devDependencies": {
     "@types/node": "22.19.1",
     "@types/pg": "8.23.1",
+    "@x402/fetch": "2.30.0",
     "typescript": "5.9.3"
   },
   "overrides": {

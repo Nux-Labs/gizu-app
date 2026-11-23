@@ -68,6 +68,15 @@ const apiEnvSchema = z
       .transform((value) => (value.startsWith("0x") ? value : `0x${value}`) as `0x${string}`)
       .optional(),
     STRATEGY_COMMIT_JITTER_MAX_SECONDS: z.coerce.number().int().min(0).max(600).optional(),
+    // x402 payments for strategy signals settle in USDC on the registry's network to this address.
+    X402_PAY_TO: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{40}$/)
+      .optional(),
+    X402_FACILITATOR_URL: z
+      .url()
+      .refine((value) => value.startsWith("https://"))
+      .optional(),
   })
   .superRefine((env, context) => {
     const strategyKeys = [
@@ -80,6 +89,21 @@ const apiEnvSchema = z
         code: "custom",
         path: ["STRATEGY_REGISTRY_ADDRESS"],
         message: "STRATEGY_REGISTRY_ADDRESS, STRATEGY_CHAIN_ID and STRATEGY_RELAYER_KEY are set together",
+      });
+    }
+    if ((env.X402_PAY_TO || env.X402_FACILITATOR_URL) && strategyKeys.some((value) => value === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["X402_PAY_TO"],
+        message: "x402 signal payments need the Sealed Strategies settings",
+      });
+    }
+    // The default x402.org facilitator settles testnets only.
+    if (env.X402_PAY_TO && env.STRATEGY_CHAIN_ID === 8453 && !env.X402_FACILITATOR_URL) {
+      context.addIssue({
+        code: "custom",
+        path: ["X402_FACILITATOR_URL"],
+        message: "x402 payments on Base mainnet need a mainnet facilitator URL",
       });
     }
     const known = new Set(

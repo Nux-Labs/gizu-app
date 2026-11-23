@@ -24,11 +24,15 @@ import type {
   StrategyRecord,
   StrategyRegistryGateway,
   StrategyStore,
+  SignalPaymentRequired,
+  SignalPaywall,
 } from "../../src/ports/strategies.port.ts";
+import { SignalPaymentRejected } from "../../src/ports/strategies.port.ts";
 import { CreateStrategyUseCase } from "../../src/usecase/strategies/create-strategy.usecase.ts";
 import { StrategyQueries } from "../../src/usecase/strategies/strategy-queries.usecase.ts";
 import { StrategyRelay } from "../../src/usecase/strategies/strategy-relay.usecase.ts";
 import { SubmitCommitUseCase } from "../../src/usecase/strategies/submit-commit.usecase.ts";
+import { PurchaseSignalUseCase } from "../../src/usecase/strategies/purchase-signal.usecase.ts";
 
 const { mnemonic } = JSON.parse(
   readFileSync(new URL("../../../shared/strategy-commit-vectors.json", import.meta.url), "utf8"),
@@ -112,7 +116,15 @@ class MemoryStore implements StrategyStore {
   async seatsTaken(ids: readonly number[]) {
     return new Map(ids.map((id) => [id, this.subs.filter((s) => s.strategyId === id).length]));
   }
-  async earnedAtoms() { return new Map<number, bigint>(); }
+  payments: { strategyId: number; amountAtoms: string; reference: string }[] = [];
+  async earnedAtoms(ids: readonly number[]) {
+    return new Map(ids.map((id) => [id, this.payments.filter((p) => p.strategyId === id).reduce((sum, p) => sum + BigInt(p.amountAtoms), 0n)]));
+  }
+  async recordPayment(payment: { strategyId: number; kind: "x402"; amountAtoms: string; reference: string }) {
+    if (this.payments.some((p) => p.reference === payment.reference.toLowerCase())) return false;
+    this.payments.push({ ...payment, reference: payment.reference.toLowerCase() });
+    return true;
+  }
   async registerPushDevice() { return "device"; }
   async followWithDevice() { return true; }
   async removePushDevice() {}
@@ -340,4 +352,115 @@ test("reveals catch up when the chain still expects an earlier commitment", asyn
   assert.equal(registry.chain.get(id)!.nextRevealSeq, 1);
   await relay.runOnce(later);
   assert.equal((await store.commits([id]))[1]!.status, "revealed");
+});
+
+class FakePaywall implements SignalPaywall {
+  required = async (input: { priceAtoms: string; error?: string }) => {
+    this.offers.push(input);
+    if (this.down) throw new Error("facilitator unreachable");
+    return { header: `offer:${input.priceAtoms}:${input.error ?? ""}`, body: { x402Version: 2 }, requirements: [input.priceAtoms] };
+  };
+  settle = async (input: { paymentHeader: string; required: SignalPaymentRequired }) => {
+    this.settled.push(input);
+    await this.whileSettling?.();
+    if (input.paymentHeader === "bad") throw new SignalPaymentRejected("insufficient_funds");
+    return { payer: "0xagent", transaction: `0x${"ab".repeat(32)}`, amountAtoms: (input.required.requirements as string[])[0]!, responseHeader: "receipt" };
+  };
+  offers: { priceAtoms: string; error?: string }[] = [];
+  settled: { paymentHeader: string; required: SignalPaymentRequired }[] = [];
+  down = false;
+  whileSettling?: () => Promise<unknown>;
+}
+
+test("agents buy the current signal with x402 and revenue is booked once per settlement", async () => {
+  const { create, submit, store, queries } = setup();
+  const paywall = new FakePaywall();
+  const purchase = new PurchaseSignalUseCase(store, queries, paywall);
+  const { id } = await create.execute(await createInput(), NOW);
+  const url = "https://api.example/v1/strategies/1/signal";
+
+  // Nothing is sold before the first basket is sealed.
+  await assert.rejects(purchase.execute({ strategyId: id, resourceUrl: url }), { code: "STRATEGY_NO_SIGNAL" });
+  assert.equal(paywall.offers.length, 0);
+  await submit.execute(id, await commitInput(id, 0), NOW);
+
+  const offer = await purchase.execute({ strategyId: id, resourceUrl: url });
+  assert.deepEqual(offer, { kind: "payment-required", header: "offer:500000:", body: { x402Version: 2 } });
+
+  const bought = await purchase.execute({ strategyId: id, resourceUrl: url, paymentHeader: "signed" });
+  assert.equal(bought.kind, "signal");
+  if (bought.kind !== "signal") return;
+  assert.equal(bought.paymentResponse, "receipt");
+  assert.equal(bought.signal.signal!.salt, SALT);
+  assert.equal(bought.signal.signal!.assets.length, 3);
+  assert.equal((await queries.detail(id)).earnedAtoms, "500000");
+
+  // The same settlement is never booked twice.
+  await purchase.execute({ strategyId: id, resourceUrl: url, paymentHeader: "signed" });
+  assert.equal((await queries.detail(id)).earnedAtoms, "500000");
+
+  // A rejected payment gets a fresh offer with the reason, and books nothing.
+  const rejected = await purchase.execute({ strategyId: id, resourceUrl: url, paymentHeader: "bad" });
+  assert.deepEqual(rejected, { kind: "payment-required", header: "offer:500000:insufficient_funds", body: { x402Version: 2 } });
+  assert.equal(store.payments.length, 1);
+
+  paywall.down = true;
+  await assert.rejects(purchase.execute({ strategyId: id, resourceUrl: url }), { code: "PAYMENT_UNAVAILABLE", statusCode: 502 });
+});
+
+test("subscriber keys bypass payment, free signals need none, and without a payee only keys work", async () => {
+  const { create, submit, store, queries } = setup();
+  const freeTerms = { ...metadata, signalPriceAtoms: "0" };
+  const { id } = await create.execute(await createInput(owner, freeTerms), NOW);
+  await submit.execute(id, await commitInput(id, 0), NOW);
+  const url = "https://api.example/v1/strategies/1/signal";
+
+  const paywall = new FakePaywall();
+  const free = await new PurchaseSignalUseCase(store, queries, paywall).execute({ strategyId: id, resourceUrl: url });
+  assert.equal(free.kind, "signal");
+  assert.equal(paywall.offers.length, 0);
+
+  // A free signal needs no payee either; a paid one does, or a key.
+  assert.equal((await new PurchaseSignalUseCase(store, queries, null).execute({ strategyId: id, resourceUrl: url })).kind, "signal");
+
+  const sold = setup();
+  const { id: paid } = await sold.create.execute(await createInput(), NOW);
+  await sold.submit.execute(paid, await commitInput(paid, 0), NOW);
+  const unpaid = new PurchaseSignalUseCase(sold.store, sold.queries, null);
+  await assert.rejects(unpaid.execute({ strategyId: paid, resourceUrl: url }), { code: "PAYMENT_REQUIRED" });
+  const { subscriberKey } = await sold.queries.subscribe(paid);
+  const keyed = await unpaid.execute({ strategyId: paid, resourceUrl: url, subscriberKey });
+  assert.equal(keyed.kind === "signal" && keyed.signal.signal!.seq, 0);
+  await assert.rejects(unpaid.execute({ strategyId: 99, resourceUrl: url }), { code: "NOT_FOUND" });
+
+  // An expired or unknown key falls back to the x402 offer instead of a dead end.
+  const selling = new PurchaseSignalUseCase(sold.store, sold.queries, paywall);
+  const unknown = await selling.execute({ strategyId: paid, resourceUrl: url, subscriberKey: `0x${"99".repeat(32)}` });
+  assert.equal(unknown.kind, "payment-required");
+  const expired = new StrategyQueries(sold.store, sold.registry, () => new Date(NOW.getTime() + 31 * 86_400_000));
+  const later = await new PurchaseSignalUseCase(sold.store, expired, paywall).execute({ strategyId: paid, resourceUrl: url, subscriberKey });
+  assert.equal(later.kind, "payment-required");
+});
+
+test("a settled payment always returns the newest basket, even when the ledger fails", async () => {
+  const { create, submit, store, queries } = setup();
+  const { id } = await create.execute(await createInput(), NOW);
+  await submit.execute(id, await commitInput(id, 0), NOW);
+  const url = "https://api.example/v1/strategies/1/signal";
+  const paywall = new FakePaywall();
+  // The owner seals seq 1 while the facilitator is settling the agent's payment.
+  paywall.whileSettling = async () => submit.execute(id, await commitInput(id, 1), NOW);
+  store.recordPayment = async () => {
+    throw new Error("connection reset");
+  };
+  const logged: unknown[] = [];
+  const purchase = new PurchaseSignalUseCase(store, queries, paywall, (event) => logged.push(event));
+  const bought = await purchase.execute({ strategyId: id, resourceUrl: url, paymentHeader: "signed" });
+  assert.equal(bought.kind, "signal");
+  if (bought.kind !== "signal") return;
+  assert.equal(bought.paymentResponse, "receipt");
+  assert.equal(bought.signal.signal!.seq, 1);
+  assert.deepEqual(logged, [
+    { code: "STRATEGY_PAYMENT_NOT_BOOKED", strategyId: id, amountAtoms: "500000", transaction: `0x${"ab".repeat(32)}` },
+  ]);
 });
