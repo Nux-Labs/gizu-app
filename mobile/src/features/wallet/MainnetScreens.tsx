@@ -28,7 +28,6 @@ import { AccountAddress } from "@/features/account/AccountAddress";
 import { PortfolioActions } from "@/features/investments/components/PortfolioActions";
 import { VaultPreview } from "@/features/investments/components/VaultPreview";
 import { useSwapAssetSweep } from "@/features/swap/useSwapAssetSweep";
-import { useStrategySigning } from "@/features/strategies/useStrategySigning";
 import { isSwapChain } from "@/domain/tokenCatalog";
 import { WithdrawalStatusNotice } from "@/features/earn/WithdrawalStatusNotice";
 import { useSharedWithdrawalState } from "@/features/earn/useVaultPosition";
@@ -289,7 +288,6 @@ export function MainnetPortfolioScreen({
 }: BottomTabScreenProps<MainTabParamList, "Home">) {
   const wallet = useMainnetWallet();
   const root = navigation.getParent<NativeStackNavigationProp<RootStackParamList>>();
-  const strategies = useStrategySigning();
   // A restored wallet rediscovers stocks its earlier swaps bought; found tokens join Assets.
   useSwapAssetSweep(!!wallet.snapshot, () => void wallet.refresh());
   const actions = (
@@ -352,20 +350,6 @@ export function MainnetPortfolioScreen({
         />
       )}
       {/* Home Earn shortcut is temporarily hidden; the Earn flow remains available. */}
-      {strategies && (
-        <>
-          <Button
-            label="Follow a strategy"
-            variant="secondary"
-            onPress={() => root.navigate("StrategyExplore")}
-          />
-          <Button
-            label="Sell your strategy"
-            variant="secondary"
-            onPress={() => root.navigate("Strategies")}
-          />
-        </>
-      )}
       <OwnedBalances
         assets={assets}
         onOpenVault={(profileId) => root.navigate("VaultPosition", { profileId })}

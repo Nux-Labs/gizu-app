@@ -16,6 +16,11 @@ import type {
 } from "@/domain/wallet/storedSigner";
 import { TokenCatalogContext } from "@/features/swap/useTokenCatalog";
 import { StrategiesScreen } from "@/features/strategies/StrategiesScreen";
+import { StrategyProfileScreen } from "@/features/strategies/StrategyProfileScreen";
+import { StrategyFollowerContext } from "@/features/strategies/useStrategyFollower";
+import { StrategySocialContext } from "@/features/strategies/useStrategySocial";
+import { createMemoryFollowStore } from "@/services/strategyFollows";
+import { fakeSocial, quietCard, socialDeps } from "../../support/strategies";
 import { StrategyPublishScreen } from "@/features/strategies/StrategyPublishScreen";
 import {
   StrategyOwnerContext,
@@ -134,19 +139,25 @@ function card(overrides: Partial<StrategyCard> = {}): StrategyCard {
     earnedAtoms: "1500000",
     createdAt: "2026-11-23T00:00:00.000Z",
     registry: { chainId: 84532, address: "0x6db1131C8d833CA0F167f7B8DBd24a93cA22Abf7" },
+    ...quietCard,
     ...overrides,
   };
 }
 const detail = (overrides: Partial<StrategyCard> = {}): StrategyDetail => ({
   ...card(overrides),
   history: [],
+  priceHistory: [],
 });
 
 function setup(initial: StrategyCard[] = [], catalog: TokenCatalogService = emptyCatalog) {
   let listed = initial;
   const service = {
     list: jest.fn(async () => listed),
-    detail: jest.fn(),
+    detail: jest.fn(async (id: number) => ({
+      ...(listed.find((c) => c.id === id) ?? card()),
+      history: [],
+      priceHistory: [],
+    })),
     create: jest.fn(async () => {
       listed = [card()];
       return detail();
@@ -156,7 +167,8 @@ function setup(initial: StrategyCard[] = [], catalog: TokenCatalogService = empt
       return { seq: request.seq, status: "committed" as const, commitTx: word("c") };
     }),
     subscribe: jest.fn(),
-    signal: jest.fn(),
+    signal: jest.fn(async () => null),
+    changePrice: jest.fn(),
   } satisfies StrategyService;
   const signer = {
     strategyAddresses: jest.fn(async () => addresses),
@@ -181,17 +193,35 @@ function setup(initial: StrategyCard[] = [], catalog: TokenCatalogService = empt
   };
   const deps: StrategyOwnerDeps = { service, signer: () => signer, now: () => NOW_MS };
   const Stack = createNativeStackNavigator<RootStackParamList>();
+  const follower = {
+    service,
+    follows: createMemoryFollowStore(),
+    push: {
+      api: { register: jest.fn(), follow: jest.fn(), remove: jest.fn() },
+      platform: { token: jest.fn(async () => null) },
+    },
+    swap: () => null,
+    now: () => NOW_MS,
+  };
   render(
     <SafeAreaProvider>
       <TokenCatalogContext.Provider value={catalog}>
-        <StrategyOwnerContext.Provider value={deps}>
-          <NavigationContainer>
-            <Stack.Navigator initialRouteName="Strategies" screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="Strategies" component={StrategiesScreen} />
-              <Stack.Screen name="StrategyPublish" component={StrategyPublishScreen} />
-            </Stack.Navigator>
-          </NavigationContainer>
-        </StrategyOwnerContext.Provider>
+        <StrategySocialContext.Provider value={socialDeps(fakeSocial().service)}>
+          <StrategyFollowerContext.Provider value={follower}>
+            <StrategyOwnerContext.Provider value={deps}>
+              <NavigationContainer>
+                <Stack.Navigator
+                  initialRouteName="Strategies"
+                  screenOptions={{ headerShown: false }}
+                >
+                  <Stack.Screen name="Strategies" component={StrategiesScreen} />
+                  <Stack.Screen name="StrategyPublish" component={StrategyPublishScreen} />
+                  <Stack.Screen name="StrategyDetail" component={StrategyProfileScreen} />
+                </Stack.Navigator>
+              </NavigationContainer>
+            </StrategyOwnerContext.Provider>
+          </StrategyFollowerContext.Provider>
+        </StrategySocialContext.Provider>
       </TokenCatalogContext.Provider>
     </SafeAreaProvider>,
   );
@@ -206,8 +236,10 @@ const expectedAssets = [
 
 test("publishes a strategy from the portfolio's weights, then seals its first basket", async () => {
   const { service, signer } = setup();
-  expect(await screen.findByText("You haven't published a strategy yet.")).toBeVisible();
-  fireEvent.press(screen.getByRole("button", { name: "Publish a strategy" }));
+  expect(
+    await screen.findByText("You haven't published your strategy yet. Each wallet publishes one."),
+  ).toBeVisible();
+  fireEvent.press(screen.getByRole("button", { name: "Publish your strategy" }));
 
   expect(await screen.findByLabelText("NVDAc weight 60%")).toBeVisible();
   expect(screen.getByLabelText("Steakhouse USDG weight 30%")).toBeVisible();
@@ -269,14 +301,15 @@ test("publishes a strategy from the portfolio's weights, then seals its first ba
   });
 
   // Back on the list, the new strategy appears with its sealed update.
-  expect(await screen.findByLabelText("Strategy AI chips")).toBeVisible();
-  expect(screen.getByText(/1 updates sealed/)).toBeVisible();
-  expect(screen.getByText("Earned $1.50")).toBeVisible();
+  // Back on "your strategy", the wallet now sells one, so its profile opens with owner tools.
+  expect(await screen.findByText("Earned $1.50 · 3 of 20 seats taken")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Send update" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Publish/ })).toBeNull();
 });
 
 test("the basket is the portfolio's own weights: nothing to edit, publishing waits for a name", async () => {
   const { signer } = setup();
-  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Publish your strategy" }));
   expect(await screen.findByLabelText("NVDAc weight 60%")).toBeVisible();
   expect(screen.queryByRole("button", { name: /Lower|Raise/ })).toBeNull();
   expect(screen.queryByRole("button", { name: "Refill from my portfolio" })).toBeNull();
@@ -323,7 +356,7 @@ test("a stock a swap bought joins the basket at its market value once the catalo
     () => new Promise<Awaited<ReturnType<TokenCatalogService["list"]>>>((r) => (answer = r)),
   );
   setup([], { list });
-  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Publish your strategy" }));
   // No basket from a partial valuation: the unpriced stock would be missing from it.
   expect(await screen.findByText("Reading your portfolio…")).toBeVisible();
   expect(screen.queryByLabelText(/weight/)).toBeNull();
@@ -343,7 +376,7 @@ test("a stock a swap bought joins the basket at its market value once the catalo
 test("without market prices nothing can be published, and the portfolio can be read again", async () => {
   holding(swapBought);
   setup([], { list: jest.fn(async () => Promise.reject(new Error("offline"))) });
-  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Publish your strategy" }));
   expect(
     await screen.findByText(
       "Market prices for your stocks couldn't be loaded, so your weights aren't known yet.",
@@ -368,7 +401,7 @@ test("an unsupported stock large enough to change the weights stops publishing",
     valueUsdAtoms: "5000000",
   } as OwnedPortfolioAsset);
   setup();
-  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Publish your strategy" }));
   expect(
     await screen.findByText(/Strategies don't support BIGc, OTHERc yet, and leaving them out/),
   ).toBeVisible();
@@ -380,7 +413,7 @@ test("an unsupported stock large enough to change the weights stops publishing",
 test("an update seals the next sequence number and explains a busy registry", async () => {
   const { service, signer } = setup([card({ commits: 2 })]);
   service.commit.mockRejectedValueOnce(new ApiError(400, "STRATEGY_COMMIT_PENDING", "unavailable"));
-  fireEvent.press(await screen.findByRole("button", { name: "Send update for AI chips" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Send update" }));
   expect(await screen.findByText("Update AI chips")).toBeVisible();
   expect(screen.queryByLabelText("Strategy name")).toBeNull();
 
@@ -399,14 +432,14 @@ test("an update seals the next sequence number and explains a busy registry", as
   );
 
   fireEvent.press(screen.getByRole("button", { name: "Seal and send update" }));
-  expect(await screen.findByLabelText("Strategy AI chips")).toBeVisible();
+  expect(await screen.findByText(/Earned \$1\.50/)).toBeVisible();
   expect(service.commit).toHaveBeenLastCalledWith(5, expect.objectContaining({ seq: 2 }));
 });
 
 test("a cancelled first basket switches to sealing that strategy, never publishing another", async () => {
   const { service, signer } = setup();
   signer.sealStrategyCommit.mockRejectedValueOnce(new Error("Wallet operation cancelled."));
-  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Publish your strategy" }));
   fireEvent.changeText(await screen.findByLabelText("Strategy name"), "AI chips");
   fireEvent.press(screen.getByRole("button", { name: "Publish strategy" }));
   expect(
@@ -421,7 +454,7 @@ test("a cancelled first basket switches to sealing that strategy, never publishi
   expect(await screen.findByText("Update AI chips")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Publish strategy" })).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Seal and send update" }));
-  expect(await screen.findByLabelText("Strategy AI chips")).toBeVisible();
+  expect(await screen.findByText(/Earned \$1\.50/)).toBeVisible();
   expect(signer.createStrategy).toHaveBeenCalledTimes(1);
   expect(service.commit).toHaveBeenCalledWith(5, expect.objectContaining({ seq: 0 }));
 });
@@ -434,7 +467,7 @@ test("a create that timed out but landed is found instead of signed again", asyn
     await created();
     throw new TypeError("Network request failed");
   });
-  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Publish your strategy" }));
   fireEvent.changeText(await screen.findByLabelText("Strategy name"), "AI chips");
   fireEvent.press(screen.getByRole("button", { name: "Publish strategy" }));
   await waitFor(() =>
@@ -451,7 +484,7 @@ test("a wallet that hashes the terms differently stops before anything is publis
     metadataHash: word("e"),
     signature,
   });
-  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  fireEvent.press(await screen.findByRole("button", { name: "Publish your strategy" }));
   fireEvent.changeText(await screen.findByLabelText("Strategy name"), "AI chips");
   fireEvent.press(screen.getByRole("button", { name: "Publish strategy" }));
   expect(

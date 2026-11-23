@@ -15,6 +15,7 @@ import {
   formatEmbargo,
   formatPrice,
   formatWeight,
+  holdingAmounts,
   metadataProblem,
   portfolioBasket,
   usdcAtoms,
@@ -26,7 +27,7 @@ import { useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { usePricedPortfolio } from "@/features/wallet/usePricedPortfolio";
 import colors from "@/theme/colors.json";
 import { BasketPreview } from "./components/BasketPreview";
-import { useStrategyOwner, type StrategyStage } from "./useStrategyOwner";
+import { useSealRecords, useStrategyOwner, type StrategyStage } from "./useStrategyOwner";
 
 const inputClass = "min-h-12 rounded-xl bg-well px-4 py-3 text-text";
 const embargoes = __DEV__ ? [demoEmbargo, ...embargoOptions] : embargoOptions;
@@ -35,6 +36,7 @@ const stageText: Record<StrategyStage, string | null> = {
   approving: "Review and approve with your passkey…",
   publishing: "Publishing your strategy…",
   sealing: "Sealing the basket…",
+  pricing: "Saving the new price…",
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, "StrategyPublish">;
@@ -103,16 +105,26 @@ export function StrategyPublishScreen({ navigation, route }: Props) {
     if (finished && !owner.busy) navigation.goBack();
   }, [finished, navigation, owner.busy]);
 
+  const sealRecords = useSealRecords();
   const submit = async () => {
-    if (!basket) return;
+    if (!basket || !snapshot) return;
     const assets = basketAssets(basket.lines, basket.weights);
+    // The holdings this basket came from, so the owner later sees when a trade changed them.
+    const record = (strategyId: number) =>
+      sealRecords
+        .save({ strategyId, sealedAt: new Date().toISOString(), amounts: holdingAmounts(snapshot) })
+        .catch(() => {});
     setSealing(basket);
     try {
       if (updating) {
-        if (existing !== null && (await owner.sendUpdate(existing, assets))) setFinished(true);
+        if (existing !== null && (await owner.sendUpdate(existing, assets))) {
+          await record(existing.card.id);
+          setFinished(true);
+        }
         return;
       }
       const result = await owner.publish(metadata, embargo, assets);
+      if (result.ok && result.strategyId !== null) await record(result.strategyId);
       if (result.ok) setFinished(true);
       // Published but not sealed: finish this strategy instead of offering to publish another.
       else if (result.strategyId !== null) navigation.setParams({ strategyId: result.strategyId });
@@ -267,8 +279,8 @@ export function StrategyPublishScreen({ navigation, route }: Props) {
           {status}
         </Typography>
       )}
-      {!updating && owner.keysExhausted && (
-        <Notice message="This wallet has used all of its strategy keys." />
+      {!updating && owner.published && (
+        <Notice message="This wallet already sells a strategy. Each wallet sells one: its own portfolio." />
       )}
       {updating && !owner.loading && !owner.error && existing === null && (
         <Notice error message="This strategy isn't one of this wallet's strategies." />

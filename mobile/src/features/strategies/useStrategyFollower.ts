@@ -90,7 +90,7 @@ export function useStrategyList() {
  * One strategy as a follower sees it: its public record, this phone's trial and the newest basket
  * the trial unlocks. The subscriber key stays in the keystore and only travels to the API.
  */
-export function useStrategyFollower(strategyId: number) {
+export function useStrategyFollower(strategyId: number, token: string | null = null) {
   const deps = useStrategyFollowerDeps();
   const { service, follows, now } = deps;
   const [detail, setDetail] = useState<StrategyDetail | null>(null);
@@ -114,7 +114,11 @@ export function useStrategyFollower(strategyId: number) {
 
   useEffect(() => {
     let active = true;
-    Promise.all([service.detail(strategyId), follows.load(), follows.pushDevice()])
+    Promise.all([
+      service.detail(strategyId, undefined, token),
+      follows.load(),
+      follows.pushDevice(),
+    ])
       .then(async ([card, mine, device]) => {
         const mineHere = mine.find((entry) => entry.strategyId === strategyId) ?? null;
         let basket: StrategySignal | null = null;
@@ -144,7 +148,7 @@ export function useStrategyFollower(strategyId: number) {
     return () => {
       active = false;
     };
-  }, [follows, revision, service, strategyId]);
+  }, [follows, revision, service, strategyId, token]);
 
   const reload = useCallback(() => {
     setLoading(true);

@@ -248,6 +248,46 @@ export function portfolioBasket(snapshot: MainnetPortfolioSnapshot): PortfolioBa
   return { lines, weights, blocked, leftOut };
 }
 
+/**
+ * Token amounts behind a strategy's basket: stock balances, vault shares and dollar cash. Prices
+ * move weights on their own; amounts change only when the owner trades, deposits or withdraws.
+ */
+export function holdingAmounts(snapshot: MainnetPortfolioSnapshot): Record<string, string> {
+  const amounts: Record<string, string> = {};
+  for (const row of stockRows(snapshot))
+    if (row.complete && BigInt(row.balanceAtoms ?? row.observedAtoms) > 0n)
+      amounts[`${row.chainId}:0:${row.token.toLowerCase()}`] =
+        row.balanceAtoms ?? row.observedAtoms;
+  for (const position of canonicalRows(snapshot.positions ?? [])) {
+    const profileId = vaultPositionProfile(position);
+    if (!profileId || !position.shareAtoms || BigInt(position.shareAtoms) <= 0n) continue;
+    const profile = earnProfiles[profileId];
+    amounts[`${profile.chainId}:1:${profile.vault.toLowerCase()}`] = position.shareAtoms;
+  }
+  const cash = portfolioHoldings(snapshot).lines.find((line) => line.label === "USDC");
+  if (cash) amounts.cash = cash.valueAtoms.toString();
+  return amounts;
+}
+
+/** Amounts within this share of each other count as unchanged, so dust and rounding don't nag. */
+const AMOUNT_TOLERANCE_BPS = 50n;
+
+/** The portfolio holds different assets or amounts than when the basket was sealed. */
+export function holdingsChanged(
+  sealed: Readonly<Record<string, string>>,
+  current: Readonly<Record<string, string>>,
+): boolean {
+  const keys = new Set([...Object.keys(sealed), ...Object.keys(current)]);
+  for (const key of keys) {
+    const before = BigInt(sealed[key] ?? "0");
+    const after = BigInt(current[key] ?? "0");
+    const larger = before > after ? before : after;
+    const gap = before > after ? before - after : after - before;
+    if (larger > 0n && gap * 10_000n > larger * AMOUNT_TOLERANCE_BPS) return true;
+  }
+  return false;
+}
+
 /** Rounds values to 5% steps summing to 100% by largest remainder; ties go to the larger value. */
 export function suggestedWeights(lines: readonly BasketLine[]): number[] {
   const total = lines.reduce((sum, line) => sum + line.valueAtoms, 0n);
@@ -325,6 +365,15 @@ export type StrategyCard = {
   earnedAtoms: string;
   createdAt: string;
   registry: { chainId: number; address: string };
+  social: { likes: number; comments: number };
+  /** The newest revealed basket; empty before the first reveal. */
+  latestAssets: SealedAssetView[];
+  /** 0 until the owner first changes the price. */
+  priceVersion: number;
+  /** When the next price change is allowed; null when it is allowed now. */
+  priceChangeAllowedAt: string | null;
+  /** The signed-in viewer likes this strategy. */
+  liked: boolean;
 };
 
 export type SealedAssetView = {
@@ -335,17 +384,133 @@ export type SealedAssetView = {
   assetId: string;
 };
 
-export type StrategyDetail = StrategyCard & {
-  history: {
-    seq: number;
-    committedAt: string | null;
-    revealedAt: string | null;
-    commitTx: string | null;
-    revealTx: string | null;
-    assets: SealedAssetView[];
-    periodReturnBps: number | null;
-  }[];
+export type StrategyHistoryEntry = {
+  seq: number;
+  committedAt: string | null;
+  revealedAt: string | null;
+  commitTx: string | null;
+  revealTx: string | null;
+  assets: SealedAssetView[];
+  periodReturnBps: number | null;
+  likes: number;
+  comments: number;
+  liked: boolean;
 };
+
+export type StrategyPriceChange = {
+  /** 0 is the price the strategy was published with. */
+  version: number;
+  monthlyPriceAtoms: string;
+  signalPriceAtoms: string;
+  at: string;
+};
+
+export type StrategyDetail = StrategyCard & {
+  history: StrategyHistoryEntry[];
+  priceHistory: StrategyPriceChange[];
+};
+
+/** A comment on a strategy's profile (`seq` null) or on one revealed update. */
+export type StrategyComment = {
+  id: number;
+  seq: number | null;
+  parentId: number | null;
+  body: string;
+  createdAt: string;
+  /** An automatic nickname, or the strategy's name when its owner wrote it. */
+  authorName: string;
+  owner: boolean;
+  mine: boolean;
+  replies: StrategyComment[];
+};
+
+export type FeedEvent =
+  | { kind: "sealed"; strategyId: number; strategyName: string; seq: number; at: string }
+  | {
+      kind: "revealed";
+      strategyId: number;
+      strategyName: string;
+      seq: number;
+      at: string;
+      assets: SealedAssetView[];
+      previousAssets: SealedAssetView[] | null;
+      periodReturnBps: number | null;
+      likes: number;
+      comments: number;
+      liked: boolean;
+    }
+  | {
+      kind: "price";
+      strategyId: number;
+      strategyName: string;
+      version: number;
+      at: string;
+      monthlyPriceAtoms: string;
+      signalPriceAtoms: string;
+      previous: { monthlyPriceAtoms: string; signalPriceAtoms: string };
+    };
+
+export type Page<T> = { list: T[]; next: string | null };
+
+/** A signed-in social session; the token is a bearer credential for likes and comments only. */
+export type SocialSession = {
+  token: string;
+  expiresAt: string;
+  name: string;
+  /** The strategy this session speaks for as its owner. */
+  ownerOf: number | null;
+};
+
+export type StrategyPriceRequest = {
+  version: number;
+  monthlyPriceAtoms: string;
+  signalPriceAtoms: string;
+  deadline: number;
+  signature: string;
+};
+
+/** Likes, comments, the feed and social sign-in; writes need a session token. */
+export interface StrategySocialService {
+  challenge(): Promise<{ nonce: string; issuedAt: number }>;
+  createSession(request: {
+    account: string;
+    nonce: string;
+    issuedAt: number;
+    signature: string;
+    ownerLink?: { strategyId: number; signature: string };
+  }): Promise<SocialSession>;
+  like(
+    token: string,
+    strategyId: number,
+    seq: number | null,
+  ): Promise<{ liked: boolean; count: number }>;
+  unlike(
+    token: string,
+    strategyId: number,
+    seq: number | null,
+  ): Promise<{ liked: boolean; count: number }>;
+  comments(
+    strategyId: number,
+    seq: number | null,
+    cursor: string | null,
+    token: string | null,
+    signal?: AbortSignal,
+  ): Promise<Page<StrategyComment>>;
+  postComment(
+    token: string,
+    strategyId: number,
+    comment: { body: string; seq: number | null; parentId: number | null },
+  ): Promise<StrategyComment>;
+  deleteComment(token: string, id: number): Promise<void>;
+  reportComment(token: string, id: number): Promise<void>;
+  hideComment(token: string, id: number): Promise<void>;
+  feed(
+    strategyIds: readonly number[] | null,
+    cursor: string | null,
+    token: string | null,
+    signal?: AbortSignal,
+  ): Promise<Page<FeedEvent>>;
+}
 
 export type StrategyCreateRequest = {
   signer: string;
@@ -386,13 +551,19 @@ export type StrategySignal = {
 };
 
 export interface StrategyService {
-  list(signers?: readonly string[], signal?: AbortSignal): Promise<StrategyCard[]>;
-  detail(id: number, signal?: AbortSignal): Promise<StrategyDetail>;
+  /** A social token fills `liked`; reads work without one. */
+  list(
+    signers?: readonly string[],
+    signal?: AbortSignal,
+    token?: string | null,
+  ): Promise<StrategyCard[]>;
+  detail(id: number, signal?: AbortSignal, token?: string | null): Promise<StrategyDetail>;
   create(request: StrategyCreateRequest): Promise<StrategyDetail>;
   commit(id: number, request: StrategyCommitRequest): Promise<StrategyCommitResult>;
   subscribe(id: number): Promise<StrategySubscription>;
   /** Null before the strategy seals its first basket. */
   signal(id: number, subscriberKey: string, abort?: AbortSignal): Promise<StrategySignal | null>;
+  changePrice(id: number, request: StrategyPriceRequest): Promise<StrategyDetail>;
 }
 
 /** The verified return line on a strategy card. */

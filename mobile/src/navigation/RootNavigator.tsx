@@ -17,8 +17,9 @@ import { MainTabs } from "./MainTabs";
 import { EarnScreen } from "@/features/earn/EarnScreen";
 import { StrategiesScreen } from "@/features/strategies/StrategiesScreen";
 import { StrategyPublishScreen } from "@/features/strategies/StrategyPublishScreen";
-import { StrategyExploreScreen } from "@/features/strategies/StrategyExploreScreen";
-import { StrategyDetailScreen } from "@/features/strategies/StrategyDetailScreen";
+import { StrategyProfileScreen } from "@/features/strategies/StrategyProfileScreen";
+import { StrategyUpdateScreen } from "@/features/strategies/StrategyUpdateScreen";
+import { StrategyPriceScreen } from "@/features/strategies/StrategyPriceScreen";
 import type { RootStackParamList } from "./types";
 import { Platform } from "react-native";
 import { durations } from "@/theme/motion";
@@ -63,12 +64,16 @@ export function RootNavigator() {
             component={session.kind === "mainnet" ? StrategyPublishScreen : UnavailableScreen}
           />
           <Stack.Screen
-            name="StrategyExplore"
-            component={session.kind === "mainnet" ? StrategyExploreScreen : UnavailableScreen}
+            name="StrategyDetail"
+            component={session.kind === "mainnet" ? StrategyProfileScreen : UnavailableScreen}
           />
           <Stack.Screen
-            name="StrategyDetail"
-            component={session.kind === "mainnet" ? StrategyDetailScreen : UnavailableScreen}
+            name="StrategyUpdate"
+            component={session.kind === "mainnet" ? StrategyUpdateScreen : UnavailableScreen}
+          />
+          <Stack.Screen
+            name="StrategyPrice"
+            component={session.kind === "mainnet" ? StrategyPriceScreen : UnavailableScreen}
           />
           <Stack.Screen
             name="Earn"

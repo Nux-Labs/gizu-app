@@ -3,10 +3,12 @@ import type {
   StrategyCard,
   StrategyCommitResult,
   StrategyDetail,
+  StrategyHistoryEntry,
+  StrategyPriceChange,
   StrategyService,
   StrategySignal,
 } from "@/domain/strategies";
-import { ApiError, getJson, sendJson } from "./http";
+import { ApiError, sendJson } from "./http";
 
 const UNAVAILABLE = "Strategies are unavailable right now. Please try again.";
 /** Creation and updates wait for the registry to confirm on chain. */
@@ -25,6 +27,20 @@ const messages: Record<string, string> = {
   NOT_FOUND: "This strategy no longer exists.",
   STRATEGY_EXISTS: "A strategy with other terms already uses this key.",
   TOO_MANY_REQUESTS: "Too many requests. Please try again shortly.",
+  PRICE_CHANGE_TOO_SOON: "The price can change once every 7 days. Try again later.",
+  SOCIAL_RATE_LIMITED: "You're commenting very quickly. Wait a moment and try again.",
+  UNAUTHORIZED: "Sign in again to like and comment.",
+  SOCIAL_AUTH_REQUIRED: "Sign in again to like and comment.",
+  SOCIAL_FORBIDDEN: "Only the strategy's owner can do that.",
+  SOCIAL_SIGNATURE_INVALID: "The sign-in couldn't be checked. Please try again.",
+  SOCIAL_CHALLENGE_INVALID: "The sign-in expired. Please try again.",
+  SOCIAL_OWNER_LINK_INVALID: "This wallet couldn't prove it owns the strategy. Please try again.",
+  COMMENT_INVALID: "Comments are 1 to 500 characters.",
+  COMMENT_PARENT_INVALID: "That comment can't be replied to anymore.",
+  STRATEGY_PRICE_VERSION_STALE: "The price changed since you opened it. Refresh and try again.",
+  STRATEGY_PRICE_UNCHANGED: "Change at least one price.",
+  STRATEGY_DEADLINE_TOO_FAR: "Your phone's clock looks off. Check the time and try again.",
+  STRATEGY_SIGNATURE_INVALID: "The wallet's signature wasn't accepted. Please try again.",
 };
 
 /** A user-facing message for a failed strategy request. */
@@ -56,7 +72,30 @@ const isWord = (value: unknown): value is string =>
 const isNullableBps = (value: unknown) => value === null || isInt(value);
 const isNullableString = (value: unknown) => value === null || typeof value === "string";
 
-function isCard(value: unknown): value is StrategyCard {
+const count = (value: unknown) => (isInt(value) && value >= 0 ? value : 0);
+
+/**
+ * The card with social and pricing fields filled in; an API from before they existed reads as
+ * no likes, no comments and the original price.
+ */
+function parseCard(value: unknown): StrategyCard {
+  if (!isCard(value)) throw new Error("Invalid strategy response.");
+  const raw = value as unknown as Record<string, unknown>;
+  const social = isRecord(raw.social) ? raw.social : {};
+  const latest = Array.isArray(raw.latestAssets) ? raw.latestAssets : [];
+  if (!latest.every(isSealedAsset)) throw new Error("Invalid strategy response.");
+  return {
+    ...(value as StrategyCard),
+    social: { likes: count(social.likes), comments: count(social.comments) },
+    latestAssets: latest,
+    priceVersion: count(raw.priceVersion),
+    priceChangeAllowedAt:
+      typeof raw.priceChangeAllowedAt === "string" ? raw.priceChangeAllowedAt : null,
+    liked: raw.liked === true,
+  };
+}
+
+function isCard(value: unknown): boolean {
   if (!isRecord(value) || !isRecord(value.performance) || !isRecord(value.registry)) return false;
   const p = value.performance;
   return (
@@ -83,7 +122,7 @@ function isCard(value: unknown): value is StrategyCard {
   );
 }
 
-function isSealedAsset(value: unknown): value is SealedAssetView {
+export function isSealedAsset(value: unknown): value is SealedAssetView {
   return (
     isRecord(value) &&
     isInt(value.chainId) &&
@@ -95,10 +134,10 @@ function isSealedAsset(value: unknown): value is SealedAssetView {
 }
 
 function parseDetail(value: unknown): StrategyDetail {
-  if (!isCard(value) || !Array.isArray((value as { history?: unknown }).history))
-    throw new Error("Invalid strategy response.");
-  const history = (value as unknown as { history: unknown[] }).history;
-  for (const entry of history)
+  const card = parseCard(value);
+  const raw = value as Record<string, unknown>;
+  if (!Array.isArray(raw.history)) throw new Error("Invalid strategy response.");
+  const history: StrategyHistoryEntry[] = raw.history.map((entry: unknown) => {
     if (
       !isRecord(entry) ||
       !isInt(entry.seq) ||
@@ -111,8 +150,43 @@ function parseDetail(value: unknown): StrategyDetail {
       !isNullableBps(entry.periodReturnBps)
     )
       throw new Error("Invalid strategy response.");
-  return value as StrategyDetail;
+    return {
+      ...(entry as unknown as StrategyHistoryEntry),
+      likes: count(entry.likes),
+      comments: count(entry.comments),
+      liked: entry.liked === true,
+    };
+  });
+  const prices = Array.isArray(raw.priceHistory) ? raw.priceHistory : [];
+  const priceHistory: StrategyPriceChange[] = prices.flatMap((entry: unknown) =>
+    isRecord(entry) &&
+    isInt(entry.version) &&
+    isAtoms(entry.monthlyPriceAtoms) &&
+    isAtoms(entry.signalPriceAtoms) &&
+    typeof entry.at === "string"
+      ? [
+          {
+            version: entry.version,
+            monthlyPriceAtoms: entry.monthlyPriceAtoms,
+            signalPriceAtoms: entry.signalPriceAtoms,
+            at: entry.at,
+          },
+        ]
+      : [],
+  );
+  // An API from before price changes knows only the price the strategy was published with.
+  if (priceHistory.length === 0)
+    priceHistory.push({
+      version: 0,
+      monthlyPriceAtoms: card.monthlyPriceAtoms,
+      signalPriceAtoms: card.signalPriceAtoms,
+      at: card.createdAt,
+    });
+  return { ...card, history, priceHistory };
 }
+
+const bearer = (token: string | null | undefined): Record<string, string> =>
+  token ? { Authorization: `Bearer ${token}` } : {};
 
 export function createStrategyService(baseUrl: string): StrategyService {
   const base = baseUrl.replace(/\/+$/, "");
@@ -121,15 +195,32 @@ export function createStrategyService(baseUrl: string): StrategyService {
     return `${base}${path}`;
   };
   return {
-    async list(signers, signal = new AbortController().signal) {
+    async list(signers, signal, token) {
       const query = signers && signers.length > 0 ? `?signers=${signers.join(",")}` : "";
-      const body = await getJson(url(`/v1/strategies${query}`), signal, UNAVAILABLE);
-      if (!isRecord(body) || !Array.isArray(body.list) || !body.list.every(isCard))
+      const body = await sendJson("GET", url(`/v1/strategies${query}`), undefined, {
+        ...(signal ? { signal } : {}),
+        headers: bearer(token),
+        unavailable: UNAVAILABLE,
+      });
+      if (!isRecord(body) || !Array.isArray(body.list))
         throw new Error("Invalid strategy response.");
-      return body.list;
+      return body.list.map(parseCard);
     },
-    async detail(id, signal = new AbortController().signal) {
-      return parseDetail(await getJson(url(`/v1/strategies/${id}`), signal, UNAVAILABLE));
+    async detail(id, signal, token) {
+      return parseDetail(
+        await sendJson("GET", url(`/v1/strategies/${id}`), undefined, {
+          ...(signal ? { signal } : {}),
+          headers: bearer(token),
+          unavailable: UNAVAILABLE,
+        }),
+      );
+    },
+    async changePrice(id, request) {
+      return parseDetail(
+        await sendJson("POST", url(`/v1/strategies/${id}/prices`), request, {
+          unavailable: UNAVAILABLE,
+        }),
+      );
     },
     async create(request) {
       return parseDetail(
@@ -187,6 +278,8 @@ export function createStrategyService(baseUrl: string): StrategyService {
   };
 }
 
-export const strategyService = createStrategyService(
-  process.env.EXPO_PUBLIC_API_URL ?? (__DEV__ ? "http://127.0.0.1:3000" : ""),
-);
+/** The API origin strategies, the feed and social features use. */
+export const strategyApiBase =
+  process.env.EXPO_PUBLIC_API_URL ?? (__DEV__ ? "http://127.0.0.1:3000" : "");
+
+export const strategyService = createStrategyService(strategyApiBase);

@@ -39,6 +39,10 @@ export type StoredSignerCapabilities = {
   earnPartialWithdrawals?: boolean;
   /** Sealed Strategies registry signatures; Android only. */
   strategySigning?: boolean;
+  /** Social sign-in for likes and comments; Android only. */
+  socialSigning?: boolean;
+  /** Signed strategy price changes; Android only. */
+  strategyPricing?: boolean;
   reason?: "notImplemented" | "unsupportedPlatform" | "unsupportedProvider";
 };
 export type StoredTransferProposal = {
@@ -201,6 +205,9 @@ export type StrategyTermsInput = {
   seats: number;
 };
 export type StrategyCreateSignature = { signer: string; metadataHash: string; signature: string };
+/** A social sign-in: the social key's address and signature, plus the owner link when asked. */
+export type SocialSignIn = { account: string; signature: string; ownerSignature: string | null };
+export type StrategyPriceSignature = { signer: string; signature: string };
 /** The sorted basket the commitment covers, with the salt the backend keeps for the reveal. */
 export type SealedStrategyCommit = {
   signer: string;
@@ -239,6 +246,24 @@ export interface StoredSignerContract {
     strategyId: number,
     seq: number,
     assets: StrategyAssetInput[],
+    deadline: number,
+  ): Promise<unknown>;
+  socialAddress?(walletId: string, chainId: StrategyRegistryChainId): Promise<unknown>;
+  socialSignIn?(
+    walletId: string,
+    chainId: StrategyRegistryChainId,
+    nonce: string,
+    issuedAt: number,
+    ownerStrategyId: number | null,
+  ): Promise<unknown>;
+  signStrategyPrice?(
+    walletId: string,
+    chainId: StrategyRegistryChainId,
+    index: number,
+    strategyId: number,
+    version: number,
+    monthlyPriceAtoms: string,
+    signalPriceAtoms: string,
     deadline: number,
   ): Promise<unknown>;
   selectEarnInvestmentSlot?(walletId: string, intentId: string, slot: number): Promise<unknown>;

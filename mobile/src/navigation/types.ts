@@ -6,6 +6,8 @@ export type MainTabParamList = {
   Vaults: undefined;
   /** `sell` opens the sell form with `token` chosen; `request` makes a repeat tap reopen it. */
   Exchange: { mode: "buy" | "sell"; token?: string; request: number } | undefined;
+  /** Strategies as a social space: feed, discovery and follows. */
+  StrategyHub: undefined;
   Settings: undefined;
 };
 export type RootStackParamList = {
@@ -21,10 +23,14 @@ export type RootStackParamList = {
     | { opportunityId: string }
     | { profileId: import("@/domain/earn/types").EarnProfileId; amount?: string }
     | undefined;
+  /** This wallet's own strategy: its profile once published, otherwise the way to publish it. */
   Strategies: undefined;
-  StrategyExplore: undefined;
-  /** Deep links pass the id as text; the screen accepts only a positive integer. */
+  /** A strategy's public profile. Deep links pass the id as text; only a positive integer opens. */
   StrategyDetail: { id: number };
+  /** One revealed update and its comments. */
+  StrategyUpdate: { id: number; seq: number };
+  /** The owner changes the strategy's price. */
+  StrategyPrice: { strategyId: number };
   /** Without `strategyId` it publishes a new strategy; with it, it seals an update. */
   StrategyPublish: { strategyId?: number } | undefined;
   EarnInvestment: { intentId: string };

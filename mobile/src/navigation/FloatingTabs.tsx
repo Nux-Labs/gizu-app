@@ -9,7 +9,7 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
-import { House, PieChart, ArrowLeftRight, Settings } from "lucide-react-native";
+import { House, PieChart, ArrowLeftRight, Settings, Users } from "lucide-react-native";
 import {
   BottomTabBarHeightCallbackContext,
   type BottomTabBarProps,
@@ -19,9 +19,21 @@ import colors from "@/theme/colors.json";
 import { springs } from "@/theme/motion";
 import { haptic } from "@/theme/haptics";
 
-const icons = { Home: House, Vaults: PieChart, Exchange: ArrowLeftRight, Settings };
+const icons = {
+  Home: House,
+  Vaults: PieChart,
+  StrategyHub: Users,
+  Exchange: ArrowLeftRight,
+  Settings,
+};
 // Visible tab names; route names stay stable for navigation and deep links.
-const titles = { Home: "Home", Vaults: "Earn", Exchange: "Swap", Settings: "Settings" };
+const titles = {
+  Home: "Home",
+  Vaults: "Earn",
+  StrategyHub: "Strategies",
+  Exchange: "Swap",
+  Settings: "Settings",
+};
 /** Frontend BottomNav enters from `y: 60` with a fade. */
 const ENTRANCE_OFFSET = 60;
 
@@ -74,7 +86,7 @@ export function FloatingTabs({ state, descriptors, navigation, insets }: BottomT
       }}
     >
       <Animated.View
-        className="w-full max-w-[320px] self-center rounded-[28px] border border-glassBorder bg-rail p-1.5"
+        className="w-full max-w-[360px] self-center rounded-[28px] border border-glassBorder bg-rail p-1.5"
         style={entranceStyle}
       >
         {/* Keep measured tabs and the absolute pill in the same border-free coordinates. */}

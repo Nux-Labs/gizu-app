@@ -5,19 +5,21 @@ import { Button } from "@/components/atoms/Button";
 import { Typography } from "@/components/atoms/Typography";
 import { Notice } from "@/components/molecules/Notice";
 import { Screen } from "@/components/templates/Screen";
-import { formatEmbargo, formatPrice, strategyReturnText } from "@/domain/strategies";
 import { BackAction } from "@/navigation/BackAction";
 import type { RootStackParamList } from "@/navigation/types";
 import { useStrategyOwner } from "./useStrategyOwner";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Strategies">;
 
-/** The strategies this wallet sells, found from its own strategy keys. */
+/**
+ * This wallet's strategy. A wallet sells one strategy, its own portfolio, so once published this
+ * opens its profile; before that it explains what publishing shares.
+ */
 export function StrategiesScreen({ navigation }: Props) {
   const owner = useStrategyOwner();
-  const { reload } = owner;
-  // Coming back from publishing or an update shows the new state. The first focus is the
-  // screen opening, which the hook already reads for.
+  const { reload, strategy } = owner;
+  // Coming back from publishing shows the new strategy. The first focus is the screen opening,
+  // which the hook already reads for.
   const seen = useRef(false);
   useEffect(
     () =>
@@ -27,62 +29,40 @@ export function StrategiesScreen({ navigation }: Props) {
       }),
     [navigation, reload],
   );
+  useEffect(() => {
+    if (strategy) navigation.replace("StrategyDetail", { id: strategy.card.id });
+  }, [navigation, strategy]);
+
   return (
     <Screen refreshing={owner.loading} onRefresh={() => void reload()}>
       <BackAction fallback="Home" />
       <View className="gap-1">
-        <Typography variant="pageTitle">Your strategies</Typography>
+        <Typography variant="pageTitle">Your strategy</Typography>
         <Typography variant="body">
-          Sell your basket&apos;s weights. Your wallets, amounts and identity stay private.
+          Sell the weights of the portfolio you hold. Every update is sealed on Base, revealed after
+          your embargo and stays on your public record for good. Your wallets, amounts and identity
+          stay private.
         </Typography>
       </View>
       {owner.error && <Notice error message={owner.error} />}
-      {owner.loading && owner.owned.length === 0 && (
+      {owner.loading && (
         <Typography variant="micro" accessibilityLiveRegion="polite">
-          Loading your strategies…
+          Loading your strategy…
         </Typography>
       )}
-      {!owner.loading && !owner.error && owner.owned.length === 0 && (
-        <Typography variant="rowValue" className="!text-fg-45">
-          You haven&apos;t published a strategy yet.
-        </Typography>
-      )}
-      <View className="gap-3">
-        {owner.owned.map(({ card }) => (
-          <View
-            key={card.id}
-            accessibilityLabel={`Strategy ${card.name}`}
-            className="gap-2 rounded-2xl border border-glassBorder bg-glass px-4 py-4"
-          >
-            <Typography variant="cardTitle">{card.name}</Typography>
-            <Typography variant="rowValue">{strategyReturnText(card)}</Typography>
-            <Typography variant="micro">
-              {card.seatsTaken}/{card.seats} seats · {card.commits} updates sealed · {card.revealed}{" "}
-              revealed · {formatEmbargo(card.embargoSeconds)} embargo
-            </Typography>
-            <Typography variant="micro">Earned {formatPrice(card.earnedAtoms)}</Typography>
-            {card.broken && (
-              <Notice
-                error
-                message="An update is past its reveal time. Gizu retries the reveal automatically."
-              />
-            )}
+      {!owner.loading && !owner.error && !strategy && (
+        <>
+          <Typography variant="rowValue" className="!text-fg-45">
+            You haven&apos;t published your strategy yet. Each wallet publishes one.
+          </Typography>
+          {owner.nextIndex !== null && (
             <Button
-              label="Send update"
-              accessibilityLabel={`Send update for ${card.name}`}
-              variant="secondary"
+              label="Publish your strategy"
               disabled={owner.busy}
-              onPress={() => navigation.navigate("StrategyPublish", { strategyId: card.id })}
+              onPress={() => navigation.navigate("StrategyPublish")}
             />
-          </View>
-        ))}
-      </View>
-      {!owner.loading && owner.nextIndex !== null && (
-        <Button
-          label="Publish a strategy"
-          disabled={owner.busy}
-          onPress={() => navigation.navigate("StrategyPublish")}
-        />
+          )}
+        </>
       )}
     </Screen>
   );

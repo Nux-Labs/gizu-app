@@ -9,6 +9,8 @@ import {
   type StrategyCreateSignature,
   type StrategyRegistryChainId,
   type StrategyTermsInput,
+  type SocialSignIn,
+  type StrategyPriceSignature,
   type SwapChainId,
 } from "@/domain/wallet/storedSigner";
 import { AppState, Platform } from "react-native";
@@ -127,6 +129,15 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
         typeof native.strategyAddresses === "function" &&
         typeof native.createStrategy === "function" &&
         typeof native.sealStrategyCommit === "function",
+      socialSigning:
+        Platform.OS === "android" &&
+        result.socialSigning === true &&
+        typeof native.socialAddress === "function" &&
+        typeof native.socialSignIn === "function",
+      strategyPricing:
+        Platform.OS === "android" &&
+        result.strategyPricing === true &&
+        typeof native.signStrategyPrice === "function",
       confidentialWithdrawals:
         result.confidentialWithdrawals === true &&
         typeof native.getConfidentialWithdrawal === "function" &&
@@ -166,7 +177,9 @@ async function checked(
     | "earnDepositJourney"
     | "confidentialWithdrawals"
     | "confidentialSaleProceeds"
-    | "strategySigning",
+    | "strategySigning"
+    | "socialSigning"
+    | "strategyPricing",
 ) {
   const generation = authorizationGeneration;
   const value = await native.getCapabilities();
@@ -1042,6 +1055,96 @@ export function getStoredStrategySigner() {
         ),
         assets.length,
       );
+    },
+  };
+}
+
+const ATOMS_LIMIT = 999_999_999_999n;
+const isPriceAtoms = (value: string) =>
+  /^(0|[1-9]\d{0,11})$/.test(value) && BigInt(value) <= ATOMS_LIMIT;
+
+/**
+ * Social sign-in. Native code derives the social key, shows its review and requires a passkey;
+ * JS passes the API's challenge and, for a strategy owner, the strategy to speak for.
+ */
+export function getStoredSocialSigner() {
+  const native = nativeModule();
+  if (!native?.socialAddress || !native.socialSignIn) return null;
+  return {
+    async socialAddress(walletId: string, chainId: StrategyRegistryChainId): Promise<string> {
+      await checked(native, "socialSigning");
+      const value = await readNative(() => native.socialAddress!(walletId, chainId));
+      return strategyString(value, STRATEGY_ADDRESS);
+    },
+    async signIn(
+      walletId: string,
+      chainId: StrategyRegistryChainId,
+      nonce: string,
+      issuedAt: number,
+      ownerStrategyId: number | null,
+    ): Promise<SocialSignIn> {
+      if (!STRATEGY_WORD.test(nonce) || !Number.isSafeInteger(issuedAt))
+        throw new Error("Invalid sign-in challenge.");
+      await checked(native, "socialSigning");
+      const record = strategyRecord(
+        await native.socialSignIn!(walletId, chainId, nonce, issuedAt, ownerStrategyId),
+      );
+      const ownerSignature =
+        record.ownerSignature === null || record.ownerSignature === undefined
+          ? null
+          : strategyString(record.ownerSignature, STRATEGY_SIGNATURE);
+      if (ownerStrategyId !== null && ownerSignature === null)
+        throw new Error("Invalid native strategy response.");
+      return {
+        account: strategyString(record.account, STRATEGY_ADDRESS),
+        signature: strategyString(record.signature, STRATEGY_SIGNATURE),
+        ownerSignature,
+      };
+    },
+  };
+}
+
+/** Signs a strategy's new price with its key; native code reviews it and requires a passkey. */
+export function getStoredStrategyPricer() {
+  const native = nativeModule();
+  if (!native?.signStrategyPrice) return null;
+  return {
+    async signPrice(
+      walletId: string,
+      chainId: StrategyRegistryChainId,
+      index: number,
+      strategyId: number,
+      version: number,
+      monthlyPriceAtoms: string,
+      signalPriceAtoms: string,
+      deadline: number,
+    ): Promise<StrategyPriceSignature> {
+      if (
+        !Number.isSafeInteger(strategyId) ||
+        strategyId < 1 ||
+        !Number.isSafeInteger(version) ||
+        version < 1 ||
+        !isPriceAtoms(monthlyPriceAtoms) ||
+        !isPriceAtoms(signalPriceAtoms)
+      )
+        throw new Error("Invalid strategy price.");
+      await checked(native, "strategyPricing");
+      const record = strategyRecord(
+        await native.signStrategyPrice!(
+          walletId,
+          chainId,
+          index,
+          strategyId,
+          version,
+          monthlyPriceAtoms,
+          signalPriceAtoms,
+          deadline,
+        ),
+      );
+      return {
+        signer: strategyString(record.signer, STRATEGY_ADDRESS),
+        signature: strategyString(record.signature, STRATEGY_SIGNATURE),
+      };
     },
   };
 }

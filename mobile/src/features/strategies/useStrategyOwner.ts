@@ -8,31 +8,76 @@ import {
   type StrategyService,
 } from "@/domain/strategies";
 import type { StrategyAssetInput } from "@/domain/wallet/storedSigner";
-import { useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
+import {
+  useMainnetWallet,
+  useOptionalMainnetWallet,
+} from "@/features/wallet/MainnetWalletProvider";
+import { secureSealRecordStore, type SealRecordStore } from "@/services/sealRecordStore";
 import { strategyErrorMessage, strategyService } from "@/services/strategies";
-import { getStoredStrategySigner } from "@/services/wallet/nativeBridge";
+import { getStoredStrategyPricer, getStoredStrategySigner } from "@/services/wallet/nativeBridge";
 
-/** How many strategy keys are checked when rediscovering this wallet's strategies. */
+/**
+ * One wallet sells one strategy, always from strategy key 0: its basket is the wallet's own
+ * portfolio, so a second strategy would only repeat it. Earlier builds could use more keys, so
+ * discovery still looks at several to find a strategy published from one of them.
+ */
+export const STRATEGY_KEY_INDEX = 0;
 const DISCOVERY_COUNT = 32;
 
 export type OwnedStrategy = { index: number; card: StrategyCard };
 /** approving: a native review and passkey are open; sending: waiting for the registry. */
-export type StrategyStage = "idle" | "approving" | "publishing" | "sealing";
+export type StrategyStage = "idle" | "approving" | "publishing" | "sealing" | "pricing";
 
 type Signer = NonNullable<ReturnType<typeof getStoredStrategySigner>>;
+type Pricer = NonNullable<ReturnType<typeof getStoredStrategyPricer>>;
 export type StrategyOwnerDeps = {
   service: StrategyService;
   signer: () => Signer | null;
   now: () => number;
+  /** Where the holdings behind each sealed basket are kept; the keystore by default. */
+  sealRecords?: SealRecordStore;
+  /** Signs price changes; the native signer by default. */
+  pricer?: () => Pricer | null;
 };
 const defaultDeps: StrategyOwnerDeps = {
   service: strategyService,
   signer: getStoredStrategySigner,
   now: Date.now,
+  sealRecords: secureSealRecordStore,
 };
+
+/** The seal record store from the owner context. */
+export function useSealRecords(): SealRecordStore {
+  return useContext(StrategyOwnerContext).sealRecords ?? secureSealRecordStore;
+}
 
 /** Tests and previews provide their own API and signer. */
 export const StrategyOwnerContext = createContext<StrategyOwnerDeps>(defaultDeps);
+
+/**
+ * This wallet's strategy signer addresses, lowercase, so lists can mark its own strategy. They are
+ * derived natively without an approval and never sent anywhere from here.
+ */
+export function useOwnStrategySigners(): ReadonlySet<string> {
+  const walletId = useOptionalMainnetWallet()?.session.walletId ?? null;
+  const { signer: signerFor } = useContext(StrategyOwnerContext);
+  const [signers, setSigners] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const signer = signerFor();
+    if (!signer || !walletId) return;
+    let active = true;
+    Promise.resolve()
+      .then(() => signer.strategyAddresses(walletId, STRATEGY_REGISTRY_CHAIN, 0, DISCOVERY_COUNT))
+      .then((addresses) => {
+        if (active) setSigners(new Set(addresses.map((address) => address.toLowerCase())));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [signerFor, walletId]);
+  return signers;
+}
 
 /**
  * Finds this wallet's strategies from its derived strategy keys and drives publishing and updates.
@@ -86,8 +131,8 @@ export function useStrategyOwner(deps?: StrategyOwnerDeps) {
             return card ? [{ index, card }] : [];
           }),
         );
-        const free = addresses.findIndex((address) => !bySigner.has(address.toLowerCase()));
-        setNextIndex(free === -1 ? null : free);
+        const ownsOne = addresses.some((address) => bySigner.has(address.toLowerCase()));
+        setNextIndex(ownsOne ? null : STRATEGY_KEY_INDEX);
         setLoaded(true);
         setLoadError(null);
       })
@@ -217,6 +262,45 @@ export function useStrategyOwner(deps?: StrategyOwnerDeps) {
     [deadline, nextIndex, run, seal, service, walletId],
   );
 
+  /**
+   * Signs and sends a new price. Only key 0 signs prices, so a strategy an earlier build published
+   * from another key keeps its price.
+   */
+  const pricerFor = (deps ?? fromContext).pricer ?? getStoredStrategyPricer;
+  const changePrice = useCallback(
+    (strategy: OwnedStrategy, monthlyPriceAtoms: string, signalPriceAtoms: string) =>
+      run(async () => {
+        const pricer = pricerFor();
+        if (!pricer) throw new Error("Changing the price needs an updated Gizu app.");
+        if (strategy.index !== STRATEGY_KEY_INDEX)
+          throw new Error("This strategy was published from an older key and keeps its price.");
+        const version = strategy.card.priceVersion + 1;
+        const until = deadline();
+        setStage("approving");
+        const signed = await pricer.signPrice(
+          walletId!,
+          STRATEGY_REGISTRY_CHAIN,
+          strategy.index,
+          strategy.card.id,
+          version,
+          monthlyPriceAtoms,
+          signalPriceAtoms,
+          until,
+        );
+        if (signed.signer.toLowerCase() !== strategy.card.signer.toLowerCase())
+          throw new Error("The wallet signed with a different strategy key. Update the app.");
+        if (mounted.current) setStage("pricing");
+        await service.changePrice(strategy.card.id, {
+          version,
+          monthlyPriceAtoms,
+          signalPriceAtoms,
+          deadline: until,
+          signature: signed.signature,
+        });
+      }),
+    [deadline, pricerFor, run, service, walletId],
+  );
+
   const sendUpdate = useCallback(
     (strategy: OwnedStrategy, assets: StrategyAssetInput[]) =>
       run(async (signer) => {
@@ -227,9 +311,11 @@ export function useStrategyOwner(deps?: StrategyOwnerDeps) {
 
   return {
     owned,
+    /** This wallet's strategy; the first found when an earlier build published more than one. */
+    strategy: owned[0] ?? null,
     nextIndex,
-    /** Every discovered strategy key already has a strategy. */
-    keysExhausted: !unavailable && loaded && nextIndex === null,
+    /** This wallet already sells its strategy, so it cannot publish another. */
+    published: !unavailable && loaded && nextIndex === null,
     loading: !unavailable && loading,
     error: unavailable
       ? "Strategies need the Gizu Android app with a ready wallet."
@@ -239,5 +325,6 @@ export function useStrategyOwner(deps?: StrategyOwnerDeps) {
     reload: load,
     publish,
     sendUpdate,
+    changePrice,
   };
 }

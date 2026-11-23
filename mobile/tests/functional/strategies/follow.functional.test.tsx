@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { Text } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
+import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import type {
@@ -15,14 +16,16 @@ import type {
   OwnedPortfolioAsset,
   StoredSwapView,
 } from "@/domain/wallet/storedSigner";
-import { StrategyDetailScreen } from "@/features/strategies/StrategyDetailScreen";
-import { StrategyExploreScreen } from "@/features/strategies/StrategyExploreScreen";
+import { StrategyHubScreen } from "@/features/strategies/StrategyHubScreen";
+import { StrategyProfileScreen } from "@/features/strategies/StrategyProfileScreen";
+import { StrategySocialContext } from "@/features/strategies/useStrategySocial";
 import {
   StrategyFollowerContext,
   type StrategyFollowerDeps,
 } from "@/features/strategies/useStrategyFollower";
 import { strategyLinkFor } from "@/navigation/strategyNotificationLinks";
-import type { RootStackParamList } from "@/navigation/types";
+import { fakeSocial, historyEntry, quietCard, socialDeps } from "../../support/strategies";
+import type { MainTabParamList, RootStackParamList } from "@/navigation/types";
 import { ApiError } from "@/services/http";
 import { createMemoryFollowStore, type FollowedStrategy } from "@/services/strategyFollows";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
@@ -89,6 +92,7 @@ function card(overrides: Partial<StrategyCard> = {}): StrategyCard {
     earnedAtoms: "0",
     createdAt: "2026-11-01T00:00:00Z",
     registry: { chainId: 84532, address: "0x6db1131C8d833CA0F167f7B8DBd24a93cA22Abf7" },
+    ...quietCard,
     ...overrides,
   };
 }
@@ -112,14 +116,20 @@ function setup(options: {
   const detail: StrategyDetail = {
     ...card(),
     history: [
-      {
+      historyEntry({
         seq: 0,
         committedAt: "2026-11-02T00:00:00Z",
         revealedAt: "2026-11-09T00:00:00Z",
-        commitTx: null,
-        revealTx: null,
         assets: [asset(8453, 0, NVDA, 10000, "1")],
         periodReturnBps: 800,
+      }),
+    ],
+    priceHistory: [
+      {
+        version: 0,
+        monthlyPriceAtoms: "10000000",
+        signalPriceAtoms: "500000",
+        at: "2026-11-01T00:00:00Z",
       },
     ],
   };
@@ -133,6 +143,7 @@ function setup(options: {
       expiresAt: "2026-12-23T12:00:00Z",
     })),
     signal: jest.fn(async () => signal),
+    changePrice: jest.fn(),
   } satisfies StrategyService;
   const follows = createMemoryFollowStore(options.follows);
   const api = {
@@ -156,27 +167,37 @@ function setup(options: {
     now: () => NOW_MS,
   };
   const Stack = createNativeStackNavigator<RootStackParamList>();
+  const Tabs = createBottomTabNavigator<MainTabParamList>();
+  const social = fakeSocial();
   render(
     <SafeAreaProvider>
       <TokenCatalogContext.Provider value={options.catalog ?? emptyCatalog}>
-        <StrategyFollowerContext.Provider value={deps}>
-          <NavigationContainer>
-            <Stack.Navigator
-              initialRouteName={options.initial ?? "StrategyExplore"}
-              screenOptions={{ headerShown: false }}
-            >
-              <Stack.Screen name="StrategyExplore" component={StrategyExploreScreen} />
-              <Stack.Screen
-                name="StrategyDetail"
-                component={StrategyDetailScreen}
-                initialParams={{ id: 7 }}
-              />
-              <Stack.Screen name="Earn">
-                {({ route }) => <Text>Earn opened with {JSON.stringify(route.params)}</Text>}
-              </Stack.Screen>
-            </Stack.Navigator>
-          </NavigationContainer>
-        </StrategyFollowerContext.Provider>
+        <StrategySocialContext.Provider value={socialDeps(social.service)}>
+          <StrategyFollowerContext.Provider value={deps}>
+            <NavigationContainer>
+              <Stack.Navigator
+                initialRouteName={options.initial ?? "Main"}
+                screenOptions={{ headerShown: false }}
+              >
+                <Stack.Screen name="Main">
+                  {() => (
+                    <Tabs.Navigator screenOptions={{ headerShown: false }}>
+                      <Tabs.Screen name="StrategyHub" component={StrategyHubScreen} />
+                    </Tabs.Navigator>
+                  )}
+                </Stack.Screen>
+                <Stack.Screen
+                  name="StrategyDetail"
+                  component={StrategyProfileScreen}
+                  initialParams={{ id: 7 }}
+                />
+                <Stack.Screen name="Earn">
+                  {({ route }) => <Text>Earn opened with {JSON.stringify(route.params)}</Text>}
+                </Stack.Screen>
+              </Stack.Navigator>
+            </NavigationContainer>
+          </StrategyFollowerContext.Provider>
+        </StrategySocialContext.Provider>
       </TokenCatalogContext.Provider>
     </SafeAreaProvider>,
   );
@@ -207,14 +228,20 @@ test("a follower starts a trial, sees the sealed basket and copies it: buy, vaul
       asset(8453, 0, USDC, 2500, "3"),
     ],
   });
-  // Only strategies with a sealed basket are listed, with their verified record.
+  // Discover lists only strategies with a sealed basket, with their verified record. Two reveals
+  // are too few for the ranking by return, so the most active order shows it.
+  fireEvent.press(await screen.findByRole("radio", { name: "Discover" }));
+  expect(await screen.findByText("No strategy matches yet.")).toBeVisible();
+  fireEvent.press(screen.getByRole("radio", { name: "Most active" }));
   expect(await screen.findByText("+12.50% verified over 2 periods")).toBeVisible();
-  expect(screen.getByText("Worst drop 3.00% · 2/3 updates revealed · 7 days delay")).toBeVisible();
+  expect(
+    screen.getByText("Worst drop 3.00% · 2/3 updates revealed · 7 days delay · $10.00/mo"),
+  ).toBeVisible();
   expect(screen.queryByText("Nothing yet")).toBeNull();
   fireEvent.press(screen.getByRole("button", { name: "Open strategy AI chips" }));
 
   expect(await screen.findByText(/30-day free trial, then \$10\.00 a month/)).toBeVisible();
-  expect(screen.getByText("Update 0 · sealed 2026-11-02 · +8.00%")).toBeVisible();
+  expect(screen.getByText("Period return +8.00%, verified on Base")).toBeVisible();
   fireEvent.press(screen.getByRole("button", { name: "Start free trial" }));
 
   expect(await screen.findByLabelText("NVDAc on Base 50%")).toBeVisible();

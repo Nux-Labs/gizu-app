@@ -142,6 +142,9 @@ test("behind text and vault change counts", () => {
     revealTx: null,
     assets: [asset(4663, 1, VAULT, vaultBps), asset(8453, 0, USDC, 10_000 - vaultBps)],
     periodReturnBps: null,
+    likes: 0,
+    comments: 0,
+    liked: false,
   });
   const history: StrategyDetail["history"] = [
     entry(0, 2500),
