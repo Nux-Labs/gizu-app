@@ -308,7 +308,7 @@ test("the feed shows sealed updates without weights, reveals with what changed, 
 
 test("discover marks your own strategy, ranks only strategies with a record and filters by holding", async () => {
   setup();
-  fireEvent.press(await screen.findByRole("radio", { name: "Discover" }));
+  fireEvent.press(await screen.findByRole("tab", { name: "Discover" }));
   // Two reveals are too few for the ranking by return; your own strategy is always shown.
   const own = await screen.findByRole("button", { name: "Open strategy My basket" });
   expect(within(own).getByText("Yours")).toBeVisible();
@@ -343,7 +343,7 @@ test("liking signs in once with the passkey, then toggles without asking again",
 test("comments appear under the automatic nickname; you delete your own and report others'", async () => {
   const { social } = setup({ initial: "StrategyDetail", params: { id: 7 } });
   social.seed(7, null, "Why the AAPL add?", "Brave Heron #9f2a");
-  fireEvent.press(await screen.findByRole("radio", { name: "Comments" }));
+  fireEvent.press(await screen.findByRole("tab", { name: "Comments" }));
   expect(await screen.findByText("Why the AAPL add?")).toBeVisible();
 
   fireEvent.changeText(screen.getByLabelText("Comment on this strategy"), "  Following this one  ");
@@ -399,7 +399,7 @@ test("an owner speaks as the strategy and can hide comments on it", async () => 
     ownStrategyId: 9,
   });
   social.seed(9, null, "spam spam", "Loud Crow #0001");
-  fireEvent.press(await screen.findByRole("radio", { name: "Comments" }));
+  fireEvent.press(await screen.findByRole("tab", { name: "Comments" }));
   expect(await screen.findByText("spam spam")).toBeVisible();
   fireEvent.changeText(screen.getByLabelText("Comment on this strategy"), "Rebalanced today");
   fireEvent.press(screen.getByRole("button", { name: "Post" }));

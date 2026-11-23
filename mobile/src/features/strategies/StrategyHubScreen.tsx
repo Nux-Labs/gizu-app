@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { TextInput, View } from "react-native";
+import { ScrollView, TextInput, View } from "react-native";
 import { UserRound } from "lucide-react-native";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { IconButton } from "@/components/atoms/IconButton";
 import { Button } from "@/components/atoms/Button";
 import { Typography } from "@/components/atoms/Typography";
-import { Choice } from "@/components/molecules/Choice";
+import { FilterChip } from "@/components/atoms/FilterChip";
+import { SegmentedControl } from "@/components/molecules/SegmentedControl";
+import { UnderlineTabs } from "@/components/molecules/UnderlineTabs";
 import { Notice } from "@/components/molecules/Notice";
 import { Screen } from "@/components/templates/Screen";
 import type { StrategyCard } from "@/domain/strategies";
@@ -24,6 +26,16 @@ type Props = BottomTabScreenProps<MainTabParamList, "StrategyHub">;
 type Section = "feed" | "discover" | "following";
 type Sort = "return" | "liked" | "active" | "newest";
 type Filter = "cheap" | "short" | "record";
+
+const sections = [
+  { key: "feed", label: "Feed" },
+  { key: "discover", label: "Discover" },
+  { key: "following", label: "Following" },
+] as const satisfies readonly { key: Section; label: string }[];
+const scopes = [
+  { key: "following", label: "Following" },
+  { key: "everyone", label: "Everyone" },
+] as const;
 
 const sorts: { key: Sort; label: string }[] = [
   { key: "return", label: "Top return" },
@@ -133,32 +145,18 @@ export function StrategyHubScreen({ navigation }: Props) {
         />
       </View>
 
-      <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
-        {(
-          [
-            ["feed", "Feed"],
-            ["discover", "Discover"],
-            ["following", "Following"],
-          ] as const
-        ).map(([key, label]) => (
-          <Choice
-            key={key}
-            label={label}
-            selected={section === key}
-            onPress={() => setSection(key)}
-          />
-        ))}
-      </View>
+      <UnderlineTabs tabs={sections} selected={section} onSelect={setSection} />
 
       {list.error && <Notice error message={list.error} />}
 
       {section === "feed" && (
         <View className="gap-3">
           {followedIds.length > 0 && (
-            <View className="flex-row gap-2">
-              <Choice label="Following" selected={!everyone} onPress={() => setEveryone(false)} />
-              <Choice label="Everyone" selected={everyone} onPress={() => setEveryone(true)} />
-            </View>
+            <SegmentedControl
+              options={scopes}
+              selected={everyone ? "everyone" : "following"}
+              onSelect={(key) => setEveryone(key === "everyone")}
+            />
           )}
           {feed.error && <Notice error message={feed.error} />}
           {feed.loading && feed.list.length === 0 && (
@@ -193,20 +191,25 @@ export function StrategyHubScreen({ navigation }: Props) {
 
       {section === "discover" && (
         <View className="gap-3">
-          <View className="flex-row flex-wrap gap-2">
+          {/* Sorts, a divider, then filters: one quiet row that scrolls when it runs out of room. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerClassName="items-center gap-2"
+          >
             {sorts.map((option) => (
-              <Choice
+              <FilterChip
                 key={option.key}
                 label={option.label}
                 selected={sort === option.key}
                 onPress={() => setSort(option.key)}
               />
             ))}
-          </View>
-          <View className="flex-row flex-wrap gap-2">
+            <View className="mx-1 h-5 w-px bg-glassBorder" />
             {filters.map((option) => (
-              <Choice
+              <FilterChip
                 key={option.key}
+                role="checkbox"
                 label={option.label}
                 selected={active.has(option.key)}
                 onPress={() =>
@@ -219,7 +222,7 @@ export function StrategyHubScreen({ navigation }: Props) {
                 }
               />
             ))}
-          </View>
+          </ScrollView>
           <TextInput
             accessibilityLabel="Holds an asset"
             placeholder="Holds an asset, e.g. NVDA"

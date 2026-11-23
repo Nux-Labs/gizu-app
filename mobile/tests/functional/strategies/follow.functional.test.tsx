@@ -230,7 +230,7 @@ test("a follower starts a trial, sees the sealed basket and copies it: buy, vaul
   });
   // Discover lists only strategies with a sealed basket, with their verified record. Two reveals
   // are too few for the ranking by return, so the most active order shows it.
-  fireEvent.press(await screen.findByRole("radio", { name: "Discover" }));
+  fireEvent.press(await screen.findByRole("tab", { name: "Discover" }));
   expect(await screen.findByText("No strategy matches yet.")).toBeVisible();
   fireEvent.press(screen.getByRole("radio", { name: "Most active" }));
   expect(await screen.findByText("+12.50% verified over 2 periods")).toBeVisible();

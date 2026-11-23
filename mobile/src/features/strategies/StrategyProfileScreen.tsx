@@ -7,7 +7,7 @@ import type {
 } from "@react-navigation/native-stack";
 import { Button } from "@/components/atoms/Button";
 import { Typography } from "@/components/atoms/Typography";
-import { Choice } from "@/components/molecules/Choice";
+import { UnderlineTabs } from "@/components/molecules/UnderlineTabs";
 import { Notice } from "@/components/molecules/Notice";
 import { StatGrid } from "@/components/molecules/StatGrid";
 import { LineChart } from "@/components/molecules/chart/LineChart";
@@ -48,6 +48,13 @@ import { useSocialSession, useStrategySocialDeps } from "./useStrategySocial";
 type Props = NativeStackScreenProps<RootStackParamList, "StrategyDetail">;
 type Tab = "history" | "performance" | "allocation" | "comments";
 type Follower = ReturnType<typeof useStrategyFollower>;
+
+const profileTabs = [
+  { key: "history", label: "History" },
+  { key: "performance", label: "Returns" },
+  { key: "allocation", label: "Allocation" },
+  { key: "comments", label: "Comments" },
+] as const satisfies readonly { key: Tab; label: string }[];
 
 const day = (iso: string) => new Date(iso).toISOString().slice(0, 10);
 
@@ -174,18 +181,7 @@ function StrategyProfile({ id }: { id: number }) {
 
       {mine ? <OwnerPanel detail={detail} /> : <FollowPanel s={s} detail={detail} />}
 
-      <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
-        {(
-          [
-            ["history", "History"],
-            ["performance", "Performance"],
-            ["allocation", "Allocation"],
-            ["comments", "Comments"],
-          ] as const
-        ).map(([key, label]) => (
-          <Choice key={key} label={label} selected={tab === key} onPress={() => setTab(key)} />
-        ))}
-      </View>
+      <UnderlineTabs tabs={profileTabs} selected={tab} onSelect={setTab} />
       {tab === "history" && <History detail={detail} nowMs={nowMs} />}
       {tab === "performance" && <Performance detail={detail} />}
       {tab === "allocation" && <AllocationHistory history={detail.history} />}
