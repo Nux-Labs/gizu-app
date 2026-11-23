@@ -125,7 +125,8 @@ contract StrategyRegistryTest is Test {
         _commit(id, second);
 
         vm.warp(START + embargo);
-        // Revealing the second preimage first fails: seq 0 must be revealed before seq 1.
+        // reveal() always targets the oldest unrevealed commitment: any other preimage is
+        // checked against seq 0 and fails, so reveals come back as 0, then 1, then none.
         vm.expectRevert(StrategyRegistry.CommitmentMismatch.selector);
         registry.reveal(id, assetIds, weights, bytes32(uint256(salt) + 1));
         assertEq(registry.reveal(id, assetIds, weights, salt), 0);

@@ -61,7 +61,12 @@ valid shared private-read grant; explicit lock also clears that grant.
   registry chains 8453 and 84532 (`core/src/strategy.rs`). They hold no funds and
   only sign the registry's `CreateStrategy` and `Commit` structures for the pinned
   registry; a relayer submits them. No counter is persisted: the next index is the
-  first derived address with no strategy recorded, so restore needs no metadata.
+  first derived address the API lists no strategy for, so restore needs no metadata.
+  The app shows the review's terms (name, prices, seats, embargo, network) and, for
+  each update, every asset's pinned label and weight; Rust hashes and validates both
+  before the passkey, and the approval is bound to those hashes. The leaf index is
+  non-hardened, like the Earn branches; the xpub of `146'/{chain}'` never leaves
+  native code.
 
 Passkeys authorize use of randomly generated local entropy; PRF encrypts backups
 and does not determine addresses. Old signer state/provider passkeys are neither

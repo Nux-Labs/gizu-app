@@ -8,6 +8,7 @@ import {
   type StrategyAssetInput,
   type StrategyCreateSignature,
   type StrategyRegistryChainId,
+  type StrategyTermsInput,
   type SwapChainId,
 } from "@/domain/wallet/storedSigner";
 import { AppState, Platform } from "react-native";
@@ -939,6 +940,7 @@ function parseStrategyCreate(value: unknown): StrategyCreateSignature {
   const result = strategyRecord(value);
   return {
     signer: strategyString(result.signer, STRATEGY_ADDRESS),
+    metadataHash: strategyString(result.metadataHash, STRATEGY_WORD),
     signature: strategyString(result.signature, STRATEGY_SIGNATURE),
   };
 }
@@ -997,13 +999,23 @@ export function getStoredStrategySigner() {
       chainId: StrategyRegistryChainId,
       index: number,
       embargo: number,
-      metadataHash: string,
+      terms: StrategyTermsInput,
       deadline: number,
     ): Promise<StrategyCreateSignature> {
-      if (!STRATEGY_WORD.test(metadataHash)) throw new Error("Invalid strategy metadata hash.");
+      if (!Number.isInteger(terms.seats) || terms.seats < 1 || terms.seats > 100)
+        throw new Error("Invalid strategy terms.");
       await checked(native, "strategySigning");
+      // Only the four terms cross the boundary; native code validates and hashes them.
+      const { name, monthlyPriceAtoms, signalPriceAtoms, seats } = terms;
       return parseStrategyCreate(
-        await native.createStrategy!(walletId, chainId, index, embargo, metadataHash, deadline),
+        await native.createStrategy!(
+          walletId,
+          chainId,
+          index,
+          embargo,
+          { name, monthlyPriceAtoms, signalPriceAtoms, seats },
+          deadline,
+        ),
       );
     },
     async sealStrategyCommit(

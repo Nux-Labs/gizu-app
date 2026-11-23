@@ -48,10 +48,28 @@ pub struct StrategyAsset {
     pub weight_bps: u16,
 }
 
+/// Terms a strategy is published with. They are hashed natively, so the review shows exactly the
+/// terms the signature commits to.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct StrategyMetadata {
+    pub name: String,
+    pub monthly_price_atoms: String,
+    pub signal_price_atoms: String,
+    pub seats: u32,
+}
+
 #[derive(uniffi::Record, Debug, PartialEq, Eq)]
 pub struct StrategyCreateSignature {
     pub signer: String,
+    pub metadata_hash: String,
     pub signature: String,
+}
+
+/// One line of the native review: the pinned asset's label and its weight.
+#[derive(uniffi::Record, Debug, PartialEq, Eq)]
+pub struct StrategyReviewLine {
+    pub label: String,
+    pub weight_bps: u16,
 }
 
 /// The sorted basket the commitment covers, which the backend keeps for the later reveal.
@@ -84,14 +102,14 @@ pub fn strategy_addresses(
         .collect()
 }
 
-/// Signs `CreateStrategy` for the pinned registry on `chain_id`.
+/// Hashes the terms as the API does and signs `CreateStrategy` for the pinned registry.
 #[uniffi::export]
 pub fn strategy_create_signature(
     entropy: Vec<u8>,
     chain_id: u64,
     index: u32,
     embargo: u32,
-    metadata_hash: String,
+    metadata: StrategyMetadata,
     deadline: u64,
     now_ms: u64,
 ) -> Result<StrategyCreateSignature, SignerError> {
@@ -100,10 +118,144 @@ pub fn strategy_create_signature(
     }
     check_deadline(deadline, now_ms)?;
     let registry = pinned_registry(chain_id)?;
-    let metadata_hash = word(&metadata_hash)?;
+    let metadata_hash = strategy_metadata_hash(&metadata)?;
     let seed = roles::seed_from_entropy(entropy)?;
     let key = strategy_key(&seed, chain_id, index)?;
     sign_create(&key, chain_id, registry, embargo, metadata_hash, deadline)
+}
+
+/// Validates a basket and labels it from the pinned universe for the native review, largest
+/// weight first. Nothing here comes from JS but the addresses and weights being reviewed.
+#[uniffi::export]
+pub fn strategy_review(assets: Vec<StrategyAsset>) -> Result<Vec<StrategyReviewLine>, SignerError> {
+    sealed_basket(&assets)?;
+    let mut lines = assets
+        .iter()
+        .map(|asset| {
+            Ok(StrategyReviewLine {
+                label: asset_label(asset.chain_id, asset.kind, evm::addr(&asset.address)?)
+                    .ok_or(SignerError::InvalidInput)?,
+                weight_bps: asset.weight_bps,
+            })
+        })
+        .collect::<Result<Vec<_>, SignerError>>()?;
+    lines.sort_by(|a, b| b.weight_bps.cmp(&a.weight_bps));
+    Ok(lines)
+}
+
+/// Validates strategy terms and returns their hash, so the review can bind its approval to them
+/// before anything is signed.
+#[uniffi::export]
+pub fn strategy_terms_hash(metadata: StrategyMetadata) -> Result<String, SignerError> {
+    Ok(hex::encode_prefixed(strategy_metadata_hash(&metadata)?))
+}
+
+/// Network name of a registry chain, for the native review.
+#[uniffi::export]
+pub fn strategy_network_name(chain_id: u64) -> Result<String, SignerError> {
+    match chain_id {
+        pins::BASE_CHAIN_ID => Ok("Base".into()),
+        STRATEGY_BASE_SEPOLIA_CHAIN_ID => Ok("Base Sepolia".into()),
+        _ => Err(SignerError::InvalidInput),
+    }
+}
+
+fn asset_label(chain_id: u64, kind: u8, token: Address) -> Option<String> {
+    let symbol = |targets: &[Address], symbols: &[&str]| {
+        targets
+            .iter()
+            .position(|target| *target == token)
+            .map(|i| symbols[i].to_string())
+    };
+    match (chain_id, kind) {
+        (pins::BASE_CHAIN_ID, ASSET_TOKEN) if token == pins::BASE_USDC => {
+            Some("USDC (cash)".into())
+        }
+        (pins::BASE_CHAIN_ID, ASSET_TOKEN) => {
+            symbol(&pins::BASE_BUY_TARGETS, &BASE_SYMBOLS).map(|symbol| format!("{symbol} on Base"))
+        }
+        (pins::ROBINHOOD_CHAIN_ID, ASSET_TOKEN) => {
+            symbol(&pins::ROBINHOOD_BUY_TARGETS, &ROBINHOOD_SYMBOLS)
+                .map(|symbol| format!("{symbol} on Robinhood"))
+        }
+        (pins::ROBINHOOD_CHAIN_ID, ASSET_VAULT) if token == STRATEGY_ROBINHOOD_EARN_VAULT => {
+            Some("Steakhouse USDG vault".into())
+        }
+        (ETHEREUM_CHAIN_ID, ASSET_VAULT) if token == STRATEGY_ETHEREUM_EARN_VAULT => {
+            Some("Pendle USDC vault".into())
+        }
+        _ => None,
+    }
+}
+
+const MAX_NAME_UTF16_UNITS: usize = 48;
+const MAX_SEATS: u32 = 100;
+
+/// The API's and the app's canonical JSON, keys in this order. serde_json escapes strings the
+/// way `JSON.stringify` does, so all three hash the same bytes.
+#[derive(serde::Serialize)]
+struct CanonicalMetadata<'a> {
+    v: u8,
+    name: &'a str,
+    #[serde(rename = "monthlyPriceAtoms")]
+    monthly_price_atoms: &'a str,
+    #[serde(rename = "signalPriceAtoms")]
+    signal_price_atoms: &'a str,
+    seats: u32,
+}
+
+/// JavaScript's `\s`: the API checks names with a JavaScript regular expression.
+fn js_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
+/// `^(0|[1-9]\d{0,11})$`: USDC base units up to twelve digits.
+fn price_atoms(value: &str) -> bool {
+    value == "0"
+        || (!value.is_empty()
+            && value.len() <= 12
+            && !value.starts_with('0')
+            && value.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The API's rules for strategy terms (`backend/src/http/routes/strategies.routes.ts`), then the
+/// keccak hash of their canonical JSON.
+pub(crate) fn strategy_metadata_hash(metadata: &StrategyMetadata) -> Result<B256, SignerError> {
+    let name = metadata.name.as_str();
+    let units = name.encode_utf16().count();
+    let valid_name = units > 0
+        && units <= MAX_NAME_UTF16_UNITS
+        && !name.starts_with(js_whitespace)
+        && !name.ends_with(js_whitespace)
+        // `.` in the API's pattern matches anything but a line terminator.
+        && !name.contains(['\n', '\r', '\u{2028}', '\u{2029}']);
+    if !valid_name
+        || !price_atoms(&metadata.monthly_price_atoms)
+        || !price_atoms(&metadata.signal_price_atoms)
+        || metadata.seats == 0
+        || metadata.seats > MAX_SEATS
+    {
+        return Err(SignerError::InvalidInput);
+    }
+    let json = serde_json::to_string(&CanonicalMetadata {
+        v: 1,
+        name,
+        monthly_price_atoms: &metadata.monthly_price_atoms,
+        signal_price_atoms: &metadata.signal_price_atoms,
+        seats: metadata.seats,
+    })
+    .map_err(|_| SignerError::InvalidInput)?;
+    Ok(keccak256(json.as_bytes()))
 }
 
 /// Checks and seals a basket for commitment `seq` of `strategy_id`, then signs `Commit`.
@@ -172,13 +324,19 @@ fn check_deadline(deadline_secs: u64, now_ms: u64) -> Result<(), SignerError> {
     Ok(())
 }
 
-fn word(value: &str) -> Result<B256, SignerError> {
-    let bytes = evm::hex_bytes(value)?;
-    if bytes.len() != 32 {
-        return Err(SignerError::InvalidInput);
-    }
-    Ok(B256::from_slice(&bytes))
-}
+/// Symbols of `pins::BASE_BUY_TARGETS`, index for index, for the native review only.
+const BASE_SYMBOLS: [&str; 34] = [
+    "GOOGLc", "SPCXc", "AAPLc", "AMZNc", "NVDAc", "CRWVc", "METAc", "KOc", "BRK.Bc", "MCDc",
+    "ANTc", "TSLAc", "MSFTc", "ORCLc", "HSAIc", "LLYc", "AVGOc", "BUDc", "NVOc", "ULc", "PDDc",
+    "SONYc", "TTWOc", "AMDc", "SAPc", "MRNAc", "INFYc", "LIc", "NOKc", "MSTRc", "MRVLc", "CRCLc",
+    "PLTRc", "HOODc",
+];
+/// Symbols of `pins::ROBINHOOD_BUY_TARGETS`, index for index, for the native review only.
+const ROBINHOOD_SYMBOLS: [&str; 25] = [
+    "QQQ", "NVDA", "SPCX", "TSLA", "META", "USO", "MU", "GOOGL", "GLD", "AAPL", "SNDK", "CRWV",
+    "SGOV", "AMZN", "BE", "AMAT", "IBM", "MSFT", "SLV", "LLY", "RDDT", "MRVL", "TTWO", "INTC",
+    "AVGO",
+];
 
 /// keccak256(abi.encode(uint64 chainId, uint8 kind, address token)).
 pub(crate) fn asset_id(chain_id: u64, kind: u8, token: Address) -> B256 {
@@ -307,6 +465,7 @@ fn sign_create(
     let digest = create_digest(chain_id, registry, embargo, metadata_hash, deadline);
     Ok(StrategyCreateSignature {
         signer: evm::key_address(key).to_checksum(None),
+        metadata_hash: hex::encode_prefixed(metadata_hash),
         signature: evm::sign(key, digest)?.rsv_hex(),
     })
 }
@@ -359,6 +518,122 @@ mod tests {
     fn b256(value: &Value) -> B256 {
         value.as_str().unwrap().parse().unwrap()
     }
+    fn vector_metadata(m: &Value) -> StrategyMetadata {
+        StrategyMetadata {
+            name: m["name"].as_str().unwrap().to_string(),
+            monthly_price_atoms: m["monthlyPriceAtoms"].as_str().unwrap().to_string(),
+            signal_price_atoms: m["signalPriceAtoms"].as_str().unwrap().to_string(),
+            seats: m["seats"].as_u64().unwrap() as u32,
+        }
+    }
+
+    #[test]
+    fn metadata_hashes_match_the_api_and_app() {
+        let v = vectors();
+        for case in v["metadata"].as_array().unwrap() {
+            assert_eq!(
+                hex::encode_prefixed(strategy_metadata_hash(&vector_metadata(case)).unwrap()),
+                case["hash"].as_str().unwrap()
+            );
+            assert_eq!(
+                strategy_terms_hash(vector_metadata(case)).unwrap(),
+                case["hash"].as_str().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_follows_the_api_rules() {
+        let ok = vector_metadata(&vectors()["metadata"][0]);
+        let with = |name: &str| StrategyMetadata {
+            name: name.into(),
+            ..ok.clone()
+        };
+        assert!(strategy_metadata_hash(&with("A")).is_ok());
+        assert!(strategy_metadata_hash(&with("Tab\tinside is allowed")).is_ok());
+        for bad in [
+            " lead",
+            "trail ",
+            "\u{a0}nbsp",
+            "new\nline",
+            "sep\u{2028}arator",
+            "",
+        ] {
+            assert!(strategy_metadata_hash(&with(bad)).is_err(), "{bad:?}");
+        }
+        // Length counts UTF-16 units, as JavaScript does: 24 emoji fit, 25 do not.
+        assert!(strategy_metadata_hash(&with(&"🚀".repeat(24))).is_ok());
+        assert!(strategy_metadata_hash(&with(&"🚀".repeat(25))).is_err());
+        assert!(strategy_metadata_hash(&with(&"a".repeat(49))).is_err());
+        for price in ["01", "", "1.5", "1234567890123", "-1"] {
+            let bad = StrategyMetadata {
+                monthly_price_atoms: price.into(),
+                ..ok.clone()
+            };
+            assert!(strategy_metadata_hash(&bad).is_err(), "{price:?}");
+        }
+        for seats in [0, 101] {
+            assert!(
+                strategy_metadata_hash(&StrategyMetadata {
+                    seats,
+                    ..ok.clone()
+                })
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn the_review_labels_assets_from_the_pinned_universe() {
+        let lines = strategy_review(vector_assets(&vectors())).unwrap();
+        assert_eq!(
+            lines,
+            vec![
+                StrategyReviewLine {
+                    label: "NVDAc on Base".into(),
+                    weight_bps: 4000
+                },
+                StrategyReviewLine {
+                    label: "GOOGLc on Base".into(),
+                    weight_bps: 3500
+                },
+                StrategyReviewLine {
+                    label: "USDC (cash)".into(),
+                    weight_bps: 1500
+                },
+                StrategyReviewLine {
+                    label: "Steakhouse USDG vault".into(),
+                    weight_bps: 1000
+                },
+            ]
+        );
+        let robinhood = vec![
+            StrategyAsset {
+                chain_id: 4663,
+                kind: 0,
+                address: pins::ROBINHOOD_BUY_TARGETS[3].to_checksum(None),
+                weight_bps: 5000,
+            },
+            StrategyAsset {
+                chain_id: 1,
+                kind: 1,
+                address: STRATEGY_ETHEREUM_EARN_VAULT.to_checksum(None),
+                weight_bps: 5000,
+            },
+        ];
+        let labels: Vec<String> = strategy_review(robinhood)
+            .unwrap()
+            .into_iter()
+            .map(|l| l.label)
+            .collect();
+        assert_eq!(labels, vec!["TSLA on Robinhood", "Pendle USDC vault"]);
+        let mut invalid = vector_assets(&vectors());
+        invalid[0].weight_bps += 500;
+        assert!(strategy_review(invalid).is_err());
+        assert_eq!(strategy_network_name(84_532).unwrap(), "Base Sepolia");
+        assert!(strategy_network_name(1).is_err());
+    }
+
     fn vector_assets(v: &Value) -> Vec<StrategyAsset> {
         v["basket"]["assets"]
             .as_array()
@@ -537,21 +812,31 @@ mod tests {
     fn exported_functions_sign_for_the_pinned_sepolia_registry() {
         let v = vectors();
         let deadline = NOW_MS / 1_000 + 600;
-        let meta = v["create"]["metadataHash"].as_str().unwrap().to_string();
-        let create =
-            strategy_create_signature(vec![0; 32], 84_532, 0, 60, meta.clone(), deadline, NOW_MS)
-                .unwrap();
+        let create = strategy_create_signature(
+            vec![0; 32],
+            84_532,
+            0,
+            60,
+            vector_metadata(&v["metadata"][0]),
+            deadline,
+            NOW_MS,
+        )
+        .unwrap();
         let signer: Address = v["signers"][2]["address"]
             .as_str()
             .unwrap()
             .parse()
             .unwrap();
         assert_eq!(create.signer, signer.to_checksum(None));
+        assert_eq!(
+            create.metadata_hash,
+            v["metadata"][0]["hash"].as_str().unwrap()
+        );
         let digest = create_digest(
             84_532,
             STRATEGY_REGISTRY_BASE_SEPOLIA,
             60,
-            b256(&v["create"]["metadataHash"]),
+            b256(&v["metadata"][0]["hash"]),
             deadline,
         );
         assert_eq!(recovered(digest, &create.signature), signer);
@@ -648,16 +933,16 @@ mod tests {
     #[test]
     fn rejects_invalid_signing_requests() {
         let v = vectors();
-        let meta = v["create"]["metadataHash"].as_str().unwrap().to_string();
+        let meta = vector_metadata(&v["metadata"][0]);
         let salt = evm::hex_bytes(v["basket"]["salt"].as_str().unwrap()).unwrap();
         let ok_deadline = NOW_MS / 1_000 + 600;
-        let create = |chain, embargo, meta: &str, deadline| {
+        let create = |chain, embargo, meta: &StrategyMetadata, deadline| {
             strategy_create_signature(
                 vec![0; 32],
                 chain,
                 0,
                 embargo,
-                meta.to_string(),
+                meta.clone(),
                 deadline,
                 NOW_MS,
             )
@@ -670,7 +955,11 @@ mod tests {
             Err(SignerError::Expired)
         ));
         assert!(create(84_532, 60, &meta, NOW_MS / 1_000 + 3_601).is_err());
-        assert!(create(84_532, 60, "0x1234", ok_deadline).is_err());
+        let unnamed = StrategyMetadata {
+            name: String::new(),
+            ..meta.clone()
+        };
+        assert!(create(84_532, 60, &unnamed, ok_deadline).is_err());
         // Base mainnet keys derive, but signing waits until its registry is pinned.
         assert!(create(8453, 60, &meta, ok_deadline).is_err());
         assert!(create(1, 60, &meta, ok_deadline).is_err());

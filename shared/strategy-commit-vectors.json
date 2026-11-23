@@ -81,5 +81,21 @@
   "commit": {
     "deadline": 2000000000,
     "digest": "0x53213d703fa6e4007c4c734afbec90f4b18d02982f4f2d7a38d4e8d676838eb8"
-  }
+  },
+  "metadata": [
+    {
+      "name": "Chips",
+      "monthlyPriceAtoms": "10000000",
+      "signalPriceAtoms": "500000",
+      "seats": 20,
+      "hash": "0x414a817151a722dfa46f23282600437c05a1100b83b4c37519a0594525487c69"
+    },
+    {
+      "name": "Yapay zekâ çipleri — \"AI\"",
+      "monthlyPriceAtoms": "0",
+      "signalPriceAtoms": "250000",
+      "seats": 1,
+      "hash": "0x0bd7a219ed6ddd1421dfe03cc1959cd88461e80a3174bab02a4d0a80554ea754"
+    }
+  ]
 }

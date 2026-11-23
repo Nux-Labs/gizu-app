@@ -42,6 +42,8 @@ class GizuStoredSignerModule : Module() {
   companion object {
     private val ceremony = Mutex()
     private const val CEREMONY_TIMEOUT_MS = 120000L
+    /** The registry's maximum; checked before the review rather than after the passkey. */
+    private const val MAX_STRATEGY_EMBARGO_SECONDS = 30 * 86_400
     private const val FOCUS_TIMEOUT_MS = 10000L
     private const val FOCUS_POLL_INTERVAL_MS = 50L
   }
@@ -186,6 +188,29 @@ class GizuStoredSignerModule : Module() {
       weight.toInt().toUShort(),
     )
   }
+
+  private fun strategyTerms(
+    entry: Map<String, Any?>
+  ): uniffi.gizu_stored_signer_core.StrategyMetadata {
+    check(entry.keys == setOf("name", "monthlyPriceAtoms", "signalPriceAtoms", "seats"))
+    val seats = (entry["seats"] as? Number)?.toDouble() ?: error("Missing seats")
+    require(wholeNumber(seats, 1.0) && seats <= 100.0)
+    return uniffi.gizu_stored_signer_core.StrategyMetadata(
+      entry["name"] as? String ?: error("Missing name"),
+      entry["monthlyPriceAtoms"] as? String ?: error("Missing monthly price"),
+      entry["signalPriceAtoms"] as? String ?: error("Missing signal price"),
+      seats.toInt().toUInt(),
+    )
+  }
+
+  /** USDC base units as dollars with at least cents, for example "$10.00" or "$0.125". */
+  private fun usdcText(atoms: String): String {
+    val dollars = java.math.BigDecimal(atoms).movePointLeft(6).stripTrailingZeros()
+    return "$" + dollars.setScale(maxOf(2, dollars.scale())).toPlainString()
+  }
+
+  private fun weightText(weightBps: Int): String =
+    if (weightBps % 100 == 0) "${weightBps / 100}%" else "${weightBps / 100.0}%"
 
   private fun embargoText(seconds: Int): String =
     when {
@@ -985,12 +1010,22 @@ class GizuStoredSignerModule : Module() {
       chainId: Int,
       index: Int,
       embargo: Int,
-      metadataHash: String,
+      terms: Map<String, Any?>,
       deadline: Double,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
-        require(index >= 0 && embargo > 0 && wholeNumber(deadline, 1.0))
-        require(Regex("^0x[0-9a-fA-F]{64}$").matches(metadataHash))
+        require(
+          index >= 0 && embargo in 1..MAX_STRATEGY_EMBARGO_SECONDS && wholeNumber(deadline, 1.0)
+        )
+        // Rust validates the terms and hashes them before the review, so the review shows
+        // exactly what the signature commits to and the approval is bound to that hash.
+        val metadata = strategyTerms(terms)
+        val name = metadata.name
+        val monthlyPriceAtoms = metadata.monthlyPriceAtoms
+        val signalPriceAtoms = metadata.signalPriceAtoms
+        val seats = metadata.seats
+        val termsHash = uniffi.gizu_stored_signer_core.strategyTermsHash(metadata)
+        val network = uniffi.gizu_stored_signer_core.strategyNetworkName(chainId.toULong())
         val credential =
           store.load().use { record ->
             check(record.id == walletId && record.verified)
@@ -999,14 +1034,17 @@ class GizuStoredSignerModule : Module() {
         confirm(
           activity,
           "Publish strategy",
-          "Publish this strategy on Base with a ${embargoText(embargo)} embargo. Its name and prices become public. Your wallets, balances and identity are not shared. No funds move.",
+          "Publish “$name” on $network.\n\n" +
+            "Subscribers pay ${usdcText(monthlyPriceAtoms)} a month, agents ${usdcText(signalPriceAtoms)} per signal, $seats seats.\n\n" +
+            "Each update's weights become public ${embargoText(embargo)} after it is sealed; this can't change later. " +
+            "Your wallets, balances and identity are not shared. No funds move.",
         )
         withProviderUi(activity) {
           PasskeyGate(activity)
             .authorize(
               credential,
               walletId,
-              "strategy-create:v1:$chainId:$index:$embargo:${metadataHash.lowercase()}",
+              "strategy-create:v1:$chainId:$index:$embargo:$termsHash",
             )
         }
         currentCoroutineContext().ensureActive()
@@ -1018,12 +1056,17 @@ class GizuStoredSignerModule : Module() {
               chainId.toULong(),
               index.toUInt(),
               embargo.toUInt(),
-              metadataHash,
+              metadata,
               deadline.toLong().toULong(),
               System.currentTimeMillis().toULong(),
             )
           }
-        mapOf("signer" to signed.signer, "signature" to signed.signature)
+        check(signed.metadataHash == termsHash)
+        mapOf(
+          "signer" to signed.signer,
+          "metadataHash" to signed.metadataHash,
+          "signature" to signed.signature,
+        )
       }
     }
     AsyncFunction("sealStrategyCommit") {
@@ -1044,6 +1087,10 @@ class GizuStoredSignerModule : Module() {
         )
         val basket = assets.map(::strategyAsset)
         require(basket.size in 1..10)
+        // Rust validates the basket and labels each asset from its pinned universe; the review
+        // lists exactly the weights that will be sealed.
+        val review = uniffi.gizu_stored_signer_core.strategyReview(basket)
+        val network = uniffi.gizu_stored_signer_core.strategyNetworkName(chainId.toULong())
         val credential =
           store.load().use { record ->
             check(record.id == walletId && record.verified)
@@ -1057,10 +1104,13 @@ class GizuStoredSignerModule : Module() {
           java.security.MessageDigest.getInstance("SHA-256")
             .digest("${strategyId.toLong()}:${seq.toLong()}:$request".toByteArray())
             .joinToString("") { "%02x".format(it) }
+        val lines =
+          review.joinToString("\n") { "${weightText(it.weightBps.toInt())} · ${it.label}" }
         confirm(
           activity,
-          "Send update to subscribers",
-          "Seal the new weights of ${basket.size} assets on Base and share them with your subscribers. Amounts, wallets and identity stay private. No funds move.",
+          "Update strategy #${strategyId.toLong()}",
+          "Seal update ${seq.toLong() + 1} on $network and share these weights with your subscribers:\n\n" +
+            "$lines\n\nAmounts, wallets and identity stay private. No funds move.",
         )
         withProviderUi(activity) {
           PasskeyGate(activity)

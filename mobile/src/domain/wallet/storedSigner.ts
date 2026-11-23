@@ -193,7 +193,14 @@ export type StrategyAssetInput = {
   address: string;
   weightBps: number;
 };
-export type StrategyCreateSignature = { signer: string; signature: string };
+/** Strategy terms; native code validates and hashes them and shows them in its review. */
+export type StrategyTermsInput = {
+  name: string;
+  monthlyPriceAtoms: string;
+  signalPriceAtoms: string;
+  seats: number;
+};
+export type StrategyCreateSignature = { signer: string; metadataHash: string; signature: string };
 /** The sorted basket the commitment covers, with the salt the backend keeps for the reveal. */
 export type SealedStrategyCommit = {
   signer: string;
@@ -222,7 +229,7 @@ export interface StoredSignerContract {
     chainId: StrategyRegistryChainId,
     index: number,
     embargo: number,
-    metadataHash: string,
+    terms: StrategyTermsInput,
     deadline: number,
   ): Promise<unknown>;
   sealStrategyCommit?(

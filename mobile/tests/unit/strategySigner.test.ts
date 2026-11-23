@@ -22,6 +22,12 @@ function platform(os: "android" | "ios", version: number) {
 const word = (digit: string) => `0x${digit.repeat(64)}`;
 const signer = "0x1cED07C44A78772081bc6490A05584dD4bfF15B5";
 const signature = `0x${"ab".repeat(64)}1b`;
+const terms = {
+  name: "AI chips",
+  monthlyPriceAtoms: "10000000",
+  signalPriceAtoms: "500000",
+  seats: 20,
+};
 const assets = [
   {
     chainId: 8453,
@@ -43,7 +49,7 @@ function strategyNative(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockResolvedValue({ contractVersion: 1, available: true, strategySigning: true }),
     strategyAddresses: jest.fn().mockResolvedValue([signer]),
-    createStrategy: jest.fn().mockResolvedValue({ signer, signature }),
+    createStrategy: jest.fn().mockResolvedValue({ signer, metadataHash: word("d"), signature }),
     sealStrategyCommit: jest.fn().mockResolvedValue({
       signer,
       assetIds: [word("1"), word("2")],
@@ -81,14 +87,24 @@ test("passes public basket data to native code and returns the validated sealed 
   expect(native.strategyAddresses).toHaveBeenCalledWith("wallet-1", 84532, 0, 1);
 
   await expect(
-    strategies.createStrategy("wallet-1", 84532, 0, 604800, word("d"), 1_900_000_600),
-  ).resolves.toEqual({ signer, signature });
-  expect(native.createStrategy).toHaveBeenCalledWith(
+    strategies.createStrategy("wallet-1", 84532, 0, 604800, terms, 1_900_000_600),
+  ).resolves.toEqual({ signer, metadataHash: word("d"), signature });
+  // Only the four terms cross the boundary, even if the caller passes more.
+  await strategies.createStrategy(
     "wallet-1",
     84532,
     0,
     604800,
-    word("d"),
+    { ...terms, extra: "ignored" } as typeof terms,
+    1_900_000_600,
+  );
+  expect(native.createStrategy).toHaveBeenNthCalledWith(
+    2,
+    "wallet-1",
+    84532,
+    0,
+    604800,
+    terms,
     1_900_000_600,
   );
 
@@ -134,8 +150,8 @@ test("rejects invalid requests before native code and malformed native results a
   const strategies = getStoredStrategySigner()!;
 
   await expect(
-    strategies.createStrategy("wallet-1", 84532, 0, 60, "0xnot-a-hash", 1_900_000_600),
-  ).rejects.toThrow("Invalid strategy metadata hash.");
+    strategies.createStrategy("wallet-1", 84532, 0, 60, { ...terms, seats: 0 }, 1_900_000_600),
+  ).rejects.toThrow("Invalid strategy terms.");
   await expect(strategies.strategyAddresses("wallet-1", 84532, 0, 33)).rejects.toThrow(
     "Invalid strategy address range.",
   );
@@ -146,7 +162,7 @@ test("rejects invalid requests before native code and malformed native results a
   expect(native.strategyAddresses).not.toHaveBeenCalled();
 
   await expect(
-    strategies.createStrategy("wallet-1", 84532, 0, 60, word("d"), 1_900_000_600),
+    strategies.createStrategy("wallet-1", 84532, 0, 60, terms, 1_900_000_600),
   ).rejects.toThrow("Invalid native strategy response.");
   // Native returned one sealed asset for a two-asset request.
   await expect(
@@ -161,7 +177,7 @@ test("refuses to sign when the native build no longer reports the capability", a
   });
   jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
   await expect(
-    getStoredStrategySigner()!.createStrategy("wallet-1", 84532, 0, 60, word("d"), 1_900_000_600),
+    getStoredStrategySigner()!.createStrategy("wallet-1", 84532, 0, 60, terms, 1_900_000_600),
   ).rejects.toBeInstanceOf(WalletUnavailableError);
   expect(native.createStrategy).not.toHaveBeenCalled();
 });
