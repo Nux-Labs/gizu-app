@@ -94,13 +94,31 @@ test("trial seats, earnings and push follows", { skip: !database }, async () => 
     await pool.query("insert into strategy_payments (strategy_id, kind, amount_atoms, reference) values (1, 'x402', 500000, 'a'), (1, 'x402', 250000, 'b')");
     assert.deepEqual([...(await store.earnedAtoms([1]))], [[1, 750000n]]);
 
-    const device = await store.registerPushDevice("token-".padEnd(32, "x"), "android");
-    assert.equal(await store.registerPushDevice("token-".padEnd(32, "x"), "android"), device);
+    const token = "token-".padEnd(32, "x");
+    const first = await store.registerPushDevice(token, "android");
+    assert.equal(await store.followWithDevice(first, 1), true);
+    assert.equal(await store.queueStrategyPush(1, 0), 1);
+    // Registering a known token never returns its device id; the old device and its queue go.
+    const device = await store.registerPushDevice(token, "android");
+    assert.notEqual(device, first);
+    assert.equal(await store.followWithDevice(first, 1), false);
+    assert.deepEqual(await store.pendingPushes(10), []);
+
     assert.equal(await store.followWithDevice(device, 1), true);
     assert.equal(await store.followWithDevice(device, 1), true);
     assert.equal(await store.followWithDevice(device, 2), false);
     assert.equal(await store.queueStrategyPush(1, 0), 1);
     assert.equal(await store.queueStrategyPush(1, 0), 0);
+    assert.equal(await store.queueStrategyPush(1, 1), 1);
+    // Two updates waiting for one device collapse into the newest.
+    const pending = await store.pendingPushes(10);
+    assert.deepEqual(pending, [{ deviceId: device, token, platform: "android", strategyId: 1, seq: 1 }]);
+    await store.finishPush(pending[0]!, "sent");
+    assert.deepEqual(await store.pendingPushes(10), []);
+    assert.deepEqual(
+      (await pool.query("select seq, status from push_outbox order by seq")).rows,
+      [{ seq: 0, status: "sent" }, { seq: 1, status: "sent" }],
+    );
     await store.removePushDevice(device);
     assert.equal((await pool.query("select count(*)::int as n from push_outbox")).rows[0].n, 0);
   });

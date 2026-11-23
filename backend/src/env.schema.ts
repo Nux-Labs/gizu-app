@@ -77,6 +77,28 @@ const apiEnvSchema = z
       .url()
       .refine((value) => value.startsWith("https://"))
       .optional(),
+    // Firebase service account key file (JSON) for strategy update notifications; without it
+    // notifications stay queued.
+    FCM_SERVICE_ACCOUNT_JSON: z
+      .string()
+      .transform((value, context) => {
+        try {
+          const parsed = JSON.parse(value) as Record<string, unknown>;
+          const { project_id, client_email, private_key } = parsed;
+          if (
+            typeof project_id === "string" &&
+            typeof client_email === "string" &&
+            typeof private_key === "string" &&
+            private_key.includes("PRIVATE KEY")
+          )
+            return { project_id, client_email, private_key };
+        } catch {
+          // Reported below without echoing the secret.
+        }
+        context.addIssue({ code: "custom", message: "Expected a Firebase service account key file" });
+        return z.NEVER;
+      })
+      .optional(),
   })
   .superRefine((env, context) => {
     const strategyKeys = [
@@ -89,6 +111,13 @@ const apiEnvSchema = z
         code: "custom",
         path: ["STRATEGY_REGISTRY_ADDRESS"],
         message: "STRATEGY_REGISTRY_ADDRESS, STRATEGY_CHAIN_ID and STRATEGY_RELAYER_KEY are set together",
+      });
+    }
+    if (env.FCM_SERVICE_ACCOUNT_JSON && strategyKeys.some((value) => value === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["FCM_SERVICE_ACCOUNT_JSON"],
+        message: "Strategy notifications need the Sealed Strategies settings",
       });
     }
     if ((env.X402_PAY_TO || env.X402_FACILITATOR_URL) && strategyKeys.some((value) => value === undefined)) {

@@ -86,13 +86,38 @@ export interface StrategyStore {
     amountAtoms: string;
     reference: string;
   }): Promise<boolean>;
+  /**
+   * Registers a push token under a fresh random device id. Registering a known token replaces its
+   * device and follows, so holding a token never reveals an existing device id; apps follow their
+   * strategies again after registering.
+   */
   registerPushDevice(token: string, platform: "android" | "ios"): Promise<string>;
   followWithDevice(deviceId: string, strategyId: number): Promise<boolean>;
   removePushDevice(deviceId: string): Promise<void>;
   /** Queues one neutral notification per device following the strategy. */
   queueStrategyPush(strategyId: number, seq: number): Promise<number>;
+  /** Pending notifications, only the newest update per device and strategy. */
+  pendingPushes(limit: number): Promise<PendingPush[]>;
+  /** Settles a delivery and every older pending update it supersedes for that device and strategy. */
+  finishPush(push: PendingPush, status: "sent" | "failed"): Promise<void>;
   /** Runs `work` only where no other instance holds the strategy worker lock. */
   withWorkerLock(work: () => Promise<void>): Promise<boolean>;
+}
+
+export type PendingPush = {
+  deviceId: string;
+  token: string;
+  platform: "android" | "ios";
+  strategyId: number;
+  seq: number;
+};
+
+/** What a push provider did with one message. */
+export type PushOutcome = "sent" | "unregistered" | "failed";
+
+export interface PushSender {
+  /** `ref` is opaque to the provider; the app maps it back to a strategy it follows. */
+  send(message: { token: string; platform: "android" | "ios"; ref: string }): Promise<PushOutcome>;
 }
 
 export type OnchainStrategy = {

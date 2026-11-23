@@ -226,3 +226,29 @@ test("x402 signal payments need a payee and the Sealed Strategies settings", () 
   const facilitator = { X402_FACILITATOR_URL: "https://facilitator.example" };
   assert.equal(parseApiEnv({ ...apiEnv, ...mainnet, ...payee, ...facilitator }).X402_FACILITATOR_URL, facilitator.X402_FACILITATOR_URL);
 });
+
+test("strategy notifications take a Firebase service account key file", () => {
+  const strategy = {
+    STRATEGY_REGISTRY_ADDRESS: "0x6db1131C8d833CA0F167f7B8DBd24a93cA22Abf7",
+    STRATEGY_CHAIN_ID: "84532",
+    STRATEGY_RELAYER_KEY: "11".repeat(32),
+  };
+  const key = {
+    type: "service_account",
+    project_id: "gizu-test",
+    client_email: "push@gizu-test.iam.gserviceaccount.com",
+    private_key: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+  };
+  const parsed = parseApiEnv({ ...apiEnv, ...strategy, FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(key) });
+  assert.deepEqual(parsed.FCM_SERVICE_ACCOUNT_JSON, {
+    project_id: key.project_id,
+    client_email: key.client_email,
+    private_key: key.private_key,
+  });
+  assert.throws(() => parseApiEnv({ ...apiEnv, FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(key) }), /Sealed Strategies settings/);
+  for (const bad of ["not json", JSON.stringify({ ...key, private_key: "secret" })])
+    assert.throws(
+      () => parseApiEnv({ ...apiEnv, ...strategy, FCM_SERVICE_ACCOUNT_JSON: bad }),
+      (error: Error) => /service account/.test(error.message) && !error.message.includes("secret"),
+    );
+});

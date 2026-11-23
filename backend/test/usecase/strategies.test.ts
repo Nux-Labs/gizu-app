@@ -130,6 +130,8 @@ class MemoryStore implements StrategyStore {
   async removePushDevice() {}
   async queueStrategyPush(strategyId: number, seq: number) { this.pushes.push({ strategyId, seq }); return 1; }
   async withWorkerLock(work: () => Promise<void>) { await work(); return true; }
+  async pendingPushes() { return []; }
+  async finishPush() {}
 }
 
 class FakeRegistry implements StrategyRegistryGateway {

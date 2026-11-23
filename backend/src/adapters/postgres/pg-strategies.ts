@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { getAddress, type Address, type Hex } from "viem";
 import type { AssetPrices, SealedStrategyAsset, StrategyMetadata } from "../../domain/strategy.ts";
 import type {
+  PendingPush,
   StrategyCommitInsert,
   StrategyCommitRecord,
   StrategyCommitStatus,
@@ -318,13 +319,48 @@ export class PgStrategies implements StrategyStore {
 
   async registerPushDevice(token: string, platform: "android" | "ios"): Promise<string> {
     await this.ensureSchema();
+    // A known token gets a new device: returning the old id would hand it to anyone holding the
+    // token. Its follows and queued notifications go with the old device.
+    await this.pool.query("delete from push_devices where token = $1", [token]);
+    const id = randomUUID();
+    await this.pool.query("insert into push_devices (id, token, platform) values ($1, $2, $3)", [
+      id,
+      token,
+      platform,
+    ]);
+    return id;
+  }
+
+  async pendingPushes(limit: number): Promise<PendingPush[]> {
+    await this.ensureSchema();
     const { rows } = await this.pool.query(
-      `insert into push_devices (id, token, platform) values ($1, $2, $3)
-       on conflict (token) do update set platform = excluded.platform, updated_at = now()
-       returning id`,
-      [randomUUID(), token, platform],
+      `select * from (
+         select distinct on (o.device_id, o.strategy_id)
+                o.device_id, d.token, d.platform, o.strategy_id, o.seq, o.created_at
+           from push_outbox o join push_devices d on d.id = o.device_id
+          where o.status = 'pending'
+          order by o.device_id, o.strategy_id, o.seq desc
+       ) newest
+       order by created_at
+       limit $1`,
+      [limit],
     );
-    return String(rows[0].id);
+    return rows.map((row) => ({
+      deviceId: String(row.device_id),
+      token: String(row.token),
+      platform: row.platform as "android" | "ios",
+      strategyId: Number(row.strategy_id),
+      seq: Number(row.seq),
+    }));
+  }
+
+  async finishPush(push: PendingPush, status: "sent" | "failed"): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query(
+      `update push_outbox set status = $4
+        where device_id = $1 and strategy_id = $2 and seq <= $3 and status = 'pending'`,
+      [push.deviceId, push.strategyId, push.seq, status],
+    );
   }
 
   async followWithDevice(deviceId: string, strategyId: number): Promise<boolean> {

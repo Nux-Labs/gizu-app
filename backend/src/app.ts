@@ -72,6 +72,8 @@ import { StrategyQueries } from "./usecase/strategies/strategy-queries.usecase.t
 import { StrategyRelay } from "./usecase/strategies/strategy-relay.usecase.ts";
 import { SubmitCommitUseCase } from "./usecase/strategies/submit-commit.usecase.ts";
 import { PurchaseSignalUseCase } from "./usecase/strategies/purchase-signal.usecase.ts";
+import { PushDelivery } from "./usecase/strategies/push-delivery.usecase.ts";
+import { FcmPushSender } from "./adapters/push/fcm-push-sender.ts";
 import { X402SignalPaywall } from "./adapters/x402/x402-signal-paywall.ts";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { registerEarlyAccessRoutes } from "./http/routes/early-access.routes.ts";
@@ -237,8 +239,17 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
       ),
     });
     registerPushRoutes(app, strategyStore);
+    // Without a Firebase service account, notifications stay queued until one is configured.
+    const pushes = secret.FCM_SERVICE_ACCOUNT_JSON
+      ? new PushDelivery(strategyStore, new FcmPushSender(secret.FCM_SERVICE_ACCOUNT_JSON), (event) =>
+          app.log.info({ event: "strategy.push", ...event }, "strategy push"),
+        )
+      : null;
     strategyTimer = setInterval(() => {
-      void relay.runOnce().catch(() => app.log.error({ code: "STRATEGY_WORKER_FAILED" }, "strategy worker failed"));
+      void relay
+        .runOnce()
+        .then(() => pushes?.runOnce())
+        .catch(() => app.log.error({ code: "STRATEGY_WORKER_FAILED" }, "strategy worker failed"));
     }, STRATEGY_WORKER_INTERVAL_MS);
     strategyTimer.unref();
   }
