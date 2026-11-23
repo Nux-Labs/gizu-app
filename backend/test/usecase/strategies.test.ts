@@ -129,6 +129,9 @@ class MemoryStore implements StrategyStore {
   async followWithDevice() { return true; }
   async removePushDevice() {}
   async queueStrategyPush(strategyId: number, seq: number) { this.pushes.push({ strategyId, seq }); return 1; }
+  async queuePricePush() { return 0; }
+  async priceChanges() { return []; }
+  async addPriceChange() { return true; }
   async withWorkerLock(work: () => Promise<void>) { await work(); return true; }
   async pendingPushes() { return []; }
   async finishPush() {}

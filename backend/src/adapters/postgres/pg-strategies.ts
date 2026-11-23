@@ -7,6 +7,7 @@ import type {
   StrategyCommitInsert,
   StrategyCommitRecord,
   StrategyCommitStatus,
+  StrategyPriceChange,
   StrategyPriceEdge,
   StrategyPriceSnapshot,
   StrategyRecord,
@@ -223,6 +224,44 @@ export class PgStrategies implements StrategyStore {
     }));
   }
 
+  async priceChanges(strategyIds: readonly number[]): Promise<StrategyPriceChange[]> {
+    await this.ensureSchema();
+    if (strategyIds.length === 0) return [];
+    const { rows } = await this.pool.query(
+      `select * from strategy_price_changes where strategy_id = any($1) order by strategy_id, version`,
+      [strategyIds],
+    );
+    return rows.map((row: Row) => ({
+      strategyId: Number(row.strategy_id),
+      version: Number(row.version),
+      monthlyPriceAtoms: String(row.monthly_price_atoms),
+      signalPriceAtoms: String(row.signal_price_atoms),
+      signature: row.signature as Hex,
+      deadline: Number(row.deadline),
+      at: row.changed_at as Date,
+    }));
+  }
+
+  async addPriceChange(change: StrategyPriceChange): Promise<boolean> {
+    await this.ensureSchema();
+    const { rowCount } = await this.pool.query(
+      `insert into strategy_price_changes
+         (strategy_id, version, monthly_price_atoms, signal_price_atoms, signature, deadline, changed_at)
+       values ($1, $2, $3, $4, $5, $6, $7)
+       on conflict do nothing`,
+      [
+        change.strategyId,
+        change.version,
+        change.monthlyPriceAtoms,
+        change.signalPriceAtoms,
+        change.signature,
+        change.deadline,
+        change.at,
+      ],
+    );
+    return rowCount === 1;
+  }
+
   async addTrialSubscription(strategyId: number, keyHash: Hex, expiresAt: Date): Promise<boolean> {
     await this.ensureSchema();
     // The row lock serializes sign-ups. The count must be a separate statement: under READ
@@ -395,6 +434,10 @@ export class PgStrategies implements StrategyStore {
     return rowCount ?? 0;
   }
 
+  async queuePricePush(strategyId: number, version: number): Promise<number> {
+    return this.queueStrategyPush(strategyId, -version);
+  }
+
   async withWorkerLock(work: () => Promise<void>): Promise<boolean> {
     await this.ensureSchema();
     if (!this.connections) {
@@ -429,6 +472,11 @@ export class PgStrategies implements StrategyStore {
       // A client that may still hold the lock is destroyed rather than returned to the pool.
       client.release(broken);
     }
+  }
+
+  /** Resolves once the strategy tables exist; tables that reference them wait for it. */
+  ready(): Promise<void> {
+    return this.ensureSchema();
   }
 
   private ensureSchema(): Promise<void> {
@@ -507,6 +555,16 @@ export class PgStrategies implements StrategyStore {
             status text not null default 'pending' check (status in ('pending', 'sent', 'failed')),
             created_at timestamptz not null default now(),
             unique (device_id, strategy_id, seq)
+          );
+          create table if not exists strategy_price_changes (
+            strategy_id bigint not null references strategies(id),
+            version integer not null check (version > 0),
+            monthly_price_atoms numeric(78, 0) not null check (monthly_price_atoms >= 0),
+            signal_price_atoms numeric(78, 0) not null check (signal_price_atoms >= 0),
+            signature text not null,
+            deadline bigint not null,
+            changed_at timestamptz not null,
+            primary key (strategy_id, version)
           );
         `)
         .then(() => {})

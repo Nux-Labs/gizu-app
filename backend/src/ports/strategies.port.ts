@@ -3,6 +3,7 @@ import type {
   AssetPrices,
   SealedStrategyAsset,
   StrategyMetadata,
+  StrategyPriceVersion,
   StrategyRegistryChainId,
 } from "../domain/strategy.ts";
 
@@ -46,6 +47,13 @@ export type StrategyPriceSnapshot = {
   takenAt: Date;
 };
 
+/** An accepted price change (version 1 and up); version 0 lives in the strategy's metadata. */
+export type StrategyPriceChange = StrategyPriceVersion & {
+  strategyId: number;
+  signature: Hex;
+  deadline: number;
+};
+
 export type StrategyCommitInsert = Omit<
   StrategyCommitRecord,
   "status" | "commitTx" | "committedAt" | "revealTx" | "revealedAt"
@@ -74,6 +82,10 @@ export interface StrategyStore {
   markRevealed(strategyId: number, seq: number, tx: Hex | null, revealedAt: Date): Promise<void>;
   saveSnapshot(snapshot: StrategyPriceSnapshot): Promise<void>;
   snapshots(strategyIds: readonly number[]): Promise<StrategyPriceSnapshot[]>;
+  /** Price changes of the given strategies, oldest version first. */
+  priceChanges(strategyIds: readonly number[]): Promise<StrategyPriceChange[]>;
+  /** False when that version is already taken. */
+  addPriceChange(change: StrategyPriceChange): Promise<boolean>;
   /** Adds a trial seat unless every seat is taken; returns false when full. */
   addTrialSubscription(strategyId: number, keyHash: Hex, expiresAt: Date): Promise<boolean>;
   hasSubscription(strategyId: number, keyHash: Hex, now: Date): Promise<boolean>;
@@ -96,6 +108,11 @@ export interface StrategyStore {
   removePushDevice(deviceId: string): Promise<void>;
   /** Queues one neutral notification per device following the strategy. */
   queueStrategyPush(strategyId: number, seq: number): Promise<number>;
+  /**
+   * Queues the same neutral notification for a price change. It is queued under sequence number
+   * `-version`, so it never collides with an update and collapses with them on delivery.
+   */
+  queuePricePush(strategyId: number, version: number): Promise<number>;
   /** Pending notifications, only the newest update per device and strategy. */
   pendingPushes(limit: number): Promise<PendingPush[]>;
   /** Settles a delivery and every older pending update it supersedes for that device and strategy. */

@@ -7,6 +7,7 @@ import { RobinhoodPlanFailure } from "../adapters/earn/robinhood-plan-error.ts";
 import { ExitSnapshotFailure } from "../adapters/earn/exit-snapshot-error.ts";
 import { InfrastructureError } from "../domain/errors/infrastructure-error.ts";
 import { NotFoundError } from "../domain/errors/not-found-error.ts";
+import { StatusDomainError } from "../domain/errors/status-error.ts";
 
 export function mapRequestError(
   error: FastifyError,
@@ -29,7 +30,7 @@ export function mapRequestError(
     const status =
       error instanceof NotFoundError
         ? 404
-        : error instanceof InfrastructureError
+        : error instanceof StatusDomainError || error instanceof InfrastructureError
           ? error.statusCode
           : error instanceof DomainError
             ? 400
@@ -75,6 +76,10 @@ export function mapRequestError(
     );
   if (error instanceof NotFoundError) {
     return reply.code(404).send({ code: error.code, message: error.message });
+  }
+  if (error instanceof StatusDomainError) {
+    if (error.statusCode === 429) reply.header("Retry-After", 60);
+    return reply.code(error.statusCode).send({ code: error.code, message: error.message });
   }
   if (error instanceof DomainError) {
     return reply.code(400).send({ code: error.code, message: error.message });

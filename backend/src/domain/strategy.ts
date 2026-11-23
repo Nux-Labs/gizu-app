@@ -211,6 +211,80 @@ export async function commitSigner(input: {
   });
 }
 
+/** A price change applies to new subscriptions and agent signals; seats and embargo never change. */
+export const STRATEGY_PRICE_CHANGE_INTERVAL_SECONDS = 7 * 86_400;
+/** Signatures relayed or verified by the backend expire within an hour. */
+export const STRATEGY_SIGNATURE_MAX_AHEAD_SECONDS = 3_600;
+
+/** Verified by the backend only; the registry never sees it. */
+export const updatePriceTypes = {
+  UpdatePrice: [
+    { name: "strategyId", type: "uint256" },
+    { name: "version", type: "uint64" },
+    { name: "monthlyPriceAtoms", type: "uint64" },
+    { name: "signalPriceAtoms", type: "uint64" },
+    { name: "deadline", type: "uint64" },
+  ],
+} as const;
+
+export async function updatePriceSigner(input: {
+  chainId: StrategyRegistryChainId;
+  registry: Address;
+  strategyId: bigint;
+  version: number;
+  monthlyPriceAtoms: string;
+  signalPriceAtoms: string;
+  deadline: number;
+  signature: Hex;
+}): Promise<Address> {
+  assertRegistrySignature(input.signature);
+  return recoverTypedDataAddress({
+    domain: registryDomain(input.chainId, input.registry),
+    types: updatePriceTypes,
+    primaryType: "UpdatePrice",
+    message: {
+      strategyId: input.strategyId,
+      version: BigInt(input.version),
+      monthlyPriceAtoms: BigInt(input.monthlyPriceAtoms),
+      signalPriceAtoms: BigInt(input.signalPriceAtoms),
+      deadline: BigInt(input.deadline),
+    },
+    signature: input.signature,
+  });
+}
+
+/** Version 0 is the creation terms in the metadata; each accepted change adds one. */
+export type StrategyPriceVersion = {
+  version: number;
+  monthlyPriceAtoms: string;
+  signalPriceAtoms: string;
+  at: Date;
+};
+
+/** Every price version, oldest first, starting with the creation terms. */
+export function strategyPriceHistory(
+  strategy: { metadata: StrategyMetadata; createdAt: Date },
+  changes: readonly StrategyPriceVersion[],
+): StrategyPriceVersion[] {
+  return [
+    {
+      version: 0,
+      monthlyPriceAtoms: strategy.metadata.monthlyPriceAtoms,
+      signalPriceAtoms: strategy.metadata.signalPriceAtoms,
+      at: strategy.createdAt,
+    },
+    ...changes.filter((change) => change.version > 0).sort((a, b) => a.version - b.version),
+  ];
+}
+
+/** When the next change is allowed, or null when it is allowed at `now`. */
+export function priceChangeAllowedAt(history: readonly StrategyPriceVersion[], now: Date): Date | null {
+  const last = history.at(-1);
+  if (!last || last.version === 0) return null;
+  const allowed = new Date(last.at.getTime() + STRATEGY_PRICE_CHANGE_INTERVAL_SECONDS * 1000);
+  return allowed.getTime() > now.getTime() ? allowed : null;
+}
+
 /** USD prices keyed by asset id; null when a price was unavailable at that moment. */
 export type AssetPrices = Readonly<Record<Hex, number | null>>;
 export type StrategyPeriod = {
