@@ -43,6 +43,8 @@ function build() {
         return { kind: "payment-required", header: "payment-offer", body: { x402Version: 2, accepts: [] } };
       },
     },
+    prices: { execute: async () => {} },
+    sessions: { authenticate: async () => null },
   });
   registerPushRoutes(app, {
     registerPushDevice: async () => "6f1b1d4e-2a2b-4c4d-8e8f-0a1b2c3d4e5f",
@@ -179,12 +181,15 @@ test("strategy creation is limited per IP and in total, since it spends relayer 
           paymentResponse: null,
         }),
       },
+      prices: { execute: async () => {} },
+      sessions: { authenticate: async () => null },
     },
     {
       create: { perIp: 2, total: 3, windowMs: 60_000 },
       commit: { perIp: 1, windowMs: 60_000 },
       subscribe: { perIp: 1, windowMs: 60_000 },
       signal: { perIp: 1, windowMs: 60_000 },
+      price: { perIp: 1, windowMs: 60_000 },
     },
   );
   app.setErrorHandler(mapRequestError);

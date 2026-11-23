@@ -1,8 +1,10 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "@fastify/type-provider-zod";
 import { getAddress, type Address, type Hex } from "viem";
 import { z } from "zod";
 import { rateLimit, type RateLimit } from "../rate-limit.ts";
+import { optionalSession, type SessionLookup } from "../social-auth.ts";
+import type { ChangePriceUseCase } from "../../usecase/strategies/change-price.usecase.ts";
 import type { CreateStrategyUseCase } from "../../usecase/strategies/create-strategy.usecase.ts";
 import type { PurchaseSignalUseCase } from "../../usecase/strategies/purchase-signal.usecase.ts";
 import type { StrategyQueries } from "../../usecase/strategies/strategy-queries.usecase.ts";
@@ -59,6 +61,16 @@ const commitSchema = z
   })
   .strict();
 
+const priceSchema = z
+  .object({
+    version: z.number().int().positive().max(2 ** 31 - 1),
+    monthlyPriceAtoms: atoms,
+    signalPriceAtoms: atoms,
+    deadline: z.number().int().positive(),
+    signature,
+  })
+  .strict();
+
 const idParams = z.object({ id: z.coerce.number().int().positive() });
 const listQuery = z.object({
   signers: z
@@ -70,13 +82,14 @@ const listQuery = z.object({
 
 const HOUR_MS = 3_600_000;
 /** Creation and commitments spend relayer gas; trial seats are scarce. */
-export const strategyRouteLimits: Record<"create" | "commit" | "subscribe" | "signal", RateLimit> = {
+export const strategyRouteLimits: Record<"create" | "commit" | "subscribe" | "signal" | "price", RateLimit> = {
   create: { perIp: 10, total: 100, windowMs: HOUR_MS },
   commit: { perIp: 60, total: 600, windowMs: HOUR_MS },
   // Seats are scarce and a trial reveals the current basket, so all callers share a cap too.
   subscribe: { perIp: 20, total: 200, windowMs: HOUR_MS },
   // Paid reads call the facilitator; the total keeps junk payments from exhausting its quota.
   signal: { perIp: 30, total: 600, windowMs: 60_000 },
+  price: { perIp: 20, windowMs: HOUR_MS },
 };
 
 export function registerStrategyRoutes(
@@ -86,6 +99,9 @@ export function registerStrategyRoutes(
     submit: Pick<SubmitCommitUseCase, "execute">;
     queries: Pick<StrategyQueries, "list" | "detail" | "subscribe">;
     purchase: Pick<PurchaseSignalUseCase, "execute">;
+    prices: Pick<ChangePriceUseCase, "execute">;
+    /** Reads accept an optional social session to fill the `liked` flags. */
+    sessions: SessionLookup;
   },
   limits = strategyRouteLimits,
 ) {
@@ -94,13 +110,28 @@ export function registerStrategyRoutes(
   const limitCommit = rateLimit(app, limits.commit);
   const limitSubscribe = rateLimit(app, limits.subscribe);
   const limitSignal = rateLimit(app, limits.signal);
+  const limitPrice = rateLimit(app, limits.price);
+  const viewer = async (request: FastifyRequest, reply: FastifyReply) =>
+    (await optionalSession(request, reply, deps.sessions))?.account ?? null;
 
-  routes.get("/v1/strategies", { schema: { querystring: listQuery } }, async (request) => ({
-    list: await deps.queries.list(request.query.signers),
+  routes.get("/v1/strategies", { schema: { querystring: listQuery } }, async (request, reply) => ({
+    list: await deps.queries.list(request.query.signers, await viewer(request, reply)),
   }));
 
-  routes.get("/v1/strategies/:id", { schema: { params: idParams } }, async (request) =>
-    deps.queries.detail(request.params.id),
+  routes.get("/v1/strategies/:id", { schema: { params: idParams } }, async (request, reply) =>
+    deps.queries.detail(request.params.id, await viewer(request, reply)),
+  );
+
+  // Signed by the strategy key as EIP-712 UpdatePrice; answers with the updated detail.
+  routes.post(
+    "/v1/strategies/:id/prices",
+    { schema: { params: idParams, body: priceSchema }, onRequest: limitPrice },
+    async (request, reply) => {
+      await deps.prices.execute(request.params.id, request.body);
+      return reply
+        .code(201)
+        .send(await deps.queries.detail(request.params.id, await viewer(request, reply)));
+    },
   );
 
   routes.post(

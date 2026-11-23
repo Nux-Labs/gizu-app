@@ -64,6 +64,11 @@ import { robinhoodChain } from "./adapters/earn/robinhood-vault.ts";
 import { evmReadTransport } from "./adapters/evm/read-transport.ts";
 import { ViemStrategyRegistry } from "./adapters/evm/strategy-registry.ts";
 import { PgStrategies } from "./adapters/postgres/pg-strategies.ts";
+import { PgSocial } from "./adapters/postgres/pg-social.ts";
+import { registerSocialRoutes } from "./http/routes/social.routes.ts";
+import { SocialSessions } from "./usecase/social/social-sessions.usecase.ts";
+import { StrategySocial } from "./usecase/social/strategy-social.usecase.ts";
+import { ChangePriceUseCase } from "./usecase/strategies/change-price.usecase.ts";
 import { StrategyPrices, type VaultReader } from "./adapters/strategies/strategy-prices.ts";
 import { registerPushRoutes } from "./http/routes/push.routes.ts";
 import { registerStrategyRoutes } from "./http/routes/strategies.routes.ts";
@@ -217,7 +222,9 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
       new StrategyPrices(stockDetails, vaultReaders),
       (event) => app.log.info({ event: "strategy.relay", ...event }, "strategy relay"),
     );
-    const queries = new StrategyQueries(strategyStore, registry);
+    const socialStore = new PgSocial(pgPool, strategyStore, pgPool);
+    const queries = new StrategyQueries(strategyStore, registry, socialStore);
+    const sessions = new SocialSessions(socialStore, strategyStore, registry.chainId);
     // Agents buy signals with x402 in the registry network's USDC; without a payee only trial
     // subscriber keys can read signals.
     const paywall = secret.X402_PAY_TO
@@ -237,6 +244,15 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
       purchase: new PurchaseSignalUseCase(strategyStore, queries, paywall, (event) =>
         app.log.error({ event: "strategy.payment", ...event }, "settled payment not booked"),
       ),
+      prices: new ChangePriceUseCase(strategyStore, registry, (event) =>
+        app.log.error({ event: "strategy.price", ...event }, "price change notification not queued"),
+      ),
+      sessions,
+    });
+    registerSocialRoutes(app, {
+      sessions,
+      social: new StrategySocial(socialStore, strategyStore),
+      queries,
     });
     registerPushRoutes(app, strategyStore);
     // Without a Firebase service account, notifications stay queued until one is configured.

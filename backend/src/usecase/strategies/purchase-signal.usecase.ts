@@ -7,6 +7,7 @@ import {
   type StrategyStore,
 } from "../../ports/strategies.port.ts";
 import {
+  currentPrices,
   paymentRequired,
   type StrategyQueries,
   type StrategySignal,
@@ -31,7 +32,7 @@ export type SignalPaymentLog = (event: {
  */
 export class PurchaseSignalUseCase {
   constructor(
-    private readonly store: Pick<StrategyStore, "strategy" | "recordPayment">,
+    private readonly store: Pick<StrategyStore, "strategy" | "priceChanges" | "recordPayment">,
     private readonly queries: Pick<StrategyQueries, "signal" | "latestSignal">,
     private readonly paywall: SignalPaywall | null,
     private readonly log: SignalPaymentLog = () => {},
@@ -64,7 +65,8 @@ export class PurchaseSignalUseCase {
     const signal = await this.queries.latestSignal(strategyId);
     if (!signal.signal)
       throw new DomainError("STRATEGY_NO_SIGNAL", "This strategy has not sealed a basket yet.");
-    const price = strategy.metadata.signalPriceAtoms;
+    // A price change applies to agent signals from the moment it is accepted.
+    const price = currentPrices(strategy, await this.store.priceChanges([strategyId])).signalPriceAtoms;
     if (price === "0") return { kind: "signal", signal, paymentResponse: null };
     if (!this.paywall) throw paymentRequired();
 
