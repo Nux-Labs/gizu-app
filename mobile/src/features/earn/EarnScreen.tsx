@@ -27,8 +27,18 @@ import { catalogEarnProfile } from "@/domain/earn/catalog";
 import { depositBudgetAtoms } from "./useDepositJourney";
 
 export function EarnScreen({ route }: NativeStackScreenProps<RootStackParamList, "Earn">) {
-  return route.params?.opportunityId ? (
-    <CatalogEarnEntry opportunityId={route.params.opportunityId} />
+  const params = route.params;
+  if (params && "profileId" in params) {
+    // A copied strategy's vault share arrives with its amount; the person still reviews it.
+    const amount = params.amount && depositBudgetAtoms(params.amount) ? params.amount : "";
+    return params.profileId === "robinhood-usdg" ? (
+      <DepositJourneyScreen profileId={params.profileId} initialAmount={amount} />
+    ) : (
+      <CatalogEarnStart profile={params.profileId} initialAmount={amount} />
+    );
+  }
+  return params?.opportunityId ? (
+    <CatalogEarnEntry opportunityId={params.opportunityId} />
   ) : (
     <EarnJourney />
   );
@@ -74,9 +84,15 @@ function CatalogEarnEntry({ opportunityId }: { opportunityId: string }) {
 }
 
 /** Each new catalog Deposit request starts a fresh cycle; existing investments stay intact. */
-function CatalogEarnStart({ profile }: { profile: EarnProfileId }) {
+function CatalogEarnStart({
+  profile,
+  initialAmount = "",
+}: {
+  profile: EarnProfileId;
+  initialAmount?: string;
+}) {
   const earn = useEarn();
-  const [amount, setAmount] = useState("");
+  const [amount, setAmount] = useState(initialAmount);
   const [initialIntentId, setInitialIntentId] = useState<string | null>(null);
   const [requested, setRequested] = useState(false);
   const intent = earn.state && "intentId" in earn.state ? earn.state : null;

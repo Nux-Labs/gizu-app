@@ -4,6 +4,7 @@ import type {
   StrategyCommitResult,
   StrategyDetail,
   StrategyService,
+  StrategySignal,
 } from "@/domain/strategies";
 import { ApiError, getJson, sendJson } from "./http";
 
@@ -20,6 +21,8 @@ const messages: Record<string, string> = {
   STRATEGY_COMMIT_REJECTED: "The registry did not accept this update. Please try again.",
   STRATEGY_REGISTRY_REJECTED: "The registry did not accept this request. Please try again.",
   STRATEGY_INVALID: "This basket includes an asset strategies don't support.",
+  PAYMENT_REQUIRED: "Your trial for this strategy has ended.",
+  NOT_FOUND: "This strategy no longer exists.",
   STRATEGY_EXISTS: "A strategy with other terms already uses this key.",
   TOO_MANY_REQUESTS: "Too many requests. Please try again shortly.",
 };
@@ -149,6 +152,37 @@ export function createStrategyService(baseUrl: string): StrategyService {
       )
         throw new Error("Invalid strategy response.");
       return body as StrategyCommitResult;
+    },
+    async subscribe(id) {
+      const body = await sendJson("POST", url(`/v1/strategies/${id}/subscriptions`), undefined, {
+        unavailable: UNAVAILABLE,
+      });
+      if (!isRecord(body) || !isWord(body.subscriberKey) || typeof body.expiresAt !== "string")
+        throw new Error("Invalid strategy response.");
+      return { subscriberKey: body.subscriberKey, expiresAt: body.expiresAt };
+    },
+    async signal(id, subscriberKey, abort) {
+      const body = await sendJson("GET", url(`/v1/strategies/${id}/signal`), undefined, {
+        ...(abort ? { signal: abort } : {}),
+        headers: { "x-subscriber-key": subscriberKey },
+        unavailable: UNAVAILABLE,
+      });
+      if (!isRecord(body) || body.strategyId !== id) throw new Error("Invalid strategy response.");
+      const signal = body.signal;
+      if (signal === null) return null;
+      if (
+        !isRecord(signal) ||
+        !isInt(signal.seq) ||
+        !isWord(signal.commitment) ||
+        !isNullableString(signal.committedAt) ||
+        !isNullableString(signal.commitTx) ||
+        !Array.isArray(signal.assets) ||
+        signal.assets.length === 0 ||
+        !signal.assets.every(isSealedAsset) ||
+        !isWord(signal.salt)
+      )
+        throw new Error("Invalid strategy response.");
+      return signal as StrategySignal;
     },
   };
 }

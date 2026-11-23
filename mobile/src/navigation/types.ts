@@ -16,8 +16,15 @@ export type RootStackParamList = {
   VaultDetail: { id: string };
   OpportunityDetail: { id: string };
   Activity: undefined;
-  Earn: { opportunityId: string } | undefined;
+  /** `profileId` opens that vault's deposit with `amount` (USDC, for example "25.5") filled in. */
+  Earn:
+    | { opportunityId: string }
+    | { profileId: import("@/domain/earn/types").EarnProfileId; amount?: string }
+    | undefined;
   Strategies: undefined;
+  StrategyExplore: undefined;
+  /** Deep links pass the id as text; the screen accepts only a positive integer. */
+  StrategyDetail: { id: number };
   /** Without `strategyId` it publishes a new strategy; with it, it seals an update. */
   StrategyPublish: { strategyId?: number } | undefined;
   EarnInvestment: { intentId: string };

@@ -32,6 +32,7 @@ import colors from "@/theme/colors.json";
 import { SessionProvider, useSession } from "./SessionProvider";
 import { type AccessService, type WalletSession } from "@/services/access";
 import { createLinking } from "@/navigation/linking";
+import { StrategyPushSync } from "@/features/strategies/StrategyPushSync";
 import type { RootStackParamList } from "@/navigation/types";
 import { ToastHost } from "@/components/organisms/toast/ToastHost";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -129,6 +130,7 @@ function AppNavigation({
             <OpportunityServiceContext.Provider value={opportunityService}>
               <AccountProvider {...accountDependencies}>
                 <NotificationProvider service={emptyNotificationService}>
+                  <StrategyPushSync />
                   <RootNavigator />
                 </NotificationProvider>
               </AccountProvider>

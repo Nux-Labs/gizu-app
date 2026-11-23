@@ -47,11 +47,14 @@ function shareAmount(atoms: string, decimals: number) {
 export function DepositJourneyScreen({
   profileId,
   savedJourneyId,
+  initialAmount,
 }: {
   profileId: EarnProfileId;
   savedJourneyId?: string;
+  /** Fills the amount of a new deposit; a saved journey keeps its own. */
+  initialAmount?: string;
 }) {
-  const v = useDepositJourney(profileId, savedJourneyId),
+  const v = useDepositJourney(profileId, savedJourneyId, initialAmount),
     navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const row = v.snapshot,
     review = row?.review,

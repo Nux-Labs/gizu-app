@@ -34,11 +34,11 @@ export class ApiError extends Error {
 }
 
 /**
- * JSON request with a body and a caller-chosen timeout. Writes that wait for an on-chain
- * confirmation need longer than reads.
+ * JSON request with optional body and headers and a caller-chosen timeout, failing with the
+ * server's error code. Writes that wait for an on-chain confirmation need longer than reads.
  */
 export async function sendJson(
-  method: "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   url: string,
   body: unknown,
   options: {

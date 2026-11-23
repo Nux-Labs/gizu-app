@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { ExpoConfig } from "expo/config";
 import { identity, validatePasskeyMode } from "./src/config/passkeys";
 
@@ -6,6 +7,10 @@ import { distributionConfig } from "./src/config/distribution";
 validatePasskeyMode(process.env.EXPO_PUBLIC_PASSKEY_MODE);
 
 const { release } = distributionConfig(process.env);
+
+// Firebase client config for strategy notifications; kept out of git. Without it the app builds
+// and runs, and strategy notifications are simply unavailable.
+const googleServicesFile = process.env.GOOGLE_SERVICES_JSON ?? "./google-services.json";
 
 const config: ExpoConfig = {
   name: "Gizu",
@@ -30,7 +35,11 @@ const config: ExpoConfig = {
     },
     associatedDomains: [`webcredentials:${identity.rpId}`],
   },
-  android: { package: identity.androidPackage, versionCode: 12 },
+  android: {
+    package: identity.androidPackage,
+    versionCode: 12,
+    ...(existsSync(googleServicesFile) ? { googleServicesFile } : {}),
+  },
   plugins: [
     [
       "expo-splash-screen",
@@ -60,6 +69,8 @@ const config: ExpoConfig = {
       },
     ],
     "expo-localization",
+    "expo-secure-store",
+    "expo-notifications",
     "./plugins/withAndroidDevelopmentSigning.cjs",
     "./plugins/withStoredSignerIos.cjs",
   ],

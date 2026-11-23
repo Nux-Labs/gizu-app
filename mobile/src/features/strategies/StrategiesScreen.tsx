@@ -5,19 +5,12 @@ import { Button } from "@/components/atoms/Button";
 import { Typography } from "@/components/atoms/Typography";
 import { Notice } from "@/components/molecules/Notice";
 import { Screen } from "@/components/templates/Screen";
-import { formatEmbargo, formatPrice, type StrategyCard } from "@/domain/strategies";
+import { formatEmbargo, formatPrice, strategyReturnText } from "@/domain/strategies";
 import { BackAction } from "@/navigation/BackAction";
 import type { RootStackParamList } from "@/navigation/types";
 import { useStrategyOwner } from "./useStrategyOwner";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Strategies">;
-
-function returnText(card: StrategyCard): string {
-  const bps = card.performance.cumulativeReturnBps;
-  if (bps === null) return "Return verified after the first reveal";
-  const sign = bps > 0 ? "+" : "";
-  return `${sign}${(bps / 100).toFixed(2)}% verified over ${card.performance.closedPeriods} periods`;
-}
 
 /** The strategies this wallet sells, found from its own strategy keys. */
 export function StrategiesScreen({ navigation }: Props) {
@@ -62,7 +55,7 @@ export function StrategiesScreen({ navigation }: Props) {
             className="gap-2 rounded-2xl border border-glassBorder bg-glass px-4 py-4"
           >
             <Typography variant="cardTitle">{card.name}</Typography>
-            <Typography variant="rowValue">{returnText(card)}</Typography>
+            <Typography variant="rowValue">{strategyReturnText(card)}</Typography>
             <Typography variant="micro">
               {card.seatsTaken}/{card.seats} seats · {card.commits} updates sealed · {card.revealed}{" "}
               revealed · {formatEmbargo(card.embargoSeconds)} embargo

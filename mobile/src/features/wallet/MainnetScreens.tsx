@@ -353,11 +353,18 @@ export function MainnetPortfolioScreen({
       )}
       {/* Home Earn shortcut is temporarily hidden; the Earn flow remains available. */}
       {strategies && (
-        <Button
-          label="Sell your strategy"
-          variant="secondary"
-          onPress={() => root.navigate("Strategies")}
-        />
+        <>
+          <Button
+            label="Follow a strategy"
+            variant="secondary"
+            onPress={() => root.navigate("StrategyExplore")}
+          />
+          <Button
+            label="Sell your strategy"
+            variant="secondary"
+            onPress={() => root.navigate("Strategies")}
+          />
+        </>
       )}
       <OwnedBalances
         assets={assets}

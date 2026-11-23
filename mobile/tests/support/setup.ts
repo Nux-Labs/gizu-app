@@ -6,6 +6,29 @@ jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
 );
 jest.mock("expo-clipboard", () => ({ setStringAsync: jest.fn().mockResolvedValue(true) }));
+// The platform keystore, as an in-memory map cleared between tests.
+jest.mock("expo-secure-store", () => {
+  const items = new Map<string, string>();
+  return {
+    __items: items,
+    getItemAsync: jest.fn(async (key: string) => items.get(key) ?? null),
+    setItemAsync: jest.fn(async (key: string, value: string) => void items.set(key, value)),
+    deleteItemAsync: jest.fn(async (key: string) => void items.delete(key)),
+  };
+});
+// Notifications are a native boundary; tests drive tokens and taps through injected platforms.
+jest.mock("expo-notifications", () => ({
+  AndroidImportance: { DEFAULT: 3 },
+  setNotificationHandler: jest.fn(),
+  setNotificationChannelAsync: jest.fn(async () => null),
+  getPermissionsAsync: jest.fn(async () => ({ granted: false, canAskAgain: true })),
+  requestPermissionsAsync: jest.fn(async () => ({ granted: false, canAskAgain: false })),
+  getDevicePushTokenAsync: jest.fn(async () => {
+    throw new Error("No Firebase in tests");
+  }),
+  getLastNotificationResponse: jest.fn(() => null),
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+}));
 jest.mock("react-native-safe-area-context", () => mockSafeAreaContext);
 // Native animation runtime is unavailable in Jest.
 jest.mock("react-native-reanimated", () => ({
@@ -46,4 +69,6 @@ jest.mock("@shopify/react-native-skia", () => ({
 beforeEach(async () => {
   jest.clearAllMocks();
   await AsyncStorage.clear();
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  (require("expo-secure-store") as { __items: Map<string, string> }).__items.clear();
 });

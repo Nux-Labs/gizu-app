@@ -39,7 +39,11 @@ export function depositBudgetAtoms(text: string): string | null {
   return atoms > 10000n ? atoms.toString() : null;
 }
 const running = ["authorizing", "funding", "settlingCredit", "payouts", "depositing"];
-export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: string) {
+export function useDepositJourney(
+  profileId: EarnProfileId,
+  savedJourneyId?: string,
+  initialAmount = "",
+) {
   const isFocused = useIsFocused();
   const wallet = useFundingWallet(),
     { depositJourney: service } = useEarn();
@@ -48,7 +52,7 @@ export function useDepositJourney(profileId: EarnProfileId, savedJourneyId?: str
     [wallet.session.walletId, wallet.session.address],
   );
   const funding = wallet.depositBalance ?? { balance: wallet.balance, breakdown: null };
-  const [amount, setAmountText] = useState(""),
+  const [amount, setAmountText] = useState(initialAmount),
     [snapshot, setSnapshot] = useState<DepositSnapshot | null>(null),
     [available, setAvailable] = useState(false),
     [discovered, setDiscovered] = useState(false),

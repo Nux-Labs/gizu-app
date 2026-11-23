@@ -8,6 +8,9 @@ tsconfig.tsbuildinfo
 .env
 .env.*
 !.env.example
+# Firebase client config (strategy notifications) stays with the operator.
+google-services.json
+GoogleService-Info.plist
 coverage/
 
 # OpenTofu configuration, state and plans stay on the operator workstation.

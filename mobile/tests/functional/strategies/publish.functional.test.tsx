@@ -133,6 +133,8 @@ function setup(initial: StrategyCard[] = []) {
       listed = listed.map((c) => ({ ...c, commits: request.seq + 1 }));
       return { seq: request.seq, status: "committed" as const, commitTx: word("c") };
     }),
+    subscribe: jest.fn(),
+    signal: jest.fn(),
   } satisfies StrategyService;
   const signer = {
     strategyAddresses: jest.fn(async () => addresses),

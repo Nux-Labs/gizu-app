@@ -216,9 +216,10 @@ export function formatWeight(weightBps: number): string {
 }
 
 export function formatEmbargo(seconds: number): string {
-  if (seconds % 86_400 === 0) return `${seconds / 86_400} days`;
-  if (seconds % 3_600 === 0) return `${seconds / 3_600} hours`;
-  return `${Math.round(seconds / 60)} minutes`;
+  const count = (value: number, unit: string) => `${value} ${unit}${value === 1 ? "" : "s"}`;
+  if (seconds % 86_400 === 0) return count(seconds / 86_400, "day");
+  if (seconds % 3_600 === 0) return count(seconds / 3_600, "hour");
+  return count(Math.round(seconds / 60), "minute");
 }
 
 export type StrategyPerformance = {
@@ -294,11 +295,62 @@ export type StrategyCommitResult = {
   commitTx: string | null;
 };
 
+/** A trial seat: the key reads the strategy's current basket until it expires. */
+export type StrategySubscription = { subscriberKey: string; expiresAt: string };
+
+/** The newest sealed basket, as a subscriber receives it. */
+export type StrategySignal = {
+  seq: number;
+  commitment: string;
+  committedAt: string | null;
+  commitTx: string | null;
+  assets: SealedAssetView[];
+  salt: string;
+};
+
 export interface StrategyService {
   list(signers?: readonly string[], signal?: AbortSignal): Promise<StrategyCard[]>;
   detail(id: number, signal?: AbortSignal): Promise<StrategyDetail>;
   create(request: StrategyCreateRequest): Promise<StrategyDetail>;
   commit(id: number, request: StrategyCommitRequest): Promise<StrategyCommitResult>;
+  subscribe(id: number): Promise<StrategySubscription>;
+  /** Null before the strategy seals its first basket. */
+  signal(id: number, subscriberKey: string, abort?: AbortSignal): Promise<StrategySignal | null>;
+}
+
+/** The verified return line on a strategy card. */
+export function strategyReturnText(card: StrategyCard): string {
+  const bps = card.performance.cumulativeReturnBps;
+  if (bps === null) return "Return verified after the first reveal";
+  const sign = bps > 0 ? "+" : "";
+  return `${sign}${(bps / 100).toFixed(2)}% verified over ${card.performance.closedPeriods} periods`;
+}
+
+export function drawdownText(card: StrategyCard): string | null {
+  const bps = card.performance.maxDrawdownBps;
+  return bps === null ? null : `Worst drop ${(Math.abs(bps) / 100).toFixed(2)}%`;
+}
+
+/**
+ * How many revealed updates changed the vault share. Vault moves are slow and costly to follow,
+ * so followers see how often a strategy makes them.
+ */
+export function vaultChanges(history: StrategyDetail["history"]): number {
+  const revealed = history
+    .filter((entry) => entry.revealedAt !== null && entry.assets.length > 0)
+    .sort((a, b) => a.seq - b.seq);
+  let changes = 0;
+  let previous: string | null = null;
+  for (const entry of revealed) {
+    const vaults = entry.assets
+      .filter((asset) => asset.kind === 1)
+      .map((asset) => `${asset.chainId}:${asset.address.toLowerCase()}:${asset.weightBps}`)
+      .sort()
+      .join(",");
+    if (previous !== null && vaults !== previous) changes += 1;
+    previous = vaults;
+  }
+  return changes;
 }
 
 /** A USDC price with cents, for example "$10.00" or "$0.50". */
