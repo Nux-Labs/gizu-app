@@ -306,20 +306,46 @@ test("the feed shows sealed updates without weights, reveals with what changed, 
   expect(screen.getByText(/changed its price to \$12\.00 a month/)).toBeVisible();
 });
 
-test("discover marks your own strategy, ranks only strategies with a record and filters by holding", async () => {
+test("discover ranks by record, sorts and filters from sheets, and searches names and holdings", async () => {
   setup();
   fireEvent.press(await screen.findByRole("tab", { name: "Discover" }));
-  // Two reveals are too few for the ranking by return; your own strategy is always shown.
+  // Neither has the 3 reveals and 14 days a ranking by return needs, so both wait below it.
   const own = await screen.findByRole("button", { name: "Open strategy My basket" });
   expect(within(own).getByText("Yours")).toBeVisible();
   expect(within(own).getByText("New")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Open strategy AI chips" })).toBeNull();
+  expect(screen.getByText("Not ranked yet")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open strategy AI chips" })).toBeVisible();
 
-  fireEvent.press(screen.getByRole("radio", { name: "Most liked" }));
-  expect(await screen.findByRole("button", { name: "Open strategy AI chips" })).toBeVisible();
-  fireEvent.changeText(screen.getByLabelText("Holds an asset"), "aapl");
+  // Sorting is one button that opens a sheet.
+  fireEvent.press(screen.getByRole("button", { name: "Sort: Top return" }));
+  fireEvent.press(await screen.findByRole("radio", { name: "Lowest price" }));
+  expect(await screen.findByRole("button", { name: "Sort: Lowest price" })).toBeVisible();
+  expect(screen.queryByText("Not ranked yet")).toBeNull();
+
+  // Filters are chosen in a sheet that says how many strategies they leave.
+  fireEvent.press(screen.getByRole("button", { name: "Filters" }));
+  fireEvent.press(await screen.findByRole("radio", { name: "Mostly stocks" }));
+  fireEvent.press(screen.getByRole("radio", { name: "Worst drop under 10%" }));
+  fireEvent.press(screen.getByRole("button", { name: "Show 1 strategy" }));
+  expect(await screen.findByRole("button", { name: "Filters, 2 on" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Open strategy AI chips" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Open strategy My basket" })).toBeNull();
+
+  // Each chosen filter shows as a chip that removes it.
+  fireEvent.press(screen.getByRole("button", { name: "Remove filter Mostly stocks" }));
+  fireEvent.press(screen.getByRole("button", { name: "Remove filter Worst drop under 10%" }));
+  expect(await screen.findByRole("button", { name: "Open strategy My basket" })).toBeVisible();
+
+  // Search matches a strategy's name or an asset in its newest revealed basket.
+  fireEvent.changeText(screen.getByLabelText("Search strategies or assets"), "aapl");
+  expect(screen.getByRole("button", { name: "Open strategy AI chips" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Open strategy My basket" })).toBeNull();
+  fireEvent.changeText(screen.getByLabelText("Search strategies or assets"), "my bas");
+  expect(screen.getByRole("button", { name: "Open strategy My basket" })).toBeVisible();
+  fireEvent.changeText(screen.getByLabelText("Search strategies or assets"), "zzz");
+  expect(screen.getByText("No strategy matches these filters.")).toBeVisible();
+  fireEvent.press(screen.getByRole("button", { name: "Clear search and filters" }));
+  expect(await screen.findByRole("button", { name: "Open strategy AI chips" })).toBeVisible();
 });
 
 test("liking signs in once with the passkey, then toggles without asking again", async () => {
