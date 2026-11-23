@@ -60,13 +60,32 @@ valid shared private-read grant; explicit lock also clears that grant.
 - Sealed Strategies signing keys use `m/44'/60'/146'/{registryChainId}'/{index}` for
   registry chains 8453 and 84532 (`core/src/strategy.rs`). They hold no funds and
   only sign the registry's `CreateStrategy` and `Commit` structures for the pinned
-  registry; a relayer submits them. No counter is persisted: the next index is the
-  first derived address the API lists no strategy for, so restore needs no metadata.
-  The app shows the review's terms (name, prices, seats, embargo, network) and, for
-  each update, every asset's pinned label and weight; Rust hashes and validates both
-  before the passkey, and the approval is bound to those hashes. The leaf index is
-  non-hardened, like the Earn branches; the xpub of `146'/{chain}'` never leaves
-  native code.
+  registry, which a relayer submits, the API-only
+  `UpdatePrice(uint256 strategyId,uint64 version,uint64 monthlyPriceAtoms,uint64 signalPriceAtoms,uint64 deadline)`
+  under the same registry domain, and the `OwnerLink` below. One wallet has one
+  strategy: creation and price changes sign with index 0 only (Kotlin `require` and
+  Rust `InvalidInput`). Commitments still accept any index for strategies created
+  before that rule. No counter is persisted, so restore needs no metadata. The app shows the
+  review's terms (name, prices, seats, embargo, network) and, for each update, every
+  asset's pinned label and weight; Rust hashes and validates both before the passkey,
+  and the approval is bound to those hashes. A price change reviews both new prices
+  (each 0–999999999999 USDC base units, `version` ≥ 1, deadline at most an hour
+  ahead) and binds the approval to
+  `strategy-price:v1:{chainId}:{strategyId}:{version}:{monthly}:{signal}`. The leaf
+  index is non-hardened, like the Earn branches; the xpub of `146'/{chain}'` never
+  leaves native code.
+- The Sealed Strategies social key uses `m/44'/60'/147'/{registryChainId}'/0`, only
+  on chains with a pinned registry (84532 today; `core/src/social.rs`). It holds no
+  funds and only identifies a commenter. It signs only
+  `SignIn(address account,bytes32 nonce,uint64 issuedAt)` for its own address, and
+  strategy key 0 signs only `OwnerLink(address account,uint256 strategyId,bytes32 nonce)`
+  binding that address to an owned strategy, both under the domain
+  `{ name: "GizuSocial", version: "1", chainId }` with no verifying contract. JS
+  supplies only the backend's nonce, its `issuedAt` (rejected when more than ten
+  minutes from the device clock) and the optional strategy id; the approval is bound
+  to `social-signin:v1:{chainId}:{nonce}`. Reading the social address needs no
+  passkey. `shared/strategy-social-vectors.json` holds cast-computed addresses,
+  digests and signatures for all three new structures.
 
 Passkeys authorize use of randomly generated local entropy; PRF encrypts backups
 and does not determine addresses. Old signer state/provider passkeys are neither
