@@ -65,7 +65,8 @@ export function portfolioAssetValue(row: OwnedPortfolioAsset, vault = false): st
   return stablecoin ? portfolioAssetAmount(row, vault) : null;
 }
 
-function canonicalRows<T extends OwnedPortfolioAsset>(rows: readonly T[]): T[] {
+/** One row per chain and token, preferring complete, fresh and newer observations. */
+export function canonicalRows<T extends OwnedPortfolioAsset>(rows: readonly T[]): T[] {
   const unique = new Map<string, T>();
   for (const row of rows) {
     const key = `${row.chainId}:${row.token.toLowerCase()}`;

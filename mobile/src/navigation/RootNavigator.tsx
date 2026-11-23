@@ -15,6 +15,8 @@ import { useSession } from "@/application/SessionProvider";
 import { WelcomeScreen } from "@/features/access/WelcomeScreen";
 import { MainTabs } from "./MainTabs";
 import { EarnScreen } from "@/features/earn/EarnScreen";
+import { StrategiesScreen } from "@/features/strategies/StrategiesScreen";
+import { StrategyPublishScreen } from "@/features/strategies/StrategyPublishScreen";
 import type { RootStackParamList } from "./types";
 import { Platform } from "react-native";
 import { durations } from "@/theme/motion";
@@ -49,6 +51,14 @@ export function RootNavigator() {
             component={
               session.kind === "mainnet" ? ConfidentialWithdrawalScreen : UnavailableScreen
             }
+          />
+          <Stack.Screen
+            name="Strategies"
+            component={session.kind === "mainnet" ? StrategiesScreen : UnavailableScreen}
+          />
+          <Stack.Screen
+            name="StrategyPublish"
+            component={session.kind === "mainnet" ? StrategyPublishScreen : UnavailableScreen}
           />
           <Stack.Screen
             name="Earn"

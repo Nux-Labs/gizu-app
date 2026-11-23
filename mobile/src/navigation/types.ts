@@ -17,6 +17,9 @@ export type RootStackParamList = {
   OpportunityDetail: { id: string };
   Activity: undefined;
   Earn: { opportunityId: string } | undefined;
+  Strategies: undefined;
+  /** Without `strategyId` it publishes a new strategy; with it, it seals an update. */
+  StrategyPublish: { strategyId?: number } | undefined;
   EarnInvestment: { intentId: string };
   VaultPosition: { profileId: import("@/domain/earn/types").EarnProfileId; opportunityId?: string };
   VaultWithdrawal: {

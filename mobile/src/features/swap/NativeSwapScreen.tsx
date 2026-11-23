@@ -1,7 +1,9 @@
 import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
 import { useState } from "react";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
-import type { MainTabParamList } from "@/navigation/types";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import type { MainTabParamList, RootStackParamList } from "@/navigation/types";
+import { useStrategySigning } from "@/features/strategies/useStrategySigning";
 import { TextInput, View } from "react-native";
 import { ArrowDown } from "lucide-react-native";
 import { Button } from "@/components/atoms/Button";
@@ -24,8 +26,10 @@ import { useNativeSwap } from "./useNativeSwap";
 
 export function NativeSwapScreen({
   route,
+  navigation,
 }: Partial<BottomTabScreenProps<MainTabParamList, "Exchange">> = {}) {
   const swap = useNativeSwap();
+  const strategySigning = useStrategySigning();
   const [mode, setMode] = useState<"buy" | "sell">("buy");
   const request = route?.params;
   const [sellToken, setSellToken] = useState<string | undefined>();
@@ -86,6 +90,23 @@ export function NativeSwapScreen({
       </View>
       {isFinished(swap.status) && showLast ? (
         <LastSwapSummary status={swap.status} canSell={swap.canSell} />
+      ) : null}
+      {swap.status?.phase === "COMPLETE" && strategySigning && navigation ? (
+        // A strategy owner's trade changes their basket; sealing it for subscribers is one tap away.
+        <View className="flex-row items-center gap-3 rounded-2xl border border-glassBorder bg-glass px-4 py-3">
+          <Typography variant="micro" className="flex-1">
+            Selling a strategy? Send your new weights to your subscribers.
+          </Typography>
+          <Button
+            label="Update subscribers"
+            variant="secondary"
+            onPress={() =>
+              navigation
+                .getParent<NativeStackNavigationProp<RootStackParamList>>()
+                ?.navigate("Strategies")
+            }
+          />
+        </View>
       ) : null}
       {active && swap.status ? <ActiveSwapCard status={swap.status} /> : null}
       {!active && mode === "sell" && (
