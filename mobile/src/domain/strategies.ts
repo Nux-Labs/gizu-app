@@ -104,43 +104,62 @@ function universeSymbol(chainId: number, token: string): string | null {
   return target?.symbol ?? null;
 }
 
-type HeldStock = { row: OwnedPortfolioAsset; value: bigint; symbol: string | null };
+const byValue = (a: { valueAtoms: bigint }, b: { valueAtoms: bigint }) =>
+  b.valueAtoms > a.valueAtoms ? 1 : b.valueAtoms < a.valueAtoms ? -1 : 0;
 
-/** Priced stock rows on stock chains, with their universe symbol when strategies support them. */
-function heldStocks(snapshot: MainnetPortfolioSnapshot): HeldStock[] {
-  return canonicalRows(snapshot.ownedAssets ?? []).flatMap((row) => {
-    if (row.chainId !== 8453 && row.chainId !== 4663) return [];
-    if (!/^0x[0-9a-fA-F]{40}$/.test(row.token)) return [];
+/** Held tokens on the stock chains, other than cash and vault shares. */
+function stockRows(snapshot: MainnetPortfolioSnapshot): OwnedPortfolioAsset[] {
+  return canonicalRows(snapshot.ownedAssets ?? []).filter((row) => {
+    if (row.chainId !== 8453 && row.chainId !== 4663) return false;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(row.token)) return false;
     const key = `${row.chainId}:${row.token.toLowerCase()}`;
-    if (stablecoins.has(key) || vaultTokens.has(key)) return [];
-    const value = portfolioAssetValue(row);
-    if (value === null || BigInt(value) <= 0n) return [];
-    return [{ row, value: BigInt(value), symbol: universeSymbol(row.chainId, row.token) }];
+    return !stablecoins.has(key) && !vaultTokens.has(key);
   });
 }
 
-/** Held stocks strategies cannot include, so the screen can say they were left out. */
-export function unsupportedHoldings(snapshot: MainnetPortfolioSnapshot): string[] {
-  return heldStocks(snapshot)
-    .filter((stock) => stock.symbol === null)
-    .map((stock) => stock.row.symbol);
-}
+export type PortfolioHoldings = {
+  /** Supported stocks, Earn vault positions and one USDC cash line, largest value first. */
+  lines: BasketLine[];
+  /** Priced stocks outside the strategy universe. */
+  unsupported: { label: string; valueAtoms: bigint }[];
+  /** Held stocks without a market value, so their share of the portfolio is unknown. */
+  unpriced: string[];
+  /** A stock row whose balance native has not finished reading. */
+  incomplete: boolean;
+};
 
 /**
- * The basket a portfolio suggests: supported Base and Robinhood stocks, Earn vault positions and
- * all dollar stablecoins as one Base USDC cash line. Amounts never leave the phone; only the
- * rounded weights do.
+ * The portfolio as strategies see it: supported Base and Robinhood stocks, Earn vault positions
+ * and all dollar stablecoins as one Base USDC cash line. Amounts never leave the phone.
  */
-export function basketFromPortfolio(snapshot: MainnetPortfolioSnapshot): BasketLine[] {
+export function portfolioHoldings(snapshot: MainnetPortfolioSnapshot): PortfolioHoldings {
   const lines: BasketLine[] = [];
-  for (const { row, value, symbol } of heldStocks(snapshot)) {
-    if (symbol === null) continue;
+  const unsupported: PortfolioHoldings["unsupported"] = [];
+  const unpriced: string[] = [];
+  let incomplete = false;
+  for (const row of stockRows(snapshot)) {
+    if (!row.complete) {
+      incomplete = true;
+      continue;
+    }
+    if (BigInt(row.balanceAtoms ?? row.observedAtoms) <= 0n) continue;
+    const value = portfolioAssetValue(row);
+    if (value === null) {
+      unpriced.push(row.symbol);
+      continue;
+    }
+    if (BigInt(value) <= 0n) continue;
+    const symbol = universeSymbol(row.chainId, row.token);
+    if (symbol === null) {
+      unsupported.push({ label: row.symbol, valueAtoms: BigInt(value) });
+      continue;
+    }
     lines.push({
       chainId: row.chainId,
       kind: 0,
       address: row.token,
       label: symbol,
-      valueAtoms: value,
+      valueAtoms: BigInt(value),
     });
   }
   for (const position of canonicalRows(snapshot.positions ?? [])) {
@@ -166,9 +185,67 @@ export function basketFromPortfolio(snapshot: MainnetPortfolioSnapshot): BasketL
   }
   if (cash > 0n)
     lines.push({ chainId: 8453, kind: 0, address: BASE_USDC, label: "USDC", valueAtoms: cash });
-  return lines
-    .sort((a, b) => (b.valueAtoms > a.valueAtoms ? 1 : b.valueAtoms < a.valueAtoms ? -1 : 0))
-    .slice(0, STRATEGY_MAX_ASSETS);
+  return { lines: lines.sort(byValue), unsupported, unpriced, incomplete };
+}
+
+export type PortfolioBasket = {
+  /** The assets that get a weight, largest value first; `weights` follows the same order. */
+  lines: BasketLine[];
+  weights: number[];
+  /**
+   * Why this basket cannot stand for the portfolio yet; publishing waits until it is null. A
+   * stock without a price, or unsupported stocks worth half a step or more, would change weights.
+   */
+  blocked:
+    | { reason: "incomplete" }
+    | { reason: "unpriced"; labels: string[] }
+    | { reason: "unsupported"; labels: string[] }
+    | null;
+  /** Holdings that round below 5% or fall past the ten-asset limit, and their exact share. */
+  leftOut: { labels: string[]; bps: number };
+};
+
+/**
+ * The basket a strategy seals: the portfolio's own weights, rounded to the registry's 5% steps.
+ * It is derived, never edited, so a sealed basket is the position its owner held when sealing.
+ */
+export function portfolioBasket(snapshot: MainnetPortfolioSnapshot): PortfolioBasket {
+  const holdings = portfolioHoldings(snapshot);
+  const extra = holdings.unsupported.reduce((sum, stock) => sum + stock.valueAtoms, 0n);
+  const total = holdings.lines.reduce((sum, line) => sum + line.valueAtoms, 0n) + extra;
+  const share = (value: bigint) => (total === 0n ? 0 : Number((value * 10_000n) / total));
+
+  // Weights over every line first, so a holding that rounds to 0% is left out, not inflated.
+  const all = suggestedWeights(holdings.lines);
+  let lines = holdings.lines.filter((_, i) => all[i]! > 0).slice(0, STRATEGY_MAX_ASSETS);
+  let weights = suggestedWeights(lines);
+  // Past the ten-asset limit the kept lines share 100%; one could round to 0% again.
+  lines = lines.filter((_, i) => weights[i]! > 0);
+  weights = weights.filter((weight) => weight > 0);
+
+  const kept = new Set(lines);
+  const dropped = holdings.lines.filter((line) => !kept.has(line));
+  // Together under half a step, unsupported stocks could not move a 5% weight; otherwise they block.
+  const minor = share(extra) * 2 < STRATEGY_STEP_BPS;
+  const small = minor ? holdings.unsupported : [];
+  const leftOut = {
+    labels: [...dropped, ...small].sort(byValue).map((line) => line.label),
+    bps: share(
+      dropped.reduce((sum, line) => sum + line.valueAtoms, 0n) +
+        small.reduce((sum, stock) => sum + stock.valueAtoms, 0n),
+    ),
+  };
+
+  let blocked: PortfolioBasket["blocked"] = null;
+  if (snapshot.balanceComplete === false || holdings.incomplete) blocked = { reason: "incomplete" };
+  else if (holdings.unpriced.length > 0)
+    blocked = { reason: "unpriced", labels: holdings.unpriced };
+  else if (!minor)
+    blocked = {
+      reason: "unsupported",
+      labels: [...holdings.unsupported].sort(byValue).map((stock) => stock.label),
+    };
+  return { lines, weights, blocked, leftOut };
 }
 
 /** Rounds values to 5% steps summing to 100% by largest remainder; ties go to the larger value. */

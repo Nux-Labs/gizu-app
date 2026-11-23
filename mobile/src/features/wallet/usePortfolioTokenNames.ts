@@ -58,8 +58,23 @@ export function usePortfolioTokenNames<T extends OwnedPortfolioAsset>(
   assets: readonly T[],
   refreshKey = 0,
 ): (T & NamedPortfolioAsset)[] {
+  return usePortfolioTokenCatalog(assets, refreshKey).assets;
+}
+
+/**
+ * pending: a token is still being looked up; failed: the catalog was unreachable for a token
+ * that has no earlier answer. Callers that must not act on a partial valuation wait for ready.
+ */
+export type PortfolioPricing = "ready" | "pending" | "failed";
+
+/** [usePortfolioTokenNames] plus whether every token it looks up has an answer yet. */
+export function usePortfolioTokenCatalog<T extends OwnedPortfolioAsset>(
+  assets: readonly T[],
+  refreshKey = 0,
+): { assets: (T & NamedPortfolioAsset)[]; pricing: PortfolioPricing } {
   const service = useContext(TokenCatalogContext);
   const [entries, setEntries] = useState<ReadonlyMap<string, Entry>>(new Map());
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
   const latest = useRef(entries);
   useEffect(() => {
     latest.current = entries;
@@ -100,17 +115,31 @@ export function usePortfolioTokenNames<T extends OwnedPortfolioAsset>(
           return [key, entry] as const;
         } catch {
           // Unavailable catalog: keep the last name and price, and retry on a later refresh.
-          return null;
+          return key;
         }
       }),
     ).then((rows) => {
       if (controller.signal.aborted) return;
-      const found = rows.filter((row) => row !== null);
+      const found = rows.filter(
+        (row): row is readonly [string, Entry] => row !== null && typeof row !== "string",
+      );
+      const missed = rows.filter((row): row is string => typeof row === "string");
       if (found.length > 0) setEntries((current) => new Map([...current, ...found]));
+      setFailed((current) => {
+        const next = new Set(current);
+        for (const [key] of found) next.delete(key);
+        for (const key of missed) next.add(key);
+        return next;
+      });
     });
     return () => controller.abort();
   }, [needed, refreshKey, service]);
-  return useMemo(
+  const pricing: PortfolioPricing = useMemo(() => {
+    const unanswered = needed ? needed.split(",").filter((key) => !entries.has(key)) : [];
+    if (unanswered.length === 0) return "ready";
+    return unanswered.some((key) => failed.has(key)) ? "failed" : "pending";
+  }, [entries, failed, needed]);
+  const named = useMemo(
     () =>
       assets.map((asset) => {
         if (!needsName(asset)) return asset;
@@ -141,4 +170,5 @@ export function usePortfolioTokenNames<T extends OwnedPortfolioAsset>(
       }),
     [assets, entries],
   );
+  return { assets: named, pricing };
 }

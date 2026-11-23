@@ -8,7 +8,13 @@ import {
   type StrategyDetail,
   type StrategyService,
 } from "@/domain/strategies";
-import type { MainnetPortfolioSnapshot, StrategyTermsInput } from "@/domain/wallet/storedSigner";
+import type { CatalogToken, TokenCatalogService } from "@/domain/tokenCatalog";
+import type {
+  MainnetPortfolioSnapshot,
+  OwnedPortfolioAsset,
+  StrategyTermsInput,
+} from "@/domain/wallet/storedSigner";
+import { TokenCatalogContext } from "@/features/swap/useTokenCatalog";
 import { StrategiesScreen } from "@/features/strategies/StrategiesScreen";
 import { StrategyPublishScreen } from "@/features/strategies/StrategyPublishScreen";
 import {
@@ -40,6 +46,7 @@ const row = {
 };
 const mockWallet = {
   session: { walletId: "wallet-1" },
+  refresh: jest.fn(async () => {}),
   snapshot: {
     ...mainnetPortfolio("wallet-1", "0x1111111111111111111111111111111111111111", "1000000"),
     balanceComplete: true,
@@ -55,7 +62,7 @@ const mockWallet = {
         observedAtoms: "1",
         valueUsdAtoms: "6000000",
       },
-      // Priced but outside the strategy universe: left out and named.
+      // Priced but outside the strategy universe, and under half a step: left out and named.
       {
         ...row,
         assetId: "other",
@@ -65,7 +72,7 @@ const mockWallet = {
         decimals: 18,
         balanceAtoms: "1",
         observedAtoms: "1",
-        valueUsdAtoms: "9000000",
+        valueUsdAtoms: "200000",
       },
     ],
     positions: [
@@ -87,7 +94,22 @@ const mockWallet = {
 };
 jest.mock("@/features/wallet/MainnetWalletProvider", () => ({
   useMainnetWallet: () => mockWallet,
+  useOptionalMainnetWallet: () => mockWallet,
 }));
+const portfolio = mockWallet.snapshot;
+afterEach(() => {
+  mockWallet.snapshot = portfolio;
+});
+function holding(extra: OwnedPortfolioAsset) {
+  mockWallet.snapshot = {
+    ...portfolio,
+    ownedAssets: [...(portfolio.ownedAssets ?? []), extra],
+  } as MainnetPortfolioSnapshot;
+}
+
+const emptyCatalog: TokenCatalogService = {
+  list: async () => ({ list: [], page: 0, items: 0, total: 0 }),
+};
 
 function card(overrides: Partial<StrategyCard> = {}): StrategyCard {
   return {
@@ -120,7 +142,7 @@ const detail = (overrides: Partial<StrategyCard> = {}): StrategyDetail => ({
   history: [],
 });
 
-function setup(initial: StrategyCard[] = []) {
+function setup(initial: StrategyCard[] = [], catalog: TokenCatalogService = emptyCatalog) {
   let listed = initial;
   const service = {
     list: jest.fn(async () => listed),
@@ -161,14 +183,16 @@ function setup(initial: StrategyCard[] = []) {
   const Stack = createNativeStackNavigator<RootStackParamList>();
   render(
     <SafeAreaProvider>
-      <StrategyOwnerContext.Provider value={deps}>
-        <NavigationContainer>
-          <Stack.Navigator initialRouteName="Strategies" screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="Strategies" component={StrategiesScreen} />
-            <Stack.Screen name="StrategyPublish" component={StrategyPublishScreen} />
-          </Stack.Navigator>
-        </NavigationContainer>
-      </StrategyOwnerContext.Provider>
+      <TokenCatalogContext.Provider value={catalog}>
+        <StrategyOwnerContext.Provider value={deps}>
+          <NavigationContainer>
+            <Stack.Navigator initialRouteName="Strategies" screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="Strategies" component={StrategiesScreen} />
+              <Stack.Screen name="StrategyPublish" component={StrategyPublishScreen} />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </StrategyOwnerContext.Provider>
+      </TokenCatalogContext.Provider>
     </SafeAreaProvider>,
   );
   return { service, signer };
@@ -190,7 +214,9 @@ test("publishes a strategy from the portfolio's weights, then seals its first ba
   expect(screen.getByLabelText("USDC weight 10%")).toBeVisible();
   expect(screen.queryByLabelText(/OTHERc weight/)).toBeNull();
   expect(
-    screen.getByText("Not included because strategies don't support them yet: OTHERc."),
+    screen.getByText(
+      "Too small for a 5% step or past the ten-asset limit: OTHERc (1.96% of your portfolio).",
+    ),
   ).toBeVisible();
   expect(screen.getByText(/Never shared: your wallets/)).toBeVisible();
   const publish = screen.getByRole("button", { name: "Publish strategy" });
@@ -248,23 +274,107 @@ test("publishes a strategy from the portfolio's weights, then seals its first ba
   expect(screen.getByText("Earned $1.50")).toBeVisible();
 });
 
-test("publishing stays off until weights total 100% and the strategy has a name", async () => {
+test("the basket is the portfolio's own weights: nothing to edit, publishing waits for a name", async () => {
   const { signer } = setup();
   fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
-  fireEvent.changeText(await screen.findByLabelText("Strategy name"), "AI chips");
+  expect(await screen.findByLabelText("NVDAc weight 60%")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Lower|Raise/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refill from my portfolio" })).toBeNull();
+
   const publish = screen.getByRole("button", { name: "Publish strategy" });
+  fireEvent.changeText(screen.getByLabelText("Strategy name"), "AI chips");
   expect(publish).toBeEnabled();
-
-  fireEvent.press(screen.getByRole("button", { name: "Lower NVDAc by 5%" }));
-  expect(screen.getByText("Weights add up to 95%; make it 100%.")).toBeVisible();
-  expect(publish).toBeDisabled();
-  fireEvent.press(screen.getByRole("button", { name: "Raise USDC by 5%" }));
-  expect(screen.getByLabelText("USDC weight 15%")).toBeVisible();
-  expect(publish).toBeEnabled();
-
   fireEvent.changeText(screen.getByLabelText("Strategy name"), " ");
   expect(publish).toBeDisabled();
   expect(signer.createStrategy).not.toHaveBeenCalled();
+});
+
+const GOOGL = "0xb2000000000000000000002D0BA3164cc74f58B7";
+const swapBought: OwnedPortfolioAsset = {
+  ...row,
+  assetId: "googl",
+  chainId: 8453,
+  token: GOOGL,
+  // Native knows a stock a swap bought only by address, and never prices it.
+  symbol: "Token 4f58b7",
+  decimals: 18,
+  balanceAtoms: "2000000000000000000",
+  observedAtoms: "2000000000000000000",
+  valueUsdAtoms: null,
+} as OwnedPortfolioAsset;
+const googl: CatalogToken = {
+  chainId: 8453,
+  address: GOOGL,
+  symbol: "GOOGLc",
+  name: "Alphabet",
+  decimals: 18,
+  logoURI: null,
+  category: "rwa",
+  issuer: "Coinbase",
+  swapListed: true,
+  priceUsd: 2,
+  fusionStatus: "quote-required",
+};
+
+test("a stock a swap bought joins the basket at its market value once the catalog prices it", async () => {
+  holding(swapBought);
+  let answer: (page: Awaited<ReturnType<TokenCatalogService["list"]>>) => void = () => {};
+  const list = jest.fn(
+    () => new Promise<Awaited<ReturnType<TokenCatalogService["list"]>>>((r) => (answer = r)),
+  );
+  setup([], { list });
+  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  // No basket from a partial valuation: the unpriced stock would be missing from it.
+  expect(await screen.findByText("Reading your portfolio…")).toBeVisible();
+  expect(screen.queryByLabelText(/weight/)).toBeNull();
+
+  answer({ list: [googl], page: 0, items: 1, total: 1 });
+  // 2 GOOGLc at $2 next to $6 NVDAc, the $3 vault and $1 USDC.
+  expect(await screen.findByLabelText("NVDAc weight 45%")).toBeVisible();
+  expect(screen.getByLabelText("GOOGLc weight 30%")).toBeVisible();
+  expect(screen.getByLabelText("Steakhouse USDG weight 20%")).toBeVisible();
+  expect(screen.getByLabelText("USDC weight 5%")).toBeVisible();
+  expect(list).toHaveBeenCalledWith(
+    { chainId: 8453, category: "all", search: GOOGL.toLowerCase(), page: 0 },
+    expect.anything(),
+  );
+});
+
+test("without market prices nothing can be published, and the portfolio can be read again", async () => {
+  holding(swapBought);
+  setup([], { list: jest.fn(async () => Promise.reject(new Error("offline"))) });
+  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  expect(
+    await screen.findByText(
+      "Market prices for your stocks couldn't be loaded, so your weights aren't known yet.",
+    ),
+  ).toBeVisible();
+  fireEvent.changeText(screen.getByLabelText("Strategy name"), "AI chips");
+  expect(screen.getByRole("button", { name: "Publish strategy" })).toBeDisabled();
+  fireEvent.press(screen.getByRole("button", { name: "Try again" }));
+  expect(mockWallet.refresh).toHaveBeenCalled();
+});
+
+test("an unsupported stock large enough to change the weights stops publishing", async () => {
+  holding({
+    ...row,
+    assetId: "big",
+    chainId: 8453,
+    token: "0x000000000000000000000000000000000000bEEF",
+    symbol: "BIGc",
+    decimals: 18,
+    balanceAtoms: "1",
+    observedAtoms: "1",
+    valueUsdAtoms: "5000000",
+  } as OwnedPortfolioAsset);
+  setup();
+  fireEvent.press(await screen.findByRole("button", { name: "Publish a strategy" }));
+  expect(
+    await screen.findByText(/Strategies don't support BIGc, OTHERc yet, and leaving them out/),
+  ).toBeVisible();
+  expect(screen.queryByLabelText(/weight/)).toBeNull();
+  fireEvent.changeText(screen.getByLabelText("Strategy name"), "AI chips");
+  expect(screen.getByRole("button", { name: "Publish strategy" })).toBeDisabled();
 });
 
 test("an update seals the next sequence number and explains a busy registry", async () => {

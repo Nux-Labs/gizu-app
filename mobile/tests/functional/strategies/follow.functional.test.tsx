@@ -10,7 +10,11 @@ import type {
   StrategyService,
   StrategySignal,
 } from "@/domain/strategies";
-import type { MainnetPortfolioSnapshot, StoredSwapView } from "@/domain/wallet/storedSigner";
+import type {
+  MainnetPortfolioSnapshot,
+  OwnedPortfolioAsset,
+  StoredSwapView,
+} from "@/domain/wallet/storedSigner";
 import { StrategyDetailScreen } from "@/features/strategies/StrategyDetailScreen";
 import { StrategyExploreScreen } from "@/features/strategies/StrategyExploreScreen";
 import {
@@ -22,6 +26,8 @@ import type { RootStackParamList } from "@/navigation/types";
 import { ApiError } from "@/services/http";
 import { createMemoryFollowStore, type FollowedStrategy } from "@/services/strategyFollows";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
+import type { TokenCatalogService } from "@/domain/tokenCatalog";
+import { TokenCatalogContext } from "@/features/swap/useTokenCatalog";
 
 const NVDA = "0xb20000000000000000000078ee7ce2fE4908108C";
 const AAPL = "0xb200000000000000000000C2e324d24d7eEcd1fb";
@@ -93,6 +99,7 @@ function setup(options: {
   swapPhases?: string[];
   openSwap?: boolean;
   initial?: keyof RootStackParamList;
+  catalog?: TokenCatalogService;
 }) {
   const signal: StrategySignal = {
     seq: 2,
@@ -151,28 +158,34 @@ function setup(options: {
   const Stack = createNativeStackNavigator<RootStackParamList>();
   render(
     <SafeAreaProvider>
-      <StrategyFollowerContext.Provider value={deps}>
-        <NavigationContainer>
-          <Stack.Navigator
-            initialRouteName={options.initial ?? "StrategyExplore"}
-            screenOptions={{ headerShown: false }}
-          >
-            <Stack.Screen name="StrategyExplore" component={StrategyExploreScreen} />
-            <Stack.Screen
-              name="StrategyDetail"
-              component={StrategyDetailScreen}
-              initialParams={{ id: 7 }}
-            />
-            <Stack.Screen name="Earn">
-              {({ route }) => <Text>Earn opened with {JSON.stringify(route.params)}</Text>}
-            </Stack.Screen>
-          </Stack.Navigator>
-        </NavigationContainer>
-      </StrategyFollowerContext.Provider>
+      <TokenCatalogContext.Provider value={options.catalog ?? emptyCatalog}>
+        <StrategyFollowerContext.Provider value={deps}>
+          <NavigationContainer>
+            <Stack.Navigator
+              initialRouteName={options.initial ?? "StrategyExplore"}
+              screenOptions={{ headerShown: false }}
+            >
+              <Stack.Screen name="StrategyExplore" component={StrategyExploreScreen} />
+              <Stack.Screen
+                name="StrategyDetail"
+                component={StrategyDetailScreen}
+                initialParams={{ id: 7 }}
+              />
+              <Stack.Screen name="Earn">
+                {({ route }) => <Text>Earn opened with {JSON.stringify(route.params)}</Text>}
+              </Stack.Screen>
+            </Stack.Navigator>
+          </NavigationContainer>
+        </StrategyFollowerContext.Provider>
+      </TokenCatalogContext.Provider>
     </SafeAreaProvider>,
   );
   return { service, follows, api, platform, swap };
 }
+
+const emptyCatalog: TokenCatalogService = {
+  list: async () => ({ list: [], page: 0, items: 0, total: 0 }),
+};
 
 /** The fields the copy reads; the native view has more. */
 function swapView(phase: string, target: string): StoredSwapView {
@@ -271,6 +284,83 @@ test("a copy stops at a cancelled buy and continues with only what is left", asy
   fireEvent.press(screen.getByRole("button", { name: "Continue copying" }));
   expect(await screen.findByText("Bought NVDAc, AAPLc. Your copy matches update 2.")).toBeVisible();
   expect(swap.startSwap.mock.calls.map((call) => call[0])).toEqual([NVDA, AAPL, AAPL]);
+});
+
+test("a stock a swap bought counts toward the copy once the catalog prices it", async () => {
+  const portfolio = mockWallet.snapshot;
+  // 5 NVDAc a swap bought; native knows them only by address and never prices them.
+  mockWallet.snapshot = {
+    ...portfolio,
+    ownedAssets: [
+      ...(portfolio.ownedAssets ?? []),
+      {
+        assetId: "nvda",
+        chainId: 8453,
+        token: NVDA,
+        symbol: "Token 08108c",
+        decimals: 18,
+        balanceAtoms: "5000000000000000000",
+        observedAtoms: "5000000000000000000",
+        complete: true,
+        stale: false,
+        checkedAt: 1,
+        valueUsdcAtoms: null,
+        valueUsdAtoms: null,
+        valuationUnavailable: false,
+      } as OwnedPortfolioAsset,
+    ],
+  } as MainnetPortfolioSnapshot;
+  let answer: (page: Awaited<ReturnType<TokenCatalogService["list"]>>) => void = () => {};
+  const list = jest.fn(
+    () => new Promise<Awaited<ReturnType<TokenCatalogService["list"]>>>((r) => (answer = r)),
+  );
+  try {
+    setup({
+      initial: "StrategyDetail",
+      assets: [asset(8453, 0, NVDA, 5000, "1"), asset(8453, 0, AAPL, 5000, "2")],
+      follows: [
+        {
+          strategyId: 7,
+          name: "AI chips",
+          subscriberKey: word("a"),
+          expiresAt: "2026-12-23T12:00:00Z",
+          copiedSeq: null,
+        },
+      ],
+      catalog: { list },
+    });
+    fireEvent.changeText(await screen.findByLabelText("Amount to invest in USDC"), "20");
+    // Until the held NVDAc has a value, a plan would buy it again.
+    expect(screen.getByText("Getting market prices for the stocks you hold…")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy basket" })).toBeDisabled();
+
+    answer({
+      list: [
+        {
+          chainId: 8453,
+          address: NVDA,
+          symbol: "NVDAc",
+          name: "NVIDIA",
+          decimals: 18,
+          logoURI: null,
+          category: "rwa",
+          issuer: "Coinbase",
+          swapListed: true,
+          priceUsd: 2,
+          fusionStatus: "quote-required",
+        },
+      ],
+      page: 0,
+      items: 1,
+      total: 1,
+    });
+    // $10 of NVDAc held plus $20 to invest: $15 each, so only $5 more NVDAc.
+    expect(await screen.findByText("Buy $5.00 of NVDAc on Base")).toBeVisible();
+    expect(screen.getByText("Buy $15.00 of AAPLc on Base")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy basket" })).toBeEnabled();
+  } finally {
+    mockWallet.snapshot = portfolio;
+  }
 });
 
 test("an open swap blocks copying until it is finished", async () => {

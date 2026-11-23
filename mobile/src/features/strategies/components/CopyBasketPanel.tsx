@@ -9,7 +9,7 @@ import { formatPrice, usdcAtoms, type StrategySignal } from "@/domain/strategies
 import { copyPlan, type CopyLeg } from "@/domain/strategyCopy";
 import { formatUsdc } from "@/domain/wallet/amounts";
 import { portfolioPublicUsdcAtoms } from "@/domain/wallet/portfolioValue";
-import { useOptionalMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
+import { usePricedPortfolio } from "@/features/wallet/usePricedPortfolio";
 import type { RootStackParamList } from "@/navigation/types";
 import colors from "@/theme/colors.json";
 import { useCopyBasket, type StockLeg } from "../useCopyBasket";
@@ -39,8 +39,8 @@ export function CopyBasketPanel({
   onCopied: (seq: number) => void;
 }) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const wallet = useOptionalMainnetWallet();
-  const snapshot = wallet?.snapshot ?? null;
+  // Stocks already held count toward the basket, so their market values must be in first.
+  const { snapshot, pricing } = usePricedPortfolio();
   const [budget, setBudget] = useState("");
   // The plan is fixed when copying starts: buys change the holdings it was computed from.
   const [deposits, setDeposits] = useState<Extract<CopyLeg, { kind: "vault" }>[]>([]);
@@ -129,9 +129,16 @@ export function CopyBasketPanel({
               Each buy is its own confidential swap with its own approval, one after another.
             </Typography>
           )}
+          {pricing !== "ready" && (
+            <Typography variant="micro" accessibilityLiveRegion="polite">
+              {pricing === "failed"
+                ? "Market prices for the stocks you hold couldn't be loaded yet. Copying waits for them, so nothing you hold is bought again."
+                : "Getting market prices for the stocks you hold…"}
+            </Typography>
+          )}
           <Button
             label={stocks.length > 0 ? "Copy basket" : "Continue to deposits"}
-            disabled={tooMuch || running}
+            disabled={tooMuch || running || pricing !== "ready"}
             onPress={() => {
               setDeposits(vaults);
               void copy.start(stocks);

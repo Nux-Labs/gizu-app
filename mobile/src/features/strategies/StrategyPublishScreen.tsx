@@ -9,23 +9,23 @@ import { Notice } from "@/components/molecules/Notice";
 import { Screen } from "@/components/templates/Screen";
 import {
   basketAssets,
-  basketFromPortfolio,
   basketProblem,
   demoEmbargo,
   embargoOptions,
   formatEmbargo,
   formatPrice,
+  formatWeight,
   metadataProblem,
-  suggestedWeights,
-  unsupportedHoldings,
+  portfolioBasket,
   usdcAtoms,
-  type BasketLine,
+  type PortfolioBasket,
 } from "@/domain/strategies";
 import { BackAction } from "@/navigation/BackAction";
 import type { RootStackParamList } from "@/navigation/types";
 import { useMainnetWallet } from "@/features/wallet/MainnetWalletProvider";
+import { usePricedPortfolio } from "@/features/wallet/usePricedPortfolio";
 import colors from "@/theme/colors.json";
-import { BasketEditor } from "./components/BasketEditor";
+import { BasketPreview } from "./components/BasketPreview";
 import { useStrategyOwner, type StrategyStage } from "./useStrategyOwner";
 
 const inputClass = "min-h-12 rounded-xl bg-well px-4 py-3 text-text";
@@ -39,24 +39,37 @@ const stageText: Record<StrategyStage, string | null> = {
 
 type Props = NativeStackScreenProps<RootStackParamList, "StrategyPublish">;
 
-/** Publishes a strategy from the portfolio, or seals a new basket for an existing one. */
+/** Why the portfolio cannot be sealed as it stands, or null when it can. */
+function blockedText(blocked: PortfolioBasket["blocked"]): string | null {
+  if (blocked === null) return null;
+  if (blocked.reason === "incomplete")
+    return "Some balances are still loading. Your basket appears once your whole portfolio is in.";
+  if (blocked.reason === "unpriced")
+    return `There's no market price for ${blocked.labels.join(", ")}, so your real weights aren't known and the basket can't be sealed yet.`;
+  return `Strategies don't support ${blocked.labels.join(", ")} yet, and leaving them out would change your weights. A strategy has to match the portfolio you hold.`;
+}
+
+/** Seals the portfolio's own weights: publishes a strategy, or sends an update for one. */
 export function StrategyPublishScreen({ navigation, route }: Props) {
   const strategyId = route.params?.strategyId;
   const owner = useStrategyOwner();
-  const { snapshot } = useMainnetWallet();
+  const wallet = useMainnetWallet();
+  const { snapshot, pricing } = usePricedPortfolio();
   const existing = owner.owned.find((strategy) => strategy.card.id === strategyId) ?? null;
   const updating = strategyId !== undefined;
   // Leaving mid-operation would let another screen start a second one on the same key.
   usePreventRemove(owner.busy, () => {});
 
-  // Lines come from the first portfolio read; later refreshes keep the weights already edited.
-  const [lines, setLines] = useState<BasketLine[] | null>(null);
-  const [weights, setWeights] = useState<number[]>([]);
-  if (lines === null && snapshot) {
-    const found = basketFromPortfolio(snapshot);
-    setLines(found);
-    setWeights(suggestedWeights(found));
-  }
+  // The basket follows the portfolio, except while an approval is open: the review shows the
+  // weights being sealed, and a refresh must not change them underneath it.
+  const live = useMemo(
+    () => (snapshot && pricing === "ready" ? portfolioBasket(snapshot) : null),
+    [pricing, snapshot],
+  );
+  const [sealing, setSealing] = useState<PortfolioBasket | null>(null);
+  const basket = sealing ?? live;
+  const lines = basket?.lines ?? [];
+  const weights = basket?.weights ?? [];
 
   const [name, setName] = useState("");
   const [monthly, setMonthly] = useState("10");
@@ -73,7 +86,10 @@ export function StrategyPublishScreen({ navigation, route }: Props) {
     }),
     [monthly, name, perSignal, seats],
   );
-  const problem = basketProblem(weights) ?? (updating ? null : metadataProblem(metadata));
+  const problem =
+    basket === null || basket.blocked !== null
+      ? "portfolio"
+      : (basketProblem(weights) ?? (updating ? null : metadataProblem(metadata)));
   const ready =
     !owner.loading &&
     !owner.busy &&
@@ -88,23 +104,23 @@ export function StrategyPublishScreen({ navigation, route }: Props) {
   }, [finished, navigation, owner.busy]);
 
   const submit = async () => {
-    const assets = basketAssets(lines ?? [], weights);
-    if (updating) {
-      if (existing !== null && (await owner.sendUpdate(existing, assets))) setFinished(true);
-      return;
+    if (!basket) return;
+    const assets = basketAssets(basket.lines, basket.weights);
+    setSealing(basket);
+    try {
+      if (updating) {
+        if (existing !== null && (await owner.sendUpdate(existing, assets))) setFinished(true);
+        return;
+      }
+      const result = await owner.publish(metadata, embargo, assets);
+      if (result.ok) setFinished(true);
+      // Published but not sealed: finish this strategy instead of offering to publish another.
+      else if (result.strategyId !== null) navigation.setParams({ strategyId: result.strategyId });
+    } finally {
+      setSealing(null);
     }
-    const result = await owner.publish(metadata, embargo, assets);
-    if (result.ok) setFinished(true);
-    // Published but not sealed: finish this strategy instead of offering to publish another.
-    else if (result.strategyId !== null) navigation.setParams({ strategyId: result.strategyId });
   };
-  const refill = () => {
-    if (!snapshot) return;
-    const found = basketFromPortfolio(snapshot);
-    setLines(found);
-    setWeights(suggestedWeights(found));
-  };
-  const leftOut = snapshot ? unsupportedHoldings(snapshot) : [];
+  const blocked = basket ? blockedText(basket.blocked) : null;
 
   const status = stageText[owner.stage];
   return (
@@ -116,34 +132,44 @@ export function StrategyPublishScreen({ navigation, route }: Props) {
         </Typography>
         <Typography variant="body">
           {updating
-            ? "Seal your new weights on chain and send them to your subscribers."
-            : "Subscribers and agents buy your basket's weights. Your wallets, amounts and identity stay private."}
+            ? "Seal your portfolio's current weights on chain and send them to your subscribers."
+            : "Subscribers and agents buy the weights of the portfolio you hold. Your wallets, amounts and identity stay private."}
         </Typography>
       </View>
 
       <Typography variant="section">Basket</Typography>
-      {!lines || lines.length === 0 ? (
+      {pricing === "failed" ? (
+        <Notice
+          error
+          message="Market prices for your stocks couldn't be loaded, so your weights aren't known yet."
+        />
+      ) : basket === null ? (
+        <Typography variant="rowValue" className="!text-fg-45" accessibilityLiveRegion="polite">
+          Reading your portfolio…
+        </Typography>
+      ) : blocked !== null ? (
+        <Notice error message={blocked} />
+      ) : lines.length === 0 ? (
         <Typography variant="rowValue" className="!text-fg-45">
-          {snapshot
-            ? "Your portfolio has no stocks, vaults or USDC to build a basket from yet."
-            : "Reading your portfolio…"}
+          Your portfolio has no stocks, vaults or USDC to build a basket from yet.
         </Typography>
       ) : (
-        <BasketEditor lines={lines} weights={weights} onChange={setWeights} disabled={owner.busy} />
+        <>
+          <BasketPreview lines={lines} weights={weights} />
+          <Typography variant="micro">
+            Your portfolio&apos;s weights right now, in 5% steps. They&apos;re sealed as they are
+            when you approve. Only these percentages are shared, never amounts.
+          </Typography>
+          {basket.leftOut.labels.length > 0 && (
+            <Typography variant="micro">
+              {`Too small for a 5% step or past the ten-asset limit: ${basket.leftOut.labels.join(", ")} (${formatWeight(basket.leftOut.bps)} of your portfolio).`}
+            </Typography>
+          )}
+        </>
       )}
-      {leftOut.length > 0 && (
-        <Notice
-          message={`Not included because strategies don't support them yet: ${leftOut.join(", ")}.`}
-        />
-      )}
-      {snapshot && (
+      {pricing === "failed" && (
         <View className="self-start">
-          <Button
-            label="Refill from my portfolio"
-            variant="quiet"
-            disabled={owner.busy}
-            onPress={refill}
-          />
+          <Button label="Try again" variant="quiet" onPress={() => void wallet.refresh()} />
         </View>
       )}
 

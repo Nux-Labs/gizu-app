@@ -2,7 +2,7 @@ import { earnProfiles, type EarnProfileId } from "@/domain/earn/types";
 import { vaultNames } from "@/domain/wallet/portfolioValue";
 import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
 import { strategyStockTargets } from "@/domain/strategyUniverse";
-import { BASE_USDC, basketFromPortfolio, type SealedAssetView } from "./strategies";
+import { BASE_USDC, portfolioHoldings, type SealedAssetView } from "./strategies";
 
 /** Buys below a dollar cost more in fees than they track; they stay in USDC. */
 export const MIN_STOCK_BUY_ATOMS = 1_000_000n;
@@ -100,7 +100,7 @@ export function copyPlan(
   snapshot: MainnetPortfolioSnapshot | null,
 ): CopyPlan {
   const held = new Map<string, bigint>();
-  for (const line of snapshot ? basketFromPortfolio(snapshot) : []) {
+  for (const line of snapshot ? portfolioHoldings(snapshot).lines : []) {
     // USDC is what the budget comes from, not a position to rebalance.
     if (line.label === "USDC") continue;
     held.set(assetKey(line.chainId, line.kind, line.address), line.valueAtoms);
