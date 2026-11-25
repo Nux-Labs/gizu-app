@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { InfrastructureError } from "../../src/domain/errors/infrastructure-error.ts";
 import { BASE_BUY_TARGETS, ROBINHOOD_BUY_TARGETS } from "../../src/adapters/oneinch/swap-targets.ts";
 import { StockTokenDetails } from "../../src/adapters/oneinch/token-details.ts";
@@ -131,7 +131,7 @@ test("a failed batch leaves every price null without throwing", async () => {
   assert.ok([...prices.values()].every((price) => price === null));
 });
 
-test("a Base page combines Coinbase's record, our description, the 1inch price and a chart against Base USDC", async () => {
+test("a Base page combines Coinbase's record, our description, the 1inch price and a GeckoTerminal chart", async () => {
   const googl = BASE_BUY_TARGETS[0]!;
   const calls: string[] = [];
   let coinbaseUp = true;
@@ -144,7 +144,9 @@ test("a Base page combines Coinbase's record, our description, the 1inch price a
         : new Response("", { status: 503 });
     }
     if (url.includes("/price/")) return Response.json({ [googl.address.toLowerCase()]: "301.5" });
-    return Response.json({ data: [{ time: 2, value: 302 }, { time: 1, value: 300 }] });
+    if (url.includes("/pools?")) return Response.json({ data: [{ attributes: { address: geckoPoolAddress } }] });
+    if (url.includes("/ohlcv/")) return Response.json({ data: { attributes: { ohlcv_list: [[2, 1, 1, 1, 302], [1, 1, 1, 1, 300]] } } });
+    throw new Error(`Unexpected request: ${url}`);
   };
   let now = 1_000;
   const service = new StockTokenDetails("key", fetchImpl, () => now);
@@ -152,16 +154,16 @@ test("a Base page combines Coinbase's record, our description, the 1inch price a
   assert.deepEqual(details, {
     chainId: 8453, address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc.", logoURI: "https://cdn.coinbase.com/googl.png",
     kind: "stock", description: TOKEN_PROFILES.GOOGL!.description, isin: "US02079K3059", sharesPerToken: "1", sessions: null, priceUsd: 301.5,
-    chart: { period: "1W", source: "1inch", points: [{ time: 1, price: 300 }, { time: 2, price: 302 }] },
+    chart: { period: "1W", source: "geckoterminal", points: [{ time: 1, price: 300 }, { time: 2, price: 302 }] },
   });
-  assert.ok(calls.some((url) => url.endsWith(`/charts/v1.0/chart/line/${googl.address}/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913/1W/8453`)));
+  assert.ok(!calls.some((url) => url.includes("api.1inch.com/charts")));
   assert.ok(calls.some((url) => url.startsWith(`https://api.1inch.com/price/v1.1/8453/${googl.address}`)));
   assert.equal(await service.details(googl.address, "1W"), undefined, "a Base token is not a Robinhood target");
   // A Coinbase outage after one good read keeps serving the last list.
   coinbaseUp = false;
   now += 11 * 60_000;
   assert.equal((await service.details(googl.address, "1W", 8453))?.symbol, "GOOGLc");
-  // With no Coinbase list at all, the page keeps the pinned symbol, our description and the 1inch price and chart.
+  // With no Coinbase list at all, the page keeps the pinned symbol, our description and the price and chart.
   const fallback = await new StockTokenDetails("key", fetchImpl).details(googl.address, "1W", 8453);
   assert.deepEqual(
     { symbol: fallback?.symbol, name: fallback?.name, isin: fallback?.isin, description: fallback?.description, priceUsd: fallback?.priceUsd },
@@ -179,7 +181,7 @@ test("Base prices come from one batched request on chain 8453", async () => {
   assert.ok(calls[0]!.startsWith("https://api.1inch.com/price/v1.1/8453/"));
 });
 
-test("a Base token without a 1inch chart is charted from its most liquid GeckoTerminal pool", async () => {
+test("a Base token goes directly to its most liquid GeckoTerminal pool and reuses chart and pool caches", async () => {
   const crwv = BASE_BUY_TARGETS.find((t) => t.symbol === "CRWVc")!;
   const pool = "0x4d942b4239e0894e5a80ca2b3944e3467f4ee464";
   const now = 1_795_300_000_000;
@@ -214,9 +216,13 @@ test("a Base token without a 1inch chart is charted from its most liquid GeckoTe
   });
   assert.ok(calls.includes(`https://api.geckoterminal.com/api/v2/networks/base/tokens/${crwv.address}/pools?page=1&sort=h24_volume_usd_liquidity_desc`));
   assert.ok(calls.includes(`https://api.geckoterminal.com/api/v2/networks/base/pools/${pool}/ohlcv/hour?aggregate=1&limit=500&currency=usd&token=${crwv.address}`));
-  // The pool is looked up once per token; each period then costs one candle request, cached ten minutes.
+  const geckoCalls = () => calls.filter((url) => url.includes("geckoterminal")).length;
+  assert.equal(geckoCalls(), 2, "a cold chart needs only pool discovery and candles");
   await service.details(crwv.address, "1Y", 8453);
+  assert.equal(geckoCalls(), 3, "a new period reuses the warm pool");
   await service.details(crwv.address, "1W", 8453);
+  assert.equal(geckoCalls(), 3, "a cached period needs no Gecko request");
+  assert.ok(!calls.some((url) => url.includes("api.1inch.com/charts")));
   assert.equal(calls.filter((url) => url.includes("/pools?")).length, 1);
   assert.equal(calls.filter((url) => url.includes("/ohlcv/")).length, 2);
   assert.ok(calls.some((url) => url.includes("/ohlcv/day?aggregate=1&limit=365")));
@@ -227,9 +233,254 @@ test("a Base token without a 1inch chart is charted from its most liquid GeckoTe
   assert.equal(fresh?.symbol, "CRWVc");
 });
 
+// Addresses from GOOGLc's public pool list: Aerodrome contract and Uniswap v4 pool ID.
+const geckoPoolAddress = "0x16c70f04c3080a127486cdf5a4c33c066bbf47c3";
+const geckoPoolId = "0x5dfc32bfb5ec664a8be2844a1e564847e34f210d7f820d500312f85ab47e9ff9";
+
+for (const [first, second] of [[geckoPoolAddress, geckoPoolId], [geckoPoolId, geckoPoolAddress]]) {
+  test(`a mixed GeckoTerminal pool list charts its first ${first!.length === 42 ? "20-byte address" : "32-byte ID"} intact`, async () => {
+    const googl = BASE_BUY_TARGETS.find((t) => t.symbol === "GOOGLc")!;
+    const now = 1_795_300_000_000;
+    const calls: string[] = [];
+    const candleUrl = `https://api.geckoterminal.com/api/v2/networks/base/pools/${first}/ohlcv/hour?aggregate=1&limit=500&currency=usd&token=${googl.address}`;
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("coinbase.com")) return Response.json({ tokens: [{ contract_address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc." }] });
+      if (url.includes("/price/")) return Response.json({ [googl.address.toLowerCase()]: "300" });
+      if (url.includes("api.1inch.com/charts")) return new Response("", { status: 400 });
+      if (url.includes("/pools?")) return Response.json({ data: [{ attributes: { address: first } }, { attributes: { address: second } }] });
+      if (url === candleUrl) return Response.json({ data: { attributes: { ohlcv_list: [
+        [1_795_296_400, 1, 1, 1, 301, 1],
+        [1_795_292_800, 1, 1, 1, 300, 1],
+      ] } } });
+      throw new Error(`Unexpected request: ${url}`);
+    };
+    const details = await new StockTokenDetails("key", fetchImpl, () => now).details(googl.address, "1W", 8453);
+    assert.deepEqual(details?.chart, {
+      period: "1W", source: "geckoterminal", points: [{ time: 1_795_292_800, price: 300 }, { time: 1_795_296_400, price: 301 }],
+    });
+    assert.deepEqual(calls.filter((url) => url.includes("/ohlcv/")), [candleUrl]);
+  });
+}
+
+test("missing pools and malformed GeckoTerminal pool identifiers leave the chart unavailable", async () => {
+  const googl = BASE_BUY_TARGETS.find((t) => t.symbol === "GOOGLc")!;
+  const invalidPools = [
+    [],
+    [{ attributes: {} }],
+    ...["", "0x" + "g".repeat(40), "0x" + "a".repeat(41), "0x" + "a".repeat(63), "../other-pool"].map((address) => [
+      { attributes: { address: geckoPoolAddress } }, { attributes: { address } },
+    ]),
+  ];
+  for (const data of invalidPools) {
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("coinbase.com")) return Response.json({ tokens: [{ contract_address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc." }] });
+      if (url.includes("/price/")) return Response.json({ [googl.address.toLowerCase()]: "300" });
+      if (url.includes("api.1inch.com/charts")) return new Response("", { status: 400 });
+      if (url.includes("/pools?")) return Response.json({ data });
+      throw new Error(`Unexpected request: ${url}`);
+    };
+    const details = await new StockTokenDetails("key", fetchImpl).details(googl.address, "1W", 8453);
+    assert.equal(details?.symbol, "GOOGLc");
+    assert.equal(details?.chart, null);
+    assert.equal(calls.filter((url) => url.includes("/ohlcv/")).length, 0);
+  }
+});
+
 test("a 1inch chart is kept and Robinhood tokens never ask GeckoTerminal", async () => {
   const calls: string[] = [];
   const service = new StockTokenDetails("key", fakeFetch(calls, { chart: () => new Response("", { status: 400 }) }));
   assert.equal((await service.details(nvda.address, "1M"))?.chart, null);
   assert.ok(!calls.some((url) => url.includes("geckoterminal")));
+});
+
+const baseNow = 1_795_300_000_000;
+const baseCandles = { data: { attributes: { ohlcv_list: [[1_795_296_400, 1, 1, 1, 301], [1_795_292_800, 1, 1, 1, 300]] } } };
+
+function pendingUntilAbort(signal: AbortSignal | null | undefined): Promise<Response> {
+  assert.ok(signal, "optional provider requests carry a deadline");
+  return new Promise((_, reject) => {
+    signal.throwIfAborted();
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+}
+
+for (const stage of ["pool", "candles", "issuer and price", "response body"] as const) {
+  test(`Base shares one two-second deadline when ${stage} stalls`, async (t) => {
+    const googl = BASE_BUY_TARGETS[0]!;
+    const deadline = new AbortController();
+    const timeouts: number[] = [];
+    const signals: Array<AbortSignal | null | undefined> = [];
+    const calls: string[] = [];
+    const timeout = mock.method(AbortSignal, "timeout", (ms: number) => {
+      timeouts.push(ms);
+      return deadline.signal;
+    });
+    t.after(() => timeout.mock.restore());
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      signals.push(init?.signal);
+      if (url.includes("coinbase.com")) {
+        if (stage === "issuer and price") return pendingUntilAbort(init?.signal);
+        return Response.json({ tokens: [{ contract_address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc." }] });
+      }
+      if (url.includes("/price/")) {
+        if (stage === "issuer and price") return pendingUntilAbort(init?.signal);
+        return Response.json({ [googl.address.toLowerCase()]: "300" });
+      }
+      if (url.includes("api.1inch.com/charts")) return new Response("", { status: 400 });
+      if (url.includes("/pools?")) {
+        if (stage === "pool") return pendingUntilAbort(init?.signal);
+        return Response.json({ data: [{ attributes: { address: geckoPoolAddress } }] });
+      }
+      if (stage === "candles") return pendingUntilAbort(init?.signal);
+      if (stage === "response body") return { ok: true, json: () => new Promise(() => {}) } as Response;
+      return Response.json(baseCandles);
+    };
+    const service = new StockTokenDetails("key", fetchImpl, () => baseNow);
+    const pending = service.details(googl.address, "1W", 8453);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    deadline.abort(new Error("Base enrichment deadline"));
+    const result = await Promise.race([pending, new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Base details exceeded its shared deadline")), 100);
+    })]);
+    assert.equal(result?.chainId, 8453);
+    assert.equal(result?.symbol, "GOOGLc");
+    assert.equal(result?.name, stage === "issuer and price" ? "GOOGLc" : "Alphabet Inc.");
+    assert.equal(result?.sessions, null);
+    assert.equal(result?.chart?.source ?? null, stage === "issuer and price" ? "geckoterminal" : null);
+    assert.equal(result?.priceUsd, stage === "issuer and price" ? null : 300);
+    assert.deepEqual(timeouts, [2_000]);
+    assert.ok(signals.every((signal) => signal === deadline.signal), "cold pool and candles share the issuer/price deadline");
+    assert.ok(!calls.some((url) => url.includes("api.1inch.com/charts")));
+  });
+}
+
+test("concurrent Base periods share cold pool discovery, and identical charts share candles", async () => {
+  const googl = BASE_BUY_TARGETS[0]!;
+  const calls: string[] = [];
+  let releasePool!: () => void;
+  const poolReady = new Promise<void>((resolve) => { releasePool = resolve; });
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes("coinbase.com")) return Response.json({ tokens: [{ contract_address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc." }] });
+    if (url.includes("/price/")) return Response.json({ [googl.address.toLowerCase()]: "300" });
+    if (url.includes("api.1inch.com/charts")) return new Response("", { status: 400 });
+    if (url.includes("/pools?")) {
+      await poolReady;
+      return Response.json({ data: [{ attributes: { address: geckoPoolAddress } }] });
+    }
+    return Response.json(baseCandles);
+  };
+  const service = new StockTokenDetails("key", fetchImpl, () => baseNow);
+  const pending = Promise.all([service.details(googl.address, "1W", 8453), service.details(googl.address, "1Y", 8453), service.details(googl.address, "1W", 8453)]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  releasePool();
+  const results = await pending;
+  assert.ok(results.every((result) => result?.chart?.source === "geckoterminal"));
+  assert.equal(calls.filter((url) => url.includes("/pools?")).length, 1);
+  assert.equal(calls.filter((url) => url.includes("/ohlcv/")).length, 2);
+});
+
+test("an aborted shared pool owner cannot poison a later successful cached chart", async (t) => {
+  const googl = BASE_BUY_TARGETS[0]!;
+  const deadlines: AbortController[] = [];
+  const timeout = mock.method(AbortSignal, "timeout", () => {
+    const deadline = new AbortController();
+    deadlines.push(deadline);
+    return deadline.signal;
+  });
+  t.after(() => timeout.mock.restore());
+  let poolCalls = 0;
+  let candleCalls = 0;
+  let releaseOldPool!: (response: Response) => void;
+  const oldPool = new Promise<Response>((resolve) => { releaseOldPool = resolve; });
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("coinbase.com")) return Response.json({ tokens: [{ contract_address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc." }] });
+    if (url.includes("/price/")) return Response.json({ [googl.address.toLowerCase()]: "300" });
+    if (url.includes("api.1inch.com/charts")) return new Response("", { status: 400 });
+    if (url.includes("/pools?")) {
+      if (++poolCalls === 1) return oldPool;
+      return Response.json({ data: [{ attributes: { address: geckoPoolAddress } }] });
+    }
+    candleCalls++;
+    return Response.json(baseCandles);
+  };
+  const service = new StockTokenDetails("key", fetchImpl, () => baseNow);
+  const owner = service.details(googl.address, "1W", 8453);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const lateJoiner = service.details(googl.address, "1Y", 8453);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  deadlines[0]!.abort(new Error("owner expired"));
+  const expired = await Promise.race([Promise.all([owner, lateJoiner]), new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error("aborted shared discovery stayed pending")), 100);
+  })]);
+  assert.ok(expired.every((result) => result?.chart === null));
+  const recovered = await service.details(googl.address, "1W", 8453);
+  assert.equal(recovered?.chart?.source, "geckoterminal");
+  assert.equal(poolCalls, 2, "abort is retried immediately rather than negative-cached");
+  releaseOldPool(Response.json({ data: [] }));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual((await service.details(googl.address, "1W", 8453))?.chart, recovered?.chart);
+  assert.equal(poolCalls, 2);
+  assert.equal(candleCalls, 1);
+});
+
+
+test("a candle timeout retains healthy issuer, price and pool observations for the retry", async (t) => {
+  const googl = BASE_BUY_TARGETS[0]!;
+  const deadlines: AbortController[] = [];
+  const timeout = mock.method(AbortSignal, "timeout", () => {
+    const deadline = new AbortController();
+    deadlines.push(deadline);
+    return deadline.signal;
+  });
+  t.after(() => timeout.mock.restore());
+  const calls: string[] = [];
+  let candleCalls = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes("coinbase.com")) return Response.json({ tokens: [{ contract_address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc." }] });
+    if (url.includes("/price/")) return Response.json({ [googl.address.toLowerCase()]: "300" });
+    if (url.includes("/pools?")) return Response.json({ data: [{ attributes: { address: geckoPoolAddress } }] });
+    if (++candleCalls === 1) return pendingUntilAbort(init?.signal);
+    return Response.json(baseCandles);
+  };
+  const service = new StockTokenDetails("key", fetchImpl, () => baseNow);
+  const pending = service.details(googl.address, "1W", 8453);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  deadlines[0]!.abort();
+  const expired = await pending;
+  assert.equal(expired?.name, "Alphabet Inc.");
+  assert.equal(expired?.priceUsd, 300);
+  assert.equal(expired?.chart, null);
+  const beforeRetry = calls.length;
+  assert.equal((await service.details(googl.address, "1W", 8453))?.chart?.source, "geckoterminal");
+  assert.equal(calls.length - beforeRetry, 1, "only candles retry after an abort");
+  assert.equal(calls.filter((url) => url.includes("/pools?")).length, 1);
+});
+
+test("Robinhood still returns optional null prices and charts when its providers time out", async (t) => {
+  const deadline = new AbortController();
+  const timeout = mock.method(AbortSignal, "timeout", () => deadline.signal);
+  t.after(() => timeout.mock.restore());
+  const fetchImpl: typeof fetch = async (input, init) => {
+    if (String(input).includes("robinhood.com")) return Response.json({ assets: [asset("NVDA", nvda.address)] });
+    return pendingUntilAbort(init?.signal);
+  };
+  const pending = new StockTokenDetails("key", fetchImpl).details(nvda.address, "1W");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  deadline.abort();
+  const result = await pending;
+  assert.equal(result?.symbol, "NVDA");
+  assert.equal(result?.priceUsd, null);
+  assert.equal(result?.chart, null);
 });
