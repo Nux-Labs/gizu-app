@@ -1,0 +1,799 @@
+{
+  "auditDateIstanbul": "2026-11-26",
+  "sourceCommit": "23a82ec77bf568b277b01f8d004497798cafcd40",
+  "noSignaturesOrTransfers": true,
+  "rpcChecks": {
+    "observedAt": "2026-11-25T23:06:23.005Z",
+    "readOnly": true,
+    "chains": [
+      {
+        "id": 143,
+        "name": "Monad",
+        "rpc": "https://rpc.monad.xyz",
+        "usdc": "0x754704bc059f8c67012fed69bc8a327a5aafb603",
+        "checks": {
+          "chainId": {
+            "http": 200,
+            "ms": 597,
+            "data": {
+              "result": "0x8f",
+              "jsonrpc": "2.0",
+              "id": 1
+            }
+          },
+          "decimals": {
+            "http": 200,
+            "ms": 563,
+            "data": {
+              "jsonrpc": "2.0",
+              "result": "0x0000000000000000000000000000000000000000000000000000000000000006",
+              "id": 1
+            }
+          },
+          "entryPoint": {
+            "http": 200,
+            "ms": 577,
+            "data": {
+              "bytes": 21738,
+              "sha256": "73580b58c8e2a5cb5bcc1f5c52de5edd8955a87693c3a4482a2b183dac1c99ed"
+            }
+          },
+          "delegate": {
+            "http": 200,
+            "ms": 563,
+            "data": {
+              "bytes": 3639,
+              "sha256": "e5cafd6d044419dd87f11e2797e1ef8c62d838ee13b3ebbb2499745998b32e74"
+            }
+          },
+          "paymaster": {
+            "http": 200,
+            "ms": 570,
+            "data": {
+              "bytes": 14796,
+              "sha256": "dd306c4d75b6c6432c4d1caf08417409f9bffb9647232193a55327acba31f39a"
+            }
+          },
+          "usdc": {
+            "http": 200,
+            "ms": 562,
+            "data": {
+              "bytes": 1798,
+              "sha256": "bde7e5c4c0469cca18f98a08948b558f5df3cb03b5ce4d44663f806ae36ac362"
+            }
+          },
+          "entryPoints": {
+            "http": 200,
+            "ms": 702,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": [
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+                "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+                "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+                "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+              ]
+            }
+          },
+          "gasPrice": {
+            "http": 200,
+            "ms": 720,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": {
+                "slow": {
+                  "maxFeePerGas": "0x1c67c44400",
+                  "maxPriorityFeePerGas": "0x77359400"
+                },
+                "standard": {
+                  "maxFeePerGas": "0x1dd35ae100",
+                  "maxPriorityFeePerGas": "0x7d2b7500"
+                },
+                "fast": {
+                  "maxFeePerGas": "0x1f3ef17e00",
+                  "maxPriorityFeePerGas": "0x83215600"
+                }
+              }
+            }
+          },
+          "tokenQuotes": {
+            "http": 200,
+            "ms": 800,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": {
+                "quotes": [
+                  {
+                    "paymaster": "0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402",
+                    "token": "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+                    "postOpGas": "0x907e",
+                    "exchangeRate": "0x2f36",
+                    "exchangeRateNativeToUsd": "0x2ae7",
+                    "balanceSlot": "0xa",
+                    "allowanceSlot": "0x9"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": 8453,
+        "name": "Base",
+        "rpc": "https://mainnet.base.org",
+        "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "checks": {
+          "chainId": {
+            "http": 200,
+            "ms": 576,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": "0x2105"
+            }
+          },
+          "decimals": {
+            "http": 200,
+            "ms": 579,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": "0x0000000000000000000000000000000000000000000000000000000000000006"
+            }
+          },
+          "entryPoint": {
+            "http": 200,
+            "ms": 592,
+            "data": {
+              "bytes": 21738,
+              "sha256": "e5c27a628d8338475ff45a12d116f0c36df5eebc3a08a4263c1dcf042e92020f"
+            }
+          },
+          "delegate": {
+            "http": 200,
+            "ms": 586,
+            "data": {
+              "bytes": 3639,
+              "sha256": "e5cafd6d044419dd87f11e2797e1ef8c62d838ee13b3ebbb2499745998b32e74"
+            }
+          },
+          "paymaster": {
+            "http": 200,
+            "ms": 589,
+            "data": {
+              "bytes": 14796,
+              "sha256": "dd306c4d75b6c6432c4d1caf08417409f9bffb9647232193a55327acba31f39a"
+            }
+          },
+          "usdc": {
+            "http": 200,
+            "ms": 586,
+            "data": {
+              "bytes": 1852,
+              "sha256": "98d785fcb1bf847f287adc2310759fd94cc13e754b974bc72131382e8266f607"
+            }
+          },
+          "entryPoints": {
+            "http": 200,
+            "ms": 272,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": [
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+                "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+                "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+                "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+              ]
+            }
+          },
+          "gasPrice": {
+            "http": 200,
+            "ms": 302,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": {
+                "slow": {
+                  "maxFeePerGas": "0x7d8d9a",
+                  "maxPriorityFeePerGas": "0x14447a"
+                },
+                "standard": {
+                  "maxFeePerGas": "0x83d4ae",
+                  "maxPriorityFeePerGas": "0x1547e6"
+                },
+                "fast": {
+                  "maxFeePerGas": "0x8a1bc3",
+                  "maxPriorityFeePerGas": "0x164b53"
+                }
+              }
+            }
+          },
+          "tokenQuotes": {
+            "http": 200,
+            "ms": 284,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": {
+                "quotes": [
+                  {
+                    "paymaster": "0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402",
+                    "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                    "postOpGas": "0x4a2e",
+                    "exchangeRate": "0x6e42452d",
+                    "exchangeRateNativeToUsd": "0x64322a80",
+                    "balanceSlot": "0x9",
+                    "allowanceSlot": "0xa"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": 42161,
+        "name": "Arbitrum",
+        "rpc": "https://arb1.arbitrum.io/rpc",
+        "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+        "checks": {
+          "chainId": {
+            "http": 200,
+            "ms": 602,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": "0xa4b1"
+            }
+          },
+          "decimals": {
+            "http": 200,
+            "ms": 597,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": "0x0000000000000000000000000000000000000000000000000000000000000006"
+            }
+          },
+          "entryPoint": {
+            "http": 200,
+            "ms": 615,
+            "data": {
+              "bytes": 21738,
+              "sha256": "f39e4c76bd10dd358af856ff40a62e624eb9554aad005dcb2a9101485bf1a79b"
+            }
+          },
+          "delegate": {
+            "http": 200,
+            "ms": 615,
+            "data": {
+              "bytes": 3639,
+              "sha256": "e5cafd6d044419dd87f11e2797e1ef8c62d838ee13b3ebbb2499745998b32e74"
+            }
+          },
+          "paymaster": {
+            "http": 200,
+            "ms": 619,
+            "data": {
+              "bytes": 14796,
+              "sha256": "dd306c4d75b6c6432c4d1caf08417409f9bffb9647232193a55327acba31f39a"
+            }
+          },
+          "usdc": {
+            "http": 200,
+            "ms": 610,
+            "data": {
+              "bytes": 1852,
+              "sha256": "b46445c0c96a50cd0ae6245d2ceb5058fbbcd24afad9cb878974d8f17b4655c8"
+            }
+          },
+          "entryPoints": {
+            "http": 200,
+            "ms": 267,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": [
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+                "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+                "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+                "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+              ]
+            }
+          },
+          "gasPrice": {
+            "http": 200,
+            "ms": 276,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": {
+                "slow": {
+                  "maxFeePerGas": "0x195e4c0",
+                  "maxPriorityFeePerGas": "0x203a0"
+                },
+                "standard": {
+                  "maxFeePerGas": "0x1aa3030",
+                  "maxPriorityFeePerGas": "0x21d68"
+                },
+                "fast": {
+                  "maxFeePerGas": "0x1be7ba0",
+                  "maxPriorityFeePerGas": "0x23730"
+                }
+              }
+            }
+          },
+          "tokenQuotes": {
+            "http": 200,
+            "ms": 285,
+            "data": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "result": {
+                "quotes": [
+                  {
+                    "paymaster": "0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402",
+                    "token": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+                    "postOpGas": "0x4a2e",
+                    "exchangeRate": "0x6e42452d",
+                    "exchangeRateNativeToUsd": "0x64322a80",
+                    "balanceSlot": "0x9",
+                    "allowanceSlot": "0xa"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
+    "registry": {
+      "http": 200,
+      "ms": 654,
+      "data": {
+        "total": 234,
+        "tokens": [
+          {
+            "assetId": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+            "blockchain": "arb",
+            "symbol": "USDC",
+            "decimals": 6,
+            "contractAddress": "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
+          },
+          {
+            "assetId": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+            "blockchain": "base",
+            "symbol": "USDC",
+            "decimals": 6,
+            "contractAddress": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+          },
+          {
+            "assetId": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+            "blockchain": "monad",
+            "symbol": "USDC",
+            "decimals": 6,
+            "contractAddress": "0x754704bc059f8c67012fed69bc8a327a5aafb603"
+          }
+        ]
+      }
+    },
+    "auroraDocs": {
+      "http": 404,
+      "ms": 627,
+      "data": {
+        "message": "Route GET:/api-docs-json not found",
+        "error": "Not Found",
+        "statusCode": 404
+      }
+    }
+  },
+  "auroraQuotes": [
+    {
+      "source": "Monad",
+      "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "10000000",
+      "observedAt": "2026-11-25T23:07:26.902Z",
+      "http": 200,
+      "ms": 1086,
+      "fields": [
+        "timestamp",
+        "signature",
+        "correlationId",
+        "quoteRequest",
+        "quote"
+      ],
+      "echo": {
+        "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "depositType": "ORIGIN_CHAIN",
+        "recipientType": "CONFIDENTIAL_INTENTS",
+        "dry": false,
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "referral": "aurora-1u3j2qzclc"
+      },
+      "quote": {
+        "amountIn": "10000000",
+        "amountOut": "9996000",
+        "minAmountOut": "9996000",
+        "deadline": "2026-11-28T23:22:26.174Z",
+        "timeWhenInactive": "2026-11-28T23:22:26.174Z",
+        "hasDepositAddress": true
+      }
+    },
+    {
+      "source": "Base",
+      "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "10000000",
+      "observedAt": "2026-11-25T23:07:27.688Z",
+      "http": 200,
+      "ms": 783,
+      "fields": [
+        "timestamp",
+        "signature",
+        "correlationId",
+        "quoteRequest",
+        "quote"
+      ],
+      "echo": {
+        "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+        "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "depositType": "ORIGIN_CHAIN",
+        "recipientType": "CONFIDENTIAL_INTENTS",
+        "dry": false,
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "referral": "aurora-1u3j2qzclc"
+      },
+      "quote": {
+        "amountIn": "10000000",
+        "amountOut": "9973975",
+        "minAmountOut": "9973975",
+        "deadline": "2026-11-28T23:22:27.189Z",
+        "timeWhenInactive": "2026-11-28T23:22:27.189Z",
+        "hasDepositAddress": true
+      }
+    },
+    {
+      "source": "Arbitrum",
+      "originAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "10000000",
+      "observedAt": "2026-11-25T23:07:28.320Z",
+      "http": 200,
+      "ms": 631,
+      "fields": [
+        "timestamp",
+        "signature",
+        "correlationId",
+        "quoteRequest",
+        "quote"
+      ],
+      "echo": {
+        "originAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+        "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "depositType": "ORIGIN_CHAIN",
+        "recipientType": "CONFIDENTIAL_INTENTS",
+        "dry": false,
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "referral": "aurora-1u3j2qzclc"
+      },
+      "quote": {
+        "amountIn": "10000000",
+        "amountOut": "9973975",
+        "minAmountOut": "9973975",
+        "deadline": "2026-11-28T23:22:27.771Z",
+        "timeWhenInactive": "2026-11-28T23:22:27.771Z",
+        "hasDepositAddress": true
+      }
+    },
+    {
+      "source": "Monad",
+      "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "5000000",
+      "observedAt": "2026-11-25T23:10:06.292Z",
+      "http": 200,
+      "validated": true,
+      "ms": 1137,
+      "fields": [
+        "timestamp",
+        "signature",
+        "correlationId",
+        "quoteRequest",
+        "quote"
+      ],
+      "echo": {
+        "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "depositType": "ORIGIN_CHAIN",
+        "recipientType": "CONFIDENTIAL_INTENTS",
+        "dry": false,
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "referral": "aurora-1u3j2qzclc"
+      },
+      "quote": {
+        "amountIn": "5000000",
+        "amountOut": "4998000",
+        "minAmountOut": "4998000",
+        "deadline": "2026-11-28T23:25:05.598Z",
+        "timeWhenInactive": "2026-11-28T23:25:05.598Z",
+        "hasDepositAddress": true
+      }
+    },
+    {
+      "source": "Base",
+      "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "5000000",
+      "observedAt": "2026-11-25T23:10:07.140Z",
+      "http": 200,
+      "validated": true,
+      "ms": 843,
+      "fields": [
+        "timestamp",
+        "signature",
+        "correlationId",
+        "quoteRequest",
+        "quote"
+      ],
+      "echo": {
+        "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+        "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "depositType": "ORIGIN_CHAIN",
+        "recipientType": "CONFIDENTIAL_INTENTS",
+        "dry": false,
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "referral": "aurora-1u3j2qzclc"
+      },
+      "quote": {
+        "amountIn": "5000000",
+        "amountOut": "4986987",
+        "minAmountOut": "4986987",
+        "deadline": "2026-11-28T23:25:06.582Z",
+        "timeWhenInactive": "2026-11-28T23:25:06.582Z",
+        "hasDepositAddress": true
+      }
+    },
+    {
+      "source": "Arbitrum",
+      "originAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "5000000",
+      "observedAt": "2026-11-25T23:10:07.770Z",
+      "http": 200,
+      "validated": true,
+      "ms": 630,
+      "fields": [
+        "timestamp",
+        "signature",
+        "correlationId",
+        "quoteRequest",
+        "quote"
+      ],
+      "echo": {
+        "originAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+        "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "depositType": "ORIGIN_CHAIN",
+        "recipientType": "CONFIDENTIAL_INTENTS",
+        "dry": false,
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "referral": "aurora-1u3j2qzclc"
+      },
+      "quote": {
+        "amountIn": "5000000",
+        "amountOut": "4986987",
+        "minAmountOut": "4986987",
+        "deadline": "2026-11-28T23:25:07.229Z",
+        "timeWhenInactive": "2026-11-28T23:25:07.229Z",
+        "hasDepositAddress": true
+      }
+    },
+    {
+      "source": "Monad",
+      "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "100000",
+      "observedAt": "2026-11-25T23:10:06.309Z",
+      "http": 200,
+      "validated": true,
+      "ms": 978,
+      "fields": [
+        "timestamp",
+        "signature",
+        "correlationId",
+        "quoteRequest",
+        "quote"
+      ],
+      "echo": {
+        "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "depositType": "ORIGIN_CHAIN",
+        "recipientType": "CONFIDENTIAL_INTENTS",
+        "dry": false,
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "referral": "aurora-1u3j2qzclc"
+      },
+      "quote": {
+        "amountIn": "100000",
+        "amountOut": "99960",
+        "minAmountOut": "99960",
+        "deadline": "2026-11-28T23:25:05.648Z",
+        "timeWhenInactive": "2026-11-28T23:25:05.648Z",
+        "hasDepositAddress": true
+      }
+    },
+    {
+      "source": "Base",
+      "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "100000",
+      "observedAt": "2026-11-25T23:10:06.991Z",
+      "http": 422,
+      "validated": false,
+      "ms": 681,
+      "code": "AURORA_REJECTED",
+      "message": "The private request could not be completed.",
+      "fields": ["code", "message"],
+      "echo": {},
+      "quote": {
+        "hasDepositAddress": false
+      }
+    },
+    {
+      "source": "Arbitrum",
+      "originAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+      "amount": "100000",
+      "observedAt": "2026-11-25T23:10:07.660Z",
+      "http": 200,
+      "validated": true,
+      "ms": 669,
+      "fields": [
+        "timestamp",
+        "signature",
+        "correlationId",
+        "quoteRequest",
+        "quote"
+      ],
+      "echo": {
+        "originAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+        "destinationAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "depositType": "ORIGIN_CHAIN",
+        "recipientType": "CONFIDENTIAL_INTENTS",
+        "dry": false,
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "referral": "aurora-1u3j2qzclc"
+      },
+      "quote": {
+        "amountIn": "100000",
+        "amountOut": "99737",
+        "minAmountOut": "99737",
+        "deadline": "2026-11-28T23:25:07.071Z",
+        "timeWhenInactive": "2026-11-28T23:25:07.071Z",
+        "hasDepositAddress": true
+      }
+    }
+  ],
+  "limits": [
+    "Quotes are unfunded dry:false, not completed settlements.",
+    "Five-USDC and 0.10-USDC successes asserted submitted echo fields and amount/address/expiry bounds; initial ten-USDC samples were inspected.",
+    "Source paymaster gas is excluded from Aurora route input.",
+    "HTTP 422 is generic and does not prove an exact route minimum."
+  ],
+  "privateHandoffQuotes": {
+    "unfundedQuotesOnly": true,
+    "noSignedIntents": true,
+    "syntheticAddresses": true,
+    "results": [
+      {
+        "destination": "Ethereum USDC",
+        "destinationAsset": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+        "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "amount": "10000000",
+        "observedAt": "2026-11-25T23:15:47.022Z",
+        "http": 200,
+        "validated": true,
+        "ms": 1015,
+        "amountOut": "9374982",
+        "minAmountOut": "9281232",
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "depositType": "CONFIDENTIAL_INTENTS",
+        "recipientType": "DESTINATION_CHAIN",
+        "refundType": "CONFIDENTIAL_INTENTS"
+      },
+      {
+        "destination": "Robinhood USDG",
+        "destinationAsset": "nep141:hood-0x5fc5360d0400a0fd4f2af552add042d716f1d168.omft.near",
+        "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "amount": "10000000",
+        "observedAt": "2026-11-25T23:15:47.789Z",
+        "http": 200,
+        "validated": true,
+        "ms": 762,
+        "amountOut": "9804052",
+        "minAmountOut": "9706011",
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 25
+          }
+        ],
+        "depositType": "CONFIDENTIAL_INTENTS",
+        "recipientType": "DESTINATION_CHAIN",
+        "refundType": "CONFIDENTIAL_INTENTS"
+      },
+      {
+        "destination": "Base USDC",
+        "destinationAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+        "originAsset": "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx",
+        "amount": "10000000",
+        "observedAt": "2026-11-25T23:15:48.381Z",
+        "http": 200,
+        "validated": true,
+        "ms": 592,
+        "amountOut": "9969175",
+        "minAmountOut": "9869483",
+        "appFees": [
+          {
+            "recipient": "widget_collect.sputnik-dao.near",
+            "fee": 4
+          }
+        ],
+        "depositType": "CONFIDENTIAL_INTENTS",
+        "recipientType": "DESTINATION_CHAIN",
+        "refundType": "CONFIDENTIAL_INTENTS"
+      }
+    ]
+  }
+}

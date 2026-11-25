@@ -2,6 +2,8 @@
 
 Status: proposed for review; implementation has not started.
 
+Feasibility follow-up: [live checks, existing mechanisms and remaining gaps](../feasibility/2026-11-26-funding-expansion.md). Exact Base/Arbitrum canonical-private routes returned successful unfunded quotes. Reuse existing source-credit envelopes and journals; no new funding-credit table or standalone pool object is required by the baseline design.
+
 Branch: `feat/funding-expansion`, created from `origin/main` at
 `23a82ec77bf568b277b01f8d004497798cafcd40` (includes PRs #80–#83).
 
@@ -119,9 +121,22 @@ continue working; do not silently pool different confidential owners.
   The existing private-funded branch already handles spending private USDC.
   Route the combined credited amount through that branch instead of adding
   a new payout type or redesigning its transfer/distribution rules.
-- Backend `ConfidentialSettlement` has an in-memory occupied set, which is not
-  durable coordination across replicas. Existing minimum-return receipts have
-  different semantics from bounded funding credit and cannot simply be renamed.
+- That balance-funded Earn adapter is currently Robinhood-only. Ethereum Earn
+  retains a separate legacy controller and individual source-credit proof path.
+  Its handoff requires an explicit extension of the existing private-balance
+  adapter/native allowlist for Ethereum USDC; liquidity/vault execution and
+  stage approvals remain unchanged. Do not silently exclude it or describe that
+  handoff as already supported.
+- Backend `ConfidentialSettlement` already issues portable, bound source-credit
+  envelopes that survive later spending/restart. The native source journals and
+  shared-credit guards provide ordered recovery; existing Postgres operation
+  coordination also binds immutable claims. Its in-memory occupied set alone is
+  not durable locking, but it is not the only existing safeguard. Extend the
+  current mechanisms before considering another ledger. Minimum-return receipts
+  retain their distinct semantics.
+- Swap's private-funded mode currently sizes execution from the whole available
+  private balance. Bind the approved combined amount at the handoff so a partial
+  budget cannot sweep unrelated private funds; retain the existing trading rules.
 - iOS has a single-operation Swap journal, lacks Android's funding batch and
   reservations, and caps new Swap input at 10,000,000 atoms. All three need
   explicit handling for the 15 USDC cross-source example.
@@ -142,13 +157,16 @@ receipt. Serializing app-controlled incoming routes reduces ambiguity; unrelated
 external activity can still make attribution uncertain. Do not claim that pooling
 eliminates this limitation or introduce guessed credit for a new network.
 
-Use a durable account/asset fence and receipts across funding, private sales,
-Earn returns, payouts and cashout. Never reuse one observed balance increase for
-two operations. A timeout or expiring authorization must not release signed work
-or reset its saved baseline. Reauthentication refreshes authority while retaining
-the original settlement evidence. Ambiguous credit pauses with recoverable funds;
-it does not start the downstream action. Without `/history`, some ambiguity may
-still require provider-assisted reconciliation; never label that case settled.
+Reuse existing encrypted source/parent journals, bound source-credit envelopes,
+shared-credit/payout guards and operation coordination. Persist each credit before
+advancing, and make the new source children visible to the existing guards.
+Never reuse one observed balance increase for two child credits or release signed
+work/reset its baseline merely because authorization expired. Reauthentication
+refreshes authority while retaining the original evidence. Ambiguous credit pauses
+with recoverable funds; it does not start downstream execution. Without `/history`,
+some ambiguity may still require provider-assisted reconciliation; never label it
+settled. Expiring coordination claims are not permanent signed-work ownership;
+do not introduce a global lease/ledger system without a demonstrated unmet need.
 
 Cancel before submission releases unused reservations. After submission,
 reconcile before releasing ownership; do not promise an automatic cross-chain
@@ -165,14 +183,19 @@ USDC-paid gas is described in
 [its ERC-20 funding guide](https://docs.pimlico.io/guides/how-to/payments/send-usdc-without-eth).
 These are integration references, not proof of Gizu's complete route.
 
-No provider credentials are currently supplied. Before enabling either new
-network, qualify exact token/paymaster support, live gas estimates including
-rollup data fees, Aurora origin-to-canonical-private quotes, refunds, expiry,
-minimums, settlement evidence and at least one bounded end-to-end funded journey.
-An asset appearing in the registry does not prove that route is executable.
-Do not make the new networks visible until both backend and native capabilities
-are ready. Keep unavailable qualification checks explicitly blocked rather than
-inventing successful fixtures or requesting secret values in chat.
+Live public checks confirmed exact token/paymaster support, deployed pins and
+Base/Arbitrum origin-to-canonical-private quote availability at 5- and 10-USDC
+route inputs. Gizu's already-configured proxy and Pimlico public endpoints allowed
+these checks without local provider keys. Quotes were unfunded and did not prove
+private settlement. A 0.10-USDC Base quote was rejected, so minima cannot be
+assumed identical across networks or copied from Monad.
+
+Before enabling either new network, qualify concrete UserOperation gas estimates
+including rollup overhead, source-specific refund/expiry behavior, authenticated
+private settlement, interrupted recovery and a bounded end-to-end funded journey.
+Do not expose the networks until backend and native capabilities are ready. Keep
+unavailable checks explicitly blocked; do not invent successful fixtures or ask
+for secret values in chat.
 
 Read-only and deterministic tests may proceed without credentials. Paid
 qualification transfers, production enablement and deployment require a concrete
