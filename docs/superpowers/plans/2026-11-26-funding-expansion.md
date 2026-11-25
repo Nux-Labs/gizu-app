@@ -1,0 +1,378 @@
+# Base and Arbitrum Funding Expansion Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Let one chain-abstracted Swap or Earn journey spend USDC held across Monad, Base and Arbitrum, using the existing Account 1 and pooling confirmed credits at Account 2.
+
+**Architecture:** Extend existing funding adapters and native planners with exact source-chain identities. Persist each source's independently reconciled Aurora credit, then execute the existing private payout/distribution once from the approved pool. Preserve legacy journals, native authorization and current platform availability.
+
+**Tech Stack:** TypeScript/Fastify/viem/Postgres backend; Rust/UniFFI signer core; Kotlin and Swift native hosts; Expo/React Native; existing Pimlico and Aurora integrations.
+
+**Spec:** [Proposed design and product contract](../specs/2026-11-26-funding-expansion-design.md). Read it before executing this plan; it records the pooling decision, exact assets, known limitations and release gates.
+
+## Global Constraints
+
+- Work in `feat/funding-expansion`, based on main `23a82ec77bf568b277b01f8d004497798cafcd40`; do not move changes to an unrelated branch. No production implementation has started.
+- Funding networks: Monad `143`, Base `8453`, Arbitrum One `42161`; USDC only, six decimals, exact contracts/asset IDs from the spec.
+- Account 1 is `m/44'/60'/0'/0/1` on all funding networks; Account 2 remains the shared confidential owner. Preserve existing eligible Monad return accounts and legacy private-owner recovery.
+- Network is visible only within funding. Main balances and downstream actions are chain-abstracted. Internal identity is always chain + token + owner + account index.
+- Amounts use integer atoms/decimal strings. Requested amounts remain gross budgets; review shows maximum fees and minimum net output. Do not silently reduce the requested budget to fit one source.
+- `/history` is not used. Preserve authenticated bounded balance evidence; ambiguous or unavailable evidence cannot authorize pooled spending.
+- Keep keys, signatures and approval enforcement native. Provider credentials remain backend-only. Reuse existing SDKs, grants, journals, distribution and payout engines.
+- Signed/uncertain operations require reconciliation. Preserve v1 journals and signed payloads; do not reinterpret them as pooled operations.
+- Android guided Earn expands; iOS retains current Earn availability, per the user's explicit answer. Both platforms get the new funding networks and multi-source Swap.
+- Respect `mobile/AGENTS.md`; regenerate bindings. Backend Node >=22.22; mobile Node >=24.15 <25/npm 11; pinned Rust 1.94.1 and existing native build tooling.
+
+## Review Focus
+
+- Same Account 1 address on three chains must represent distinct sources; duplicate rows on one chain must not inflate funds. Tests: tasks 1, 3, 8.
+- Source debit and private credit observed at different times must not double the balance or available budget. Tests: tasks 4, 5, 8.
+- An unrelated private inflow during a pending route must not be claimed beyond the original evidence bounds; uncertainty must remain recoverable. Tests: tasks 4, 6.
+- An old app/journal or partial backend rollout must neither expose unsupported networks nor rewrite signed Monad operations. Tests: tasks 2, 6, 7, 9.
+- A request affordable only in aggregate must work above iOS's existing 10 USDC limit while respecting per-source gas and downstream minimums. Tests: tasks 3, 7, 10.
+
+## Implementation order and file responsibilities
+
+Execute tasks in dependency order. Task 0 verifies the route assumption before
+substantial implementation. Tasks 1–4 establish shared contracts and safe
+accounting; tasks 5–7 connect existing native journeys; tasks 8–10 expose the
+behavior; task 11 qualifies and releases it. Each task starts with regression
+tests and ends with focused verification and a commit on the requested branch.
+
+Existing files are listed below each task. New files are limited to: a pinned
+backend source configuration, a shared pure Rust pool model, a durable funding
+credit store using the existing Postgres infrastructure, the missing iOS source
+reservation implementation, and focused routes/tests. These each fill a concrete
+gap; no new wallet service or parallel Swap/Earn orchestration framework is needed.
+
+### Task 0: Qualify the canonical-private route before building the flow
+
+**Files:** Read the source pins, Aurora gateway and existing provider integration
+tests listed in tasks 1–2. Record results in the accompanying design document;
+no transaction, production configuration or implementation change is required.
+
+**Interfaces:** Qualification input is the exact source token/chain and canonical
+private destination from the spec, not generic USDC. Output is per-network
+`qualified`, `unavailable` or `blocked` evidence with timestamp and limitations.
+
+- [ ] Verify public RPC chain ID and pinned deployments, supported EntryPoint,
+      registry asset identities and documented ERC-20 paymaster support for each
+      selected network. This evidence alone does not mark the end-to-end route qualified.
+- [ ] With server-side credentials, request genuinely non-executing provider
+      quotes for Base/Arbitrum USDC → canonical confidential USDC at representative
+      amounts, including the 10+5 USDC gross split. Verify quote minimums, maximum
+      credit bounds, refund chain/address and source gas affordability. Do not send
+      `dry: true` to Gizu's current Swap quote proxy: its schema accepts only
+      `dry: false`. Use the provider's documented non-executing facility through a
+      local qualification harness; if unavailable, record that limit explicitly.
+- [ ] Record that credentials are currently absent. Keep this prerequisite
+      blocked until they are configured securely; do not invent a successful quote
+      or assume a generic NEAR Intents quote proves Aurora's confidential route.
+      Contract tests and independent refactoring can proceed, but do not commit the
+      substantial pooled-journey implementation to an unqualified route assumption.
+- [ ] If the exact destination is unsupported, stop this design's route-dependent
+      tasks and review the provider result with the user. Do not silently substitute
+      another private asset or add a public consolidation bridge.
+- [ ] Commit recorded evidence as `docs: qualify funding origins and private routes`.
+
+### Task 1: Pin source identities and version the contracts
+
+**Files**
+
+- Create: `backend/src/adapters/pimlico/funding-chains.ts`.
+- Modify: `backend/src/adapters/aurora/assets.ts`, `backend/src/env.schema.ts`.
+- Modify: `mobile/modules/gizu-stored-signer/core/src/swap/pins.rs`, `mobile/modules/gizu-stored-signer/core/src/swap/funding.rs`, `mobile/modules/gizu-stored-signer/core/src/source_planner.rs`.
+- Modify: `mobile/src/domain/wallet/storedSigner.ts`, `mobile/src/domain/earn/sourceFunding.ts`, `mobile/src/domain/earn/depositJourney.ts`.
+- Test: create `backend/test/adapters/pimlico/funding-chains.test.ts`; extend `backend/test/env.schema.test.ts`; Rust tests beside the affected source.
+
+**Interfaces**
+
+- Backend `FundingChainId = 143 | 8453 | 42161`; `fundingChain(id: number): FundingChain` returns pinned RPC configuration key, exact USDC, Aurora origin asset, six decimals, EntryPoint, delegate and paymaster. Reject other IDs.
+- Mirror exact pins in native Rust `FundingChain`; no caller-supplied RPC URLs or arbitrary token/delegate addresses.
+- Public `FundingSourceKey = { sourceChainId, token, accountIndex, owner }`; new funding requests/journals are `version: 2`. Existing `chainId` continues to mean the action's destination.
+- Add a capability declaration containing `fundingContractVersion: 2` and supported `fundingChainIds`; old native/backend versions imply Monad-only support.
+
+- [ ] Write `source_identity_distinguishes_same_owner_across_chains`: Account 1/address A on 143, 8453 and 42161 yields three identities; a second A/8453/native-USDC row is rejected. Verify unknown chain, wrong USDC, USDC.e and non-six-decimal inputs fail.
+- [ ] Run `cd backend && node --experimental-transform-types --test test/adapters/pimlico/funding-chains.test.ts`; run `cd mobile && npm run stored-signer:test -- source_planner`. Confirm the new assertions fail before changing production behavior.
+- [ ] Implement the pinned configuration, native types and additive v2 contracts. Add Arbitrum RPC configuration; reuse existing Base RPC configuration where suitable. Preserve old defaults as explicit Monad v1 decoding, not inferred target-chain behavior.
+- [ ] Run focused tests and both packages' `npm run typecheck`. Verify old request fixtures still decode unchanged.
+- [ ] Commit as `feat: define versioned multi-chain funding identities`.
+
+### Task 2: Generalize the existing Pimlico and Aurora funding boundaries
+
+**Files**
+
+- Modify: `backend/src/adapters/pimlico/monad-funding.ts`, `backend/src/adapters/pimlico/source-funding.ts`, `backend/src/adapters/evm/gas-policy.ts`, `backend/src/adapters/evm/token-paymaster.ts`.
+- Modify: `backend/src/adapters/earn/native-gateway.ts`, `backend/src/adapters/earn/fee-policy.ts`, `backend/src/http/routes/swap.routes.ts`, `backend/src/app.ts`.
+- Create: `backend/src/http/routes/funding.routes.ts`, `backend/test/http/funding.routes.test.ts`.
+- Test: `backend/test/adapters/pimlico/source-funding.test.ts`, `backend/test/adapters/pimlico/source-funding.integration.test.ts`, `backend/test/adapters/evm/gas-policy.test.ts`, `backend/test/adapters/earn/native-gateway.test.ts`, `backend/test/http/swap.routes.test.ts`.
+
+**Interfaces**
+
+- New allowlisted routes: `POST /v1/funding/:chainId/plan`, `/prepare`, `/submit`, `/receipt`. Their schemas reuse existing funding payloads plus v2 source identity; responses bind the selected network and token.
+- Existing `/v1/swap/monad/*` and `/v1/earn/monad/funding-plan` remain v1 wrappers with identical behavior and serialized proofs.
+- Source quote input separates `originAsset` from fixed canonical `privateAsset`; refund owner is Account 1 on the selected source network. All source proofs include `sourceChainId` and exact origin asset.
+
+- [ ] Add `base_and_arbitrum_use_source_rpc_and_token`, `funding_chain_is_not_swap_target`, and `legacy_monad_proofs_remain_stable`. Assert source 42161 with target 8453 still signs/looks up the UserOperation on 42161. Wrong RPC chain ID, receipt chain and paymaster token fail closed.
+- [ ] Run the affected backend test files with `node --experimental-transform-types --test <files>` and confirm the new cases fail.
+- [ ] Parameterize the existing watch-only Pimlico adapter rather than copying it per chain. Keep server signing disabled. Preserve code/delegate, nonce, EntryPoint, calldata, allowance and fee-cap checks; derive fees from each chain's estimate, including rollup overhead, rather than a Monad constant.
+- [ ] Qualify each exact Aurora origin → canonical private pair in the existing gateway/fee policy. Reject unavailable routes and unqualified fee proofs; never replace the canonical private asset with the origin token ID.
+- [ ] Run affected tests, `npm run typecheck` and `npm run gas:check` from `backend/`. Provider integration cases requiring credentials are reported separately, not treated as deterministic passes.
+- [ ] Commit as `feat: reuse funding infrastructure on Base and Arbitrum`.
+
+### Task 3: Make native planning and reservations chain-aware
+
+**Files**
+
+- Modify: `mobile/modules/gizu-stored-signer/core/src/source_planner.rs`.
+- Modify: `mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/NativeFundingPlanner.kt`, `FundingReservations.kt`, `SavedSourceReservations.kt`, `WalletDiscoveryRegistry.kt` (same directory).
+- Test: corresponding `NativeFundingPlannerTest.kt`, `FundingReservationsTest.kt`, `EarnFundingCapacityTest.kt` under `android/src/test/java/io/gizu/storedwallet/`.
+
+**Interfaces**
+
+- Extend `plan_public_source_allocation(registry: String, requested_budget_atoms: String, sources_json: String) -> Result<String, SignerError>` with versioned, chain-qualified input/output; leave v1 decoding intact.
+- `NativeFundingPlanner.plan(...)` returns source rows with stable `sourceId` and `FundingSourceKey`. Persist deterministic source order; do not sort solely by account index.
+- Reservation v2 key is `(sourceChainId, token, owner)` within wallet generation; bind parent/source operation and gross budget. Version 1 records default to Monad/exact existing USDC.
+
+- [ ] Add `ten_plus_ten_can_budget_fifteen`: balances 10,000,000 on 143 and 10,000,000 on 8453, requested 15,000,000; assert exact gross sum 15,000,000, each debit fits its balance, and gas/reserves reduce principal rather than silently reducing the requested budget. Repeat with 42161.
+- [ ] Add tests for private-first allocation, one sufficient public source, cross-source fee/minimum constraints, a dust source that cannot fund its overhead, a reserved source, and legacy Monad returned balances. Test reserving A/8453 does not reserve A/143; concurrent requests cannot overbook either.
+- [ ] Run focused Rust tests and Android `NativeFundingPlannerTest`/`FundingReservationsTest` using the native command in task 11; confirm new behavior fails first.
+- [ ] Extend existing planner/reservations. Read Account 1 on new networks only; retain existing Monad eligible return accounts. Bound probes and quote requests. Prefer private balance, then one sufficient source using bounded fee estimates, then a deterministic economical split. Register/reserve the full approved source set atomically before signing.
+- [ ] Preserve sticky signed reservations across expiry/restart. Resume adopts exact saved chain/token/owner; never moves an old signed operation to a newly cheaper source. Run focused tests to pass.
+- [ ] Commit as `feat: allocate funding budgets across source networks`.
+
+### Task 4: Persist bounded credits and pool ownership safely
+
+**Files**
+
+- Create: `mobile/modules/gizu-stored-signer/core/src/funding_pool.rs`; register in `core/src/lib.rs`.
+- Create: `backend/src/ports/funding-credit.port.ts`, `backend/src/adapters/postgres/pg-funding-credit.ts`, `backend/test/adapters/postgres/pg-funding-credit.test.ts`.
+- Modify: `backend/src/adapters/aurora/settlement.ts`, `backend/src/adapters/aurora/minimum-return.ts`, `backend/src/adapters/earn/operation-coordinator.ts`, `backend/src/ports/operation-coordination.port.ts`, `backend/src/adapters/postgres/pg-operation-coordination.ts`, `backend/src/app.ts`.
+- Test: `backend/test/adapters/aurora/balance-settlement.test.ts`, `backend/test/adapters/aurora/settlement.test.ts`, `backend/test/adapters/postgres/pg-operation-coordination.test.ts`; new Rust module tests.
+
+**Interfaces**
+
+- Rust `FundingPoolManifest` binds wallet generation, parent ID, feature, Account 2, canonical asset, approved existing-private debit, ordered source keys/budgets, per-source minimum/maximum credit, action/recipient distribution and fee caps.
+- Pure `FundingPool::record_credit(source_id, evidence_digest, credited_atoms)` is called only after existing native settlement validation; rejects changed/reused evidence. `allocate(recipient_id, atoms)` cannot exceed `approvedPrivateAtoms + verifiedCredits - previousAllocations`. Native hosts persist its versioned serialized state inside existing encrypted journals.
+- `FundingCreditStore.finish(receipt, expectedAccountSequence)` atomically records an immutable, keyed receipt and advances the private-account sequence. `receipt(routeKey)` returns the same result on replay. Bind parent/source, chain/origin, baseline/quote digest, amount bounds and credited amount; store opaque commitments and amounts, not raw signatures/addresses.
+- Extend existing coordination with a fenced, recoverable Account 2/canonical-asset owner. Stale workers cannot settle after ownership changes. Signed unresolved work remains owned across lease expiry; only the same saved operation may recover it or an explicit reconciled terminal transition may release it.
+
+- [ ] Add `one_delta_cannot_credit_two_sources`: two replicas observe the same 10,000,000 increase; only the correct source's receipt advances the sequence. Replaying its exact receipt returns it without a new balance read, even after payout. Changed parent, origin chain, bounds or baseline is rejected.
+- [ ] Add `pool_budget_excludes_unrelated_private_funds`: existing private balance 50,000,000, approved private debit 2,000,000, two verified credits 9,900,000 and 4,900,000; spending ceiling is 16,800,000, not 64,800,000. Allocate once; replay cannot spend again.
+- [ ] Add over-bound/unrelated inflow, negative delta, missing baseline, route pending/refunded, process death, replica race, stale fence and expired-auth tests. Require ambiguity/pending status; do not assert uniquely attributable credit from an indistinguishable in-bound external inflow.
+- [ ] Run these backend/Rust tests and confirm failures before implementation.
+- [ ] Reuse recovery envelopes, Postgres pool and operation coordination; add only the missing permanent funding-credit receipt/sequence model. Do not change `minimum-return-v1` into bounded funding semantics. Make all new pool writers and existing app-controlled Account 2 mutators participate in the fence, including private sale, Earn returns, private payout and cashout entry points.
+- [ ] Scope the fence to the parent journey so its source and payout children
+      are compatible owners. Refuse a new pool while a legacy operation has unresolved
+      Account 2 mutation evidence; reconcile it first. Prepare speculative quotes in
+      parallel, but refresh the active leg's quote/baseline within its reviewed terms
+      just before that leg submits. A baseline captured before the previous leg's
+      credit must never serve as the next leg's baseline.
+- [ ] Run affected tests against the existing Postgres integration harness, including concurrent clients and rollback. Add focused integration cases for private sale/cashout conflicts. Verify process-local locking alone cannot satisfy the tests.
+- [ ] Commit as `feat: persist and fence pooled private funding credits`.
+
+### Task 5: Reuse Earn's barrier and pay out from one pool
+
+**Files**
+
+- Modify: `mobile/modules/gizu-stored-signer/core/src/earn_sponsored.rs`, `core/src/earn_payout.rs`, `core/src/private_earn_payout.rs`, `core/src/earn_auth.rs`.
+- Modify: `mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/earn/EarnDepositPreparer.kt`, `EarnDepositCoordinator.kt`, `EarnDepositApproval.kt`, `EarnDepositJournal.kt`, `EarnDepositEngineAdapter.kt`, `EarnSponsoredSettlement.kt`, `EarnFundingBatchApproval.kt` (same directory).
+- Modify: `backend/src/adapters/earn/private-payout.ts`, `backend/src/adapters/earn/robinhood-deposit-preview.ts`, `backend/src/http/routes/earn-settlement.routes.ts`.
+- Test: existing `EarnDepositCoordinatorTest.kt`, `EarnDepositRecoveryTest.kt`, `EarnPrivateDepositFlowTest.kt`, `EarnDepositAllocationTest.kt`; `backend/test/adapters/earn/private-payout.test.ts`, `private-payout-routes.test.ts`.
+
+**Interfaces**
+
+- Deposit review v2 carries `fundingPool` manifest/digest and one set of recipient allocations. Existing source rows remain provenance/funding records; they no longer multiply payout recipients.
+- Add a versioned payout source `{ kind: "fundingPool", poolId, manifestDigest, creditReceipts, approvedPrivateAtoms, allocatedAtoms }` beside the existing single-source proof. The backend validates exact membership/ownership/consumption before preparing a payout.
+- The existing coordinator's all-credit barrier consumes verified pool state. Payout lookup is keyed by `(poolId, recipient/leg)`, not `(sourceId, recipient/leg)` for v2 only.
+
+- [ ] Add `two_funding_sources_use_one_payout_per_recipient`: two credits and two saved distribution recipients produce two payouts, not four; vault deposits use independently verified recipient receipts exactly once. Same test for the Ethereum and Robinhood profiles where currently supported.
+- [ ] Add partial-credit failure/resume, mixed approved-private/public input, quote expiry after first credit, insufficient net minimum and changed-recipient cases. Terms outside the saved caps require review; completed credits and chosen weights survive it.
+- [ ] Run focused native and backend tests and confirm new cases fail.
+- [ ] Reuse existing preparer, grant, coordinator barrier and group receipt verifier. Quote/preview against the combined private allocation; revise source × recipient fee/minimum assumptions. Count distribution wallets once using the original approved gross budget. New sources cannot reroll the saved distribution or allocate additional wallet cycles.
+- [ ] Preserve v1 source × recipient journals and legacy confidential owners. Reauthentication uses existing approval/read-auth transitions while retaining saved settlement evidence. Run affected Earn suites and existing sell/cashout regression suites.
+- [ ] Commit as `feat: invest pooled funding through the existing Earn journey`.
+
+### Task 6: Extend Swap with fund-only children and a pooled execution
+
+**Files**
+
+- Modify: `mobile/modules/gizu-stored-signer/core/src/swap/engine.rs`, `engine_tests.rs`, `funding.rs`, `aurora.rs`, `mod.rs` (same directory).
+- Modify: `mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/swap/SwapFundingBatch.kt`, `SwapBatchApproval.kt`, `SwapEngine.kt`, `SwapStore.kt` (same directory).
+- Test: `android/src/test/java/io/gizu/storedwallet/swap/SwapFundingBatchTest.kt`, `SwapBatchApprovalTest.kt`; Rust engine tests.
+
+**Interfaces**
+
+- Native plan v2 separates `sourceChainId`, `originAsset`, fixed `privateAsset` and destination `chainId`. Add a fund-only mode to the existing operation that terminates at confirmed private credit.
+- Swap batch v2 persists funding pool + fund-only child states + one downstream execution state. The downstream existing private-payout operation receives an explicit approved amount and saved distribution rather than reading/spending the whole private balance.
+- Public parent status reports aggregate gross budget, verified private credit and downstream result without claiming success when only funding finished.
+
+- [ ] Add `mixed_network_swap_waits_for_all_credits`, `funding_chain_does_not_change_target`, and `payout_spends_only_approved_pool`. Assert no Fusion order/private payout before the final required credit; repeat target 4663 and 8453.
+- [ ] Add restore at every submission/credit boundary, ambiguity → reauthenticate → Resume, saved source quote expiry and cancel-after-first-credit tests. Assert one submission per saved UserOperation and no baseline replacement. Replay the previously fixed private-sale Resume case.
+- [ ] Run `cd mobile && npm run stored-signer:test -- swap`; focused Android Swap batch/approval tests must fail for the new assertions first.
+- [ ] Extend the existing Rust state machine and Android batch, preserving persistence-before-transmission. Keep v1 hashes, fixed Monad fields, batch execution and encrypted-envelope AAD readable unchanged; new batches use explicit v2 decoding.
+- [ ] Run Rust swap tests and Android batch/approval tests to pass, including old saved-journal fixtures. Confirm private balance alone can fund a new Swap without public-source signatures.
+- [ ] Commit as `feat: execute one Swap from pooled multi-chain funding`.
+
+### Task 7: Bring iOS funding and Swap to the same contract
+
+**Files**
+
+- Modify: `mobile/modules/gizu-stored-signer/ios/Swap/SwapEngine.swift`, `SwapStore.swift`, `SwapReconciler.swift`.
+- Modify: `mobile/modules/gizu-stored-signer/ios/Access/WalletCeremony+Swap.swift`, `ios/GizuStoredSignerModule.swift`.
+- Create: `mobile/modules/gizu-stored-signer/ios/Swap/FundingReservations.swift`, `ios/Tests/FundingReservationsTests.swift`, `ios/Tests/SwapFundingBatchTests.swift`.
+- Test: `mobile/modules/gizu-stored-signer/ios/Tests/OperationJournalTests.swift`, `MainnetPortfolioTests.swift`, `SwapHoldingsTests.swift`.
+
+**Interfaces**
+
+- iOS consumes the same Rust source allocation and `FundingPool` model as Android; `SwapEngine` persists v2 parent/children through the existing encrypted `StoredSwapFile`.
+- iOS source reservation operations match task 3's chain-qualified contract and sticky signed ownership, using existing wallet files/keys and wallet-generation scoping.
+- Expose only capabilities actually implemented: new funding/Swap contract yes; existing unavailable guided Earn functions remain unavailable.
+
+- [ ] Add `fifteen_usdc_swap_uses_two_account_one_sources` and a 15,000,000-atom input validation case. Add legacy single-state journal restore, same-address/different-chain reservation, two simultaneous intents, expired auth and restore-after-one-credit cases.
+- [ ] Run `cd mobile && npm run stored-signer:test:ios`; confirm new cases fail before implementing the host changes.
+- [ ] Remove the hardcoded 10,000,000-atom ceiling for new reviewed operations; use the shared checked numeric bounds, fee constraints and actual capacity. Retain bounded payload sizes. Extend the existing host to drive fund-only children then the pooled execution; do not reimplement Rust signing or payout calculations in Swift.
+- [ ] Version `StoredSwapFile` content without changing old encryption AAD or invalidating v1 records. Persist reservations/children before outbound actions. Resume reconciles saved source operations before planning another source.
+- [ ] Run iOS tests and `npm run stored-signer:check:ios`; verify capability tests still keep guided Earn unavailable. Regenerate UniFFI bindings using existing build scripts and check both hosts compile.
+- [ ] Commit as `feat: support pooled funding for iOS Swap`.
+
+### Task 8: Observe and display one correct cash balance
+
+**Files**
+
+- Modify: `mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/swap/MainnetPortfolio.kt`, `android/src/main/java/io/gizu/storedwallet/portfolio/OwnedPortfolio.kt`, `PublicPortfolioMapping.kt`.
+- Modify: `mobile/modules/gizu-stored-signer/ios/Portfolio/MainnetPortfolio.swift`, `MainnetPortfolioRPC.swift`.
+- Modify: `mobile/src/domain/wallet/storedSigner.ts`, `portfolioValue.ts`, `mobile/src/features/wallet/MainnetWalletProvider.tsx`.
+- Test: `mobile/tests/unit/wallet/portfolioValue.test.ts`, `mobile/tests/functional/wallet/sourceUsdc.functional.test.tsx`; Android `PublicPortfolioTest.kt`, `OwnedPortfolioTest.kt`; iOS `MainnetPortfolioTests.swift`.
+
+**Interfaces**
+
+- Add `fundingSources` to the native snapshot: rows carry `FundingSourceKey`, `balanceAtoms: string | null`, observed amount, reservations, stale/complete flags and timestamp. Add `fundingContractVersion`/supported chain IDs.
+- Add `fundingCash` aggregate with observed total, complete flag and available-to-plan observation; preserve legacy Monad `totalAtoms`, `fundingAtoms`, `returnAtoms` until callers migrate.
+- Update `portfolioUsdcBalance(snapshot)` to derive public USDC from canonical per-source observations once and combine the existing private observation once. Native fresh checks, not this helper, authorize spending.
+
+- [ ] Add balances 10,000,000 Monad + 10,000,000 Base + 5,000,000 Arbitrum + 2,000,000 private = 27,000,000. An identical Base USDC holding represented in `ownedAssets` must not count twice. Different legitimate owners on one chain must not be collapsed by token identity.
+- [ ] Add RPC failure on one chain with cached funds, a late result from another wallet generation, source debit before private credit, private credit before source refresh, and pending/reserved states. No failed read becomes a verified zero; no transition creates two spendable copies.
+- [ ] Run affected Jest and native portfolio tests and confirm the new assertions fail.
+- [ ] Extend current caches/read budget and snapshot validator. Read Account 1 on each new chain in bounded parallel calls, publish partial observations without waiting for the slowest network, and preserve freshness independently. Deduplicate the aggregate by chain/token/owner and journal transfer identity, not symbol or chain/token alone.
+- [ ] Refresh/invalidate affected source and private observations after funding, sell, Earn return, payout and cancel. Do not mark current funds complete from stale cached values. Run tests to pass.
+- [ ] Commit as `feat: aggregate funding cash without duplicate balances`.
+
+### Task 9: Extend existing funding UI and keep downstream screens chain-abstracted
+
+**Files**
+
+- Modify: `mobile/src/domain/wallet/depositNetworks.ts`, `mobile/src/features/wallet/AddFunds.tsx`, `NetworkPicker.tsx`.
+- Modify: `mobile/src/features/swap/useNativeSwap.ts`, `NativeSwapScreen.tsx`, `TokenDetail.tsx`, `components/ChainMark.tsx`.
+- Modify: `mobile/src/features/earn/DepositJourneyScreen.tsx`, `useDepositJourney.ts`, `SourceFundingPanel.tsx`.
+- Modify: `mobile/src/services/earn/sourceFunding.ts`, `mobile/src/domain/earn/depositJourney.ts`, `mobile/src/domain/wallet/portfolioValue.ts`.
+- Test: `mobile/tests/functional/wallet/sourceUsdc.functional.test.tsx`, `mobile/tests/functional/earn/deposit-journey.functional.test.tsx`, `mobile/tests/functional/swap/nativeSwapLayout.functional.test.tsx`; create `mobile/tests/functional/wallet/funding-networks.functional.test.tsx`.
+
+**Interfaces**
+
+- `DepositNetworkId = "monad" | "base" | "arbitrum"`; visible choices are the intersection of backend enablement and native funding capabilities. All three resolve to existing Account 1 with the selected network context.
+- Swap/Earn controllers request an aggregate budget; native planning selects sources. Funding review/status may identify networks and show extra approvals; ordinary balance, token/action and completed-result views do not require chain selection.
+
+- [ ] Add functional receiving tests for each network: same address, correct network context, copy/QR, back navigation and unsupported-build gating. Backend-only readiness cannot expose a network unsupported by the native build.
+- [ ] Add Home → 15 USDC action from 10+10, review showing gross amount/maximum fees/minimum net, extra funding signatures, progress and Resume. Assert no downstream chain picker or network badges; retain useful asset issuer/product labels when symbols collide.
+- [ ] Run focused functional tests and confirm new cases fail.
+- [ ] Extend existing screens/controllers and native review data. Update all balance/max validators and preview helpers that currently assume one funding address on Monad; use the prepared pool's minimum private amount for reliable action estimates. Catalog metadata and screen rendering must not wait for all source RPCs.
+- [ ] Handle fee/minimum changes, unavailable source, biometric rejection, partial credit and additional approval through existing review/status states. Show funding-specific errors at the affected funding step; keep one parent journey in ordinary navigation/history.
+- [ ] Run affected functional/unit tests and typecheck. Audit visible strings/accessibility labels for chain leakage outside funding, including token details, Earn names and completed activity; preserve internal chain/address selection so the earlier catalog race cannot regress.
+- [ ] Commit as `feat: expose funding networks through a chain-abstracted journey`.
+
+### Task 10: Prove recovery and compatibility across the complete journey
+
+**Files**
+
+- Extend: `mobile/modules/gizu-stored-signer/core/src/swap/engine_tests.rs` and pool/planner tests.
+- Extend: Android `EarnDepositRecoveryTest.kt`, `EarnDepositJournalTest.kt`, `swap/SwapFundingBatchTest.kt`; iOS `OperationJournalTests.swift`, `SwapFundingBatchTests.swift`, `BackupTests.swift`.
+- Extend: `backend/test/adapters/aurora/balance-settlement.test.ts`, `backend/test/adapters/earn/confidential-private-funding.test.ts`, `backend/test/adapters/earn/confidential-cashout.test.ts`, `backend/test/adapters/earn/private-payout.test.ts`.
+- Extend: `mobile/tests/functional/earn/deposit-journey.functional.test.tsx`, `mobile/tests/functional/wallet/funding-networks.functional.test.tsx`, `mobile/tests/support/mainnetWallet.ts`, `mobile/tests/support/depositJourney.ts`.
+
+**Interfaces:** No new product API. Exercise production planners, journals and controllers with provider/transport/storage boundaries mocked; retain real native policy/cryptographic checks in native tests.
+
+- [ ] Build a deterministic matrix for source sets `{Monad}`, `{Base}`, `{Arbitrum}`, each pair, all three and approved-private + public. Include 15,000,000 from 10,000,000 + 10,000,000; first-use versus delegated Account 1; zero native gas token; both Swap destinations and existing Android Earn profiles.
+- [ ] Assert exactly-once effects across interruption before/after source signature, submission, receipt, credit record, final pool readiness, payout submission, destination receipt and vault deposit. Retry cannot create a new deposit or move already funded money to another source.
+- [ ] Assert safe cancellation at unsigned, signed-unknown and partially credited stages; reservations release only after terminal evidence. Test expired authorization, app restart, backend restart/replica races, wallet lock/switch/recovery and unavailable local journal. Funds recovered by wallet discovery are not automatically declared an attributable completed pool.
+- [ ] Replay v1 journal fixtures, prior ambiguous-sale reauthentication regression, normal private sells, existing withdrawal/cashout and late catalog responses. Missing/unknown protocol versions fail visibly without deleting evidence. No `/history` request is introduced.
+- [ ] Run the full backend, Rust, Android, iOS and JS suites using task 11's commands. Fix behavior, not only fixtures; report deterministic tests separately from provider/device qualification.
+- [ ] Commit as `test: cover multi-chain funding recovery and legacy operations`.
+
+### Task 11: Qualify providers, document behavior and enable deliberately
+
+**Files**
+
+- Modify: `docs/internal/CONFIDENTIAL_EARN.md`, `docs/internal/NATIVE_SIGNER_PORTFOLIO.md`, `docs/internal/NATIVE_SIGNER_EARN.md`, `docs/internal/WALLET_DISCOVERY_RECOVERY.md`, `docs/internal/GAS_MANAGEMENT.md`.
+- Modify: `docs/feature-plans/SWAP_ARCHITECTURE.md`, `docs/feature-plans/SWAP_PERSISTENCE.md`, `docs/feature-plans/PARITY.md`.
+- Extend: existing Pimlico integration test and gas-doctor script reached by `backend/package.json` (do not create another measurement framework). Extend `.github/workflows/mobile-release.yml` only if new native tests are not discovered by its existing commands.
+
+**Interfaces:** Backend capability enablement is per network. Enable only when the deployed backend, release native host and exact provider route are qualified. Monad v1 routes remain available for old clients.
+
+- [ ] Record read-only evidence for 143/8453/42161: RPC chain ID, pinned bytecode/delegate/EntryPoint, exact USDC token/paymaster support, Aurora origin → canonical-private quote, fees, minimums, expiry and refund semantics. Check cold/delegated gas estimates and rollup data fees. Do not mistake a token registry entry or generic guide for an executable route.
+- [ ] With credentials and explicit funded-test authorization, execute tightly budgeted single-source Base and Arbitrum journeys, then mixed-source Swap and Android Earn. Confirm canonical private credit, source USDC-paid gas, bounded fees, no duplicate effects on Resume and preserved old operations. If credentials are absent, leave this release gate blocked and keep the network disabled.
+- [ ] Verify network-specific finality/reorg treatment through the existing receipt logic. Bound polling and preparatory work; instrument preparation and time-to-credit separately. Do not impose an arbitrary two-second budget on an actual settlement or hide a pending operation as failed.
+- [ ] Run the commands below on supported hosts; record versions, pass/fail/blocked and test reports. Native device checks cover biometrics, real prompts, background/foreground, process death and funding network display; mocked JS tests do not prove them.
+- [ ] Update the listed docs with exact scope, private-pool accounting, additional signatures, fees, recovery limits and iOS Earn availability. Include deployment ordering and rollback: disable new starts per network while retaining reconciliation routes and handlers for existing v2 operations. Do not roll back to a backend unable to resume signed v2 journals.
+- [ ] Commit as `docs: document qualified multi-chain funding and rollout`. Push/PR/deploy only as subsequently requested; do not merge this branch as part of planning.
+
+## Verification commands for implementation
+
+Use package scripts and lockfiles; these are future execution checks, not checks
+claimed to have passed during planning.
+
+Backend, from `backend/`:
+
+```bash
+npm run typecheck
+npm test
+npm run gas:check
+npm run gas:check:native
+```
+
+Mobile shared/native, from `mobile/`:
+
+```bash
+npm run stored-signer:test
+npm run stored-signer:build
+npm run format:kotlin:check
+npm run check
+npm run stored-signer:build:ios
+npm run stored-signer:test:ios
+npm run stored-signer:check:ios
+```
+
+The Android build/test commands match the existing release workflow. After its
+documented JDK/SDK/NDK setup and native build, from `mobile/`:
+
+```bash
+npx expo prebuild --platform android --no-install
+```
+
+Then from `mobile/android/`:
+
+```bash
+./gradlew :gizu-stored-signer:testDebugUnitTest :gizu-stored-signer:testReleaseUnitTest assembleDebug --no-daemon -PreactNativeArchitectures=arm64-v8a
+```
+
+For focused Android iterations, use the same Gradle test task with `--tests`
+and the existing `io.gizu.storedwallet.*` test class. iOS tests require macOS,
+Xcode and an installed iPhone simulator; CI already defines those prerequisites.
+Use the repository's existing Postgres integration harness for real transactions
+and two-client races; do not replace those assertions with an in-memory mock.
+
+## Completion criteria
+
+- One reviewed 15 USDC gross-budget action can consume two 10 USDC source balances,
+  with explicit fees/minimum net result and the required native signatures.
+- Base/Arbitrum Account 1 funds converge into exact canonical Account 2 private
+  USDC before downstream execution; source count does not multiply recipient
+  payouts or reroll investment wallets.
+- Balances, available budget and pending ownership remain correct through stale
+  observations, partial completion, cancellation and restart.
+- The app asks for a network only within funding, and still identifies tokens
+  correctly internally. Unsupported builds/networks remain gated.
+- Legacy Monad funding, current sells, withdrawals, cashout and saved journals
+  continue to work. iOS guided Earn remains at its current availability.
+- Deterministic/native/device checks and provider qualification have separate,
+  truthful results. No deployment or paid operation is implied by this plan.
