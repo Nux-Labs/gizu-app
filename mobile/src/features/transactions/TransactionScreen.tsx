@@ -43,7 +43,7 @@ function DemoTransaction({ route }: NativeStackScreenProps<RootStackParamList, "
   const [observing, setObserving] = useState(resume);
   const vault = context.account?.vaults.find((v) => v.id === vaultId);
   const title =
-    kind === "deposit" ? "Receive" : kind === "withdraw" ? "Send" : operationLabels[kind];
+    kind === "deposit" ? "Add funds" : kind === "withdraw" ? "Send" : operationLabels[kind];
   const unit = kind === "sell" ? (vault?.ticker ?? "units") : "USDC";
   const balance =
     context.account &&

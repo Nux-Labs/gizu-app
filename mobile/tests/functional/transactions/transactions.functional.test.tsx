@@ -16,7 +16,7 @@ async function enter(service = createMockTransactionService()) {
 async function open(kind: OperationKind) {
   if (kind === "deposit" || kind === "withdraw")
     await userEvent.press(
-      screen.getByRole("button", { name: kind === "deposit" ? "Receive" : "Send" }),
+      screen.getByRole("button", { name: kind === "deposit" ? "Add funds" : "Send" }),
     );
   else {
     await userEvent.press(screen.getByRole("button", { name: "Open VTX holding" }));
@@ -195,7 +195,7 @@ test("balance loading failure recovers from an available transaction entry point
   renderApp(undefined, undefined, undefined, service);
   await screen.findByRole("button", { name: "Continue with passkey" });
   await userEvent.press(screen.getByRole("button", { name: "Continue with passkey" }));
-  await userEvent.press(await screen.findByRole("button", { name: "Receive" }));
+  await userEvent.press(await screen.findByRole("button", { name: "Add funds" }));
   await userEvent.press(await screen.findByRole("button", { name: "Reload balances" }));
   expect(await screen.findByLabelText("Amount in USDC")).toBeVisible();
 });

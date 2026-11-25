@@ -57,7 +57,7 @@ test("onboarding waits for verified backup then opens existing Home", async () =
   expect(screen.queryByRole("header", { name: "Your portfolio" })).toBeNull();
   await act(async () => backup.resolve(ready));
   expect(await screen.findByRole("header", { name: "Your portfolio" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Add funds" })).toBeEnabled();
   await userEvent.press(screen.getByLabelText("Settings tab"));
   expect(await screen.findByRole("header", { name: "Wallet backup" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Wallet backup" })).toBeNull();
