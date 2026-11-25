@@ -172,4 +172,31 @@ class SwapPortfolioStoreTest {
       SwapPortfolioStore.normalize(JSONObject().put("version", 9), wallet)
     }
   }
+
+  @Test
+  fun aBasePlanIsTrackedOnBaseAndItsHoldingResolvesThere() {
+    val nvda = "0xb20000000000000000000078ee7ce2fe4908108c"
+    fun plan(target: String, chainId: Long?) =
+      JSONObject()
+        .put(
+          "plan",
+          JSONObject()
+            .put("target", target)
+            .put("recipientIndices", JSONArray(listOf(3, 4, 5)))
+            .apply { if (chainId != null) put("chainId", chainId) },
+        )
+        .toString()
+    val complete =
+      JSONObject().put("operationId", "b1").put("phase", "COMPLETE").put("direction", "buy")
+    store().remember(plan(nvda, 8453), complete.toString())
+    assertEquals(listOf(nvda), store().targets(8453))
+    assertEquals(emptyList<String>(), store().targets())
+    assertEquals(8453L, store().chainOf("0xB20000000000000000000078EE7CE2FE4908108C"))
+    assertEquals(8453L, store().history().single()["chainId"])
+    // A plan saved before Base support names no chain and stays on Robinhood.
+    store().remember(plan(intc, null), JSONObject().put("phase", "RUNNING").toString())
+    assertEquals(listOf(intc), store().targets())
+    assertEquals(4663L, store().chainOf(intc))
+    assertThrows(IllegalStateException::class.java) { store().chainOf(spcx) }
+  }
 }

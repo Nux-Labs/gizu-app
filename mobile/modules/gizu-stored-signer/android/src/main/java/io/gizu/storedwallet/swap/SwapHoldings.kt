@@ -5,7 +5,7 @@ import io.gizu.storedwallet.earnWithdrawalIndices
 import java.math.BigInteger
 import org.json.JSONArray
 import org.json.JSONObject
-import uniffi.gizu_stored_signer_core.buildSwapHolding
+import uniffi.gizu_stored_signer_core.buildSwapHoldingOnChain
 import uniffi.gizu_stored_signer_core.decodeSwapSymbol
 import uniffi.gizu_stored_signer_core.deriveAccountAddressRange
 import uniffi.gizu_stored_signer_core.selectSwapHolding
@@ -36,7 +36,14 @@ internal class SwapHoldings(
       tokens.mapIndexedNotNull { index, target ->
         val rows = results.subList(index * perToken, (index + 1) * perToken).map { it.data }
         val encoded =
-          buildSwapHolding(target, indices.map { it.toUInt() }, rows.drop(2), rows[0], rows[1])
+          buildSwapHoldingOnChain(
+            chain.chainId.toULong(),
+            target,
+            indices.map { it.toUInt() },
+            rows.drop(2),
+            rows[0],
+            rows[1],
+          )
         if (encoded == "null") null
         else {
           val item = JSONObject(encoded)
@@ -63,6 +70,22 @@ internal class SwapHoldings(
   }
 
   companion object {
+    /**
+     * One holdings view from per-chain reads. `block` stays the Robinhood head for older readers;
+     * `blocks` pins every chain that was read.
+     */
+    @Suppress("UNCHECKED_CAST")
+    internal fun merge(reads: List<Pair<SwapChain, Map<String, Any?>>>): Map<String, Any?> {
+      require(reads.isNotEmpty() && reads.map { it.first }.distinct().size == reads.size)
+      return mapOf(
+        "holdings" to reads.flatMap { it.second["holdings"] as List<Map<String, Any?>> },
+        "checkedAt" to reads.minOf { it.second["checkedAt"] as Long },
+        "block" to
+          (reads.firstOrNull { it.first == SwapChains.ROBINHOOD } ?: reads.first()).second["block"],
+        "blocks" to reads.associate { (chain, read) -> chain.chainId.toString() to read["block"] },
+      )
+    }
+
     /** Swap recipients: allocated accounts from index 3, minus Earn withdrawal accounts. */
     internal fun recipientIndices(record: WalletRecord): List<Int> =
       swapHoldingIndices(record.roleRegistry, earnWithdrawalIndices(record).map { it.toUInt() })

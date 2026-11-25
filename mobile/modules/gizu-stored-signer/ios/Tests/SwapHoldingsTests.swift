@@ -8,6 +8,8 @@ final class SwapHoldingsTests: WalletTestCase {
   // Curated buy targets from core/src/swap/pins.rs. Arbitrary tokens remain in sell/recovery tests.
   private let buyToken = "0x12f190a9f9d7d37a250758b26824b97ce941bf54"
   private let otherBuyToken = "0xaf3d76f1834a1d425780943c99ea8a608f8a93f9"
+  // GOOGLc, the first Base buy target in core/src/swap/pins.rs.
+  private let baseBuyToken = "0xb2000000000000000000002d0ba3164cc74f58b7"
   private let gateway = "https://api.gizu.io"
   private func allocated(_ store: WalletStorage) throws -> WalletRecord {
     let initial = try record(verified: true)
@@ -354,14 +356,89 @@ final class SwapHoldingsTests: WalletTestCase {
       XCTAssertEqual(try SwapPortfolioStore(store: store, record: record).targets(), [token])
     }
   }
+
+  func testVersionOneLedgerMovesToRobinhoodAndBaseIsTrackedSeparately() throws {
+    let store = try storage()
+    let record = try allocated(store)
+    defer { record.close() }
+    let v1 = #"{"version":1,"walletId":"\#(record.id)","tokens":["\#(token)"],"history":{}}"#
+    try store.files.write(
+      "gizu-holdings-\(record.journalId).enc",
+      bytes: WalletEnvelope.encrypt(
+        Data(v1.utf8), key: store.keys.existing()!,
+        aad: Data("gizu-holdings:v1:\(record.id):\(record.journalId)".utf8)))
+    let portfolio = SwapPortfolioStore(store: store, record: record)
+    XCTAssertEqual(try portfolio.targets(), [token])
+    try portfolio.watch(baseBuyToken, chainId: 8453)
+    XCTAssertEqual(try portfolio.targets(), [token])
+    XCTAssertEqual(try portfolio.targets(chainId: 8453), [baseBuyToken])
+    XCTAssertEqual(try portfolio.chainOf(token), 4663)
+    XCTAssertEqual(try portfolio.chainOf(baseBuyToken.uppercased().replacingOccurrences(of: "0X", with: "0x")), 8453)
+    XCTAssertThrowsError(try portfolio.chainOf(other))
+    XCTAssertThrowsError(try portfolio.watch(other, chainId: 1))
+    let clear = try WalletEnvelope.decrypt(
+      store.files.read("gizu-holdings-\(record.journalId).enc"), key: store.keys.existing()!,
+      aad: Data("gizu-holdings:v1:\(record.id):\(record.journalId)".utf8))
+    XCTAssertEqual(try swapObject(String(decoding: clear, as: UTF8.self))["version"] as? Int, 2)
+  }
+
+  func testBaseBuyNamesItsChainAndASellFindsItInTheLedger() throws {
+    let store = try storage()
+    let record = try allocated(store)
+    defer { record.close() }
+    let saved = StoredSwapFile(store: store, record: record)
+    let buy = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
+    XCTAssertThrowsError(
+      try buy.start(record: record, target: buyToken, amountAtoms: "1000000", chainId: 8453),
+      "a Robinhood stock is not a Base buy target")
+    try buy.start(record: record, target: baseBuyToken, amountAtoms: "1000000", chainId: 8453)
+    let plan = try swapObject(saved.load()!["state"] as! String)["plan"] as! [String: Any]
+    XCTAssertEqual(plan["chainId"] as? Int, 8453)
+    XCTAssertEqual(try saved.portfolio.targets(chainId: 8453), [baseBuyToken])
+    try buy.cancel()
+    buy.close()
+    let fresh = try store.load()
+    defer { fresh.close() }
+    let sale = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
+    try sale.startSell(record: fresh, holdingId: "\(baseBuyToken):all")
+    let sold = try swapObject(saved.load()!["state"] as! String)["plan"] as! [String: Any]
+    XCTAssertEqual(sold["chainId"] as? Int, 8453)
+    XCTAssertEqual(sold["target"] as? String, baseBuyToken)
+    sale.close()
+  }
+
+  func testHoldingsReadEveryTrackedChainAgainstItsOwnChainId() async throws {
+    let store = try storage()
+    let record = try allocated(store)
+    defer { record.close() }
+    let value = try await SwapHoldings.readAll(
+      store: store, target: baseBuyToken, chainId: 8453
+    ) { HoldingsRPC(chainHex: $0.hexId) }
+    let holdings = value["holdings"] as! [[String: Any]]
+    XCTAssertEqual(holdings.map { $0["chainId"] as? Int }, [8453])
+    XCTAssertEqual(Set((value["blocks"] as! [String: Any]).keys), ["4663", "8453"])
+    let portfolio = SwapPortfolioStore(store: store, record: record)
+    XCTAssertEqual(try portfolio.targets(chainId: 8453), [baseBuyToken])
+    XCTAssertEqual(try portfolio.targets(), [])
+    // An RPC answering for another chain fails the read and tracks nothing new.
+    do {
+      _ = try await SwapHoldings.readAll(store: store, target: other, chainId: 8453) { _ in
+        HoldingsRPC()
+      }
+      XCTFail("Accepted a Robinhood answer for Base")
+    } catch {}
+    XCTAssertEqual(try portfolio.targets(chainId: 8453), [baseBuyToken])
+    XCTAssertThrowsError(try SwapPortfolioStore.chainId(NSNumber(value: 1)))
+  }
 }
 
 private struct HoldingsRPC: MainnetPortfolioRPC {
   var failure = ""
+  var chainHex = "0x1237"
   func calls(_ requests: [PortfolioRequest]) async throws -> [Any] {
     if failure == "rpc" { throw URLError(.timedOut) }
     return requests.map { request in
-      if request.method == "eth_chainId" { return failure == "chain" ? "0x8f" : "0x1237" }
+      if request.method == "eth_chainId" { return failure == "chain" ? "0x8f" : chainHex }
       if request.method == "eth_getBlockByNumber" {
         let changed = failure == "reorg" && request.params[0] as? String != "latest"
         return [

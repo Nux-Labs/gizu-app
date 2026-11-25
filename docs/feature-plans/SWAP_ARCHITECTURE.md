@@ -21,14 +21,55 @@ execution pipeline or the retired signer. Catalog browsing across multiple netwo
 does not expand executable swap support: the inspected UI gates selections to
 chain 4663, `swapListed` and `buyable`, and native/provider policy is separately enforced.
 A new buy (`confidentialSwap`, `confidentialPayout`) may only target one of the 25
-Robinhood stocks in [`shared/swap-targets-v1.json`](../../shared/swap-targets-v1.json),
+Robinhood stocks in the `4663` list of [`shared/swap-targets-v2.json`](../../shared/swap-targets-v2.json),
 ranked by 1inch price impact at 25,000, 5,000 and 1,000 USDG. The Rust engine
-(`pins.rs`), the backend catalog (`swap-targets.ts`) and that file must list the same
-addresses; tests in both languages compare them. Sell and recovery are not limited, so a
+(`pins.rs`), the backend catalog (`swap-targets.ts`) and that list must hold the same
+addresses; tests in both languages compare them. The file also holds a measured `8453`
+(Base, Coinbase-issued, USDC) list; regenerate a chain's list with
+`npm --prefix backend run swap:measure -- --chain <id> [--write]`. Sell and recovery are not limited, so a
 holding stays sellable after its token leaves the list. The per-order liquidity check in
 Fusion preview still runs for every buy.
 The current execution path uses Monad USDC, confidential credit and Robinhood USDG
 as the intermediate asset for a Fusion token trade.
+
+A plan may name its target chain with `chainId`; a plan without one is Robinhood (4663).
+The engine resolves it to a pinned `TargetChain` (`pins.rs`) on start and on restore, and
+refuses any other chain. That record fixes the target RPC, the Aurora payout asset, the
+stablecoin, the permit and order EIP-712 domains, the LOP spender and the Fusion settlement
+contract, and the chain's own buy list. Base (8453) pays out USDC through Aurora's `base`
+asset and uses the canonical LOP v4 (`0x1111…0A65`) with settlement `0x2Ad5…1Ef5`. Robinhood
+gateway bodies stay byte-identical because the deployed gateway rejects unknown fields; a Base
+body adds `chainId` and, for a buy, the USDC source.
+
+The gateway's `/v1/swap/fusion/*` bodies take that optional `chainId` (4663 or 8453; absent
+means Robinhood) and route to one Fusion adapter per chain. The Base adapter uses Fusion network
+8453, Base USDC as the buy-side stablecoin and liquidity reference, and `BASE_RPC_URL` (default
+`https://mainnet.base.org`) for permit reads. `/v1/tokens?chainId=8453` lists Base with Coinbase
+stock tokens marked `issuer: "Coinbase"`; only the pinned list is `buyable`, and a token Coinbase
+has paused is not. A list without `chainId` still returns 4663, 143 and 1 only, so older clients
+never see Base. `/v1/tokens/8453/:address/details` serves Coinbase's record (no trading
+sessions, `sessions: null`) with 1inch price and a chart against Base USDC; when Coinbase is
+unreachable the catalog still marks the pinned list and the page falls back to the pinned symbol.
+There is no server-side switch: Base buys run as soon as a client sends a Base plan.
+
+In the app, the swap picker asks `/v1/tokens?chainIds=4663,8453&liquidOnly=true`, so Robinhood
+and Base stocks share one list (Robinhood first); a stock on both chains appears once per chain,
+Robinhood rows with the Robinhood Chain mark and Base rows with a "Base" badge. The buy controller
+reads the chosen token's chain from its list entry (stock addresses are unique across chains) and
+passes it to the estimate (`chainId` and Base USDC as `srcToken`) and to `startSwap`/`startPayout`.
+Detail pages load `/v1/tokens/:chainId/:address/details`; a Base page names Base as the price
+venue and shows "Onchain, any time" for trading. The sell estimate prices a holding into its own
+chain's stablecoin, the Home "Sell" shortcut covers both chains, and the asset sweep runs on 4663
+and 8453.
+
+The native bridge takes the chain as an optional trailing `chainId` on `startSwap`,
+`startPayout`, `startRecovery` and `getSwapHoldings`; JS omits it for Robinhood so a bundle and
+a native build from either side of the change agree on arity. Both shells keep the swap ledger per
+chain (iOS moves its version 1 file to version 2, Robinhood), read holdings on every tracked chain
+and report each holding's `chainId`. A sell resolves its chain from the ledger entry of the
+holding's token, so holding IDs stay `token:index`. Android's owned portfolio reads Base at
+`latest`, pinned by block hash, like Robinhood, and wallet restore scans Base USDC as well as
+Robinhood USDG for used recipients.
 
 ## Ownership and authority
 
@@ -105,9 +146,13 @@ Rust selects all eligible allocated holders, including partial groups, excluding
 recipients. After fresh balance reads the plan freezes the funded holders and native
 review lists the real sales. There can be up to 8,189 eligible indices (3–8191),
 subject to the wallet registry. The sale has `completionTarget: "confidential"`,
-no new public recipients, no random payout weights and zero payout legs. Each sale's
-Fusion transfers must match authenticated Aurora operation history before USDC credit
-is counted. Aggregate private-balance growth or public route SUCCESS is insufficient.
+no new public recipients, no random payout weights and zero payout legs. After
+approval the core reads C's authenticated private balance before any sale; sales run
+one at a time, and each is credited with the balance growth over the previous reading,
+bounded below by its quote minimum (scaled to the deposit) and above by the stablecoin
+it deposited (Earn's `balance-delta-v1` method; Aurora's operation history is
+invite-only). Growth outside that range pauses the sale rather than attributing other
+private cash to it; public route SUCCESS alone is insufficient.
 The resulting `privateCreditedAtoms` remains in confidential Account 2 until a separate,
 capability-checked [public withdrawal](../internal/CONFIDENTIAL_WITHDRAWALS.md).
 

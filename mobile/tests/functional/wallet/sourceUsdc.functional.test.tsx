@@ -681,9 +681,15 @@ function nativeWithSweep(sweep: jest.Mock) {
 
 test("Home sweeps the swap catalogue once after the first read and shows a stock it rediscovers", async () => {
   const spcx = "0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea";
-  const sweep = jest.fn().mockResolvedValue({ swept: true, added: [intc] });
+  const googlBase = "0xb2000000000000000000002d0ba3164cc74f58b7";
+  const sweep = jest.fn().mockImplementation(async (chainId: number) => ({
+    swept: true,
+    added: chainId === 4663 ? [intc] : [],
+  }));
   nativeWithSweep(sweep);
-  const addresses = jest.spyOn(tokenCatalogService, "addresses").mockResolvedValue([intc, spcx]);
+  const addresses = jest
+    .spyOn(tokenCatalogService, "addresses")
+    .mockImplementation(async (chainId) => (chainId === 4663 ? [intc, spcx] : [googlBase]));
   jest.spyOn(tokenCatalogService, "list").mockRejectedValue(new Error("offline"));
   const { portfolio } = setup();
   portfolio.getMainnetPortfolio
@@ -692,10 +698,12 @@ test("Home sweeps the swap catalogue once after the first read and shows a stock
   await open();
   // The rediscovered stock joins Assets through the refresh the sweep requested.
   expect(await screen.findByRole("button", { name: "Token c39681 holding details" })).toBeVisible();
-  expect(addresses).toHaveBeenCalledTimes(1);
-  expect(addresses).toHaveBeenCalledWith(4663, expect.anything());
-  expect(sweep).toHaveBeenCalledTimes(1);
-  expect(sweep).toHaveBeenCalledWith(4663, [intc, spcx]);
+  // Every swap chain is swept once: Robinhood Chain, then Base.
+  expect(addresses.mock.calls.map(([chainId]) => chainId)).toEqual([4663, 8453]);
+  expect(sweep.mock.calls).toEqual([
+    [4663, [intc, spcx]],
+    [8453, [googlBase]],
+  ]);
   expect(portfolio.getMainnetPortfolio.mock.calls.length).toBeGreaterThanOrEqual(2);
 });
 
@@ -704,12 +712,13 @@ test("a sweep that finds nothing, or cannot reach the catalogue, leaves Home qui
   nativeWithSweep(sweep);
   const addresses = jest
     .spyOn(tokenCatalogService, "addresses")
-    .mockRejectedValueOnce(new Error("offline"));
+    .mockRejectedValue(new Error("offline"));
   const { portfolio } = setup();
   await open();
   expect(await screen.findByRole("header", { name: "Earn" })).toBeVisible();
   await act(async () => {});
-  expect(addresses).toHaveBeenCalledTimes(1);
+  // A chain whose catalogue is unreachable is skipped; the next chain is still tried.
+  expect(addresses).toHaveBeenCalledTimes(2);
   expect(sweep).not.toHaveBeenCalled();
   expect(portfolio.getMainnetPortfolio).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("alert")).toBeNull();

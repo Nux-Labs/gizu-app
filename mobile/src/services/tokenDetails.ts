@@ -1,3 +1,4 @@
+import type { SwapChain } from "@/domain/tokenCatalog";
 import {
   detailPeriods,
   type DetailPeriod,
@@ -33,11 +34,25 @@ function isChart(value: unknown, period: DetailPeriod): boolean {
   );
 }
 
-function isDetails(value: unknown, address: string, period: DetailPeriod): value is TokenDetails {
-  if (!isRecord(value) || !isRecord(value.sessions)) return false;
-  const sessions = value.sessions;
+function isSessions(value: unknown): boolean {
   return (
-    value.chainId === 4663 &&
+    value === null ||
+    (isRecord(value) &&
+      typeof value.regular === "boolean" &&
+      typeof value.extended === "boolean" &&
+      typeof value.overnight === "boolean")
+  );
+}
+
+function isDetails(
+  value: unknown,
+  chainId: SwapChain,
+  address: string,
+  period: DetailPeriod,
+): value is TokenDetails {
+  if (!isRecord(value) || !isSessions(value.sessions)) return false;
+  return (
+    value.chainId === chainId &&
     typeof value.address === "string" &&
     value.address.toLowerCase() === address.toLowerCase() &&
     typeof value.symbol === "string" &&
@@ -49,9 +64,6 @@ function isDetails(value: unknown, address: string, period: DetailPeriod): value
     nullableString(value.isin) &&
     (value.sharesPerToken === null ||
       (typeof value.sharesPerToken === "string" && /^\d+(\.\d+)?$/.test(value.sharesPerToken))) &&
-    typeof sessions.regular === "boolean" &&
-    typeof sessions.extended === "boolean" &&
-    typeof sessions.overnight === "boolean" &&
     (value.priceUsd === null || positive(value.priceUsd)) &&
     isChart(value.chart, period)
   );
@@ -60,15 +72,15 @@ function isDetails(value: unknown, address: string, period: DetailPeriod): value
 export function createTokenDetailsService(baseUrl: string): TokenDetailsService {
   const root = baseUrl.replace(/\/$/, "");
   return {
-    async details(address, period, signal) {
+    async details(address, period, signal, chainId = 4663) {
       if (!root) throw new Error("Token details are not configured.");
       if (!ADDRESS.test(address) || !detailPeriods.includes(period)) throw new Error(UNAVAILABLE);
       const body = await getJson(
-        `${root}/v1/tokens/4663/${address}/details?period=${period}`,
+        `${root}/v1/tokens/${chainId}/${address}/details?period=${period}`,
         signal,
         UNAVAILABLE,
       );
-      if (!isDetails(body, address, period)) throw new Error(UNAVAILABLE);
+      if (!isDetails(body, chainId, address, period)) throw new Error(UNAVAILABLE);
       return body;
     },
   };

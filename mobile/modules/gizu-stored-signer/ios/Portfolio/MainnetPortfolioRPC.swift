@@ -18,6 +18,7 @@ internal final class NativeMainnetPortfolioRPC: NSObject, MainnetPortfolioRPC,
     case monad = "https://rpc.monad.xyz"
     case ethereum = "https://ethereum-rpc.publicnode.com"
     case robinhood = "https://rpc.mainnet.chain.robinhood.com"
+    case base = "https://mainnet.base.org"
   }
   private let network: Network
   private let post: ((Data) async throws -> Data)?

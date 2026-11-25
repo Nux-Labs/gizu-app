@@ -11,10 +11,10 @@ import Foundation
     return ["fundingAddress": address as Any]
   }
 
-  func startSwap(target: String, amountAtoms: String?, gateway: String) async throws -> [String:
-    Any]
+  func startSwap(target: String, amountAtoms: String?, gateway: String, chainId: UInt64)
+    async throws -> [String: Any]
   {
-    try await runSwap(gateway: gateway, intent: .buy(target, amountAtoms))
+    try await runSwap(gateway: gateway, intent: .buy(target, amountAtoms, chainId))
   }
 
   func startSell(gateway: String) async throws -> [String: Any] {
@@ -29,20 +29,24 @@ import Foundation
     try await runSwap(gateway: gateway, intent: .sell(id))
   }
 
-  func startRecovery(target: String, gateway: String) async throws -> [String: Any] {
-    try await runSwap(gateway: gateway, intent: .recover(target))
+  func startRecovery(target: String, gateway: String, chainId: UInt64) async throws -> [String:
+    Any]
+  {
+    try await runSwap(gateway: gateway, intent: .recover(target, chainId))
   }
 
-  func startPayout(target: String, gateway: String) async throws -> [String: Any] {
-    try await runSwap(gateway: gateway, intent: .payout(target))
+  func startPayout(target: String, gateway: String, chainId: UInt64) async throws -> [String: Any]
+  {
+    try await runSwap(gateway: gateway, intent: .payout(target, chainId))
   }
 
+  /// Buys and recoveries carry the chain their target trades on; sells resolve it from the ledger.
   private enum SwapIntent {
-    case buy(String, String?)
+    case buy(String, String?, UInt64)
     case sell(String?)
     case resume
-    case recover(String)
-    case payout(String)
+    case recover(String, UInt64)
+    case payout(String, UInt64)
   }
 
   func swapStatus(gateway: String) throws -> [String: Any] {
@@ -88,11 +92,12 @@ import Foundation
       try engine.restore()
       try engine.retry()
     case .sell(let id): try engine.startSell(record: record, holdingId: id)
-    case .buy(let target, let amount):
-      try engine.start(record: record, target: target, amountAtoms: amount)
-    case .recover(let target): try engine.startRecovery(record: record, target: target)
-    case .payout(let target):
-      try engine.start(record: record, target: target, amountAtoms: nil, payout: true)
+    case .buy(let target, let amount, let chain):
+      try engine.start(record: record, target: target, amountAtoms: amount, chainId: chain)
+    case .recover(let target, let chain):
+      try engine.startRecovery(record: record, target: target, chainId: chain)
+    case .payout(let target, let chain):
+      try engine.start(record: record, target: target, amountAtoms: nil, payout: true, chainId: chain)
     }
     record.close()
     let screen = try await presentWalletUI()

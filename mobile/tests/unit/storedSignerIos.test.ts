@@ -207,6 +207,36 @@ test("iOS retains holdings and recovery while private sales require native capab
   expect(native.startRecovery).toHaveBeenCalledTimes(1);
 });
 
+test("a Base swap names its chain while Robinhood calls keep the arity older builds expect", async () => {
+  const target = "0xb2000000000000000000002d0ba3164cc74f58b7";
+  const gateway = "https://api.gizu.io";
+  const native = {
+    getCapabilities: jest
+      .fn()
+      .mockResolvedValue({ contractVersion: 1, available: true, swaps: true }),
+    startSwap: jest.fn().mockResolvedValue({ phase: "REVIEW" }),
+    getSwapHoldings: jest.fn().mockResolvedValue({ holdings: [], block: "0x1", checkedAt: 1 }),
+    startRecovery: jest.fn().mockResolvedValue({ phase: "PAUSED" }),
+    startPayout: jest.fn().mockResolvedValue({ phase: "PAUSED" }),
+  };
+  jest.mocked(requireOptionalNativeModule).mockReturnValue(native);
+  const signer = getStoredSwapSigner()!;
+  await signer.startSwap(target, "1000000", gateway, 8453);
+  await signer.startSwap(target, "1000000", gateway, 4663);
+  await signer.startSwap(target, "1000000", gateway);
+  expect(native.startSwap.mock.calls).toEqual([
+    [target, "1000000", gateway, 8453],
+    [target, "1000000", gateway],
+    [target, "1000000", gateway],
+  ]);
+  await signer.getSwapHoldings(target, 8453);
+  await signer.startPayout(target, gateway, 8453);
+  await signer.startRecovery(target, gateway, 8453);
+  expect(native.getSwapHoldings).toHaveBeenCalledWith(target, 8453);
+  expect(native.startPayout).toHaveBeenCalledWith(target, gateway, 8453);
+  expect(native.startRecovery).toHaveBeenCalledWith(target, gateway, 8453);
+});
+
 test("iOS exposes private sales when its native signer supports them", async () => {
   const native = {
     getCapabilities: jest.fn().mockResolvedValue({

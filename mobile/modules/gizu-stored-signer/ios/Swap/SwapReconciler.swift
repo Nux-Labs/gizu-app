@@ -10,13 +10,17 @@ internal enum StoredSwapReconciler {
         let address = try deriveAccountAddressRange(entropy: entropy, start: UInt32(index), count: 1)
           .first?.dropFirst(2) ?? ""
         let data = "0x70a08231" + String(repeating: "0", count: 24) + address.lowercased()
-        let body: [String: Any] = [
-          "jsonrpc": "2.0", "id": 1, "method": "eth_call",
-          "params": [["to": "0x5fc5360d0400a0fd4f2af552add042d716f1d168", "data": data], "latest"],
-        ]
-        let response = try await post(body)
-        let hex = (response["result"] as? String ?? "0x").dropFirst(2).drop { $0 == "0" }
-        if !hex.isEmpty {
+        // A recipient that still holds the payout stablecoin on any swap chain was used.
+        var held = false
+        for chain in SwapChain.allCases where !held {
+          let body: [String: Any] = [
+            "jsonrpc": "2.0", "id": 1, "method": "eth_call",
+            "params": [["to": chain.payoutToken, "data": data], "latest"],
+          ]
+          let response = try await post(body, to: chain.network.rawValue)
+          held = !(response["result"] as? String ?? "0x").dropFirst(2).drop { $0 == "0" }.isEmpty
+        }
+        if held {
           highest = index
           gap = 0
         } else {
@@ -36,8 +40,8 @@ internal enum StoredSwapReconciler {
     }
   }
 
-  private static func post(_ body: [String: Any]) async throws -> [String: Any] {
-    var request = URLRequest(url: URL(string: "https://rpc.mainnet.chain.robinhood.com")!)
+  private static func post(_ body: [String: Any], to rpc: String) async throws -> [String: Any] {
+    var request = URLRequest(url: URL(string: rpc)!)
     request.httpMethod = "POST"
     request.timeoutInterval = 20
     request.httpBody = try JSONSerialization.data(withJSONObject: body)

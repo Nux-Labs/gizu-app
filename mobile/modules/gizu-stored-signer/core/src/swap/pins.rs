@@ -17,7 +17,7 @@ pub const ONEINCH_LOP: Address = address!("0x5A705DE8982235a7fa45bB83dCaCf03a211
 pub const FUSION_SETTLEMENT: Address = address!("0xb55ba9617dafae1236313c3cb7806439ceefbd13");
 
 /// Robinhood stock tokens a new buy may target, deepest USDG market first
-/// (`shared/swap-targets-v1.json`). Sell and recovery are not limited to this list.
+/// (`shared/swap-targets-v2.json`, chain 4663). Sell and recovery are not limited to this list.
 pub const ROBINHOOD_BUY_TARGETS: [Address; 25] = [
     address!("0xD5f3879160bc7c32ebb4dC785F8a4F505888de68"), // QQQ
     address!("0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC"), // NVDA
@@ -46,8 +46,103 @@ pub const ROBINHOOD_BUY_TARGETS: [Address; 25] = [
     address!("0x156E175DD063a8cE274C50654eF40e0032b3fbcF"), // AVGO
 ];
 
-pub fn is_buy_target(token: Address) -> bool {
-    ROBINHOOD_BUY_TARGETS.contains(&token)
+pub const BASE_CHAIN_ID: u64 = 8453;
+pub const BASE_RPC: &str = "https://mainnet.base.org";
+pub const BASE_USDC: Address = address!("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+/// Base runs the canonical LOP v4 deployment; only Robinhood Chain has its own.
+pub const BASE_LOP: Address = address!("0x111111125421cA6dc452d289314280a0f8842A65");
+/// The Fusion `settlementAddress` 1inch quotes for chain 8453.
+pub const BASE_FUSION_SETTLEMENT: Address = address!("0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5");
+
+/// Coinbase-issued stock tokens a new buy may target on Base, deepest USDC market first
+/// (`shared/swap-targets-v2.json`, chain 8453). Sell and recovery are not limited to this list.
+pub const BASE_BUY_TARGETS: [Address; 34] = [
+    address!("0xb2000000000000000000002D0BA3164cc74f58B7"), // GOOGLc
+    address!("0xb2000000000000000000007b9fcbd005511aCBd5"), // SPCXc
+    address!("0xb200000000000000000000C2e324d24d7eEcd1fb"), // AAPLc
+    address!("0xb200000000000000000000d9192b6B456483C2E8"), // AMZNc
+    address!("0xb20000000000000000000078ee7ce2fE4908108C"), // NVDAc
+    address!("0xB200000000000000000000F111184A74720787E6"), // CRWVc
+    address!("0xb2000000000000000000008bC8786B856E61707C"), // METAc
+    address!("0xb200000000000000000000ffef181DB6dC5ed6A3"), // KOc
+    address!("0xb20000000000000000000024170488e788CBbCb4"), // BRK.Bc
+    address!("0xb200000000000000000000d2f4cf2f7DEBB244BB"), // MCDc
+    address!("0xb20000000000000000000016e38FD364d271Ba28"), // ANTc
+    address!("0xb2000000000000000000001e800a7f5189430cD0"), // TSLAc
+    address!("0xB200000000000000000000Ab99cFa739E253872B"), // MSFTc
+    address!("0xb200000000000000000000347AFbA223D7B6b63C"), // ORCLc
+    address!("0xb200000000000000000000f3049F4aa834b23b64"), // HSAIc
+    address!("0xB200000000000000000000f1a0F91e34892E4718"), // LLYc
+    address!("0xB200000000000000000000Fc737aeA6196aB5a4c"), // AVGOc
+    address!("0xB200000000000000000000c36ce081Dd09e86cA2"), // BUDc
+    address!("0xb2000000000000000000008D5328e9208773dC58"), // NVOc
+    address!("0xB200000000000000000000349ef3Aa93a0897476"), // ULc
+    address!("0xB200000000000000000000c8A7223510467D8563"), // PDDc
+    address!("0xb200000000000000000000a26326a922FFA87f6C"), // SONYc
+    address!("0xB200000000000000000000f720C26062Bc3067Da"), // TTWOc
+    address!("0xB2000000000000000000000d8Ce462E99ee7A47B"), // AMDc
+    address!("0xb200000000000000000000da6F64c306234127E0"), // SAPc
+    address!("0xB200000000000000000000e215e9B76ecBA02468"), // MRNAc
+    address!("0xb200000000000000000000F6b0417af5F52341FC"), // INFYc
+    address!("0xb200000000000000000000D61eFD9F54A23ef9eB"), // LIc
+    address!("0xB2000000000000000000005ac674f707E357409c"), // NOKc
+    address!("0xb2000000000000000000004884b426556b92883d"), // MSTRc
+    address!("0xB200000000000000000000eC3c4c7395Cc609813"), // MRVLc
+    address!("0xB20000000000000000000019f6E7C675b73C2e4D"), // CRCLc
+    address!("0xb2000000000000000000007d16372840dF4dAbbe"), // PLTRc
+    address!("0xb2000000000000000000006F944897540579D3f2"), // HOODc
+];
+
+/// A chain a swap may hold its stock on: where the token trades, which stablecoin Aurora pays out
+/// there, and the 1inch Fusion contracts that settle against it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TargetChain {
+    pub id: u64,
+    /// Shown in the review, e.g. "Robinhood USDG".
+    pub name: &'static str,
+    pub rpc: &'static str,
+    /// Aurora's `blockchain` key for `settlement_token`.
+    pub aurora_blockchain: &'static str,
+    pub settlement_token: Address,
+    pub settlement_symbol: &'static str,
+    pub lop: Address,
+    pub fusion_settlement: Address,
+    pub buy_targets: &'static [Address],
+}
+
+pub const ROBINHOOD: TargetChain = TargetChain {
+    id: ROBINHOOD_CHAIN_ID,
+    name: "Robinhood",
+    rpc: ROBINHOOD_RPC,
+    aurora_blockchain: "hood",
+    settlement_token: ROBINHOOD_USDG,
+    settlement_symbol: "USDG",
+    lop: ONEINCH_LOP,
+    fusion_settlement: FUSION_SETTLEMENT,
+    buy_targets: &ROBINHOOD_BUY_TARGETS,
+};
+
+pub const BASE: TargetChain = TargetChain {
+    id: BASE_CHAIN_ID,
+    name: "Base",
+    rpc: BASE_RPC,
+    aurora_blockchain: "base",
+    settlement_token: BASE_USDC,
+    settlement_symbol: "USDC",
+    lop: BASE_LOP,
+    fusion_settlement: BASE_FUSION_SETTLEMENT,
+    buy_targets: &BASE_BUY_TARGETS,
+};
+
+/// The chain a plan names, or `None` for a chain the engine does not support.
+pub fn target_chain(id: u64) -> Option<&'static TargetChain> {
+    [&ROBINHOOD, &BASE].into_iter().find(|chain| chain.id == id)
+}
+
+impl TargetChain {
+    pub fn is_buy_target(&self, token: Address) -> bool {
+        self.buy_targets.contains(&token)
+    }
 }
 
 pub const USDC_DECIMALS: u8 = 6;

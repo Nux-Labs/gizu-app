@@ -10,6 +10,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import io.gizu.storedwallet.BuildConfig
 import io.gizu.storedwallet.NativeStyle
 import io.gizu.storedwallet.PasskeyGate
 import io.gizu.storedwallet.WalletRecoveryRuntime
@@ -46,6 +47,8 @@ internal object SwapHost {
   var payout: Boolean = false
   var recovery: Boolean = false
   var holdingId: String? = null
+  /** Chain of a new buy or recovery; sells resolve theirs from the ledger. */
+  var chainId: Long = SwapChains.ROBINHOOD.chainId
 
   suspend fun open(
     activity: Activity,
@@ -57,6 +60,7 @@ internal object SwapHost {
     payout: Boolean = false,
     recovery: Boolean = false,
     holdingId: String? = null,
+    chainId: Long = SwapChains.ROBINHOOD.chainId,
   ): Map<String, Any?> {
     try {
       return suspendCancellableCoroutine { continuation ->
@@ -70,6 +74,7 @@ internal object SwapHost {
         this.payout = payout
         this.recovery = recovery
         this.holdingId = holdingId
+        this.chainId = chainId
         completion = continuation
         continuation.invokeOnCancellation { activity.runOnUiThread { close(null) } }
         try {
@@ -159,7 +164,9 @@ class SwapActivity : Activity() {
       return
     }
     SwapHost.screen = this
-    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    // Release builds hide swap screens from screenshots and recordings; debug builds allow them
+    // so device testing can capture the flow.
+    if (!BuildConfig.DEBUG) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
     // A buy runs for several minutes; a locked screen would pause it half way.
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     if (Build.VERSION.SDK_INT >= 31) window.setHideOverlayWindows(true)
@@ -197,10 +204,22 @@ class SwapActivity : Activity() {
           } else if (SwapHost.sell) {
             active.startSell(record, SwapHost.holdingId)
           } else if (SwapHost.recovery) {
-            active.startRecovery(record, checkNotNull(SwapHost.target))
+            active.startRecovery(record, checkNotNull(SwapHost.target), SwapHost.chainId)
           } else if (SwapHost.payout) {
-            active.start(record, checkNotNull(SwapHost.target), null, "confidentialPayout")
-          } else active.start(record, checkNotNull(SwapHost.target), SwapHost.amountAtoms)
+            active.start(
+              record,
+              checkNotNull(SwapHost.target),
+              null,
+              "confidentialPayout",
+              SwapHost.chainId,
+            )
+          } else
+            active.start(
+              record,
+              checkNotNull(SwapHost.target),
+              SwapHost.amountAtoms,
+              chainId = SwapHost.chainId,
+            )
         } finally {
           record.close()
         }

@@ -25,6 +25,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import io.gizu.storedwallet.swap.SwapEngine
 import io.gizu.storedwallet.swap.SwapHost
 import io.gizu.storedwallet.swap.SwapStore
+import io.gizu.storedwallet.swap.swapChainArg
 import java.security.SecureRandom
 import java.util.UUID
 import kotlin.coroutines.resume
@@ -208,7 +209,8 @@ class GizuStoredSignerModule : Module() {
       )
       dialog = alert
       alert.window?.apply {
-        addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Debug builds allow screenshots of review dialogs for device testing.
+        if (!BuildConfig.DEBUG) addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         if (fullReview) addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (Build.VERSION.SDK_INT >= 31) setHideOverlayWindows(true)
         setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -2133,31 +2135,49 @@ class GizuStoredSignerModule : Module() {
         }
       }
     }
+    // `chainId` names the chain the target trades on. JS omits it for Robinhood, so builds on
+    // either side of the Base change stay compatible.
     AsyncFunction("startSwap") {
       target: String,
       amountAtoms: String,
       gateway: String,
+      chainId: Int?,
       promise: Promise ->
       runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
         store.load().use { assertCashoutInactive(activity, it) }
+        val chain = io.gizu.storedwallet.swap.SwapChains.require(swapChainArg(chainId)).chainId
         withProviderUi(activity) {
-          SwapHost.open(activity, gateway, target, amountAtoms.ifBlank { null }, false)
+          SwapHost.open(
+            activity,
+            gateway,
+            target,
+            amountAtoms.ifBlank { null },
+            false,
+            chainId = chain,
+          )
         }
       }
     }
-    AsyncFunction("startPayout") { target: String, gateway: String, promise: Promise ->
+    AsyncFunction("startPayout") { target: String, gateway: String, chainId: Int?, promise: Promise
+      ->
       runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
         store.load().use { assertCashoutInactive(activity, it) }
+        val chain = io.gizu.storedwallet.swap.SwapChains.require(swapChainArg(chainId)).chainId
         withProviderUi(activity) {
-          SwapHost.open(activity, gateway, target, null, false, payout = true)
+          SwapHost.open(activity, gateway, target, null, false, payout = true, chainId = chain)
         }
       }
     }
-    AsyncFunction("startRecovery") { target: String, gateway: String, promise: Promise ->
+    AsyncFunction("startRecovery") {
+      target: String,
+      gateway: String,
+      chainId: Int?,
+      promise: Promise ->
       runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
         store.load().use { assertCashoutInactive(activity, it) }
+        val chain = io.gizu.storedwallet.swap.SwapChains.require(swapChainArg(chainId)).chainId
         withProviderUi(activity) {
-          SwapHost.open(activity, gateway, target, null, false, recovery = true)
+          SwapHost.open(activity, gateway, target, null, false, recovery = true, chainId = chain)
         }
       }
     }
@@ -2336,7 +2356,9 @@ class GizuStoredSignerModule : Module() {
         }
       }
     }
-    AsyncFunction("getSwapHoldings") { target: String, promise: Promise ->
+    // Reads every chain the ledger tracks; `target`/`chainId` add a token just bought on that
+    // chain.
+    AsyncFunction("getSwapHoldings") { target: String, chainId: Int?, promise: Promise ->
       runCeremony(promise, timeoutMs = 180_000L, readOnly = true) { activity, store ->
         withContext(Dispatchers.IO) {
           store.load().use { record ->
@@ -2354,15 +2376,31 @@ class GizuStoredSignerModule : Module() {
                 previous.close()
               }
             }
-            val targets =
-              saved.portfolio.targets() +
-                listOfNotNull(target.lowercase().takeIf { it.isNotBlank() })
-            val snapshot =
+            val added = io.gizu.storedwallet.swap.SwapChains.require(swapChainArg(chainId))
+            val reads =
+              io.gizu.storedwallet.swap.SwapChains.all.mapNotNull { chain ->
+                val targets =
+                  saved.portfolio.targets(chain.chainId) +
+                    listOfNotNull(target.lowercase().takeIf { it.isNotBlank() && chain == added })
+                // A chain without tracked tokens is not read at all.
+                if (targets.isEmpty() && chain != io.gizu.storedwallet.swap.SwapChains.ROBINHOOD)
+                  null
+                else chain to targets
+              }
+            val snapshots =
               withTimeoutOrNull(8_000L) {
-                io.gizu.storedwallet.swap.SwapHoldings().read(record, targets)
+                coroutineScope {
+                  reads
+                    .map { (chain, targets) ->
+                      async {
+                        chain to io.gizu.storedwallet.swap.SwapHoldings(chain).read(record, targets)
+                      }
+                    }
+                    .awaitAll()
+                }
               } ?: throw io.gizu.storedwallet.portfolio.PortfolioReadTimeout()
-            if (target.isNotBlank()) saved.portfolio.watch(target)
-            snapshot
+            if (target.isNotBlank()) saved.portfolio.watch(target, added.chainId)
+            io.gizu.storedwallet.swap.SwapHoldings.merge(snapshots)
           }
         }
       }

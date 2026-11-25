@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { InfrastructureError } from "../../src/domain/errors/infrastructure-error.ts";
-import { ROBINHOOD_BUY_TARGETS } from "../../src/adapters/oneinch/swap-targets.ts";
-import { RobinhoodTokenDetails } from "../../src/adapters/oneinch/token-details.ts";
+import { BASE_BUY_TARGETS, ROBINHOOD_BUY_TARGETS } from "../../src/adapters/oneinch/swap-targets.ts";
+import { StockTokenDetails } from "../../src/adapters/oneinch/token-details.ts";
 import { TOKEN_PROFILES } from "../../src/adapters/oneinch/token-profiles.ts";
 
 const nvda = ROBINHOOD_BUY_TARGETS.find((t) => t.symbol === "NVDA")!;
@@ -34,7 +34,7 @@ function fakeFetch(calls: string[], replies: Replies = {}): typeof fetch {
 
 test("combines Robinhood's record, the 1inch price and an oldest-first chart", async () => {
   const calls: string[] = [];
-  const details = await new RobinhoodTokenDetails("key", fakeFetch(calls)).details(nvda.address.toLowerCase(), "1D");
+  const details = await new StockTokenDetails("key", fakeFetch(calls)).details(nvda.address.toLowerCase(), "1D");
   assert.deepEqual(details, {
     chainId: 4663, address: nvda.address, symbol: "NVDA", name: "NVDA • Robinhood Token", logoURI: "https://cdn.robinhood.com/NVDA.png",
     kind: "stock", description: TOKEN_PROFILES.NVDA!.description, isin: "US67066G1040", sharesPerToken: "1.000775159164630595",
@@ -45,7 +45,7 @@ test("combines Robinhood's record, the 1inch price and an oldest-first chart", a
 });
 
 test("a fund without optional Robinhood fields still has a page", async () => {
-  const details = await new RobinhoodTokenDetails("key", fakeFetch([])).details(qqq.address, "1M");
+  const details = await new StockTokenDetails("key", fakeFetch([])).details(qqq.address, "1M");
   assert.equal(details?.kind, "fund");
   assert.equal(details?.isin, null);
   assert.equal(details?.sharesPerToken, null);
@@ -54,7 +54,7 @@ test("a fund without optional Robinhood fields still has a page", async () => {
 
 test("a missing price or chart leaves those fields empty instead of failing the page", async () => {
   const fetchImpl = fakeFetch([], { price: () => new Response("", { status: 500 }), chart: () => Response.json({ data: [{ time: 1, value: 1 }] }) });
-  const details = await new RobinhoodTokenDetails("key", fetchImpl).details(nvda.address, "1W");
+  const details = await new StockTokenDetails("key", fetchImpl).details(nvda.address, "1W");
   assert.equal(details?.priceUsd, null);
   assert.equal(details?.chart, null);
   assert.equal(details?.symbol, "NVDA");
@@ -62,12 +62,12 @@ test("a missing price or chart leaves those fields empty instead of failing the 
 
 test("tokens outside the buy list have no detail page and cause no provider calls", async () => {
   const calls: string[] = [];
-  assert.equal(await new RobinhoodTokenDetails("key", fakeFetch(calls)).details("0x1111111111111111111111111111111111111111", "1M"), undefined);
+  assert.equal(await new StockTokenDetails("key", fakeFetch(calls)).details("0x1111111111111111111111111111111111111111", "1M"), undefined);
   assert.deepEqual(calls, []);
 });
 
 test("an unavailable Robinhood catalog is a 503", async () => {
-  const service = new RobinhoodTokenDetails("key", fakeFetch([], { robinhood: () => new Response("", { status: 502 }) }));
+  const service = new StockTokenDetails("key", fakeFetch([], { robinhood: () => new Response("", { status: 502 }) }));
   await assert.rejects(service.details(nvda.address, "1M"), (error: unknown) => error instanceof InfrastructureError && error.statusCode === 503);
 });
 
@@ -75,7 +75,7 @@ test("reuses prices for a minute, charts and assets for ten minutes, and retries
   const calls: string[] = [];
   let now = 0;
   let chartFails = true;
-  const service = new RobinhoodTokenDetails("key", fakeFetch(calls, { chart: () => chartFails ? new Response("", { status: 500 }) : Response.json({ data: [{ time: 1, value: 1 }, { time: 2, value: 2 }] }) }), () => now);
+  const service = new StockTokenDetails("key", fakeFetch(calls, { chart: () => chartFails ? new Response("", { status: 500 }) : Response.json({ data: [{ time: 1, value: 1 }, { time: 2, value: 2 }] }) }), () => now);
   const count = (part: string) => calls.filter((url) => url.includes(part)).length;
   await service.details(nvda.address, "1M");
   chartFails = false;
@@ -103,7 +103,7 @@ test("one batched request prices every buy target, refreshes after a minute and 
   const calls: string[] = [];
   let now = 0;
   const all = Object.fromEntries(ROBINHOOD_BUY_TARGETS.map((t, i) => [t.address.toLowerCase(), String(100 + i)]));
-  const service = new RobinhoodTokenDetails("key", fakeFetch(calls, { price: () => Response.json(all) }), () => now);
+  const service = new StockTokenDetails("key", fakeFetch(calls, { price: () => Response.json(all) }), () => now);
   const count = () => calls.filter((url) => url.includes("/price/")).length;
   const [first, second] = await Promise.all([service.prices(), service.prices()]);
   assert.equal(count(), 1);
@@ -119,8 +119,56 @@ test("one batched request prices every buy target, refreshes after a minute and 
 });
 
 test("a failed batch leaves every price null without throwing", async () => {
-  const service = new RobinhoodTokenDetails("key", fakeFetch([], { price: () => new Response("", { status: 429 }) }));
+  const service = new StockTokenDetails("key", fakeFetch([], { price: () => new Response("", { status: 429 }) }));
   const prices = await service.prices();
   assert.equal(prices.size, ROBINHOOD_BUY_TARGETS.length);
   assert.ok([...prices.values()].every((price) => price === null));
+});
+
+test("a Base page combines Coinbase's record with the 1inch price and a chart against Base USDC", async () => {
+  const googl = BASE_BUY_TARGETS[0]!;
+  const calls: string[] = [];
+  let coinbaseUp = true;
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes("coinbase.com")) {
+      return coinbaseUp
+        ? Response.json({ tokens: [{ contract_address: googl.address.toLowerCase(), symbol: "GOOGLc", name: "Alphabet Inc.", icon_url: "https://cdn.coinbase.com/googl.png", isin: "US02079K3059", multiplier: "1", description: "Alphabet is the parent of Google." }] })
+        : new Response("", { status: 503 });
+    }
+    if (url.includes("/price/")) return Response.json({ [googl.address.toLowerCase()]: "301.5" });
+    return Response.json({ data: [{ time: 2, value: 302 }, { time: 1, value: 300 }] });
+  };
+  let now = 1_000;
+  const service = new StockTokenDetails("key", fetchImpl, () => now);
+  const details = await service.details(googl.address, "1W", 8453);
+  assert.deepEqual(details, {
+    chainId: 8453, address: googl.address, symbol: "GOOGLc", name: "Alphabet Inc.", logoURI: "https://cdn.coinbase.com/googl.png",
+    kind: "stock", description: "Alphabet is the parent of Google.", isin: "US02079K3059", sharesPerToken: "1", sessions: null, priceUsd: 301.5,
+    chart: { period: "1W", points: [{ time: 1, price: 300 }, { time: 2, price: 302 }] },
+  });
+  assert.ok(calls.some((url) => url.endsWith(`/charts/v1.0/chart/line/${googl.address}/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913/1W/8453`)));
+  assert.ok(calls.some((url) => url.startsWith(`https://api.1inch.com/price/v1.1/8453/${googl.address}`)));
+  assert.equal(await service.details(googl.address, "1W"), undefined, "a Base token is not a Robinhood target");
+  // A Coinbase outage after one good read keeps serving the last list.
+  coinbaseUp = false;
+  now += 11 * 60_000;
+  assert.equal((await service.details(googl.address, "1W", 8453))?.symbol, "GOOGLc");
+  // With no Coinbase list at all, the page keeps the pinned symbol and the 1inch price and chart.
+  const fallback = await new StockTokenDetails("key", fetchImpl).details(googl.address, "1W", 8453);
+  assert.deepEqual(
+    { symbol: fallback?.symbol, name: fallback?.name, isin: fallback?.isin, description: fallback?.description, priceUsd: fallback?.priceUsd },
+    { symbol: "GOOGLc", name: "GOOGLc", isin: null, description: "", priceUsd: 301.5 },
+  );
+});
+
+test("Base prices come from one batched request on chain 8453", async () => {
+  const calls: string[] = [];
+  const service = new StockTokenDetails("key", fakeFetch(calls, { price: () => Response.json({ [BASE_BUY_TARGETS[0]!.address.toLowerCase()]: "301.5" }) }));
+  const prices = await service.prices(8453);
+  assert.equal(prices.size, BASE_BUY_TARGETS.length);
+  assert.equal(prices.get(BASE_BUY_TARGETS[0]!.address.toLowerCase()), 301.5);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0]!.startsWith("https://api.1inch.com/price/v1.1/8453/"));
 });

@@ -1,4 +1,5 @@
 import { parseSwapAmount } from "@/domain/swap";
+import { isSwapChain, swapChains, type SwapChain } from "@/domain/tokenCatalog";
 import type { StoredSwapView } from "@/domain/wallet/storedSigner";
 import { getStoredSwapSigner } from "@/services/wallet/nativeBridge";
 
@@ -9,12 +10,18 @@ export const swapGateway =
 export const MAX_SOURCE_ATOMS = (1n << 64n) - 1n;
 
 export type ListedToken = {
+  /** The chain the token trades on; addresses are unique across swap chains. */
+  chainId: SwapChain;
   address: string;
   symbol: string;
   name: string;
   decimals: number;
   swapListed: boolean;
   buyable?: boolean;
+  /** Remote catalog logo; absent or null when the catalog has none. */
+  logoURI?: string | null;
+  /** Catalog USD price; absent or null when no market price is available right now. */
+  priceUsd?: number | null;
 };
 
 export function sourceAtoms(amount: string): string | null {
@@ -81,7 +88,7 @@ export function parseSwapView(value: unknown): StoredSwapView {
 
 export async function loadSwapTokens(fetchImpl: typeof fetch = fetch): Promise<ListedToken[]> {
   const response = await fetchImpl(
-    `${swapGateway}/v1/tokens?chainId=4663&category=rwa&search=&page=0&items=100`,
+    `${swapGateway}/v1/tokens?chainIds=${swapChains.join(",")}&category=rwa&search=&page=0&items=100`,
   );
   if (!response.ok) throw new Error("Token list unavailable.");
   const body = (await response.json()) as { list?: unknown };
@@ -89,8 +96,12 @@ export async function loadSwapTokens(fetchImpl: typeof fetch = fetch): Promise<L
   return body.list.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const token = item as Record<string, unknown>;
+    // Gateways from before Base name no chain; everything they list is on Robinhood Chain.
+    const chainId = token.chainId === undefined ? 4663 : token.chainId;
     if (
       token.swapListed !== true ||
+      typeof chainId !== "number" ||
+      !isSwapChain(chainId) ||
       typeof token.address !== "string" ||
       typeof token.symbol !== "string" ||
       typeof token.name !== "string"
@@ -98,12 +109,17 @@ export async function loadSwapTokens(fetchImpl: typeof fetch = fetch): Promise<L
       return [];
     return [
       {
+        chainId,
         address: token.address,
         symbol: token.symbol,
         name: token.name,
         decimals: typeof token.decimals === "number" ? token.decimals : 0,
         swapListed: true,
         ...(typeof token.buyable === "boolean" ? { buyable: token.buyable } : {}),
+        ...(typeof token.logoURI === "string" ? { logoURI: token.logoURI } : {}),
+        ...(typeof token.priceUsd === "number" && Number.isFinite(token.priceUsd)
+          ? { priceUsd: token.priceUsd }
+          : {}),
       },
     ];
   });
@@ -111,6 +127,13 @@ export async function loadSwapTokens(fetchImpl: typeof fetch = fetch): Promise<L
 
 /** Sales are priced into Robinhood USDG, which Aurora credits as confidential USDC 1:1. */
 export const ROBINHOOD_USDG = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+/** Base sales are priced into Base USDC, which Aurora credits as confidential USDC. */
+export const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+/** The 6-decimal stablecoin a buy spends and a sale returns on each swap chain. */
+export const SETTLEMENT_TOKEN: Record<SwapChain, string> = {
+  4663: ROBINHOOD_USDG,
+  8453: BASE_USDC,
+};
 
 /** Gross market preview only: source gas, bridge/payout fees and auction slippage are excluded. */
 export async function previewSwapOut(
@@ -118,31 +141,45 @@ export async function previewSwapOut(
   target: string,
   sourceAtomsValue: string,
   fetchImpl: typeof fetch = fetch,
+  chainId: SwapChain = 4663,
 ): Promise<string> {
-  return fusionMarketOut({ wallet, dstToken: target, amount: sourceAtomsValue }, fetchImpl);
+  return fusionMarketOut(
+    {
+      wallet,
+      dstToken: target,
+      amount: sourceAtomsValue,
+      ...(chainId === 4663 ? {} : { srcToken: SETTLEMENT_TOKEN[chainId] }),
+    },
+    chainId,
+    fetchImpl,
+  );
 }
 
-/** Gross USDG (6 decimals) for selling `tokenAtoms` of `token`; fees and slippage excluded. */
+/** Gross stablecoin (6 decimals) for selling `tokenAtoms` of `token`; fees and slippage excluded. */
 export async function previewSellOut(
   wallet: string,
   token: string,
   tokenAtoms: string,
   fetchImpl: typeof fetch = fetch,
+  chainId: SwapChain = 4663,
 ): Promise<string> {
   return fusionMarketOut(
-    { wallet, srcToken: token, dstToken: ROBINHOOD_USDG, amount: tokenAtoms },
+    { wallet, srcToken: token, dstToken: SETTLEMENT_TOKEN[chainId], amount: tokenAtoms },
+    chainId,
     fetchImpl,
   );
 }
 
 async function fusionMarketOut(
   request: { wallet: string; dstToken: string; amount: string; srcToken?: string },
+  chainId: SwapChain,
   fetchImpl: typeof fetch,
 ): Promise<string> {
+  // The gateway rejects unknown fields, so a Robinhood preview never names its chain.
   const response = await fetchImpl(`${swapGateway}/v1/swap/fusion/preview`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...request, preset: "fast" }),
+    body: JSON.stringify({ ...request, preset: "fast", ...(chainId === 4663 ? {} : { chainId }) }),
   });
   if (!response.ok) throw new Error("Estimate unavailable.");
   const body = (await response.json()) as { marketOut?: unknown };

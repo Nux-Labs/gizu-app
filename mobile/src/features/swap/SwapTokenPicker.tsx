@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, Info } from "lucide-react-native";
+import { Info } from "lucide-react-native";
 import colors from "@/theme/colors.json";
 import { Modal, View } from "react-native";
 import { Button } from "@/components/atoms/Button";
@@ -9,6 +9,8 @@ import { PressableScale } from "@/components/atoms/PressableScale";
 import { InfiniteListScreen } from "@/components/templates/InfiniteListScreen";
 import { Badge } from "@/components/atoms/Badge";
 import {
+  isSwapChain,
+  swapChains,
   tokenDisplayName,
   tokenIdentity,
   tokenNetworks,
@@ -17,9 +19,17 @@ import {
 import { useTokenCatalog } from "./useTokenCatalog";
 import type { ListedToken } from "./confidentialSwap";
 import { ESTIMATE_INFO, SwapAmountBox } from "./SwapAmountBox";
-import { RobinhoodChainMark } from "./components/RobinhoodChainMark";
+import { ChainMark } from "./components/ChainMark";
+import { TokenPill } from "./components/TokenPill";
 import { TokenDetail } from "./TokenDetail";
 import { formatUsd } from "./formatUsd";
+
+/** "1 AAPL = $227.40" for the receive row; nothing when the catalog has no market price. */
+function unitPrice(token: ListedToken): string | undefined {
+  return typeof token.priceUsd === "number" && Number.isFinite(token.priceUsd) && token.priceUsd > 0
+    ? `1 ${token.symbol} = ${formatUsd(token.priceUsd)}`
+    : undefined;
+}
 
 export function SwapTokenPicker({
   tokens,
@@ -40,7 +50,7 @@ export function SwapTokenPicker({
     <>
       <SwapAmountBox
         label="You receive"
-        note={selected && tokenDisplayName(selected.name)}
+        note={selected ? unitPrice(selected) : undefined}
         info={estimate && !estimate.loading ? ESTIMATE_INFO : undefined}
       >
         <Typography
@@ -52,19 +62,15 @@ export function SwapTokenPicker({
         >
           {estimate && !estimate.loading ? estimate.text : estimate ? "…" : "0"}
         </Typography>
-        <PressableScale
-          accessibilityRole="button"
+        <TokenPill
+          symbol={selected?.symbol ?? "Choose"}
+          logo={selected ? { uri: selected.logoURI } : undefined}
           accessibilityLabel="Choose receive token"
-          accessibilityState={{ disabled, expanded: open }}
           disabled={disabled}
+          expanded={open}
           onPress={() => setOpen(true)}
-          className="min-h-11 max-w-[52%] flex-row items-center gap-2 rounded-full bg-neon/15 px-3 py-2"
-        >
-          <Typography variant="rowTitle" className="!text-neon">
-            {selected?.symbol ?? "Choose"}
-          </Typography>
-          <ChevronDown size={14} color={colors.fg["70"]} />
-        </PressableScale>
+          className="max-w-[52%]"
+        />
       </SwapAmountBox>
       {open && (
         <TokenChoices
@@ -92,10 +98,12 @@ export function TokenChoices({
   onClose: () => void;
   onSelect: (token: CatalogToken) => void;
 }) {
-  // Swap buys only Robinhood stocks, so the picker lists nothing a buy cannot target.
+  // Swap buys stocks on Robinhood Chain and Base, so the picker lists both chains (Robinhood
+  // first) and nothing a buy cannot target. A stock on both chains appears once per chain.
   const { query, queryKey, list, change } = useTokenCatalog({
     category: "rwa",
-    chainId: 4663,
+    chainId: null,
+    chainIds: swapChains,
     liquidOnly: true,
   });
   // The list's data and query live here, so returning from a detail page keeps them.
@@ -103,6 +111,7 @@ export function TokenChoices({
   const content = detail ? (
     <TokenDetail
       address={detail.address}
+      chainId={isSwapChain(detail.chainId) ? detail.chainId : undefined}
       disabled={disabled}
       onBack={() => setDetail(null)}
       onSelect={() => onSelect(detail)}
@@ -133,12 +142,12 @@ export function TokenChoices({
       }
       renderItem={(item) => {
         const selectable =
-          item.chainId === 4663 &&
+          isSwapChain(item.chainId) &&
           item.category === "rwa" &&
           item.swapListed &&
           item.buyable !== false;
         const checked =
-          item.chainId === 4663 && item.address.toLowerCase() === target.toLowerCase();
+          isSwapChain(item.chainId) && item.address.toLowerCase() === target.toLowerCase();
         const price = typeof item.priceUsd === "number" ? formatUsd(item.priceUsd) : null;
         return (
           <View className="mb-2 flex-row items-stretch gap-2">
@@ -162,15 +171,17 @@ export function TokenChoices({
                     {price}
                   </Typography>
                 )}
-                {item.chainId === 4663 ? (
-                  <RobinhoodChainMark />
-                ) : (
-                  <Badge
-                    label={
-                      tokenNetworks.find((network) => network.chainId === item.chainId)?.name ?? ""
-                    }
-                  />
-                )}
+                <ChainMark
+                  chainId={item.chainId}
+                  fallback={
+                    <Badge
+                      label={
+                        tokenNetworks.find((network) => network.chainId === item.chainId)?.name ??
+                        ""
+                      }
+                    />
+                  }
+                />
               </View>
               <Typography variant="micro">{tokenDisplayName(item.name)}</Typography>
               {!selectable && <Typography variant="micro">Not available for swaps</Typography>}

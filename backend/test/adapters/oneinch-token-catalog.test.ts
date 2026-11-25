@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { InfrastructureError } from "../../src/domain/errors/infrastructure-error.ts";
 import { OneInchTokenCatalog } from "../../src/adapters/oneinch/token-catalog.ts";
-import { ROBINHOOD_BUY_TARGETS, robinhoodBuyRank } from "../../src/adapters/oneinch/swap-targets.ts";
+import { BASE_BUY_TARGETS, ROBINHOOD_BUY_TARGETS, buyRank, robinhoodBuyRank } from "../../src/adapters/oneinch/swap-targets.ts";
 
 const stock = "0x1111111111111111111111111111111111111111";
 const unrelated = "0x2222222222222222222222222222222222222222";
@@ -128,10 +128,64 @@ test("only curated liquid Robinhood stocks are buyable and they lead in liquidit
 });
 
 test("backend buy targets match the shared liquidity list the native engine pins", () => {
-  const shared = JSON.parse(readFileSync(new URL("../../../shared/swap-targets-v1.json", import.meta.url), "utf8")) as { version: string; chainId: number; targets: Array<{ symbol: string; address: string }> };
-  assert.equal(shared.version, "gizu-swap-targets-v1");
-  assert.equal(shared.chainId, 4663);
-  assert.deepEqual(ROBINHOOD_BUY_TARGETS.map(({ symbol, address }) => ({ symbol, address })), shared.targets.map(({ symbol, address }) => ({ symbol, address })));
-  assert.equal(robinhoodBuyRank(shared.targets[0]!.address.toUpperCase().replace("0X", "0x")), 0);
+  const shared = JSON.parse(readFileSync(new URL("../../../shared/swap-targets-v2.json", import.meta.url), "utf8")) as { version: string; chains: Record<string, { targets: Array<{ symbol: string; address: string }> }> };
+  assert.equal(shared.version, "gizu-swap-targets-v2");
+  const robinhood = shared.chains["4663"]!.targets;
+  assert.deepEqual(ROBINHOOD_BUY_TARGETS.map(({ symbol, address }) => ({ symbol, address })), robinhood.map(({ symbol, address }) => ({ symbol, address })));
+  assert.equal(robinhoodBuyRank(robinhood[0]!.address.toUpperCase().replace("0X", "0x")), 0);
   assert.equal(robinhoodBuyRank(unlisted), undefined);
 });
+
+test("backend Base buy targets match the shared 8453 list and rank only on Base", () => {
+  const shared = JSON.parse(readFileSync(new URL("../../../shared/swap-targets-v2.json", import.meta.url), "utf8")) as { chains: Record<string, { targets: Array<{ symbol: string; address: string }> }> };
+  const base = shared.chains["8453"]!.targets;
+  assert.deepEqual(BASE_BUY_TARGETS.map(({ symbol, address }) => ({ symbol, address })), base.map(({ symbol, address }) => ({ symbol, address })));
+  assert.equal(buyRank(8453, base[0]!.address.toLowerCase()), 0);
+  assert.equal(buyRank(4663, base[0]!.address), undefined);
+  assert.equal(buyRank(8453, ROBINHOOD_BUY_TARGETS[0]!.address), undefined);
+});
+
+function baseFetch(coinbase: () => Response): typeof fetch {
+  const [first, second] = BASE_BUY_TARGETS;
+  const listed = (symbol: string, address: string, decimals = 18) => ({ address, symbol, name: symbol, decimals, logoURI: null, tags: ["rwa"] });
+  return async (input) => {
+    const url = String(input);
+    if (url.includes("coinbase.com")) return coinbase();
+    assert.equal(url, "https://api.1inch.com/swap/v6.1/8453/tokens");
+    return Response.json({ tokens: {
+      [first!.address]: listed(first!.symbol, first!.address),
+      [second!.address]: listed(second!.symbol, second!.address),
+      [stock]: listed("ZZZc", stock),
+      [ordinary]: { ...listed("USDC", ordinary, 6), tags: ["tokens"] },
+    } });
+  };
+}
+
+test("Base marks Coinbase stock tokens, buys only the pinned list and stops a paused token", async () => {
+  const [first, second] = BASE_BUY_TARGETS;
+  const issued = (symbol: string, address: string, paused: string[] = []) => ({
+    contract_address: address, symbol, name: `${symbol} Inc.`, decimals: 18, icon_url: `https://cdn.coinbase.com/${symbol}.png`, paused_features: paused,
+  });
+  const catalog = new OneInchTokenCatalog("key", baseFetch(() => Response.json({ tokens: [
+    issued(first!.symbol, first!.address), issued(second!.symbol, second!.address, ["mint"]), issued("ZZZc", stock),
+  ] })));
+  const result = await catalog.list(8453, "all");
+  assert.deepEqual(result.map(({ symbol, issuer, buyable, category }) => ({ symbol, issuer, buyable, category })), [
+    { symbol: first!.symbol, issuer: "Coinbase", buyable: true, category: "rwa" },
+    { symbol: second!.symbol, issuer: "Coinbase", buyable: false, category: "rwa" },
+    { symbol: "USDC", issuer: null, buyable: false, category: "other" },
+    { symbol: "ZZZc", issuer: "Coinbase", buyable: false, category: "rwa" },
+  ]);
+  assert.equal(result[0]?.name, `${first!.symbol} Inc.`);
+  assert.equal(result[0]?.logoURI, `https://cdn.coinbase.com/${first!.symbol}.png`);
+});
+
+test("an unreachable Coinbase list still marks the pinned Base buy list", async () => {
+  const [first, second] = BASE_BUY_TARGETS;
+  const catalog = new OneInchTokenCatalog("key", baseFetch(() => new Response("", { status: 503 })));
+  const result = await catalog.list(8453, "all");
+  assert.deepEqual(result.filter((token) => token.buyable).map((token) => token.symbol), [first!.symbol, second!.symbol]);
+  assert.ok(result.filter((token) => token.buyable).every((token) => token.issuer === "Coinbase"));
+  assert.equal(result.find((token) => token.symbol === "ZZZc")?.issuer, null);
+});
+

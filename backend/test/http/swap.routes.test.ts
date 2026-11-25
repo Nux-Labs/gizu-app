@@ -17,6 +17,14 @@ function build(calls: unknown[][]) {
     calls.push([name, ...args]);
     return result;
   };
+  // Calls to the Base adapter are recorded with a "base:" prefix.
+  const fusion = (prefix: string) => ({
+    preview: record(`${prefix}preview`, {}),
+    permitContext: record(`${prefix}permitContext`, {}),
+    createOrder: record(`${prefix}createOrder`, {}),
+    submit: record(`${prefix}submit`, undefined),
+    status: record(`${prefix}status`, null),
+  });
   registerSwapRoutes(app, {
     aurora: {
       tokens: record("tokens", []),
@@ -33,13 +41,7 @@ function build(calls: unknown[][]) {
       submit: record("submit", "0x01"),
       receipt: record("receipt", { found: false }),
     } as never,
-    fusion: {
-      preview: record("preview", {}),
-      permitContext: record("permitContext", {}),
-      createOrder: record("createOrder", {}),
-      submit: record("submit", undefined),
-      status: record("status", null),
-    } as never,
+    fusion: { 4663: fusion(""), 8453: fusion("base:") } as never,
   });
   return app;
 }
@@ -122,4 +124,22 @@ test("forwards the sell receiver and keeps buy receiver optional", async () => {
     assert.equal((await app.inject({ method: "POST", url: "/v1/swap/fusion/order", payload: { ...payload, receiver: "wrong" } })).statusCode, 400);
     assert.equal(calls.length, 2);
   } finally { await app.close(); }
+});
+
+test("a Base body reaches the Base Fusion adapter, a body without a chain stays on Robinhood", async () => {
+  const calls: unknown[][] = [];
+  const app = build(calls);
+  const base = { wallet, dstToken: amzn, amount: "1000000", preset: "fast" };
+  assert.equal((await app.inject({ method: "POST", url: "/v1/swap/fusion/preview", payload: base })).statusCode, 200);
+  assert.equal((await app.inject({ method: "POST", url: "/v1/swap/fusion/preview", payload: { ...base, chainId: 8453 } })).statusCode, 200);
+  assert.equal((await app.inject({ method: "POST", url: "/v1/swap/fusion/permit-context", payload: { owner: wallet, chainId: 8453 } })).statusCode, 200);
+  const orderHash = `0x${"ab".repeat(32)}`;
+  assert.equal((await app.inject({ method: "POST", url: "/v1/swap/fusion/status", payload: { orderHash, chainId: 8453 } })).statusCode, 404);
+  assert.deepEqual(calls.map((call) => call[0]), ["preview", "base:preview", "base:permitContext", "base:status"]);
+  for (const chainId of [1, 143, "8453", null]) {
+    const response = await app.inject({ method: "POST", url: "/v1/swap/fusion/preview", payload: { ...base, chainId } });
+    assert.equal(response.statusCode, 400, `chainId ${String(chainId)}`);
+  }
+  assert.equal(calls.length, 4);
+  await app.close();
 });

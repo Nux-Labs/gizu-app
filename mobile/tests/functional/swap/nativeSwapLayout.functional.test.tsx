@@ -2,10 +2,11 @@ import { MainnetWalletProvider } from "@/features/wallet/MainnetWalletProvider";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
 import { tokenCatalogService } from "@/services/tokenCatalog";
 import { catalogToken } from "../../support/tokenCatalog";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react-native";
 import { RefreshControl } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NativeSwapScreen } from "@/features/swap/NativeSwapScreen";
+import { useNativeSwap } from "@/features/swap/useNativeSwap";
 import { getStoredSwapSigner } from "@/services/wallet/nativeBridge";
 
 jest.mock("@/services/tokenCatalog", () => ({ tokenCatalogService: { list: jest.fn() } }));
@@ -113,7 +114,7 @@ test("selects a searched token and reviews the exact amount without exposing tec
   expect(start).not.toHaveBeenCalled();
   fireEvent.press(screen.getByRole("button", { name: "Swap" }));
   await waitFor(() =>
-    expect(start).toHaveBeenCalledWith(secondToken, "1250000", expect.any(String)),
+    expect(start).toHaveBeenCalledWith(secondToken, "1250000", expect.any(String), 4663),
   );
   expect(await screen.findByText("Swap paused")).toBeVisible();
   expect(screen.queryByText(/QUOTE_REJECTED/)).toBeNull();
@@ -163,7 +164,7 @@ test("pull-to-refresh reloads saved swap status without a refresh button", async
   expect(readStatus).toHaveBeenCalledTimes(2);
 });
 
-test("picker lists only Robinhood stocks without a token type switch", async () => {
+test("picker lists stocks from every swap chain without a token type switch", async () => {
   render(
     <SafeAreaProvider>
       <NativeSwapScreen />
@@ -177,7 +178,13 @@ test("picker lists only Robinhood stocks without a token type switch", async () 
   expect(screen.getAllByLabelText("Robinhood Chain")).toHaveLength(2);
   expect(screen.queryByText("Robinhood")).toBeNull();
   expect(tokenCatalogService.list).toHaveBeenCalledWith(
-    expect.objectContaining({ chainId: 4663, category: "rwa", liquidOnly: true, page: 0 }),
+    expect.objectContaining({
+      chainId: null,
+      chainIds: [4663, 8453],
+      category: "rwa",
+      liquidOnly: true,
+      page: 0,
+    }),
     expect.anything(),
   );
   expect(start).not.toHaveBeenCalled();
@@ -217,6 +224,7 @@ test("picker hides stocks outside the liquid set and never defaults to one", asy
           decimals: 18,
           swapListed: true,
           buyable: true,
+          priceUsd: 1234.5,
         },
       ],
     }),
@@ -232,14 +240,86 @@ test("picker hides stocks outside the liquid set and never defaults to one", asy
     await screen.findByRole("radio", { name: "GOOGL · Alphabet", checked: true }),
   ).toBeEnabled();
   expect(screen.queryByRole("radio", { name: "COIN · Coinbase" })).toBeNull();
-  // The list row and the "You receive" note both drop Robinhood's name suffix.
-  expect(screen.getAllByText("Alphabet").length).toBeGreaterThanOrEqual(2);
+  // The list row drops Robinhood's name suffix; the "You receive" row shows the unit price instead.
+  expect(screen.getByText("Alphabet")).toBeVisible();
+  expect(screen.getByText("1 GOOGL = $1,234.50")).toBeVisible();
   expect(screen.queryByText(/Robinhood Token/)).toBeNull();
   expect(screen.queryByText(/most liquid Robinhood stocks/)).toBeNull();
   expect(screen.getByText("$1,234.50")).toBeVisible();
   expect(tokenCatalogService.list).toHaveBeenCalledWith(
-    expect.objectContaining({ chainId: 4663, category: "rwa", liquidOnly: true }),
+    expect.objectContaining({ chainIds: [4663, 8453], category: "rwa", liquidOnly: true }),
     expect.anything(),
+  );
+});
+
+test("a Base stock sits beside its Robinhood twin and a buy of it names Base", async () => {
+  const baseToken = "0x" + "c".repeat(40);
+  jest.mocked(tokenCatalogService.list).mockImplementation(async (query) => {
+    const tokens = [
+      { ...catalogToken, address: secondToken, symbol: "GOOGL", name: "Alphabet", buyable: true },
+      {
+        ...catalogToken,
+        chainId: 8453 as const,
+        issuer: "Coinbase" as const,
+        address: baseToken,
+        symbol: "GOOGLc",
+        name: "Alphabet Inc.",
+        buyable: true,
+      },
+    ].filter((item) => `${item.symbol}`.toLowerCase().includes(query.search.toLowerCase()));
+    return { list: tokens, total: tokens.length, items: 20, page: query.page };
+  });
+  const fetchMock = jest.mocked(globalThis.fetch).mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      list: [
+        {
+          chainId: 4663,
+          address: secondToken,
+          symbol: "GOOGL",
+          name: "Alphabet",
+          decimals: 18,
+          swapListed: true,
+          buyable: true,
+        },
+        {
+          chainId: 8453,
+          address: baseToken,
+          symbol: "GOOGLc",
+          name: "Alphabet Inc.",
+          decimals: 18,
+          swapListed: true,
+          buyable: true,
+        },
+      ],
+    }),
+  } as Response);
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  await screen.findByText("GOOGL");
+  fireEvent.press(screen.getByRole("button", { name: "Choose receive token" }));
+  expect(await screen.findByRole("radio", { name: "GOOGL · Alphabet" })).toBeEnabled();
+  expect(screen.getByLabelText("Robinhood Chain")).toBeVisible();
+  expect(screen.getByLabelText("Base")).toBeVisible();
+  fireEvent.press(screen.getByRole("radio", { name: "GOOGLc · Alphabet Inc." }));
+  fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "2");
+  // The estimate asks the gateway for a Base quote that spends Base USDC.
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith("/v1/swap/fusion/preview") &&
+          JSON.parse(String(init?.body)).chainId === 8453 &&
+          JSON.parse(String(init?.body)).srcToken === "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      ),
+    ).toBe(true),
+  );
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(baseToken, "2000000", expect.any(String), 8453),
   );
 });
 
@@ -583,4 +663,154 @@ test("a swap balance shortfall is shown explicitly and refreshes the shared obse
     await screen.findByText("Your available USDC does not cover this amount and its fees."),
   ).toBeVisible();
   expect(await screen.findByText("Available: 1 USDC")).toBeVisible();
+});
+
+test.each([false, true])(
+  "a late initial token response preserves the selected Base chain and newer price (duplicate: %s)",
+  async (duplicate) => {
+    let land!: (value: Response) => void;
+    const fetchMock = jest
+      .mocked(globalThis.fetch)
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ marketOut: "2000000000000000000" }),
+      } as Response)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          land = resolve;
+        }),
+      );
+    jest.mocked(tokenCatalogService.list).mockResolvedValue({
+      list: [
+        {
+          ...catalogToken,
+          chainId: 8453,
+          address: secondToken,
+          symbol: "GOOGLc",
+          name: "Alphabet",
+          priceUsd: 250,
+          buyable: true,
+        },
+      ],
+      total: 1,
+      items: 20,
+      page: 0,
+    });
+    render(
+      <SafeAreaProvider>
+        <NativeSwapScreen />
+      </SafeAreaProvider>,
+    );
+    fireEvent.press(screen.getByRole("button", { name: "Choose receive token" }));
+    fireEvent.press(await screen.findByRole("radio", { name: "GOOGLc · Alphabet" }));
+    expect(screen.getByText("1 GOOGLc = $250.00")).toBeVisible();
+    await act(async () =>
+      land({
+        ok: true,
+        json: async () => ({
+          list: [
+            { ...catalogToken, address: token, symbol: "COIN", name: "Coinbase" },
+            ...(duplicate
+              ? [
+                  {
+                    ...catalogToken,
+                    chainId: 8453,
+                    address: secondToken.toUpperCase().replace("0X", "0x"),
+                    symbol: "OLD",
+                    priceUsd: 1,
+                  },
+                ]
+              : []),
+          ],
+        }),
+      } as Response),
+    );
+    expect(screen.getByText("GOOGLc")).toBeVisible();
+    expect(screen.getByText("1 GOOGLc = $250.00")).toBeVisible();
+    fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1.25");
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/v1/swap/fusion/preview"),
+        expect.objectContaining({ body: expect.stringContaining('"chainId":8453') }),
+      ),
+    );
+    fireEvent.press(screen.getByRole("button", { name: "Swap" }));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(secondToken, "1250000", expect.any(String), 8453),
+    );
+  },
+);
+
+test("selecting a listed token replaces older metadata for the same normalized identity", async () => {
+  jest.mocked(tokenCatalogService.list).mockResolvedValue({
+    list: [{ ...catalogToken, address: token, symbol: "FRESH", priceUsd: 250 }],
+    total: 1,
+    items: 20,
+    page: 0,
+  });
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  await screen.findByText("COIN");
+  fireEvent.press(screen.getByRole("button", { name: "Choose receive token" }));
+  fireEvent.press(await screen.findByRole("radio", { name: "FRESH · Amazon" }));
+  expect(screen.getByText("FRESH")).toBeVisible();
+  expect(screen.getByText("1 FRESH = $250.00")).toBeVisible();
+});
+
+test("an unknown target cannot preview or enter either native buy operation", async () => {
+  const payout = jest.fn();
+  readStatus.mockResolvedValue({ ...status, creditedAtoms: "1000000" });
+  jest.mocked(getStoredSwapSigner).mockReturnValue({
+    getSwapDeposit: jest.fn().mockResolvedValue({ fundingAddress: status.fundingAddress }),
+    getSwapStatus: readStatus,
+    startSwap: start,
+    startPayout: payout,
+  } as unknown as NonNullable<ReturnType<typeof getStoredSwapSigner>>);
+  const { result } = renderHook(() => useNativeSwap());
+  await waitFor(() => expect(result.current.fundingAddress).toBe(status.fundingAddress));
+  act(() => {
+    result.current.setTarget("0x" + "f".repeat(40));
+    result.current.setAmount("1");
+  });
+  expect(result.current.canStart).toBe(false);
+  expect(result.current.canPayout).toBe(false);
+  expect(result.current.estimate).toBeNull();
+  await act(async () => {
+    await result.current.start();
+    await result.current.payout();
+  });
+  expect(start).not.toHaveBeenCalled();
+  expect(payout).not.toHaveBeenCalled();
+  expect(
+    jest
+      .mocked(globalThis.fetch)
+      .mock.calls.some(([url]) => String(url).includes("fusion/preview")),
+  ).toBe(false);
+});
+
+test("duplicate normalized initial identities still produce a usable default token", async () => {
+  jest.mocked(globalThis.fetch).mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      list: [
+        { ...catalogToken, address: "0x" + "A".repeat(40), symbol: "OLD", priceUsd: 1 },
+        { ...catalogToken, address: token, symbol: "FRESH", priceUsd: 250 },
+      ],
+    }),
+  } as Response);
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  expect(await screen.findByText("FRESH")).toBeVisible();
+  expect(screen.getByText("1 FRESH = $250.00")).toBeVisible();
+  fireEvent.changeText(screen.getByLabelText("Amount in USDC"), "1");
+  fireEvent.press(screen.getByRole("button", { name: "Swap" }));
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(token, "1000000", expect.any(String), 4663),
+  );
 });

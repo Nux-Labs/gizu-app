@@ -128,3 +128,49 @@ test("GET /v1/token-addresses lists every swap-listed address on one chain, dedu
   assert.equal((await app.inject("/v1/token-addresses")).statusCode, 400);
   await app.close();
 });
+
+test("Base is listed and priced only when asked for by chain, and has its own detail pages", async () => {
+  const app = Fastify();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  const googl = "0xb2000000000000000000002D0BA3164cc74f58B7";
+  const listed: number[] = [];
+  const priced: number[] = [];
+  const asked: Array<[string, string, number | undefined]> = [];
+  registerTokenRoutes(app, { list: async (chainId) => {
+    listed.push(chainId);
+    return chainId === 8453
+      ? [{ chainId, address: googl, symbol: "GOOGLc", name: "Alphabet", decimals: 18, logoURI: null, category: "rwa", issuer: "Coinbase", swapListed: true, buyable: true, fusionStatus: "quote-required" }]
+      : [];
+  } }, {
+    prices: async (chainId) => {
+      priced.push(chainId ?? 4663);
+      return new Map([[googl.toLowerCase(), 301.5]]);
+    },
+    details: async (address, period, chainId) => {
+      asked.push([address, period, chainId]);
+      return chainId === 8453 ? { chainId: 8453, address, symbol: "GOOGLc", name: "Alphabet", logoURI: "", kind: "stock", description: "", isin: null, sharesPerToken: null, sessions: null, priceUsd: 301.5, chart: null } : undefined;
+    },
+  });
+  await app.inject("/v1/tokens?category=rwa&search=&page=0&items=10");
+  assert.deepEqual(listed, [4663, 143, 1], "a list without a chain stays as it was before Base");
+  listed.length = 0;
+  const both = (await app.inject("/v1/tokens?chainIds=4663,8453&category=rwa&search=&page=0&items=10")).json();
+  assert.deepEqual(listed, [4663, 8453]);
+  assert.deepEqual(both.list.map((t: { symbol: string }) => t.symbol), ["GOOGLc"]);
+  for (const bad of ["chainIds=4663,4663", "chainIds=4663,999", "chainIds=x", "chainId=4663&chainIds=8453"]) {
+    assert.equal((await app.inject(`/v1/tokens?${bad}&category=rwa&search=&page=0&items=10`)).statusCode, 400, bad);
+  }
+  listed.length = 0;
+  priced.length = 0;
+  const base = (await app.inject("/v1/tokens?chainId=8453&category=rwa&search=&page=0&items=10&liquidOnly=true")).json();
+  assert.deepEqual(base.list.map((t: { symbol: string; priceUsd: number }) => [t.symbol, t.priceUsd]), [["GOOGLc", 301.5]]);
+  assert.deepEqual(priced, [8453]);
+  const page = await app.inject(`/v1/tokens/8453/${googl}/details?period=1D`);
+  assert.equal(page.statusCode, 200);
+  assert.equal(page.json().sessions, null);
+  assert.equal((await app.inject(`/v1/tokens/4663/${googl}/details`)).statusCode, 404);
+  assert.equal((await app.inject(`/v1/tokens/1/${googl}/details`)).statusCode, 400);
+  assert.deepEqual(asked, [[googl, "1D", 8453], [googl, "1M", 4663]]);
+  await app.close();
+});

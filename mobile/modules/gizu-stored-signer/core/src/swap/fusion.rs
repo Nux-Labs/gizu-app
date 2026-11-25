@@ -1,4 +1,5 @@
-//! Ai's Robinhood side: the EIP-2612 USDG permit and the 1inch Fusion (LOP v4) order that spends it.
+//! Ai's target-chain side: the EIP-2612 stablecoin permit and the 1inch Fusion (LOP v4) order that spends it.
+//! Every domain, spender and settlement contract comes from the plan's `TargetChain`.
 use super::evm::{self, RawSignature};
 use super::pins::*;
 use crate::SignerError;
@@ -26,6 +27,7 @@ pub struct CheckedOrder {
 }
 
 pub struct Permit {
+    pub chain: &'static TargetChain,
     pub name: String,
     pub version: String,
     pub token: Address,
@@ -44,17 +46,17 @@ impl Permit {
             return Err(SignerError::InvalidInput);
         }
         let token = if self.token.is_zero() {
-            ROBINHOOD_USDG
+            self.chain.settlement_token
         } else {
             self.token
         };
-        let domain = evm::domain_separator(&self.name, &self.version, ROBINHOOD_CHAIN_ID, token);
+        let domain = evm::domain_separator(&self.name, &self.version, self.chain.id, token);
         Ok(evm::typed_hash(
             domain,
             "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)",
             &[
                 evm::word_address(self.owner),
-                evm::word_address(ONEINCH_LOP),
+                evm::word_address(self.chain.lop),
                 evm::word_u256(self.value),
                 evm::word_u256(self.nonce),
                 evm::word_u256(U256::from(self.deadline)),
@@ -65,7 +67,7 @@ impl Permit {
     pub fn encode(&self, sig: &RawSignature) -> Vec<u8> {
         let mut out = Vec::with_capacity(224);
         out.extend_from_slice(&evm::word_address(self.owner));
-        out.extend_from_slice(&evm::word_address(ONEINCH_LOP));
+        out.extend_from_slice(&evm::word_address(self.chain.lop));
         out.extend_from_slice(&evm::word_u256(self.value));
         out.extend_from_slice(&evm::word_u256(U256::from(self.deadline)));
         out.extend_from_slice(&evm::word_u256(U256::from(27 + sig.y_parity)));
@@ -75,13 +77,8 @@ impl Permit {
     }
 }
 
-pub fn order_hash(order: &LimitOrder) -> Result<B256, SignerError> {
-    let domain = evm::domain_separator(
-        "1inch Aggregation Router",
-        "6",
-        ROBINHOOD_CHAIN_ID,
-        ONEINCH_LOP,
-    );
+pub fn order_hash(order: &LimitOrder, chain: &TargetChain) -> Result<B256, SignerError> {
+    let domain = evm::domain_separator("1inch Aggregation Router", "6", chain.id, chain.lop);
     Ok(evm::typed_hash(
         domain,
         "Order(uint256 salt,address maker,address receiver,address makerAsset,address takerAsset,uint256 makingAmount,uint256 takingAmount,uint256 makerTraits)",
@@ -156,6 +153,7 @@ fn fee_taker_receiver(post: &[u8], maker: Address) -> Result<Address, SignerErro
 }
 
 pub struct ApprovedOrder {
+    pub chain: &'static TargetChain,
     pub maker: Address,
     pub target: Address,
     pub amount: U256,
@@ -218,8 +216,9 @@ pub fn check_order_detail(
     let taking = evm::decimal(&order.taking_amount).map_err(binding)?;
     let traits = evm::decimal(&order.maker_traits).map_err(binding)?;
     let salt = evm::decimal(&order.salt).map_err(binding)?;
+    let chain = approved.chain;
     let maker_asset = if approved.maker_asset.is_zero() {
-        ROBINHOOD_USDG
+        chain.settlement_token
     } else {
         approved.maker_asset
     };
@@ -261,8 +260,9 @@ pub fn check_order_detail(
     let ext = parse_extension(&extension).map_err(|_| OrderReject::Extension)?;
     let mut permit = maker_asset.as_slice().to_vec();
     permit.extend_from_slice(&approved.permit);
-    let settles =
-        |data: &[u8]| data.len() >= 20 && Address::from_slice(&data[..20]) == FUSION_SETTLEMENT;
+    let settles = |data: &[u8]| {
+        data.len() >= 20 && Address::from_slice(&data[..20]) == chain.fusion_settlement
+    };
     if !ext.fields[MAKER_ASSET_SUFFIX].is_empty()
         || !ext.fields[TAKER_ASSET_SUFFIX].is_empty()
         || !ext.fields[PREDICATE].is_empty()
@@ -275,7 +275,7 @@ pub fn check_order_detail(
     {
         return Err(OrderReject::Extension);
     }
-    let real = if receiver == FUSION_SETTLEMENT {
+    let real = if receiver == chain.fusion_settlement {
         fee_taker_receiver(ext.fields[POST_INTERACTION], maker)
             .map_err(|_| OrderReject::Extension)?
     } else if receiver.is_zero() {
@@ -287,7 +287,7 @@ pub fn check_order_detail(
         return Err(OrderReject::Receiver);
     }
     Ok(CheckedOrder {
-        hash: order_hash(order).map_err(binding)?,
+        hash: order_hash(order, chain).map_err(binding)?,
         taking_amount: taking,
         expiration,
     })
@@ -315,6 +315,7 @@ mod tests {
         let f = &fixture()["fusionUnsignedWithPermitPlaceholder"];
         let order: LimitOrder = serde_json::from_value(f["order"].clone()).unwrap();
         let approved = ApprovedOrder {
+            chain: &ROBINHOOD,
             maker: wallet(),
             target: amzn(),
             amount: U256::from(2_000_000u64),
@@ -426,6 +427,7 @@ mod tests {
 
     fn approved_clone(a: &ApprovedOrder) -> ApprovedOrder {
         ApprovedOrder {
+            chain: a.chain,
             maker: a.maker,
             target: a.target,
             amount: a.amount,
@@ -457,7 +459,7 @@ mod tests {
         let fusion = &f["fusion"];
         let wallet = evm::addr(fusion["wallet"].as_str().unwrap()).unwrap();
         let order: LimitOrder = serde_json::from_value(fusion["signed"]["order"].clone()).unwrap();
-        let hash = order_hash(&order).unwrap();
+        let hash = order_hash(&order, &ROBINHOOD).unwrap();
         assert_eq!(
             format!("{hash:#x}"),
             fusion["signed"]["orderHash"].as_str().unwrap()
@@ -475,6 +477,7 @@ mod tests {
         );
         let data = evm::hex_bytes(fusion["permit"]["data"].as_str().unwrap()).unwrap();
         let permit = Permit {
+            chain: &ROBINHOOD,
             name: "Global Dollar".into(),
             version: "1".into(),
             token: ROBINHOOD_USDG,
@@ -498,6 +501,7 @@ mod tests {
         );
         assert_eq!(permit.encode(&raw), data);
         let approved = ApprovedOrder {
+            chain: &ROBINHOOD,
             maker: wallet,
             target: evm::addr(fusion["target"].as_str().unwrap()).unwrap(),
             amount: permit.value,
@@ -514,5 +518,63 @@ mod tests {
             permit.deadline - 3_590,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn a_signature_for_one_chain_does_not_verify_on_another() {
+        let (order, ..) = live();
+        assert_ne!(
+            order_hash(&order, &ROBINHOOD).unwrap(),
+            order_hash(&order, &BASE).unwrap()
+        );
+        let permit = |chain| Permit {
+            chain,
+            name: "USD Coin".into(),
+            version: "2".into(),
+            token: Address::ZERO,
+            owner: wallet(),
+            value: U256::from(1_000_000u64),
+            nonce: U256::ZERO,
+            deadline: 2_000_000_000,
+        };
+        assert_ne!(
+            permit(&ROBINHOOD).digest().unwrap(),
+            permit(&BASE).digest().unwrap()
+        );
+        // The Base permit names Base USDC and the canonical LOP as spender.
+        let base = permit(&BASE);
+        let raw = RawSignature {
+            r: [1; 32],
+            s: [2; 32],
+            y_parity: 0,
+        };
+        assert_eq!(&base.encode(&raw)[32..64], &evm::word_address(BASE_LOP));
+        let expected = evm::typed_hash(
+            evm::domain_separator("USD Coin", "2", BASE_CHAIN_ID, BASE_USDC),
+            "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)",
+            &[
+                evm::word_address(wallet()),
+                evm::word_address(BASE_LOP),
+                evm::word_u256(base.value),
+                evm::word_u256(U256::ZERO),
+                evm::word_u256(U256::from(base.deadline)),
+            ],
+        );
+        assert_eq!(base.digest().unwrap(), expected);
+    }
+
+    #[test]
+    fn an_order_settled_through_another_chains_contract_is_rejected() {
+        let (order, extension, approved, _) = live();
+        let now = approved.permit_deadline - 600;
+        let on_base = ApprovedOrder {
+            chain: &BASE,
+            maker_asset: ROBINHOOD_USDG,
+            ..approved_clone(&approved)
+        };
+        assert_eq!(
+            check_order_detail(&order, &extension, &on_base, now),
+            Err(OrderReject::Extension)
+        );
     }
 }

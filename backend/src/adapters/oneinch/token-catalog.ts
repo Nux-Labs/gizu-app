@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts";
-import { robinhoodBuyRank } from "./swap-targets.ts";
+import { BASE_BUY_TARGETS, buyRank } from "./swap-targets.ts";
 
 const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 const tokenSchema = z.object({
@@ -22,7 +22,20 @@ const robinhoodSchema = z.object({
     deployments: z.array(z.object({ chainId: z.number().int().positive(), contractAddress: addressSchema })),
   })),
 });
+const coinbaseSchema = z.object({
+  tokens: z.array(z.looseObject({
+    contract_address: addressSchema,
+    symbol: z.string().min(1),
+    name: z.string().min(1),
+    decimals: z.number().int().nonnegative(),
+    icon_url: z.string().url().optional(),
+    paused_features: z.array(z.string()).optional(),
+  })),
+  next_page_token: z.string().optional(),
+});
+type CoinbaseToken = z.infer<typeof coinbaseSchema>["tokens"][number];
 const CACHE_TTL_MS = 10 * 60_000;
+const COINBASE_PAGES = 4;
 
 export type CatalogToken = {
   chainId: number;
@@ -32,7 +45,7 @@ export type CatalogToken = {
   decimals: number;
   logoURI: string | null;
   category: "rwa" | "other";
-  issuer: "Robinhood" | null;
+  issuer: "Robinhood" | "Coinbase" | null;
   swapListed: boolean;
   /** Only the curated deep-liquidity Robinhood stocks can start a buy; the native engine enforces the same list. */
   buyable: boolean;
@@ -43,6 +56,8 @@ export type CatalogCategory = "all" | CatalogToken["category"];
 
 export class OneInchTokenCatalog {
   private readonly cache = new Map<number, { until: number; tokens: CatalogToken[] }>();
+  /** Last good Coinbase list; a failed refresh keeps serving it. */
+  private coinbase: { until: number; tokens: CoinbaseToken[] } | null = null;
 
   constructor(private readonly key: string, private readonly fetchImpl: typeof fetch = fetch) {}
 
@@ -63,7 +78,7 @@ export class OneInchTokenCatalog {
   }
 
   private async load(chainId: number): Promise<CatalogToken[]> {
-    if (![1, 143, 4663].includes(chainId)) throw new Error("Unsupported chain");
+    if (![1, 143, 4663, 8453].includes(chainId)) throw new Error("Unsupported chain");
     const response = await this.fetchImpl(`https://api.1inch.com/swap/v6.1/${chainId}/tokens`, {
       headers: { Authorization: `Bearer ${this.key}` },
       signal: AbortSignal.timeout(10_000),
@@ -115,14 +130,76 @@ export class OneInchTokenCatalog {
             category: "rwa",
             issuer: "Robinhood",
             swapListed: found !== undefined,
-            buyable: found !== undefined && robinhoodBuyRank(address) !== undefined,
+            buyable: found !== undefined && buyRank(chainId, address) !== undefined,
             fusionStatus: "quote-required",
           });
         }
       }
     }
+    if (chainId === 8453) await this.mergeCoinbase(listed);
     // Buyable stocks lead in liquidity order so the picker opens on what a buy can actually use.
-    const rank = (token: CatalogToken) => (token.buyable ? robinhoodBuyRank(token.address) ?? Infinity : Infinity);
+    const rank = (token: CatalogToken) => (token.buyable ? buyRank(chainId, token.address) ?? Infinity : Infinity);
     return [...listed.values()].sort((a, b) => rank(a) - rank(b) || a.symbol.localeCompare(b.symbol));
+  }
+
+  /**
+   * Marks Coinbase-issued stock tokens on Base. Only tokens 1inch lists are swap-listed, and only the
+   * pinned buy list is buyable. When Coinbase cannot be reached the pinned list is still marked, so a
+   * provider outage never hides or unlocks a buy.
+   */
+  private async mergeCoinbase(listed: Map<string, CatalogToken>): Promise<void> {
+    const issued = await this.coinbaseTokens();
+    const pinned = new Map(BASE_BUY_TARGETS.map((target) => [target.address.toLowerCase(), target]));
+    type Issued = { symbol: string; name: string; decimals: number | null; logo: string | null; paused: boolean };
+    const byAddress = new Map<string, Issued>();
+    for (const [address, target] of pinned) {
+      byAddress.set(address, { symbol: target.symbol, name: target.symbol, decimals: null, logo: null, paused: false });
+    }
+    for (const token of issued) {
+      byAddress.set(token.contract_address.toLowerCase(), {
+        symbol: token.symbol, name: token.name, decimals: token.decimals, logo: token.icon_url ?? null,
+        // Coinbase pausing any feature of a token stops new buys of it until it resumes.
+        paused: (token.paused_features?.length ?? 0) > 0,
+      });
+    }
+    for (const [address, issuer] of byAddress) {
+      const found = listed.get(address);
+      if (!found) continue;
+      if (issuer.decimals !== null && issuer.decimals !== found.decimals) {
+        throw new Error("Coinbase and 1inch token decimals disagree");
+      }
+      listed.set(address, {
+        ...found,
+        symbol: issuer.symbol,
+        name: issuer.name,
+        logoURI: issuer.logo ?? found.logoURI,
+        category: "rwa",
+        issuer: "Coinbase",
+        buyable: pinned.has(address) && !issuer.paused,
+      });
+    }
+  }
+
+  private async coinbaseTokens(): Promise<CoinbaseToken[]> {
+    if (this.coinbase && this.coinbase.until > Date.now()) return this.coinbase.tokens;
+    try {
+      const tokens: CoinbaseToken[] = [];
+      let pageToken: string | undefined;
+      for (let page = 0; page < COINBASE_PAGES; page++) {
+        const url = new URL("https://api.coinbase.com/v1/tokenized-stocks");
+        url.searchParams.set("page_size", "500");
+        if (pageToken) url.searchParams.set("page_token", pageToken);
+        const response = await this.fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) throw new Error(`Coinbase tokenized stocks unavailable (${response.status})`);
+        const body = coinbaseSchema.parse(await response.json());
+        tokens.push(...body.tokens);
+        pageToken = body.next_page_token;
+        if (!pageToken) break;
+      }
+      this.coinbase = { until: Date.now() + CACHE_TTL_MS, tokens };
+      return tokens;
+    } catch {
+      return this.coinbase?.tokens ?? [];
+    }
   }
 }

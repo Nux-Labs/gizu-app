@@ -67,3 +67,21 @@ test("rejects bad input and failed responses without leaking provider details", 
     createTokenDetailsService("").details(tokenDetails.address, "1M", signal()),
   ).rejects.toThrow("not configured");
 });
+
+test("a Base page is requested on chain 8453 and may carry no trading sessions", async () => {
+  const base = {
+    ...tokenDetails,
+    chainId: 8453 as const,
+    address: "0xb2000000000000000000002d0ba3164cc74f58b7",
+    sessions: null,
+  };
+  respond(base);
+  await expect(service.details(base.address, "1M", signal(), 8453)).resolves.toEqual(base);
+  expect(fetch).toHaveBeenCalledWith(
+    `https://api.example.com/v1/tokens/8453/${base.address}/details?period=1M`,
+    { signal: expect.anything() },
+  );
+  // A Robinhood page answering a Base request is refused.
+  respond({ ...base, chainId: 4663 });
+  await expect(service.details(base.address, "1M", signal(), 8453)).rejects.toThrow();
+});

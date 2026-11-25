@@ -58,4 +58,12 @@ class SwapSalePolicyTest {
     assertEquals("7000000", current["receivedAtoms"])
     assertEquals("7000000", current["privateCreditedAtoms"])
   }
+
+  @Test
+  fun aSaleNamesTheChainItsHoldingLivesOn() {
+    val target = "0x" + "b".repeat(40)
+    assertEquals(4663L, confidentialSalePlan(target, JSONArray(listOf(3))).getLong("chainId"))
+    assertEquals(8453L, confidentialSalePlan(target, JSONArray(listOf(3)), 8453).getLong("chainId"))
+    assertThrows(Exception::class.java) { confidentialSalePlan(target, JSONArray(listOf(3)), 1) }
+  }
 }

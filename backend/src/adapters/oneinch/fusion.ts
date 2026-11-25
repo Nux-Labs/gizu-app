@@ -5,15 +5,37 @@ import { InfrastructureError } from "../../domain/errors/infrastructure-error.ts
 export const ROBINHOOD_CHAIN_ID = 4663;
 export const ROBINHOOD_USDG = getAddress("0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168");
 export const ROBINHOOD_LOP = getAddress("0x5A705DE8982235a7fa45bB83dCaCf03a211389C7");
+export const BASE_CHAIN_ID = 8453;
+export const BASE_USDC = getAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+// Probe and reference sizes are 10 and 1,000 units of a 6-decimal settlement stablecoin.
 const LIQUIDITY_PROBE_ATOMS = 10_000_000n;
 const LIQUIDITY_REFERENCE_ATOMS = 1_000_000_000n;
 export const MAX_PRICE_IMPACT_BPS = 100n;
-const robinhood = defineChain({
+
+/** A chain swap stock trades on: the Fusion network, its RPC and the stablecoin a buy spends. */
+export type FusionChain = {
+  id: SwapChainId;
+  name: string;
+  network: NetworkEnum;
+  rpc: string;
+  settlementToken: Address;
+};
+export type SwapChainId = typeof ROBINHOOD_CHAIN_ID | typeof BASE_CHAIN_ID;
+export const SWAP_CHAIN_IDS = [ROBINHOOD_CHAIN_ID, BASE_CHAIN_ID] as const;
+export const ROBINHOOD_FUSION: FusionChain = {
   id: ROBINHOOD_CHAIN_ID,
   name: "Robinhood Chain",
-  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
-});
+  network: NetworkEnum.ROBINHOOD,
+  rpc: "https://rpc.mainnet.chain.robinhood.com",
+  settlementToken: ROBINHOOD_USDG,
+};
+export const BASE_FUSION: FusionChain = {
+  id: BASE_CHAIN_ID,
+  name: "Base",
+  network: NetworkEnum.COINBASE,
+  rpc: "https://mainnet.base.org",
+  settlementToken: BASE_USDC,
+};
 const permitAbi = parseAbi([
   "function name() view returns (string)",
   "function nonces(address) view returns (uint256)",
@@ -59,11 +81,18 @@ export class OneInchFusion {
   constructor(
     private readonly key: string,
     private readonly fetchImpl: typeof fetch = fetch,
-    robinhoodRpc = "https://rpc.mainnet.chain.robinhood.com",
+    rpc?: string,
     private readonly pause: () => Promise<void> = () => new Promise((resolve) => setTimeout(resolve, 1_100)),
+    readonly chain: FusionChain = ROBINHOOD_FUSION,
   ) {
-    this.sdk = new FusionSDK({ url: "https://api.1inch.com/fusion", network: NetworkEnum.ROBINHOOD, authKey: key });
-    this.client = createPublicClient({ chain: robinhood, transport: http(robinhoodRpc, { timeout: 20_000 }) });
+    this.sdk = new FusionSDK({ url: "https://api.1inch.com/fusion", network: chain.network, authKey: key });
+    const viemChain = defineChain({
+      id: chain.id,
+      name: chain.name,
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: { default: { http: [chain.rpc] } },
+    });
+    this.client = createPublicClient({ chain: viemChain, transport: http(rpc ?? chain.rpc, { timeout: 20_000 }) });
   }
 
   async preview(
@@ -71,7 +100,7 @@ export class OneInchFusion {
     dstToken: Address,
     amount: bigint,
     preset: FusionPreset,
-    srcToken: Address = ROBINHOOD_USDG,
+    srcToken: Address = this.chain.settlementToken,
   ): Promise<FusionPreview> {
     const quote = await this.guard("quote", () => this.sdk.getQuote({
       fromTokenAddress: srcToken,
@@ -80,7 +109,8 @@ export class OneInchFusion {
       walletAddress: wallet,
     }));
     const selected = quote.getPreset(preset as PresetEnum);
-    const impact = srcToken.toLowerCase() === ROBINHOOD_USDG.toLowerCase()
+    // Buys spend the chain's stablecoin and must clear the liquidity check; sells are not limited.
+    const impact = srcToken.toLowerCase() === this.chain.settlementToken.toLowerCase()
       ? await this.liquidityImpact(dstToken)
       : 0n;
     return {
@@ -97,7 +127,7 @@ export class OneInchFusion {
     };
   }
 
-  async permitContext(owner: Address, token: Address = ROBINHOOD_USDG): Promise<{ name: string; version: string; nonce: string }> {
+  async permitContext(owner: Address, token: Address = this.chain.settlementToken): Promise<{ name: string; version: string; nonce: string }> {
     return this.guard("permit context", async () => {
       const [name, separator, nonce] = await Promise.all([
         this.client.readContract({ address: token, abi: permitAbi, functionName: "name" }),
@@ -105,7 +135,7 @@ export class OneInchFusion {
         this.client.readContract({ address: token, abi: permitAbi, functionName: "nonces", args: [owner] }),
       ]);
       for (const version of ["1", "2"]) {
-        const domain = { name, version, chainId: ROBINHOOD_CHAIN_ID, verifyingContract: token };
+        const domain = { name, version, chainId: this.chain.id, verifyingContract: token };
         if (domainSeparator({ domain }).toLowerCase() === separator.toLowerCase()) {
           return { name, version, nonce: nonce.toString() };
         }
@@ -120,7 +150,7 @@ export class OneInchFusion {
     amount: bigint,
     permit: Hex,
     preset: FusionPreset,
-    srcToken: Address = ROBINHOOD_USDG,
+    srcToken: Address = this.chain.settlementToken,
     receiver?: Address,
   ): Promise<FusionOrderDraft> {
     const created = await this.guard("order", () => this.sdk.createOrder({
@@ -183,8 +213,8 @@ export class OneInchFusion {
   }
 
   private async aggregatorQuote(dstToken: Address, amount: bigint): Promise<bigint> {
-    const url = new URL(`https://api.1inch.com/swap/v6.1/${ROBINHOOD_CHAIN_ID}/quote`);
-    url.searchParams.set("src", ROBINHOOD_USDG);
+    const url = new URL(`https://api.1inch.com/swap/v6.1/${this.chain.id}/quote`);
+    url.searchParams.set("src", this.chain.settlementToken);
     url.searchParams.set("dst", dstToken);
     url.searchParams.set("amount", amount.toString());
     let response: Response;
