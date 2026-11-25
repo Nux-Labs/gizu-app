@@ -1,5 +1,6 @@
 import { ActivityHistory } from "./ActivityHistory";
 import type { OwnedPortfolioAsset } from "@/domain/wallet/storedSigner";
+import { monadUsdc } from "@/domain/wallet/assets";
 import { useCallback, type ReactNode } from "react";
 import { View } from "react-native";
 import { Bell, TrendingUp, Wallet } from "lucide-react-native";
@@ -150,6 +151,26 @@ function OwnedBalances({
   const positions = snapshot?.positions?.filter(visible) ?? [];
   // Assets always has a section. "Nothing held" needs a complete token read; until then it loads.
   const settled = !!snapshot?.ownedAssets && !loading && snapshot.ownedBalanceComplete !== false;
+  // Legacy snapshots observe public USDC only; this display row does not add token coverage.
+  const displayAssets: NamedPortfolioAsset[] =
+    snapshot && snapshot.ownedAssets === undefined && snapshot.balanceComplete !== false
+      ? [
+          {
+            assetId: `${monadUsdc.chainId}:${monadUsdc.contract.toLowerCase()}`,
+            chainId: monadUsdc.chainId,
+            token: monadUsdc.contract,
+            symbol: monadUsdc.symbol,
+            decimals: monadUsdc.decimals,
+            balanceAtoms: snapshot.totalAtoms,
+            observedAtoms: snapshot.totalAtoms,
+            complete: true,
+            stale: snapshot.stale ?? false,
+            checkedAt: snapshot.checkedAt,
+            valueUsdcAtoms: snapshot.totalAtoms,
+            valuationUnavailable: false,
+          },
+        ]
+      : assets;
   return (
     <View className="gap-5">
       <WithdrawalStatusNotice
@@ -187,10 +208,10 @@ function OwnedBalances({
       )}
       <View className="gap-3">
         <Typography variant="section">Assets</Typography>
-        {assets.length > 0 && snapshot ? (
+        {displayAssets.length > 0 && snapshot ? (
           <Surface>
             <View className="px-5">
-              {assets.map((asset) => (
+              {displayAssets.map((asset) => (
                 <PortfolioAssetRow
                   key={asset.assetId}
                   asset={asset}
