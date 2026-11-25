@@ -30,6 +30,8 @@ import { BASE_CHAIN_ID, BASE_FUSION, OneInchFusion, ROBINHOOD_CHAIN_ID } from ".
 import { OneInchTokenCatalog } from "./adapters/oneinch/token-catalog.ts";
 import { StockTokenDetails } from "./adapters/oneinch/token-details.ts";
 import { PimlicoMonadFunding } from "./adapters/pimlico/monad-funding.ts";
+import { fundingChain, type FundingChainId } from "./adapters/pimlico/funding-chains.ts";
+import { registerFundingRoutes } from "./http/routes/funding.routes.ts";
 import { registerSwapRoutes } from "./http/routes/swap.routes.ts";
 import { registerTokenRoutes } from "./http/routes/tokens.routes.ts";
 import { ConfidentialBalance } from "./adapters/aurora/confidential-balance.ts";
@@ -120,9 +122,17 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   registerHealthRoutes(app, healthController);
   registerEarlyAccessRoutes(app, new PgEarlyAccess(pgPool), secret.NODE_ENV === "local");
   registerTokenRoutes(app, new OneInchTokenCatalog(secret.ONEINCH_API_KEY), new StockTokenDetails(secret.ONEINCH_API_KEY));
+  const fundingGateways = Object.fromEntries(([143, 8453, 42161] as const).map(id => {
+    const rpc = id === 8453 ? secret.BASE_RPC_URL : id === 42161 ? secret.ARBITRUM_RPC_URL : undefined;
+    return [id, {
+      funding: new PimlicoMonadFunding(secret.PIMLICO_API_KEY, rpc ?? fundingChain(id).rpcUrl, Date.now, id),
+      planner: new MonadFundingPlanner(secret.PIMLICO_API_KEY, rpc ?? fundingChain(id).rpcUrl, Date.now, id),
+    }];
+  })) as Record<FundingChainId, { funding: PimlicoMonadFunding; planner: MonadFundingPlanner }>;
+  registerFundingRoutes(app, fundingGateways);
   registerSwapRoutes(app, {
     aurora: new AuroraIntents(secret.AURORA_API_KEY, diagnosticAuroraFetch((event) => app.log.info(event, "swap provider request"))),
-    funding: new PimlicoMonadFunding(secret.PIMLICO_API_KEY),
+    funding: fundingGateways[143].funding,
     fusion: {
       [ROBINHOOD_CHAIN_ID]: new OneInchFusion(secret.ONEINCH_API_KEY),
       [BASE_CHAIN_ID]: new OneInchFusion(secret.ONEINCH_API_KEY, fetch, secret.BASE_RPC_URL, undefined, BASE_FUSION),
@@ -147,7 +157,7 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   const nativeGateway=new NativeEarnGateway({coordination,auroraHistoryQualified:secret.EARN_AURORA_HISTORY_QUALIFIED==="true",recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,pimlicoApiKey:secret.PIMLICO_API_KEY,auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification});
   const hoodConfig={rpcUrl:secret.ROBINHOOD_RPC_URL??"https://rpc.mainnet.chain.robinhood.com",pimlicoApiKey:secret.PIMLICO_API_KEY,anvilPath:secret.EARN_ANVIL_PATH,auroraApiKey:secret.AURORA_API_KEY};
   registerEarnPreviewRoutes(app,new RobinhoodDepositPreviewPlanner(hoodConfig),new EarnPayoutPreviewGateway({auroraApiKey:secret.AURORA_API_KEY,auroraFeeQualification:auroraFeeQualification}));
-  registerEarnPlanningRoutes(app,new EthereumDepositPlanner(ethereumPlannerConfig),new MonadFundingPlanner(secret.PIMLICO_API_KEY),new EthereumWithdrawalPlanner(ethereumPlannerConfig),new RobinhoodDepositPlanner(hoodConfig),new RobinhoodWithdrawalPlanner(hoodConfig,undefined,Date.now,nativeGateway),new RobinhoodReturnPlanner(hoodConfig,nativeGateway));
+  registerEarnPlanningRoutes(app,new EthereumDepositPlanner(ethereumPlannerConfig),fundingGateways[143].planner,new EthereumWithdrawalPlanner(ethereumPlannerConfig),new RobinhoodDepositPlanner(hoodConfig),new RobinhoodWithdrawalPlanner(hoodConfig,undefined,Date.now,nativeGateway),new RobinhoodReturnPlanner(hoodConfig,nativeGateway));
   registerEarnNativeRoutes(app,nativeGateway);
   registerEarnReturnRoutes(app,new EthereumReturnPlanner(ethereumPlannerConfig,{quote:r=>nativeGateway.returnQuote(r)}));
   registerEarnFusionRoutes(app,new FusionNativeGateway({coordination,recoveryKey:secret.EARN_GATEWAY_RECOVERY_KEY,apiKey:secret.ONEINCH_API_KEY,rpcUrl:ethereumPlannerConfig.rpcUrl}));

@@ -11,6 +11,7 @@ export function isPrivateRoute(url: string | undefined) {
     !!url &&
     (url.startsWith("/wallet-recovery/") ||
       url.startsWith("/v1/earn/") ||
+      url.startsWith("/v1/funding/") ||
       (url.startsWith("/v1/swap/") && url !== "/v1/swap/aurora/tokens"))
   );
 }

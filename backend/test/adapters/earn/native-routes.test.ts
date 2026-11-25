@@ -3,6 +3,19 @@ import assert from "node:assert/strict";
 import Fastify from "fastify";
 import { registerEarnNativeRoutes } from "../../../src/http/routes/earn-native.routes.ts";
 import { NativeEarnGateway } from "../../../src/adapters/earn/native-gateway.ts";
+for (const chain of [8453, 42161]) {
+  test(`native bundler dispatch preserves funding source ${chain}`, async () => {
+    const app = Fastify({ logger: false });
+    registerEarnNativeRoutes(app, new NativeEarnGateway({ pimlicoApiKey: "server-only" }, { fetcher: async url => {
+      assert.ok(String(url).includes(`/v2/${chain}/rpc`));
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: ["0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"] }));
+    } }));
+    const reply = await app.inject({ method: "POST", url: `/v1/earn/native/bundler/${chain}`, payload: { jsonrpc: "2.0", id: 1, method: "eth_supportedEntryPoints", params: [] } });
+    assert.equal(reply.statusCode, 200);
+    assert.deepEqual(reply.json().result, ["0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"]);
+    await app.close();
+  });
+}
 test("native routes reject unknown methods and paths, no provider keys or request echoes", async () => {
   const app = Fastify({ logger: false });
   registerEarnNativeRoutes(

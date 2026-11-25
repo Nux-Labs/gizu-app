@@ -43,7 +43,7 @@ const eip7702Auth = z.object({
   s: hash,
   yParity: quantity,
 }).strict();
-const rpcUserOperation = z.object({
+export const rpcUserOperation = z.object({
   sender: address,
   nonce: quantity,
   factory: z.string().regex(/^0x(7702|[a-fA-F0-9]{40})$/).optional(),

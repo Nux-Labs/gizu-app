@@ -1,3 +1,4 @@
+import { fundingChain, type FundingChainId } from "../pimlico/funding-chains.ts";
 import { z } from "zod";
 import { OperationCoordinator, CoordinationError } from "./operation-coordinator.ts";
 import { EarnRecoveryEnvelope } from "./recovery-envelope.ts";
@@ -63,6 +64,7 @@ export const nativeQuoteInput = z
     operationId,
     revision,
     profileChainId: z.union([z.literal(1), z.literal(4663)]),
+    sourceChainId: z.union([z.literal(143), z.literal(8453), z.literal(42161)]).optional(),
     sourceOwner: address,
     confidentialAccount: address,
     amountAtoms: decimal,
@@ -77,7 +79,7 @@ export const nativeQuoteBindingInput = z
     operationId,
     revision,
     quoteId: hash,
-    chainId: z.union([z.literal(1), z.literal(143), z.literal(4663)]),
+    chainId: z.union([z.literal(1), z.literal(143), z.literal(4663), z.literal(8453), z.literal(42161)]),
     token: address,
     amountAtoms: decimal,
     confidentialAccount: address,
@@ -93,7 +95,7 @@ export interface NativeVerifiedQuote {
   readonly quoteId: Hex;
   readonly recipient: Address;
   readonly amountAtoms: string;
-  readonly chainId: 1 | 143 | 4663;
+  readonly chainId: 1 | FundingChainId | 4663;
   readonly token: Address;
   readonly confidentialAccount: Address;
   readonly refundOwner: Address;
@@ -269,7 +271,7 @@ export class NativeGatewayError extends Error {
 }
 const recoveredQuote = z.object({
   operationId, revision, quoteId: hash.transform(v => v as Hex), recipient: address, amountAtoms: decimal,
-  chainId: z.union([z.literal(1),z.literal(143),z.literal(4663)]), token: address,
+  chainId: z.union([z.literal(1),z.literal(143),z.literal(4663),z.literal(8453),z.literal(42161)]), token: address,
   confidentialAccount: address, refundOwner: address, expiresAt: z.number().int().positive(),
   authenticatedBodyHash: hash.transform(v => v as Hex), minimumCreditAtoms: decimal, maximumCreditAtoms: decimal.optional(), providerFeeBps: z.number().int().min(0).max(100),
   feePolicy: auroraFeeProofSchema.optional(),
@@ -349,7 +351,7 @@ export class NativeEarnGateway {
     if (!this.config.auroraApiKey) throw new NativeGatewayError(503,"EARN_NATIVE_UNAVAILABLE");
     return this.limited(client, async () => {
       const quotedAtMs=this.now();
-      const request = {dry:true,swapType:"EXACT_INPUT",depositType:"ORIGIN_CHAIN",depositMode:"SIMPLE",confidentiality:"advanced",amount:input.amountAtoms,originAsset:monadUsdcAssetId,destinationAsset:monadUsdcAssetId,slippageTolerance:0,refundTo:input.sourceOwner.toLowerCase(),refundType:"ORIGIN_CHAIN",recipient:input.confidentialAccount.toLowerCase(),recipientType:"CONFIDENTIAL_INTENTS",deadline:new Date(quotedAtMs+600000).toISOString()};
+      const request = {dry:true,swapType:"EXACT_INPUT",depositType:"ORIGIN_CHAIN",depositMode:"SIMPLE",confidentiality:"advanced",amount:input.amountAtoms,originAsset:fundingChain(input.sourceChainId??143).originAsset,destinationAsset:monadUsdcAssetId,slippageTolerance:0,refundTo:input.sourceOwner.toLowerCase(),refundType:"ORIGIN_CHAIN",recipient:input.confidentialAccount.toLowerCase(),recipientType:"CONFIDENTIAL_INTENTS",deadline:new Date(quotedAtMs+600000).toISOString()};
       try {
         const body=await auroraApi(this.config.auroraApiKey!,this.fetcher,"quote/{key}",request), qr=object(body.quoteRequest), q=object(body.quote);
         for (const [k,v] of Object.entries(request)) if (typeof v === "string" && /^0x[0-9a-f]{40}$/i.test(v) ? typeof qr[k] !== "string" || !same(qr[k] as string,v) : qr[k] !== v) throw new Error("Changed preview");
@@ -384,6 +386,7 @@ export class NativeEarnGateway {
     return this.createQuote("source", input, client);
   }
   returnQuote(input: NativeQuoteInput, client = "internal") {
+    if (input.sourceChainId !== undefined) throw new NativeGatewayError(400, "INVALID_NATIVE_QUOTE");
     return this.createQuote("return", input, client);
   }
   private async createQuote(
@@ -437,23 +440,24 @@ export class NativeEarnGateway {
           await this.config.coordination.bind("native-quote", key, fingerprint, this.now()+86400000);
           if (!await this.config.coordination.claim("native-quote-issue", key, fingerprint, this.now()+86400000)) throw new CoordinationError();
         }
+        const source = fundingChain(input.sourceChainId??143);
         const isSource = kind === "source",
           isEth = input.profileChainId === 1;
         const originAsset = isSource
-          ? monadUsdcAssetId
+          ? source.originAsset
           : isEth
             ? input.returnAsset === "native"
               ? ethAsset
               : ethereumUsdcAssetId
             : robinhoodUsdgAssetId;
         const token = isSource
-          ? monadUsdc
+          ? source.token
           : isEth
             ? input.returnAsset === "native"
               ? native
               : "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
             : ROBINHOOD_PROFILE.token;
-        const chainId = isSource ? 143 : input.profileChainId;
+        const chainId = isSource ? source.id : input.profileChainId;
         const seconds = Math.floor(this.now() / 1000);
         const request = {
           dry: false,
@@ -664,12 +668,12 @@ export class NativeEarnGateway {
   }
   private async validateOperation(
     value: unknown,
-    chainId: 143 | 4663,
+    chainId: FundingChainId | 4663,
     signed: boolean,
     historical = false,
   ): Promise<UserOperation<"0.8">> {
     const op = opSchema.parse(value);
-    const token = chainId === 143 ? monadUsdc : ROBINHOOD_PROFILE.token;
+    const token = chainId === 4663 ? ROBINHOOD_PROFILE.token : fundingChain(chainId).token;
     if (!same(op.paymaster, tokenPaymaster))
       throw new Error("Unsupported paymaster");
     for (const field of gasFields)
@@ -738,7 +742,7 @@ export class NativeEarnGateway {
       ),
       ...(authorization ? { authorization } : {}),
     } as unknown as UserOperation<"0.8">;
-    if (chainId === 143) sourceFeeCap(typed);
+    if (chainId !== 4663) sourceFeeCap(typed, "earn", chainId);
     else robinhoodTokenCap(typed);
     if (signed) {
       if (
@@ -773,7 +777,7 @@ export class NativeEarnGateway {
   ): Promise<Record<string, unknown>> {
     let req: z.infer<typeof rpcRequest>;
     try {
-      if (chain !== 143 && chain !== 4663) throw new Error("Unsupported chain");
+      if (chain !== 143 && chain !== 8453 && chain !== 42161 && chain !== 4663) throw new Error("Unsupported chain");
       req = rpcRequest.parse(value);
       if (JSON.stringify(req).length > 65536)
         throw new Error("Payload too large");
@@ -799,7 +803,7 @@ export class NativeEarnGateway {
           (p[2] !== toHex(chain) ||
             !same(
               z.object({ token: address }).strict().parse(p[3]).token,
-              chain === 143 ? monadUsdc : ROBINHOOD_PROFILE.token,
+              chain === 4663 ? ROBINHOOD_PROFILE.token : fundingChain(chain).token,
             ))
         )
           throw new Error("Unsupported sponsor");
@@ -911,7 +915,7 @@ export class NativeEarnGateway {
           };
           await this.validateOperation(
             { ...object(req.params[0]), ...sponsorship, signature: "0x" },
-            chain as 143 | 4663,
+            chain as FundingChainId | 4663,
             false,
           );
           return {
@@ -927,7 +931,7 @@ export class NativeEarnGateway {
           hash.parse(result);
           const op = await this.validateOperation(
             req.params[0],
-            chain as 143 | 4663,
+            chain as FundingChainId | 4663,
             true,
           );
           if (
@@ -958,7 +962,7 @@ export class NativeEarnGateway {
             throw new Error("Entry point mismatch");
           const historical = await this.validateOperation(
             r.userOperation,
-            chain as 143 | 4663,
+            chain as FundingChainId | 4663,
             true,
             true,
           );

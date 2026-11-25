@@ -188,6 +188,23 @@ test("new settlement uses exact route and authenticated balance delta; portable 
     }),
   );
 });
+for (const origin of [
+  "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+  "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+]) {
+  test(`bounded source credit accepts ${origin} into the same canonical private asset`, async () => {
+    const f = setup(origin), signed = await auth();
+    const baseline = await f.service().baseline(signed);
+    f.setBalance("995100");
+    const expected = { ...f.expected, baselineEnvelope: baseline.baselineEnvelope };
+    const credited = await f.service().read(signed, expected);
+    assert.equal(credited.assetId, monadUsdcAssetId);
+    assert.equal(credited.creditedAtoms, "995000");
+    assert.equal(credited.status, "credited");
+    assert.ok(!f.calls.some(path => path.includes("history")));
+    await assert.rejects(f.service().read(signed, { ...expected, originAsset: monadUsdcAssetId }));
+  });
+}
 
 test("history diagnostics distinguish provider access, origin-owner and credit mismatches without retaining private data", async () => {
   for (const variant of ["access", "invite-only", "owner", "credit"] as const) {

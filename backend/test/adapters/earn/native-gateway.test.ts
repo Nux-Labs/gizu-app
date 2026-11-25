@@ -129,6 +129,26 @@ test("executable source quote is immutable, provider bound, and idempotent", asy
   );
   assert.throws(() => new NativeEarnGateway({}).quoteBinding(binding(quote)));
 });
+for (const [sourceChainId, token, originAsset] of [
+  [8453, "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near"],
+  [42161, "0xaf88d065e77c8cc2239327c5edb3a432268e5831", "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near"],
+] as const) {
+  test(`source ${sourceChainId} credits canonical private USDC and its saved quote restores`, async () => {
+    const p = provider(body => {
+      assert.equal(body.quoteRequest.originAsset, originAsset);
+      assert.equal(body.quoteRequest.destinationAsset, "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx");
+    });
+    const options = { auroraApiKey: "server-only", auroraFeeQualification: config, recoveryKey: "11".repeat(32) };
+    const g = new NativeEarnGateway(options, { fetcher: p.fetcher, now: () => now });
+    const quote = await g.sourceQuote({ ...input, sourceChainId, profileChainId: 1 });
+    assert.equal(quote.chainId, sourceChainId);
+    assert.equal(quote.token.toLowerCase(), token);
+    const restored = new NativeEarnGateway(options, { fetcher: p.fetcher, now: () => now });
+    assert.equal(restored.quoteBinding({ ...binding(quote), recoveryEnvelope: quote.recoveryEnvelope }).quoteId, quote.quoteId);
+    assert.equal(restored.verifiedQuoteForSettlement(input.operationId, input.revision, quote.quoteId).originAsset, originAsset);
+    assert.throws(() => restored.quoteBinding({ ...binding(quote), chainId: 143 }));
+  });
+}
 test("changed recipient, input, refund, fees and inactive quote fail closed", async () => {
   for (const mutate of [
     (v: any) => (v.quoteRequest.recipient = owner),

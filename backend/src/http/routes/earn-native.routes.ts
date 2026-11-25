@@ -44,7 +44,7 @@ export function registerEarnNativeRoutes(
     async (request, reply) => {
       reply.header("Cache-Control", "no-store");
       try {
-        if (!["143", "4663"].includes(request.params.chainId))
+        if (!["143", "8453", "42161", "4663"].includes(request.params.chainId))
           throw new NativeGatewayError(400, "INVALID_NATIVE_CHAIN");
         return reply.send(
           await gateway.bundler(
