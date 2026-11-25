@@ -3280,11 +3280,18 @@ impl SwapOperation {
         Ok(())
     }
 
-    /// Clears a pause so the current step runs again (it re-validates everything it receives).
+    /// Clears a pause so saved progress runs again (it re-validates everything it receives).
     pub fn retry(&self) {
         if let Ok(mut e) = self.inner.lock()
             && !e.m.cancelled
         {
+            if e.private_sell()
+                && e.m.paused.as_deref() == Some("SALE_CREDIT_AMBIGUOUS")
+                && matches!(e.m.step, Step::PrivateCredit { .. })
+            {
+                // Ambiguity cleared the token; reauthenticate even for already-saved journals.
+                e.go(Step::AuthSalt);
+            }
             e.m.paused = None;
             e.m.failures = 0;
             e.m.wait_until_ms = 0;
