@@ -8,6 +8,8 @@ import { Button } from "@/components/atoms/Button";
 import { SwapTokenPicker } from "./SwapTokenPicker";
 import { SwapSellForm } from "./SwapSellForm";
 import { SwapAmountBox } from "./SwapAmountBox";
+import { TokenPill } from "./components/TokenPill";
+import usdcLogo from "../../../assets/logos/tokens/usdc.png";
 import { PressableScale } from "@/components/atoms/PressableScale";
 import { Typography } from "@/components/atoms/Typography";
 import { Notice } from "@/components/molecules/Notice";
@@ -109,6 +111,14 @@ export function NativeSwapScreen({
                       ? `Available: ${groupDigits(formatSwapAmount(BigInt(publicAtoms)))} USDC`
                       : "Checking available USDC…"
                 }
+                action={{
+                  label: "Max",
+                  accessibilityLabel: "Use maximum USDC amount",
+                  disabled: swap.busy || maxAmount === null,
+                  onPress: () => {
+                    if (maxAmount !== null) swap.setAmount(maxAmount);
+                  },
+                }}
               >
                 <TextInput
                   accessibilityLabel="Amount in USDC"
@@ -124,18 +134,7 @@ export function NativeSwapScreen({
                   cursorColor={colors.accent}
                   style={{ fontVariant: ["tabular-nums"], includeFontPadding: false }}
                 />
-                <Typography variant="rowTitle" className="!text-fg-55">
-                  USDC
-                </Typography>
-                <Button
-                  label="Max"
-                  accessibilityLabel="Use maximum USDC amount"
-                  variant="quiet"
-                  disabled={swap.busy || maxAmount === null}
-                  onPress={() => {
-                    if (maxAmount !== null) swap.setAmount(maxAmount);
-                  }}
-                />
+                <TokenPill symbol="USDC" logo={{ source: usdcLogo }} />
               </SwapAmountBox>
               {flip}
               <SwapTokenPicker

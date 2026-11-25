@@ -3,7 +3,8 @@ import { mainnetPortfolio } from "../../support/mainnetWallet";
 import { tokenCatalogService } from "@/services/tokenCatalog";
 import { catalogToken } from "../../support/tokenCatalog";
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react-native";
-import { RefreshControl } from "react-native";
+import { Image, RefreshControl } from "react-native";
+import usdcLogo from "../../../assets/logos/tokens/usdc.png";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NativeSwapScreen } from "@/features/swap/NativeSwapScreen";
 import { useNativeSwap } from "@/features/swap/useNativeSwap";
@@ -122,6 +123,20 @@ test("selects a searched token and reviews the exact amount without exposing tec
   expect(screen.getByText(/QUOTE_REJECTED/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Resume" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Cancel swap" })).toBeVisible();
+});
+
+test("the USDC being paid carries its logo like the USDC a sale receives", async () => {
+  readStatus.mockResolvedValue({ phase: "NONE" });
+  render(
+    <SafeAreaProvider>
+      <NativeSwapScreen />
+    </SafeAreaProvider>,
+  );
+  await screen.findByText("COIN");
+  expect(screen.getByText("USDC")).toBeVisible();
+  expect(screen.UNSAFE_getAllByType(Image).some((image) => image.props.source === usdcLogo)).toBe(
+    true,
+  );
 });
 
 test("a fresh wallet with no saved swap shows no status warning", async () => {

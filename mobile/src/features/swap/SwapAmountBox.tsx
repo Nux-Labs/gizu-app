@@ -21,12 +21,15 @@ export function SwapAmountBox({
   note,
   children,
   info,
+  action,
 }: {
   label: string;
   /** Short status on the label row; never a separate line, so the box height stays fixed. */
   note?: string;
   /** Explanation behind an (i) button; it opens over the box so the height stays fixed. */
   info?: { label: string; text: string };
+  /** Small text button after the note (Max), kept on the label row beside the balance it uses. */
+  action?: { label: string; accessibilityLabel: string; disabled?: boolean; onPress: () => void };
   children: ReactNode;
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
@@ -47,11 +50,28 @@ export function SwapAmountBox({
             </Pressable>
           ) : null}
         </View>
-        {note ? (
-          <Typography variant="micro" numberOfLines={1} className="shrink text-right">
-            {note}
-          </Typography>
-        ) : null}
+        <View className="shrink flex-row items-center gap-2">
+          {note ? (
+            <Typography variant="micro" numberOfLines={1} className="shrink text-right">
+              {note}
+            </Typography>
+          ) : null}
+          {action ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={action.accessibilityLabel}
+              accessibilityState={{ disabled: !!action.disabled }}
+              disabled={action.disabled}
+              hitSlop={12}
+              onPress={action.onPress}
+              className={action.disabled ? "opacity-40" : ""}
+            >
+              <Typography variant="micro" className="!font-semibold !text-accent">
+                {action.label}
+              </Typography>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
       <View className="min-h-14 flex-row items-center gap-3">{children}</View>
       {info && infoOpen ? (
