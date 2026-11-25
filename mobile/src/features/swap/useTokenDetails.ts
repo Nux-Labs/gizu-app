@@ -39,7 +39,10 @@ export function useTokenDetails(
   }, [service, address, period, chainId, key]);
   // Only this token's earlier details may stay on screen while the next request runs.
   const details =
-    settled.details?.address.toLowerCase() === address.toLowerCase() ? settled.details : null;
+    settled.details?.chainId === chainId &&
+    settled.details.address.toLowerCase() === address.toLowerCase()
+      ? settled.details
+      : null;
   const status = settled.key !== key ? "loading" : settled.failed ? "failed" : "ready";
   return { details, status, retry: () => setAttempt((value) => value + 1) };
 }

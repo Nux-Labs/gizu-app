@@ -1,4 +1,4 @@
-import { isSwapChain, type CatalogToken } from "@/domain/tokenCatalog";
+import { isSwapChain, tokenIdentity, type CatalogToken } from "@/domain/tokenCatalog";
 import { useCallback, useEffect, useState } from "react";
 import {
   formatTokenAtoms,
@@ -18,6 +18,11 @@ type SwapAction =
   "start" | "payout" | "sell" | "resume" | "cancel" | "refresh" | "tokens" | "status";
 function diagnostic(action: SwapAction, outcome: "started" | "completed" | "failed") {
   if (__DEV__) console.info("[swap]", { action, outcome });
+}
+
+// Later picker metadata wins over the initial request, including differently cased addresses.
+function mergeTokens(older: ListedToken[], newer: ListedToken[]): ListedToken[] {
+  return [...new Map([...older, ...newer].map((token) => [tokenIdentity(token), token])).values()];
 }
 
 export function useNativeSwap() {
@@ -49,8 +54,11 @@ export function useNativeSwap() {
       .then((list) => {
         if (!live) return;
         diagnostic("tokens", "completed");
-        setTokens(list);
-        setTarget((current) => current || list.find((t) => t.buyable !== false)?.address || "");
+        const initialTokens = mergeTokens([], list);
+        setTokens((current) => mergeTokens(initialTokens, current));
+        setTarget(
+          (current) => current || initialTokens.find((t) => t.buyable !== false)?.address || "",
+        );
       })
       .catch((cause: unknown) => {
         diagnostic("tokens", "failed");
@@ -94,14 +102,20 @@ export function useNativeSwap() {
   const [estimate, setEstimate] = useState<{ key: string; text: string } | null>(null);
   const targetToken = tokens.find((token) => token.address === target);
   const decimals = targetToken?.decimals ?? 0;
-  // Stock token addresses are unique across chains, so the listed token names the chain.
-  const targetChain = targetToken?.chainId ?? 4663;
-  const previewable =
-    !!atoms && !!fundingAddress && decimals > 0 && /^0x[0-9a-fA-F]{40}$/.test(target);
+  // The catalog adapter resolves legacy Robinhood responses; an unknown selection has no chain.
+  const targetChain =
+    targetToken && isSwapChain(targetToken.chainId) ? targetToken.chainId : undefined;
+  const eligibleTarget =
+    targetChain !== undefined &&
+    targetToken?.swapListed === true &&
+    targetToken.buyable !== false &&
+    /^0x[0-9a-fA-F]{40}$/.test(target);
+  const previewable = !!atoms && !!fundingAddress && decimals > 0 && eligibleTarget;
+  const estimateKey = `${atoms}:${targetChain}:${target.toLowerCase()}`;
   useEffect(() => {
-    if (!previewable) return;
+    if (!previewable || targetChain === undefined) return;
     let live = true;
-    const key = `${atoms}:${target}`;
+    const key = estimateKey;
     const timer = setTimeout(() => {
       previewSwapOut(fundingAddress, target, atoms, undefined, targetChain)
         .then((out) => {
@@ -115,12 +129,12 @@ export function useNativeSwap() {
       live = false;
       clearTimeout(timer);
     };
-  }, [previewable, atoms, fundingAddress, target, decimals, targetChain]);
+  }, [previewable, atoms, fundingAddress, target, decimals, targetChain, estimateKey]);
   return {
     // Only a result for the current amount and token is shown; a failed lookup shows nothing.
     estimate: !previewable
       ? null
-      : estimate?.key !== `${atoms}:${target}`
+      : estimate?.key !== estimateKey
         ? { text: "", loading: true }
         : estimate.text
           ? { text: estimate.text, loading: false }
@@ -132,11 +146,7 @@ export function useNativeSwap() {
     selectToken: (token: CatalogToken) => {
       const chainId = token.chainId;
       if (!isSwapChain(chainId) || !token.swapListed || token.buyable === false || busy) return;
-      setTokens((current) =>
-        current.some((item) => item.address === token.address)
-          ? current
-          : [...current, { ...token, chainId }],
-      );
+      setTokens((current) => mergeTokens(current, [{ ...token, chainId }]));
       setTarget(token.address);
     },
     amount,
@@ -145,7 +155,7 @@ export function useNativeSwap() {
     status,
     busy,
     error,
-    canStart: !!atoms && /^0x[0-9a-fA-F]{40}$/.test(target) && !busy,
+    canStart: !!atoms && eligibleTarget && !busy,
     canSell:
       status?.phase === "COMPLETE" &&
       status.direction === "buy" &&
@@ -156,6 +166,8 @@ export function useNativeSwap() {
       run("start", async () => {
         if (!atoms)
           throw new Error("Enter a positive USDC amount with at most six decimal places.");
+        if (!eligibleTarget || targetChain === undefined)
+          throw new Error("Choose a token to receive.");
         setStatus(
           parseSwapView(await swapSigner().startSwap(target, atoms, swapGateway, targetChain)),
         );
@@ -164,7 +176,7 @@ export function useNativeSwap() {
     canPayout:
       status?.phase === "CANCELLED" &&
       /^[1-9]\d*$/.test(status.creditedAtoms) &&
-      /^0x[0-9a-fA-F]{40}$/.test(target) &&
+      eligibleTarget &&
       !busy,
     sell: () =>
       run("sell", async () => {
@@ -172,6 +184,8 @@ export function useNativeSwap() {
       }),
     payout: () =>
       run("payout", async () => {
+        if (!eligibleTarget || targetChain === undefined)
+          throw new Error("Choose a token to receive.");
         setStatus(parseSwapView(await swapSigner().startPayout(target, swapGateway, targetChain)));
       }),
     resume: () =>
