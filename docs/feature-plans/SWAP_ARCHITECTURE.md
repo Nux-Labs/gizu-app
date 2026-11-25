@@ -48,9 +48,16 @@ means Robinhood) and route to one Fusion adapter per chain. The Base adapter use
 stock tokens marked `issuer: "Coinbase"`; only the pinned list is `buyable`, and a token Coinbase
 has paused is not. A list without `chainId` still returns 4663, 143 and 1 only, so older clients
 never see Base. `/v1/tokens/8453/:address/details` serves Coinbase's record (no trading
-sessions, `sessions: null`) with 1inch price and a chart against Base USDC; when Coinbase is
-unreachable the catalog still marks the pinned list and the page falls back to the pinned symbol.
+sessions, `sessions: null`) with a 1inch price and USD candles directly from GeckoTerminal.
+Base issuer, price and chart enrichment share a two-second deadline; expired optional fields
+remain unavailable while the page retains its pinned identity. Pool discovery and charts reuse
+their caches and coalesce concurrent requests. When Coinbase is unreachable the catalog still
+marks the pinned list and the page falls back to the pinned symbol.
 There is no server-side switch: Base buys run as soon as a client sends a Base plan.
+
+The detail screen shows the selected catalog metadata and selection action immediately, with
+loading and retry confined to the history area. Known issuer facts enrich that view when they
+arrive, and the previous chart remains visible while another period loads.
 
 In the app, the swap picker asks `/v1/tokens?chainIds=4663,8453&liquidOnly=true`, so Robinhood
 and Base stocks share one list (Robinhood first); a stock on both chains appears once per chain,

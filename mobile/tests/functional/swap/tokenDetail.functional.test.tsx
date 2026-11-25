@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
-import { Modal } from "react-native";
+import { Linking, Modal } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { TokenDetail } from "@/features/swap/TokenDetail";
 import { NativeSwapScreen } from "@/features/swap/NativeSwapScreen";
 import { tokenCatalogService } from "@/services/tokenCatalog";
 import { tokenDetailsService } from "@/services/tokenDetails";
@@ -37,6 +38,7 @@ beforeEach(() => {
         address: googl,
         symbol: "GOOGL",
         name: "Alphabet Class A • Robinhood Token",
+        priceUsd: 301.25,
         buyable: true,
       },
     ];
@@ -171,6 +173,22 @@ test("choosing a period reloads the chart and Select makes the token the swap ta
   expect(screen.getByText("GOOGL")).toBeVisible();
 });
 
+test("a GeckoTerminal chart credits GeckoTerminal with a link; a 1inch chart has no credit", async () => {
+  const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+  let source: "1inch" | "geckoterminal" = "geckoterminal";
+  details.mockImplementation(async (_address, period) => ({
+    ...tokenDetails,
+    chart: { ...tokenDetails.chart!, period, source },
+  }));
+  await openDetails("GOOGL");
+  fireEvent.press(await screen.findByRole("link", { name: "Chart data by GeckoTerminal" }));
+  expect(open).toHaveBeenCalledWith("https://www.geckoterminal.com");
+  source = "1inch";
+  fireEvent.press(screen.getByRole("radio", { name: "1W" }));
+  await screen.findByText("+4.13% · 1W");
+  expect(screen.queryByText("Chart data by GeckoTerminal")).toBeNull();
+});
+
 test("a fund without price history says so instead of drawing a chart", async () => {
   details.mockResolvedValue({
     ...tokenDetails,
@@ -186,7 +204,72 @@ test("a fund without price history says so instead of drawing a chart", async ()
   expect(screen.queryByLabelText(/ISIN/)).toBeNull();
 });
 
-test("a failed load offers a retry that recovers", async () => {
+test("catalog identity, price and selection remain usable while initial details are pending", async () => {
+  details.mockImplementation(() => new Promise(() => {}));
+  await openDetails("GOOGL");
+
+  expect(screen.getByText("Alphabet Class A")).toBeVisible();
+  expect(screen.getByLabelText("GOOGL logo")).toHaveProp("source", {
+    uri: "https://example.com/token.png",
+  });
+  expect(screen.getByLabelText("Price $301.25")).toBeVisible();
+  expect(screen.getByLabelText("Loading price history")).toBeVisible();
+  expect(screen.queryByText("Stock")).toBeNull();
+  expect(screen.queryByText("Fund")).toBeNull();
+  expect(screen.queryByText("About")).toBeNull();
+  expect(screen.queryByLabelText(/Trading:/)).toBeNull();
+  expect(screen.queryByLabelText(/ISIN:/)).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Select GOOGL" }));
+  expect(screen.queryByRole("button", { name: "Back to tokens" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Choose receive token" })).toBeVisible();
+  expect(screen.getByText("GOOGL")).toBeVisible();
+});
+
+test("a pending period keeps the previous chart and metadata until its replacement arrives", async () => {
+  await openDetails("GOOGL");
+  await screen.findByText("+4.13% · 1M");
+  let release: (value: TokenDetails) => void = () => undefined;
+  details.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+  fireEvent.press(screen.getByRole("radio", { name: "1W" }));
+
+  expect(screen.getByLabelText("1M price history, 2 samples")).toBeVisible();
+  expect(screen.getByText("+4.13% · 1M")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Select GOOGL" })).toBeEnabled();
+  await act(async () =>
+    release({ ...tokenDetails, chart: { ...tokenDetails.chart!, period: "1W" } }),
+  );
+  expect(screen.getByLabelText("1W price history, 2 samples")).toBeVisible();
+});
+
+test("changing chain hides previous details even when the contract address is the same", async () => {
+  details.mockResolvedValueOnce(tokenDetails).mockImplementation(() => new Promise(() => {}));
+  const props = { address: googl, disabled: false, onBack: jest.fn(), onSelect: jest.fn() };
+  const { rerender } = render(<TokenDetail {...props} chainId={4663} />);
+  expect(await screen.findByText(tokenDetails.description)).toBeVisible();
+
+  rerender(<TokenDetail {...props} chainId={8453} />);
+  expect(screen.queryByText(tokenDetails.description)).toBeNull();
+  expect(screen.queryByLabelText("1M price history, 2 samples")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Select GOOGL" })).toBeNull();
+  expect(screen.getByLabelText("Loading token details")).toBeVisible();
+});
+
+test("a cancelled previous token response cannot replace the current token", async () => {
+  let release: (value: TokenDetails) => void = () => undefined;
+  details.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
+  const props = { disabled: false, onBack: jest.fn(), onSelect: jest.fn() };
+  const { rerender } = render(<TokenDetail {...props} address={coin} />);
+  rerender(<TokenDetail {...props} address={googl} />);
+  expect(await screen.findByText(tokenDetails.description)).toBeVisible();
+
+  await act(async () =>
+    release({ ...tokenDetails, address: coin, symbol: "COIN", name: "Coinbase" }),
+  );
+  expect(screen.queryByText("Coinbase")).toBeNull();
+  expect(screen.getByRole("button", { name: "Select GOOGL" })).toBeVisible();
+});
+
+test("failed enrichment retains catalog metadata and selection with a localized retry", async () => {
   let fail = true;
   let release: (value: TokenDetails) => void = () => undefined;
   details.mockImplementation(() =>
@@ -195,13 +278,75 @@ test("a failed load offers a retry that recovers", async () => {
       : new Promise((resolve) => (release = resolve)),
   );
   await openDetails("COIN");
-  expect(await screen.findByText("Token details are unavailable right now.")).toBeVisible();
+  expect(await screen.findByText("1M price history couldn’t be loaded.")).toBeVisible();
+  expect(screen.getByText("Coinbase")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Select COIN" })).toBeEnabled();
   expect(screen.queryByText(/provider secret/)).toBeNull();
   fail = false;
   fireEvent.press(screen.getByRole("button", { name: "Try again" }));
-  expect(await screen.findByLabelText("Loading token details")).toBeVisible();
+  expect(await screen.findByLabelText("Loading price history")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Select COIN" })).toBeEnabled();
   await act(async () =>
     release({ ...tokenDetails, address: coin, symbol: "COIN", name: "Coinbase" }),
   );
   expect(await screen.findByRole("button", { name: "Select COIN" })).toBeVisible();
+});
+
+test("a matching Base seed honors disabled selection without inventing trading facts", () => {
+  details.mockImplementation(() => new Promise(() => {}));
+  const onSelect = jest.fn();
+  render(
+    <TokenDetail
+      address={googl.toUpperCase()}
+      chainId={8453}
+      seedToken={{
+        ...catalogToken,
+        address: googl,
+        chainId: 8453,
+        symbol: "GOOGL",
+        name: "Alphabet",
+        priceUsd: 301.25,
+      }}
+      disabled
+      onBack={jest.fn()}
+      onSelect={onSelect}
+    />,
+  );
+  expect(screen.getByText("Price on Base")).toBeVisible();
+  expect(screen.getByLabelText("Price $301.25")).toBeVisible();
+  expect(screen.queryByLabelText(/Trading:/)).toBeNull();
+  const select = screen.getByRole("button", { name: "Select GOOGL" });
+  expect(select).toBeDisabled();
+  fireEvent.press(select);
+  expect(onSelect).not.toHaveBeenCalled();
+});
+
+test.each([
+  { chainId: 4663 as const, address: coin },
+  { chainId: 8453 as const, address: googl },
+])("ignores a catalog seed for a different token identity: $chainId $address", (seed) => {
+  details.mockImplementation(() => new Promise(() => {}));
+  render(
+    <TokenDetail
+      address={googl}
+      chainId={4663}
+      seedToken={{ ...catalogToken, ...seed }}
+      disabled={false}
+      onBack={jest.fn()}
+      onSelect={jest.fn()}
+    />,
+  );
+  expect(screen.getByLabelText("Loading token details")).toBeVisible();
+  expect(screen.queryByText("Amazon")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Select AMZN" })).toBeNull();
+});
+
+test("direct detail callers without a catalog seed retain full-page failure and retry", async () => {
+  details.mockRejectedValueOnce(new Error("provider secret")).mockResolvedValue(tokenDetails);
+  render(<TokenDetail address={googl} disabled={false} onBack={jest.fn()} onSelect={jest.fn()} />);
+  expect(await screen.findByText("Token details are unavailable right now.")).toBeVisible();
+  expect(screen.queryByText(/provider secret/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Select GOOGL" })).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("button", { name: "Select GOOGL" })).toBeVisible();
 });

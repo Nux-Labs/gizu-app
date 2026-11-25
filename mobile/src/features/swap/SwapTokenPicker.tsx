@@ -111,6 +111,7 @@ export function TokenChoices({
   const content = detail ? (
     <TokenDetail
       address={detail.address}
+      seedToken={detail}
       chainId={isSwapChain(detail.chainId) ? detail.chainId : undefined}
       disabled={disabled}
       onBack={() => setDetail(null)}
