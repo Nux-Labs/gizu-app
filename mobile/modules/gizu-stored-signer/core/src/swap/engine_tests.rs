@@ -2462,6 +2462,135 @@ fn confidential_sale_never_attributes_shrinking_oversized_or_malformed_balance_g
 }
 
 #[test]
+fn ambiguous_sale_credit_reauthenticates_after_restore_without_repeating_the_sale() {
+    let (mut world, mut now) = (pooled_world(40_000_000_000_000_000), T0);
+    world.credit = U256::from(900_000_000u64);
+    let sale = start_plan(confidential_sale_plan());
+    review(&sale, &mut world, &mut now);
+    sale.approve(now).unwrap();
+    let SwapStep::Request { id, .. } = sale_credit_request(&sale, &mut world, &mut now) else {
+        panic!()
+    };
+    let (baseline, input) = sale_state(&sale);
+    assert_eq!(baseline, U256::from(900_000_000u64));
+    let original: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+    for field in ["permit", "signature"] {
+        assert!(original["data"]["orders"][0][field].is_string());
+    }
+    let ambiguous = private_balance(baseline + input + U256::from(1));
+    sale.on_response(id, 200, ambiguous.clone(), now).unwrap();
+    assert_eq!(status(&sale)["pausedCode"], "SALE_CREDIT_AMBIGUOUS");
+    assert_eq!(status_private_amount(&sale), U256::ZERO);
+    assert_eq!(world.orders, 1);
+
+    let restored = SwapOperation::restore(sale.export_state().unwrap(), GATEWAY.into()).unwrap();
+    restored.retry();
+    let resume_start = world.paths.len();
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Unlock);
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    let SwapStep::Request { id, url, body, .. } =
+        sale_credit_request(&restored, &mut world, &mut now)
+    else {
+        panic!()
+    };
+    assert_eq!(
+        &world.paths[resume_start..],
+        ["/v1/swap/aurora/auth-salt", "/v1/swap/aurora/authenticate"]
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&body.unwrap()).unwrap()["accessToken"],
+        "token"
+    );
+    assert!(url.ends_with("/aurora/balances"));
+    restored.on_response(id, 200, ambiguous, now).unwrap();
+    assert_eq!(
+        restored.next_step(now).unwrap(),
+        SwapStep::Paused {
+            code: "SALE_CREDIT_AMBIGUOUS".into()
+        }
+    );
+    assert_eq!(status_private_amount(&restored), U256::ZERO);
+    let paused: Value = serde_json::from_str(&restored.export_state().unwrap()).unwrap();
+    for field in ["plan", "createdMs", "approvedMs"] {
+        assert_eq!(paused[field], original[field], "{field}");
+    }
+    for field in ["privateBaseline", "saleInbounds", "orders"] {
+        assert_eq!(paused["data"][field], original["data"][field], "{field}");
+    }
+    assert_eq!(
+        world.orders, 1,
+        "resuming must not sign or submit another sale"
+    );
+
+    restored.retry();
+    let resume_start = world.paths.len();
+    let SwapStep::Request { id, url, body, .. } =
+        sale_credit_request(&restored, &mut world, &mut now)
+    else {
+        panic!()
+    };
+    assert_eq!(
+        &world.paths[resume_start..],
+        ["/v1/swap/aurora/auth-salt", "/v1/swap/aurora/authenticate"]
+    );
+    assert_eq!(world.orders, 1);
+    let (code, reply) = world.handle(&url, body.as_deref(), now);
+    restored.on_response(id, code, reply, now).unwrap();
+    assert_eq!(status_private_amount(&restored), input - U256::from(20));
+    let credited: Value = serde_json::from_str(&restored.export_state().unwrap()).unwrap();
+    let mut original_inbound = original["data"]["saleInbounds"][0].clone();
+    original_inbound["credited"] = credited["data"]["saleInbounds"][0]["credited"].clone();
+    assert_eq!(credited["data"]["saleInbounds"][0], original_inbound);
+    for field in ["permit", "signature"] {
+        assert_eq!(
+            credited["data"]["orders"][0][field], original["data"]["orders"][0][field],
+            "{field}"
+        );
+    }
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!((world.orders, world.intents), (3, 0));
+}
+
+#[test]
+fn saved_ambiguous_private_credit_without_an_access_token_can_resume() {
+    let (sale, mut world, mut now, request) = confidential_credit_request();
+    let SwapStep::Request { id, .. } = request else {
+        panic!()
+    };
+    let (baseline, input) = sale_state(&sale);
+    sale.on_response(
+        id,
+        200,
+        private_balance(baseline + input + U256::from(1)),
+        now,
+    )
+    .unwrap();
+    let mut saved: Value = serde_json::from_str(&sale.export_state().unwrap()).unwrap();
+    // Before this fix, ambiguity saved PrivateCredit after clearing its required token.
+    saved["step"] = json!({"step": "privateCredit", "index": 0});
+    assert!(saved["data"]["accessToken"].is_null());
+    assert_eq!(saved["paused"], "SALE_CREDIT_AMBIGUOUS");
+    let restored = SwapOperation::restore(saved.to_string(), GATEWAY.into()).unwrap();
+    restored.retry();
+    restored.unlock(ENTROPY.to_vec(), now).unwrap();
+    let SwapStep::Request { id, url, body, .. } =
+        sale_credit_request(&restored, &mut world, &mut now)
+    else {
+        panic!()
+    };
+    let resumed: Value = serde_json::from_str(&restored.export_state().unwrap()).unwrap();
+    for field in ["privateBaseline", "saleInbounds", "orders"] {
+        assert_eq!(resumed["data"][field], saved["data"][field], "{field}");
+    }
+    assert_eq!(world.orders, 1);
+    let (code, reply) = world.handle(&url, body.as_deref(), now);
+    restored.on_response(id, code, reply, now).unwrap();
+    assert_eq!(status_private_amount(&restored), input - U256::from(20));
+    assert_eq!(drive(&restored, &mut world, &mut now), SwapStep::Finished);
+    assert_eq!((world.orders, world.intents), (3, 0));
+}
+
+#[test]
 fn confidential_sale_credit_is_the_balance_growth_within_the_deposit() {
     let (sale, _world, now, request) = confidential_credit_request();
     let SwapStep::Request { id, .. } = request else {

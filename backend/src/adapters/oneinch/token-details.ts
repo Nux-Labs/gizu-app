@@ -55,7 +55,8 @@ type CoinbaseAsset = z.infer<typeof coinbaseSchema>["tokens"][number];
 const QUOTE_TOKEN: Record<StockChainId, string> = { 4663: ROBINHOOD_USDG, 8453: BASE_USDC };
 export type StockChainId = 4663 | 8453;
 const chartSchema = z.object({ data: z.array(z.object({ time: z.number().int().positive(), value: z.number().positive() })) });
-const geckoPoolsSchema = z.object({ data: z.array(z.object({ attributes: z.object({ address: z.string().regex(/^0x[a-fA-F0-9]{40}$/) }) })) });
+// Contract pools use 20-byte addresses; pools such as Uniswap v4 use 32-byte IDs.
+const geckoPoolsSchema = z.object({ data: z.array(z.object({ attributes: z.object({ address: z.string().regex(/^0x(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/) }) })) });
 const geckoOhlcvSchema = z.object({
   data: z.object({ attributes: z.object({ ohlcv_list: z.array(z.array(z.number()).min(5)) }) }),
 });
@@ -84,6 +85,22 @@ export type TokenDetails = {
 
 type Cached<T> = { until: number; value: T };
 
+/** Bound the whole provider operation, including a body or transport that ignores cancellation. */
+function withinDeadline<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(new DOMException("Token enrichment deadline exceeded", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    work.then(
+      (value) => { signal.removeEventListener("abort", abort); resolve(value); },
+      (error: unknown) => { signal.removeEventListener("abort", abort); reject(error); },
+    );
+  });
+}
+
 const usdPrice = (raw: unknown): number | null => {
   const value = typeof raw === "string" || typeof raw === "number" ? Number(raw) : NaN;
   return Number.isFinite(value) && value > 0 ? value : null;
@@ -91,8 +108,8 @@ const usdPrice = (raw: unknown): number | null => {
 
 /**
  * Detail page data for a buyable stock token: the issuer's record (Robinhood, or Coinbase on Base)
- * plus 1inch price and chart on the token's chain. Most Coinbase tokens have no 1inch chart, so Base
- * charts fall back to GeckoTerminal candles from the token's most liquid pool.
+ * plus 1inch prices. Robinhood uses 1inch charts; Base uses GeckoTerminal candles from the
+ * token's most liquid pool, with all optional enrichment sharing a two-second deadline.
  */
 export class StockTokenDetails {
   private assets: Cached<Map<string, Asset>> | null = null;
@@ -102,6 +119,8 @@ export class StockTokenDetails {
   private readonly priceRefresh = new Map<StockChainId, Promise<void>>();
   private readonly charts = new Map<string, Cached<TokenDetails["chart"]>>();
   private readonly geckoPools = new Map<string, Cached<string | null>>();
+  private readonly chartRefresh = new Map<string, Promise<TokenDetails["chart"]>>();
+  private readonly poolRefresh = new Map<string, Promise<string | null>>();
 
   constructor(
     private readonly key: string,
@@ -180,11 +199,12 @@ export class StockTokenDetails {
   }
 
   private async baseDetails(address: string, period: DetailPeriod, symbol: string): Promise<TokenDetails> {
+    const signal = AbortSignal.timeout(2_000);
     const [asset, priceUsd, chart] = await Promise.all([
-      // Without Coinbase the page still shows the pinned symbol with its 1inch price and chart.
-      this.coinbaseAsset(address).catch((): CoinbaseAsset => ({ contract_address: address, symbol, name: symbol })),
-      this.price(8453, address),
-      this.chart(8453, address, period),
+      // Any enrichment may expire; the pinned identity still makes a valid detail page.
+      this.coinbaseAsset(address, signal).catch((): CoinbaseAsset => ({ contract_address: address, symbol, name: symbol })),
+      this.price(8453, address, signal).catch(() => null),
+      this.chart(8453, address, period, signal).catch(() => null),
     ]);
     const multiplier = asset.multiplier === undefined ? undefined : String(asset.multiplier);
     // Our own copy matches the Robinhood pages; Coinbase's text covers a token without one.
@@ -205,7 +225,7 @@ export class StockTokenDetails {
     };
   }
 
-  private async coinbaseAsset(address: string): Promise<CoinbaseAsset> {
+  private async coinbaseAsset(address: string, signal: AbortSignal): Promise<CoinbaseAsset> {
     if (!this.coinbaseAssets || this.coinbaseAssets.until <= this.now()) {
       try {
         const byAddress = new Map<string, CoinbaseAsset>();
@@ -214,13 +234,15 @@ export class StockTokenDetails {
           const url = new URL("https://api.coinbase.com/v1/tokenized-stocks");
           url.searchParams.set("page_size", "500");
           if (pageToken) url.searchParams.set("page_token", pageToken);
-          const response = await this.fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
+          signal.throwIfAborted();
+          const response = await withinDeadline(this.fetchImpl(url, { signal }), signal);
           if (!response.ok) throw new Error(`Coinbase tokenized stocks unavailable (${response.status})`);
-          const parsed = coinbaseSchema.parse(await response.json());
+          const parsed = coinbaseSchema.parse(await withinDeadline(response.json(), signal));
           for (const token of parsed.tokens) byAddress.set(token.contract_address.toLowerCase(), token);
           pageToken = parsed.next_page_token;
           if (!pageToken) break;
         }
+        signal.throwIfAborted();
         this.coinbaseAssets = { until: this.now() + ASSETS_TTL_MS, value: byAddress };
       } catch (error) {
         // A stale list still names the token; only a first failure fails the page.
@@ -257,20 +279,18 @@ export class StockTokenDetails {
   }
 
   // Price and chart are optional on the page: a failure is cached briefly as null instead of failing it.
-  private async price(chainId: StockChainId, address: string): Promise<number | null> {
+  private async price(chainId: StockChainId, address: string, signal?: AbortSignal): Promise<number | null> {
     return this.cached(this.priceCache, address.toLowerCase(), PRICE_TTL_MS, async () => {
-      const body = await this.oneInch(`https://api.1inch.com/price/v1.1/${chainId}/${address}?currency=USD`);
+      const body = await this.oneInch(`https://api.1inch.com/price/v1.1/${chainId}/${address}?currency=USD`, signal);
       return usdPrice((body as Record<string, unknown>)[address.toLowerCase()]);
-    });
+    }, signal);
   }
 
-  private async chart(chainId: StockChainId, address: string, period: DetailPeriod): Promise<TokenDetails["chart"]> {
+  private async chart(chainId: StockChainId, address: string, period: DetailPeriod, signal?: AbortSignal): Promise<TokenDetails["chart"]> {
     return this.cached(this.charts, `${chainId}:${address}:${period}`, CHART_TTL_MS, async () => {
-      const oneInch = await this.oneInchChart(chainId, address, period).catch(() => null);
-      if (oneInch) return oneInch;
       const network = GECKO_NETWORK[chainId];
-      return network ? this.geckoChart(network, address, period) : null;
-    });
+      return network ? this.geckoChart(network, address, period, signal) : this.oneInchChart(chainId, address, period);
+    }, signal, this.chartRefresh);
   }
 
   private async oneInchChart(chainId: StockChainId, address: string, period: DetailPeriod): Promise<TokenDetails["chart"]> {
@@ -282,17 +302,17 @@ export class StockTokenDetails {
   }
 
   /** USD closes of the token in its most liquid pool, oldest first, trimmed to the period. */
-  private async geckoChart(network: string, address: string, period: DetailPeriod): Promise<TokenDetails["chart"]> {
+  private async geckoChart(network: string, address: string, period: DetailPeriod, signal?: AbortSignal): Promise<TokenDetails["chart"]> {
     const pool = await this.cached(this.geckoPools, `${network}:${address.toLowerCase()}`, POOL_TTL_MS, async () => {
       const body = geckoPoolsSchema.parse(await this.gecko(
-        `https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${address}/pools?page=1&sort=h24_volume_usd_liquidity_desc`,
+        `https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${address}/pools?page=1&sort=h24_volume_usd_liquidity_desc`, signal,
       ));
       return body.data[0]?.attributes.address ?? null;
-    });
+    }, signal, this.poolRefresh);
     if (!pool) return null;
     const { timeframe, aggregate, limit, windowMs } = GECKO_CANDLES[period];
     const body = geckoOhlcvSchema.parse(await this.gecko(
-      `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/ohlcv/${timeframe}?aggregate=${aggregate}&limit=${limit}&currency=usd&token=${address}`,
+      `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/ohlcv/${timeframe}?aggregate=${aggregate}&limit=${limit}&currency=usd&token=${address}`, signal,
     ));
     const candles = body.data.attributes.ohlcv_list
       .map(([time, , , , close]) => ({ time: time!, price: close! }))
@@ -307,36 +327,54 @@ export class StockTokenDetails {
     return points.length >= 2 ? { period, source: "geckoterminal", points } : null;
   }
 
-  private async cached<T>(cache: Map<string, Cached<T | null>>, key: string, ttl: number, load: () => Promise<T | null>): Promise<T | null> {
+  private async cached<T>(
+    cache: Map<string, Cached<T | null>>, key: string, ttl: number, load: () => Promise<T | null>,
+    signal?: AbortSignal, inFlight?: Map<string, Promise<T | null>>,
+  ): Promise<T | null> {
     const hit = cache.get(key);
     if (hit && hit.until > this.now()) return hit.value;
-    let value: T | null;
-    try {
-      value = await load();
-    } catch {
-      value = null;
-    }
-    // A miss is retried after a minute rather than the full lifetime.
-    cache.set(key, { until: this.now() + (value === null ? Math.min(ttl, 60_000) : ttl), value });
-    return value;
+    const pending = inFlight?.get(key);
+    if (pending) return signal ? withinDeadline(pending, signal) : pending;
+    const refresh = (async () => {
+      let value: T | null;
+      try {
+        value = await load();
+      } catch (error) {
+        // An expired owner must not negative-cache an observation shared by another request.
+        if (signal && (signal.aborted || (error instanceof DOMException && error.name === "AbortError"))) throw error;
+        value = null;
+      }
+      signal?.throwIfAborted();
+      // A miss is retried after a minute rather than the full lifetime.
+      cache.set(key, { until: this.now() + (value === null ? Math.min(ttl, 60_000) : ttl), value });
+      return value;
+    })().finally(() => {
+      if (inFlight?.get(key) === refresh) inFlight.delete(key);
+    });
+    inFlight?.set(key, refresh);
+    return signal ? withinDeadline(refresh, signal) : refresh;
   }
 
-  private async oneInch(url: string): Promise<unknown> {
-    const response = await this.fetchImpl(url, {
-      headers: { Authorization: `Bearer ${this.key}`, accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`1inch data unavailable (${response.status})`);
-    return response.json();
+  private async oneInch(url: string, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<unknown> {
+    signal.throwIfAborted();
+    return withinDeadline((async () => {
+      const response = await this.fetchImpl(url, {
+        headers: { Authorization: `Bearer ${this.key}`, accept: "application/json" }, signal,
+      });
+      if (!response.ok) throw new Error(`1inch data unavailable (${response.status})`);
+      return response.json();
+    })(), signal);
   }
 
   // Keyless public API (30 calls a minute); charts and pools are cached so pages stay well below it.
-  private async gecko(url: string): Promise<unknown> {
-    const response = await this.fetchImpl(url, {
-      headers: { accept: "application/json;version=20230203" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`GeckoTerminal data unavailable (${response.status})`);
-    return response.json();
+  private async gecko(url: string, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<unknown> {
+    signal.throwIfAborted();
+    return withinDeadline((async () => {
+      const response = await this.fetchImpl(url, {
+        headers: { accept: "application/json;version=20230203" }, signal,
+      });
+      if (!response.ok) throw new Error(`GeckoTerminal data unavailable (${response.status})`);
+      return response.json();
+    })(), signal);
   }
 }
