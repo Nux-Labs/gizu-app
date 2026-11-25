@@ -27,6 +27,10 @@ const apiEnvSchema = z
       .url()
       .refine((value) => value.startsWith("https://"))
       .optional(),
+    ARBITRUM_RPC_URL: z
+      .url()
+      .refine((value) => value.startsWith("https://"))
+      .optional(),
     EARN_GATEWAY_RECOVERY_KEY: z
       .string()
       .regex(/^[0-9a-f]{64}$/i)

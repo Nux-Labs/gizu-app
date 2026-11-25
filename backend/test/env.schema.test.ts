@@ -32,6 +32,12 @@ test("rejects missing swap provider keys", () => {
   assert.throws(() => parseApiEnv(withoutPimlico), /PIMLICO_API_KEY/);
 });
 
+test("Arbitrum funding RPC configuration is preserved and must use HTTPS", () => {
+  const configured = parseApiEnv({ ...apiEnv, ARBITRUM_RPC_URL: "https://arb1.arbitrum.io/rpc" });
+  assert.equal((configured as Record<string, unknown>).ARBITRUM_RPC_URL, "https://arb1.arbitrum.io/rpc");
+  assert.throws(() => parseApiEnv({ ...apiEnv, ARBITRUM_RPC_URL: "http://untrusted.example" }));
+});
+
 test("rejects a missing 1inch key", () => {
   const { ONEINCH_API_KEY: _key, ...withoutKey } = apiEnv;
   assert.throws(() => parseApiEnv(withoutKey), /ONEINCH_API_KEY/);

@@ -35,9 +35,18 @@ export type StoredSignerCapabilities = {
   earnDepositPrivateFunding?: boolean;
   confidentialWithdrawals?: boolean;
   confidentialSaleProceeds?: boolean;
+  fundingContractVersion?: 2;
+  fundingChainIds?: FundingChainId[];
   earnBalanceDeltaSettlement?: boolean;
   earnPartialWithdrawals?: boolean;
   reason?: "notImplemented" | "unsupportedPlatform" | "unsupportedProvider";
+};
+export type FundingChainId = 143 | 8453 | 42161;
+export type FundingSourceKey = {
+  sourceChainId: FundingChainId;
+  token: string;
+  accountIndex: number;
+  owner: string;
 };
 export type StoredTransferProposal = {
   walletId: string;
