@@ -4,7 +4,7 @@
 
 **Goal:** Let one chain-abstracted Swap or Earn journey spend USDC held across Monad, Base and Arbitrum, using the existing Account 1 and pooling confirmed credits at Account 2.
 
-**Architecture:** Extend existing funding adapters and native planners with exact source-chain identities. Persist each source's independently reconciled Aurora credit, then execute the existing private payout/distribution once from the approved pool. Preserve legacy journals, native authorization and current platform availability.
+**Architecture:** Extend existing funding adapters and native planners with exact source-chain identities. Persist each source's independently reconciled Aurora credit, then pass the approved combined amount into the existing private-funded Earn or Swap path. Preserve downstream execution, distribution, return policy, legacy journals, native authorization and current platform availability.
 
 **Tech Stack:** TypeScript/Fastify/viem/Postgres backend; Rust/UniFFI signer core; Kotlin and Swift native hosts; Expo/React Native; existing Pimlico and Aurora integrations.
 
@@ -16,7 +16,8 @@
 - Funding networks: Monad `143`, Base `8453`, Arbitrum One `42161`; USDC only, six decimals, exact contracts/asset IDs from the spec.
 - Account 1 is `m/44'/60'/0'/0/1` on all funding networks; Account 2 remains the shared confidential owner. Preserve existing eligible Monad return accounts and legacy private-owner recovery.
 - Network is visible only within funding. Main balances and downstream actions are chain-abstracted. Internal identity is always chain + token + owner + account index.
-- Amounts use integer atoms/decimal strings. Requested amounts remain gross budgets; review shows maximum fees and minimum net output. Do not silently reduce the requested budget to fit one source.
+- Amounts use integer atoms/decimal strings. The user confirmed that **15 USDC is the total budget, including fees**. Preserve existing fee review and minimum-result rules; do not add fees on top, introduce a net-target mode or silently reduce the requested budget to fit one source.
+- This expands source funding and its handoff to private USDC. Reuse existing private-funded Earn/Swap execution and recipient distribution. Sales and investment exits still return to private USDC; public cashout remains the separate explicit Withdraw from Gizu action.
 - `/history` is not used. Preserve authenticated bounded balance evidence; ambiguous or unavailable evidence cannot authorize pooled spending.
 - Keep keys, signatures and approval enforcement native. Provider credentials remain backend-only. Reuse existing SDKs, grants, journals, distribution and payout engines.
 - Signed/uncertain operations require reconciliation. Preserve v1 journals and signed payloads; do not reinterpret them as pooled operations.
@@ -171,27 +172,27 @@ private destination from the spec, not generic USDC. Output is per-network
 - [ ] Run affected tests against the existing Postgres integration harness, including concurrent clients and rollback. Add focused integration cases for private sale/cashout conflicts. Verify process-local locking alone cannot satisfy the tests.
 - [ ] Commit as `feat: persist and fence pooled private funding credits`.
 
-### Task 5: Reuse Earn's barrier and pay out from one pool
+### Task 5: Hand combined private USDC to the existing Earn path
 
 **Files**
 
-- Modify: `mobile/modules/gizu-stored-signer/core/src/earn_sponsored.rs`, `core/src/earn_payout.rs`, `core/src/private_earn_payout.rs`, `core/src/earn_auth.rs`.
+- Modify: `mobile/modules/gizu-stored-signer/core/src/earn_sponsored.rs` for source-network funding. Reuse existing `core/src/private_earn_payout.rs` and `core/src/earn_auth.rs` for downstream authorization/execution.
 - Modify: `mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/earn/EarnDepositPreparer.kt`, `EarnDepositCoordinator.kt`, `EarnDepositApproval.kt`, `EarnDepositJournal.kt`, `EarnDepositEngineAdapter.kt`, `EarnSponsoredSettlement.kt`, `EarnFundingBatchApproval.kt` (same directory).
-- Modify: `backend/src/adapters/earn/private-payout.ts`, `backend/src/adapters/earn/robinhood-deposit-preview.ts`, `backend/src/http/routes/earn-settlement.routes.ts`.
+- Reuse unchanged downstream contracts: `backend/src/adapters/earn/private-payout.ts`, `backend/src/adapters/earn/robinhood-deposit-preview.ts`. Source-network settlement changes remain in tasks 2 and 4.
 - Test: existing `EarnDepositCoordinatorTest.kt`, `EarnDepositRecoveryTest.kt`, `EarnPrivateDepositFlowTest.kt`, `EarnDepositAllocationTest.kt`; `backend/test/adapters/earn/private-payout.test.ts`, `private-payout-routes.test.ts`.
 
 **Interfaces**
 
-- Deposit review v2 carries `fundingPool` manifest/digest and one set of recipient allocations. Existing source rows remain provenance/funding records; they no longer multiply payout recipients.
-- Add a versioned payout source `{ kind: "fundingPool", poolId, manifestDigest, creditReceipts, approvedPrivateAtoms, allocatedAtoms }` beside the existing single-source proof. The backend validates exact membership/ownership/consumption before preparing a payout.
-- The existing coordinator's all-credit barrier consumes verified pool state. Payout lookup is keyed by `(poolId, recipient/leg)`, not `(sourceId, recipient/leg)` for v2 only.
+- The parent funding journal retains the ordered public source children and their confirmed credits. Those records are funding provenance, not new downstream payout sources.
+- After the credit barrier, construct the existing private-source review row for Account 2 (`kind: "private"`, `amountAtoms` limited to the approved combined amount). Reuse `EarnDepositEngineAdapter.privatePayoutEngine` and the existing private-funding endpoint/proof shape; do not add a `fundingPool` payout source union or endpoint.
+- The parent keeps the original total budget, funded amount, saved cycle/recipients and remaining fee bounds. Its handoff to the private-funded child must not allocate another cycle, charge source gas again or grant access to unrelated Account 2 funds.
 
-- [ ] Add `two_funding_sources_use_one_payout_per_recipient`: two credits and two saved distribution recipients produce two payouts, not four; vault deposits use independently verified recipient receipts exactly once. Same test for the Ethereum and Robinhood profiles where currently supported.
+- [ ] Add `combined_funding_reuses_private_earn_flow`: compare an already-private-funded investment with an otherwise identical investment funded from two public networks. After confirmed private credit, both use the same existing private-source contract, saved recipient distribution and execution path. No downstream action is repeated per funding network.
 - [ ] Add partial-credit failure/resume, mixed approved-private/public input, quote expiry after first credit, insufficient net minimum and changed-recipient cases. Terms outside the saved caps require review; completed credits and chosen weights survive it.
 - [ ] Run focused native and backend tests and confirm new cases fail.
-- [ ] Reuse existing preparer, grant, coordinator barrier and group receipt verifier. Quote/preview against the combined private allocation; revise source × recipient fee/minimum assumptions. Count distribution wallets once using the original approved gross budget. New sources cannot reroll the saved distribution or allocate additional wallet cycles.
-- [ ] Preserve v1 source × recipient journals and legacy confidential owners. Reauthentication uses existing approval/read-auth transitions while retaining saved settlement evidence. Run affected Earn suites and existing sell/cashout regression suites.
-- [ ] Commit as `feat: invest pooled funding through the existing Earn journey`.
+- [ ] Extend the existing preparer/coordinator only at the funding-to-private handoff. Prepare and approve the existing private-funded child using the confirmed amount and original saved distribution. Keep its payout calculations, group receipt verification, vault execution and fee/minimum rules. Changed terms outside the approved bounds require the existing review transition.
+- [ ] Preserve v1 source × recipient journals and legacy confidential owners. Reauthentication uses existing approval/read-auth transitions while retaining saved settlement evidence. Assert that selling or exiting an investment returns to private USDC, and no public cashout starts without explicit Withdraw from Gizu approval. Run affected Earn suites and existing sell/cashout regression suites.
+- [ ] Commit as `feat: connect multi-chain funding to existing private Earn execution`.
 
 ### Task 6: Extend Swap with fund-only children and a pooled execution
 
@@ -204,7 +205,7 @@ private destination from the spec, not generic USDC. Output is per-network
 **Interfaces**
 
 - Native plan v2 separates `sourceChainId`, `originAsset`, fixed `privateAsset` and destination `chainId`. Add a fund-only mode to the existing operation that terminates at confirmed private credit.
-- Swap batch v2 persists funding pool + fund-only child states + one downstream execution state. The downstream existing private-payout operation receives an explicit approved amount and saved distribution rather than reading/spending the whole private balance.
+- Swap batch v2 persists funding pool + fund-only child states + one downstream execution state. Hand the approved amount and saved distribution to the existing private-funded Swap operation. Restrict its amount if necessary at that boundary rather than redesigning its payout/trading logic or reading/spending the whole private balance.
 - Public parent status reports aggregate gross budget, verified private credit and downstream result without claiming success when only funding finished.
 
 - [ ] Add `mixed_network_swap_waits_for_all_credits`, `funding_chain_does_not_change_target`, and `payout_spends_only_approved_pool`. Assert no Fusion order/private payout before the final required credit; repeat target 4663 and 8453.
@@ -366,8 +367,9 @@ and two-client races; do not replace those assertions with an in-memory mock.
 - One reviewed 15 USDC gross-budget action can consume two 10 USDC source balances,
   with explicit fees/minimum net result and the required native signatures.
 - Base/Arbitrum Account 1 funds converge into exact canonical Account 2 private
-  USDC before downstream execution; source count does not multiply recipient
-  payouts or reroll investment wallets.
+  USDC before handing off to the existing private-funded Earn/Swap path. Its
+  downstream execution/distribution and private-return behavior remain unchanged;
+  source count does not repeat the action or reroll investment wallets.
 - Balances, available budget and pending ownership remain correct through stale
   observations, partial completion, cancellation and restart.
 - The app asks for a network only within funding, and still identifies tokens

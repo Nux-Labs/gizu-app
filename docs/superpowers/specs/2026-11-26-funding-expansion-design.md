@@ -16,15 +16,26 @@ Branch: `feat/funding-expansion`, created from `origin/main` at
   and one Swap or Earn journey. Keep chain/token identity internally.
 - Combine sources when one source cannot cover the requested budget. A wallet
   with 10 USDC on Monad and 10 on Base can request a 15 USDC budget.
-- Preserve the current gross-budget convention: source gas, routing, payout and
-  execution reserves reduce the amount delivered/invested. Review must show the
-  minimum net result. A 15 USDC budget does not promise 15 USDC net investment.
+- Preserve the current amount convention, explicitly confirmed by the user:
+  **15 USDC is the total budget, including fees.** Source gas, routing and
+  execution reserves stay inside that budget. Keep the existing fee review and
+  minimum-result behavior; do not add fees on top or introduce a net-target mode.
 - Support funding and Swap on Android and iOS. Preserve current iOS Earn
   availability, as explicitly selected by the user; full guided Earn parity is
   outside this change. Expand Android's existing guided Earn journey.
 - Reuse the native signer, Pimlico funding, Aurora routes, private payouts,
   approval grants, encrypted journals, reservations and distribution machinery.
   Do not add another wallet SDK, signing provider or cross-chain bridge.
+- The functional change ends at funding the shared private USDC balance. Feed
+  the approved combined amount into the existing private-funded Earn or Swap
+  path. Preserve its recipient distribution, execution and fee rules.
+- Preserve the existing return policy: sales and investment exits return to
+  private USDC. Making funds public remains the separate, explicitly requested
+  **Withdraw from Gizu** action. No automatic public withdrawal is added.
+
+In code, "payout" also names an internal transfer from private USDC to a saved
+investment/trading wallet. It does not necessarily mean withdrawal from Gizu.
+This expansion does not redesign that downstream transfer machinery.
 
 ## Proposed flow
 
@@ -49,9 +60,11 @@ Branch: `feat/funding-expansion`, created from `origin/main` at
    private-balance increase. Save its credited amount durably before submitting
    the next incoming funding leg to Account 2.
 7. Once all selected credits are confirmed, authorize spending only the approved
-   existing private amount plus those credits, less prior allocations. Run the
-   existing private payout/distribution and downstream Swap or Earn once per
-   saved recipient, independent of the number of funding networks.
+   existing private amount plus those credits, less prior allocations. Pass
+   that approved amount to the existing private-funded Earn or Swap journey.
+   Keep its saved recipient distribution and normal execution unchanged; the
+   downstream journey consumes one private balance, not separate public-chain
+   funding sources.
 8. On interruption, resume the same parent and child operations. A completed
    source is never deposited again. A failed later source leaves earlier funds
    in private USDC, reserved for the pending journey until reconciliation or
@@ -102,8 +115,10 @@ continue working; do not silently pool different confidential owners.
   a funding-credit barrier followed by one downstream action. Preserve the old
   version's behavior for saved operations.
 - Android `EarnDepositCoordinator.kt` already waits for all funding credits,
-  but then creates payouts for each source × recipient. Reuse its barrier and
-  receipt groups while changing new journeys to pool × recipient.
+  and its existing public-funded branch tracks transfers per source × recipient.
+  The existing private-funded branch already handles spending private USDC.
+  Route the combined credited amount through that branch instead of adding
+  a new payout type or redesigning its transfer/distribution rules.
 - Backend `ConfidentialSettlement` has an in-memory occupied set, which is not
   durable coordination across replicas. Existing minimum-return receipts have
   different semantics from bounded funding credit and cannot simply be renamed.
