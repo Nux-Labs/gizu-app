@@ -5,6 +5,49 @@ import javax.crypto.SecretKey
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal data class FundingNetwork(val chainId: Int, val token: String, val rpc: String) {
+  val originAsset: String
+    get() =
+      when (chainId) {
+        143 -> "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx"
+        8453 -> "nep141:base-$token.omft.near"
+        42161 -> "nep141:arb-$token.omft.near"
+        else -> error("Unsupported funding network")
+      }
+}
+
+/** Exact public funding assets. Action destination chains have separate admission. */
+internal fun fundingNetwork(chainId: Int): FundingNetwork =
+  when (chainId) {
+    143 ->
+      FundingNetwork(143, "0x754704bc059f8c67012fed69bc8a327a5aafb603", "https://rpc.monad.xyz")
+    8453 ->
+      FundingNetwork(8453, "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "https://mainnet.base.org")
+    42161 ->
+      FundingNetwork(
+        42161,
+        "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+        "https://arb1.arbitrum.io/rpc",
+      )
+    else -> error("Unsupported funding network")
+  }
+
+/** New networks spend Account 1 only; existing Monad return accounts stay eligible. */
+internal fun fundingCandidate(index: Int, sourceChainId: Int = 143): Boolean =
+  if (sourceChainId == 143) index != 0 else sourceChainId in setOf(8453, 42161) && index == 1
+
+internal fun fundingSourceId(chainId: Int, owner: String): String =
+  "${chainId}:${fundingNetwork(chainId).token}:${owner.lowercase()}"
+
+internal fun fundingSourceId(row: JSONObject): String {
+  val chainId = row.optInt("sourceChainId", 143)
+  val network = fundingNetwork(chainId)
+  check(row.optString("token", network.token).equals(network.token, true))
+  check(row.optInt("decimals", 6) == 6)
+  check(chainId == 143 || row.getInt("sourceIndex") == 1)
+  return fundingSourceId(chainId, row.getString("address"))
+}
+
 /** Device-wide source budget locks shared by Swap and Earn. Unknown signatures never expire. */
 internal class FundingReservations(
   private val file: WalletFile,
@@ -38,7 +81,7 @@ internal class FundingReservations(
     val clear = CryptoEnvelope.decrypt(key(), file.read(), aad)
     try {
       val root = JSONObject(String(clear, Charsets.UTF_8))
-      check(root.getInt("version") == 1)
+      check(root.getInt("version") in setOf(1, 2))
       return root.getJSONArray("batches")
     } finally {
       clear.fill(0)
@@ -46,7 +89,7 @@ internal class FundingReservations(
   }
 
   private fun write(rows: JSONArray) {
-    val clear = JSONObject().put("version", 1).put("batches", rows).toString().toByteArray()
+    val clear = JSONObject().put("version", 2).put("batches", rows).toString().toByteArray()
     check(clear.size < 3 * 1024 * 1024)
     try {
       file.write(CryptoEnvelope.encrypt(key(), clear, aad))
@@ -76,16 +119,18 @@ internal class FundingReservations(
       !leg.optBoolean("cancelled") &&
       (leg.optBoolean("signed") || leg.has("operationId") || batch.getLong("expiresAt") > now())
 
-  private fun reserved(rows: JSONArray, address: String) =
+  private fun reserved(rows: JSONArray, address: String, sourceChainId: Int) =
     batches(rows).fold(java.math.BigInteger.ZERO) { sum, batch ->
       sum +
         legs(batch)
-          .filter { it.getString("address").equals(address, true) && active(batch, it) }
+          .filter {
+            fundingSourceId(it) == fundingSourceId(sourceChainId, address) && active(batch, it)
+          }
           .fold(java.math.BigInteger.ZERO) { a, l -> a + l.getString("budgetAtoms").toBigInteger() }
     }
 
-  fun reservedAtoms(address: String): String =
-    synchronized(globalLock) { reserved(read(), address).toString() }
+  fun reservedAtoms(address: String, sourceChainId: Int = 143): String =
+    synchronized(globalLock) { reserved(read(), address, sourceChainId).toString() }
 
   fun reserveBatch(id: String, feature: String, cycleIndex: Int, selected: JSONArray) =
     synchronized(globalLock) {
@@ -100,11 +145,12 @@ internal class FundingReservations(
       for (i in 0 until selected.length()) {
         val l = selected.getJSONObject(i)
         val address = l.getString("address").lowercase()
-        check(seen.add(address))
+        check(seen.add(fundingSourceId(l)))
         val spend = l.getString("budgetAtoms").toBigInteger()
         check(
           spend.signum() > 0 &&
-            reserved(rows, address) + spend <= l.getString("balanceAtoms").toBigInteger()
+            reserved(rows, address, l.optInt("sourceChainId", 143)) + spend <=
+              l.getString("balanceAtoms").toBigInteger()
         ) {
           "These funds are already reserved by Swap or Earn"
         }
@@ -121,11 +167,18 @@ internal class FundingReservations(
       write(rows)
     }
 
-  fun bind(batchId: String, address: String, operationId: String, budgetAtoms: String) =
+  fun bind(
+    batchId: String,
+    address: String,
+    operationId: String,
+    budgetAtoms: String,
+    sourceChainId: Int = 143,
+  ) =
     synchronized(globalLock) {
       val rows = read()
       val batch = batches(rows).single { it.getString("id") == batchId }
-      val leg = legs(batch).single { it.getString("address").equals(address, true) }
+      val leg =
+        legs(batch).single { fundingSourceId(it) == fundingSourceId(sourceChainId, address) }
       val existing = operation(rows, operationId)
       check(existing == null || existing.second === leg) {
         "Funding operation identity is already registered"
@@ -149,6 +202,7 @@ internal class FundingReservations(
     budget: String,
     cycle: Int,
     feature: String = "earn",
+    sourceChainId: Int = 143,
   ) =
     synchronized(globalLock) {
       val rows = read()
@@ -160,6 +214,7 @@ internal class FundingReservations(
             (feature == "swap" || existing.first.getInt("cycleIndex") == cycle) &&
             found.getString("budgetAtoms") == budget &&
             found.getString("address").equals(address, true) &&
+            fundingSourceId(found) == fundingSourceId(sourceChainId, address) &&
             found.getInt("sourceIndex") == index
         )
         found.put("signed", true)
@@ -177,6 +232,8 @@ internal class FundingReservations(
                 .put(
                   JSONObject()
                     .put("sourceIndex", index)
+                    .put("sourceChainId", sourceChainId)
+                    .put("token", fundingNetwork(sourceChainId).token)
                     .put("address", address)
                     .put("budgetAtoms", budget)
                     .put("balanceAtoms", budget)
@@ -189,11 +246,11 @@ internal class FundingReservations(
       write(rows)
     }
 
-  fun hasUnsettledSigned(address: String): Boolean =
+  fun hasUnsettledSigned(address: String, sourceChainId: Int = 143): Boolean =
     synchronized(globalLock) {
       batches(read()).any { b ->
         legs(b).any { l ->
-          l.getString("address").equals(address, true) &&
+          fundingSourceId(l) == fundingSourceId(sourceChainId, address) &&
             l.optBoolean("signed") &&
             !l.optBoolean("completed") &&
             !l.optBoolean("cancelled")
@@ -209,6 +266,7 @@ internal class FundingReservations(
     index: Int,
     budget: String,
     balance: String,
+    sourceChainId: Int = 143,
   ) {
     val selected =
       JSONArray()
@@ -216,11 +274,13 @@ internal class FundingReservations(
           JSONObject()
             .put("address", address)
             .put("sourceIndex", index)
+            .put("sourceChainId", sourceChainId)
+            .put("token", fundingNetwork(sourceChainId).token)
             .put("budgetAtoms", budget)
             .put("balanceAtoms", balance)
         )
     reserveBatch("operation_$id", feature, cycleIndex, selected)
-    bind("operation_$id", address, id, budget)
+    bind("operation_$id", address, id, budget, sourceChainId)
   }
 
   fun commitBatch(id: String) =
@@ -252,7 +312,7 @@ internal class FundingReservations(
         check(
           batches(rows).flatMap(::legs).none {
             it.optString("operationId") != operationId &&
-              it.getString("address").equals(pair.second.getString("address"), true) &&
+              fundingSourceId(it) == fundingSourceId(pair.second) &&
               it.optBoolean("signed") &&
               !it.optBoolean("completed")
           }
@@ -286,10 +346,13 @@ internal class FundingReservations(
     }
 
   /** Caller must have independent canonical transaction/operation confirmation. */
-  fun complete(operationId: String) =
+  fun complete(operationId: String, beforeRelease: () -> Unit = {}) =
     synchronized(globalLock) {
       val rows = read()
-      operation(rows, operationId)?.second?.put("completed", true)
+      val leg = operation(rows, operationId)?.second ?: return@synchronized
+      if (leg.optBoolean("completed")) return@synchronized
+      beforeRelease()
+      leg.put("completed", true)
       write(rows)
     }
 
@@ -311,6 +374,23 @@ internal class FundingReservations(
         "This Earn batch has started; resume its remaining sources"
       }
       legs(b).filterNot { it.optBoolean("signed") }.forEach { it.put("cancelled", true) }
+      write(rows)
+    }
+
+  /** A version-2 parent can stop future sources without releasing any signed ownership. */
+  fun cancelParentUnsigned(batchId: String, expectedOperationIds: Set<String>) =
+    synchronized(globalLock) {
+      val rows = read()
+      val batch = batches(rows).single { it.getString("id") == batchId }
+      val sources = legs(batch)
+      check(batch.getString("feature") == "earn" && batch.getBoolean("registrationComplete"))
+      check(
+        expectedOperationIds.isNotEmpty() &&
+          sources.size == expectedOperationIds.size &&
+          sources.map { it.getString("operationId") }.toSet() == expectedOperationIds
+      )
+      sources.forEach { fundingSourceId(it) }
+      sources.filterNot { it.optBoolean("signed") }.forEach { it.put("cancelled", true) }
       write(rows)
     }
 

@@ -92,23 +92,51 @@ internal class EarnPrivatePayoutEngine(
       depositAtoms(prepared.getString("minimumDestinationAtoms"), true) >=
         depositAtoms(bound.getString("minimumOutputAtoms"), true)
     )
+    return savePrepared(
+      sourceId,
+      source,
+      leg,
+      review.optInt("profileChainId", 4663),
+      review.getInt("cycleIndex"),
+      distribution,
+      offset,
+      bound.getString("inputAtoms"),
+      bound.getString("recipient"),
+      prepared,
+    )
+  }
+
+  private fun savePrepared(
+    sourceId: String,
+    source: JSONObject,
+    leg: String,
+    profile: Int,
+    cycle: Int,
+    distribution: JSONObject?,
+    offset: String,
+    amount: String,
+    recipient: String,
+    prepared: JSONObject,
+  ): JSONObject {
+    check(profile in setOf(1, 4663))
     val p =
       JSONObject()
         .put("kind", "privateEarnPayout")
         .put("operationId", sourceId)
         .put("revision", 1)
-        .put("profileChainId", 4663)
-        .put("cycleIndex", review.getInt("cycleIndex"))
-        .put("distribution", distribution)
+        .put("profileChainId", profile)
+        .put("cycleIndex", cycle)
         .put("leg", leg)
         .put("source", source)
         .put("splitOffsetAtoms", offset)
         .put("creditedAtoms", source.getString("amountAtoms"))
-        .put("amountAtoms", bound.getString("inputAtoms"))
+        .put("amountAtoms", amount)
         .put("expectedSigner", source.getString("address"))
-        .put("expectedRecipient", bound.getString("recipient"))
+        .put("expectedRecipient", recipient)
         .put("minimumDestinationAtoms", prepared.getString("minimumDestinationAtoms"))
         .put("deadlineMs", prepared.getLong("expiresAtMs"))
+    if (profile == 1) p.put("version", 2)
+    if (distribution != null) p.put("distribution", distribution)
     val payload = prepared.getJSONObject("intent").getString("payload")
     return journal.create(
       p,
@@ -117,6 +145,64 @@ internal class EarnPrivatePayoutEngine(
       utf8EarnHash(payload),
       "0x" +
         ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) },
+    )
+  }
+
+  /** The caller obtains this parent only from the encrypted native deposit journal. */
+  suspend fun createFromFundingParent(parent: JSONObject, leg: String): JSONObject {
+    authority()
+    check(
+      parent.getInt("profileChainId") == 1 &&
+        parent.getString("walletId") == journal.walletId &&
+        parent.getString("generation") == journal.generation
+    )
+    val handoff = parent.getJSONObject("privateHandoff")
+    val source = handoff.getJSONObject("source")
+    val sourceId = handoff.getString("operationId")
+    check(sourceId == parent.getString("journeyId"))
+    check(
+      source.getString("kind") == "swap" &&
+        source.getInt("profileChainId") == 0 &&
+        source.getInt("cycleIndex") == 0
+    )
+    val distribution = parent.optJSONObject("distribution")
+    val slot =
+      if (distribution != null) distributionSlot(leg, distribution)
+      else
+        when (leg) {
+          "hold" -> 0
+          "invest" -> 1
+          else -> error("Invalid payout role")
+        }
+    val recipient =
+      store.load().use { record ->
+        identity(record)
+        check(record.earnChain == 1 && record.earnCycleIndex == parent.getInt("cycleIndex"))
+        check(nativeJsonEqual(savedCycleDistribution(record), distribution))
+        privateDepositAddress(record, source)
+        cycleAddresses(record)[slot].also { address ->
+          check(
+            parent
+              .getJSONArray("destinations")
+              .getJSONObject(slot)
+              .getString("address")
+              .equals(address, true)
+          )
+        }
+      }
+    val amount = nativePayoutAmount(source.getString("amountAtoms"), "0", leg, distribution)
+    val prepared = gateway.prepare(sourceId + "_" + slot, source, recipient, amount)
+    return savePrepared(
+      sourceId,
+      source,
+      leg,
+      1,
+      parent.getInt("cycleIndex"),
+      distribution,
+      "0",
+      amount,
+      recipient,
+      prepared,
     )
   }
 
@@ -180,11 +266,77 @@ internal class EarnPrivatePayoutEngine(
     id: String,
     grant: EarnDepositApproval,
     preparedAuthority: (JSONObject, JSONObject) -> Unit,
+  ) =
+    executeAuthorized(
+      id,
+      { refreshUnsigned(it, grant.review) },
+      { record, _ -> grant.assertRead(record, System.currentTimeMillis()) },
+      { row, witness -> preparedAuthority(row, witness) },
+      { signed -> grant.recordDurableSignature("payouts", id, depositDigest(signed)) },
+    )
+
+  suspend fun executeStage(
+    id: String,
+    checkParent: (WalletRecord, JSONObject) -> Unit,
+    approveStage: suspend (JSONObject, JSONObject) -> Unit,
+  ) = executeAuthorized(id, ::refreshStageUnsigned, checkParent, approveStage, {})
+
+  private suspend fun refreshStageUnsigned(initial: JSONObject): JSONObject {
+    var row = initial
+    val p = row.getJSONObject("proposal")
+    check(
+      p.getString("kind") == "privateEarnPayout" &&
+        p.getInt("version") == 2 &&
+        p.getInt("profileChainId") == 1
+    )
+    if (row.optBoolean("signingAuthorizationPending"))
+      row =
+        journal.update(row.getString("operationId"), row.getString("leg"), row.getInt("revision")) {
+          it.remove("signingAuthorizationPending")
+        }
+    if (
+      p.getLong("deadlineMs") > System.currentTimeMillis() + 15000 &&
+        row.getString("status") == "planned"
+    )
+      return row
+    authority()
+    val distribution = p.optJSONObject("distribution")
+    val slot =
+      if (distribution != null) distributionSlot(p.getString("leg"), distribution)
+      else if (p.getString("leg") == "hold") 0 else 1
+    val prepared =
+      gateway.prepare(
+        p.getString("operationId") + "_" + slot,
+        p.getJSONObject("source"),
+        p.getString("expectedRecipient"),
+        p.getString("amountAtoms"),
+      )
+    val proposal =
+      JSONObject(p.toString())
+        .put("deadlineMs", prepared.getLong("expiresAtMs"))
+        .put("minimumDestinationAtoms", prepared.getString("minimumDestinationAtoms"))
+    val payload = prepared.getJSONObject("intent").getString("payload")
+    return journal.refreshUnsigned(
+      row.getString("operationId"),
+      row.getInt("revision"),
+      proposal,
+      prepared.toString(),
+      JSONObject(payload).getString("nonce"),
+      utf8EarnHash(payload),
+    )
+  }
+
+  private suspend fun executeAuthorized(
+    id: String,
+    refresh: suspend (JSONObject) -> JSONObject,
+    checkRecord: (WalletRecord, JSONObject) -> Unit,
+    preparedAuthority: suspend (JSONObject, JSONObject) -> Unit,
+    recordSignature: (String) -> Unit,
   ) {
     authority()
     var row = journal.get(id)
     if (!row.has("signedData")) {
-      row = refreshUnsigned(row, grant.review)
+      row = refresh(row)
       val p = row.getJSONObject("proposal")
       val balance = JSONObject(read(p.getJSONObject("source")))
       // All remaining unsigned siblings share this account; reserve their entire outstanding input.
@@ -204,7 +356,7 @@ internal class EarnPrivatePayoutEngine(
       val record = store.load()
       record.use { r ->
         identity(r)
-        grant.assertRead(r, System.currentTimeMillis())
+        checkRecord(r, row)
         val signer = signerFactory(p.toString(), r.entropy)
         try {
           val text = signer.prepare(row.getString("preparedText"), balance.toString(), proof)
@@ -241,7 +393,7 @@ internal class EarnPrivatePayoutEngine(
                 .put("status", "submissionUnknown")
                 .remove("signingAuthorizationPending")
             }
-          grant.recordDurableSignature("payouts", id, depositDigest(signed))
+          recordSignature(signed)
           invalidate(r, setOf(p.getString("expectedSigner")))
         } finally {
           signer.close()
@@ -280,12 +432,24 @@ internal class EarnPrivatePayoutEngine(
   suspend fun reconcile(id: String): JSONObject {
     var row = journal.get(id)
     if (!row.has("signedData") || row.getString("status") == "paid") return row
-    if (row.getJSONObject("proposal").has("distribution")) return row
+    if (
+      row.getJSONObject("proposal").has("distribution") &&
+        row.getJSONObject("proposal").getInt("profileChainId") != 1
+    )
+      return row
     authority()
     val used =
       journal
         .all()
-        .filter { it.getString("status") == "paid" && it.has("destinationTransactionHash") }
+        .filter {
+          it.getString("status") == "paid" &&
+            it.has("destinationTransactionHash") &&
+            (row.getJSONObject("proposal").getInt("profileChainId") != 1 ||
+              it
+                .getJSONObject("proposal")
+                .getString("expectedRecipient")
+                .equals(row.getJSONObject("proposal").getString("expectedRecipient"), true))
+        }
         .map { it.getString("destinationTransactionHash") }
         .toSet()
     val result = gateway.status(row, row.getJSONObject("proposal").getJSONObject("source"), used)
@@ -325,7 +489,12 @@ internal class EarnPrivatePayoutEngine(
 /** Legacy saved zero-fee quotes remain readable; new service fees require a qualified proof. */
 internal fun privateFundingFeeBps(prepared: JSONObject): Int {
   val total = prepared.optInt("providerFeeBps", 0)
-  if (prepared.has("feePolicy")) nativeEarnFeePolicy(prepared, "providerFeeBps", "payoutRobinhood")
+  if (prepared.has("feePolicy"))
+    nativeEarnFeePolicy(
+      prepared,
+      "providerFeeBps",
+      if (prepared.optInt("destinationChainId", 4663) == 1) "payoutEthereum" else "payoutRobinhood",
+    )
   else check(total == 0)
   return total
 }

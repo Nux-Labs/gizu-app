@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Share, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import { Check, Copy, CreditCard, Share2 } from "lucide-react-native";
@@ -6,7 +6,8 @@ import { Typography } from "@/components/atoms/Typography";
 import { Button } from "@/components/atoms/Button";
 import { Surface } from "@/components/molecules/Surface";
 import { showToast } from "@/services/toast";
-import { defaultDepositNetwork } from "@/domain/wallet/depositNetworks";
+import { defaultDepositNetwork, type DepositNetwork } from "@/domain/wallet/depositNetworks";
+import { fundingCapabilityService } from "@/services/wallet/fundingCapabilities";
 import colors from "@/theme/colors.json";
 import { useAccount } from "@/features/account/AccountProvider";
 import usdcLogo from "../../../assets/logos/tokens/usdc.png";
@@ -57,6 +58,25 @@ export function AddFunds({ address }: { address: string }) {
   const { clipboard } = useAccount();
   const [copied, setCopied] = useState(false);
   const [network, setNetwork] = useState(defaultDepositNetwork);
+  const [networks, setNetworks] = useState<readonly DepositNetwork[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    void fundingCapabilityService
+      .networks()
+      .then((options) => {
+        if (!active) return;
+        setNetworks(options);
+        setNetwork(
+          (current) => options.find((option) => option.id === current.id) ?? options[0] ?? current,
+        );
+      })
+      .catch(() => {
+        if (active) setNetworks([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function copy() {
     try {
@@ -68,11 +88,42 @@ export function AddFunds({ address }: { address: string }) {
     }
   }
 
+  if (networks === null)
+    return (
+      <Surface>
+        <Typography variant="caption">Checking funding networks…</Typography>
+      </Surface>
+    );
+  if (networks.length === 0)
+    return (
+      <Surface>
+        <Typography variant="caption">
+          Funding is temporarily unavailable. Try again later.
+        </Typography>
+      </Surface>
+    );
   return (
     <View className="gap-5">
       <Surface>
         <View className="items-center gap-5 p-6">
-          <NetworkPicker network={network} onChange={setNetwork} />
+          <NetworkPicker
+            network={network}
+            onChange={(next) => {
+              setNetwork(next);
+              setCopied(false);
+            }}
+            options={networks}
+          />
+          <View className="w-full gap-1">
+            <Typography variant="caption">Send native USDC on {network.name} only.</Typography>
+            <Typography
+              variant="micro"
+              selectable
+              accessibilityLabel={`USDC token contract: ${network.token}`}
+            >
+              {network.token}
+            </Typography>
+          </View>
           {/* A white quiet zone keeps the code scannable by exchange and desktop cameras. */}
           <View
             className="rounded-2xl bg-white p-3"

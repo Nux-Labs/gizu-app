@@ -124,14 +124,30 @@ pub fn decode_calls(call_data: &[u8]) -> Result<Vec<(Address, U256, Vec<u8>)>, S
         .collect()
 }
 
-fn paymaster_terms(op: &UserOperation) -> Result<gas::DirectTokenPaymasterTerms, SignerError> {
+fn paymaster_terms(
+    op: &UserOperation,
+    source_chain_id: u64,
+) -> Result<gas::DirectTokenPaymasterTerms, SignerError> {
     // The shared decoder preserves the historical accepted layout for fee/hash compatibility.
-    gas::decode_erc20_paymaster_terms(&evm::hex_bytes(&op.paymaster_data)?, MONAD_USDC)
+    gas::decode_erc20_paymaster_terms(
+        &evm::hex_bytes(&op.paymaster_data)?,
+        funding_source(source_chain_id)
+            .ok_or(SignerError::InvalidInput)?
+            .usdc,
+    )
 }
 
 /// Protocol integer charge cap, preserved for historical signed-operation compatibility.
 pub fn fee_cap(op: &UserOperation, now_secs: u64) -> Result<U256, SignerError> {
-    let terms = paymaster_terms(op)?;
+    fee_cap_on(MONAD_CHAIN_ID, op, now_secs)
+}
+
+pub fn fee_cap_on(
+    source_chain_id: u64,
+    op: &UserOperation,
+    now_secs: u64,
+) -> Result<U256, SignerError> {
+    let terms = paymaster_terms(op, source_chain_id)?;
     if terms.valid_until != 0 && terms.valid_until <= now_secs {
         return Err(SignerError::Expired);
     }
@@ -161,7 +177,15 @@ pub fn readiness_code(
     op: &UserOperation,
     now_secs: u64,
 ) -> Result<Option<&'static str>, SignerError> {
-    let terms = paymaster_terms(op)?;
+    readiness_code_on(MONAD_CHAIN_ID, op, now_secs)
+}
+
+pub fn readiness_code_on(
+    source_chain_id: u64,
+    op: &UserOperation,
+    now_secs: u64,
+) -> Result<Option<&'static str>, SignerError> {
+    let terms = paymaster_terms(op, source_chain_id)?;
     if terms.valid_after > now_secs {
         return Ok(Some("PAYMASTER_NOT_YET_VALID"));
     }
@@ -212,6 +236,15 @@ pub fn user_operation_hash(
     op: &UserOperation,
     authorization: Option<&UnsignedAuthorization>,
 ) -> Result<B256, SignerError> {
+    user_operation_hash_on(MONAD_CHAIN_ID, op, authorization)
+}
+
+pub fn user_operation_hash_on(
+    source_chain_id: u64,
+    op: &UserOperation,
+    authorization: Option<&UnsignedAuthorization>,
+) -> Result<B256, SignerError> {
+    funding_source(source_chain_id).ok_or(SignerError::InvalidInput)?;
     let init_code = match (&op.factory, authorization) {
         (None, _) => vec![],
         (Some(f), Some(a)) if f == "0x7702" => {
@@ -228,7 +261,7 @@ pub fn user_operation_hash(
     paymaster_and_data
         .extend_from_slice(&u128_field(&op.paymaster_post_op_gas_limit)?.to_be_bytes::<32>()[16..]);
     paymaster_and_data.extend(evm::hex_bytes(&op.paymaster_data)?);
-    let domain = evm::domain_separator("ERC4337", "1", MONAD_CHAIN_ID, ENTRY_POINT_V08);
+    let domain = evm::domain_separator("ERC4337", "1", source_chain_id, ENTRY_POINT_V08);
     Ok(evm::typed_hash(
         domain,
         "PackedUserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData)",
@@ -263,6 +296,32 @@ pub fn check_funding(
     chain: &FundingChain,
     now_secs: u64,
 ) -> Result<CheckedFunding, SignerError> {
+    check_funding_on(
+        MONAD_CHAIN_ID,
+        op,
+        authorization,
+        source,
+        deposit,
+        amount,
+        budget,
+        chain,
+        now_secs,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn check_funding_on(
+    source_chain_id: u64,
+    op: &UserOperation,
+    authorization: Option<&UnsignedAuthorization>,
+    source: Address,
+    deposit: Address,
+    amount: U256,
+    budget: U256,
+    chain: &FundingChain,
+    now_secs: u64,
+) -> Result<CheckedFunding, SignerError> {
+    let config = funding_source(source_chain_id).ok_or(SignerError::InvalidInput)?;
     if evm::addr(&op.sender)? != source || evm::addr(&op.paymaster)? != PIMLICO_ERC20_PAYMASTER {
         return Err(SignerError::InvalidInput);
     }
@@ -276,7 +335,7 @@ pub fn check_funding(
     let factory_7702 = op.factory.as_deref() == Some("0x7702")
         && op.factory_data.as_deref().is_none_or(|d| d == "0x");
     let auth_7702 = authorization.is_some_and(|a| {
-        a.chain_id == MONAD_CHAIN_ID
+        a.chain_id == source_chain_id
             && a.address == SIMPLE_7702
             && a.nonce == chain.transaction_count
     });
@@ -288,7 +347,7 @@ pub fn check_funding(
     if u128_field(&op.max_priority_fee_per_gas)? > u128_field(&op.max_fee_per_gas)? {
         return Err(SignerError::InvalidInput);
     }
-    let fee = fee_cap(op, now_secs)?;
+    let fee = fee_cap_on(source_chain_id, op, now_secs)?;
     if amount.checked_add(fee).is_none_or(|total| total > budget) {
         return Err(SignerError::InvalidInput);
     }
@@ -296,7 +355,7 @@ pub fn check_funding(
     let (last, _) = calls.split_last().ok_or(SignerError::InvalidInput)?;
     if calls
         .iter()
-        .any(|(to, value, _)| *to != MONAD_USDC || !value.is_zero())
+        .any(|(to, value, _)| *to != config.usdc || !value.is_zero())
     {
         return Err(SignerError::InvalidInput);
     }
@@ -310,7 +369,7 @@ pub fn check_funding(
     }
     Ok(CheckedFunding {
         fee_cap: fee,
-        hash: user_operation_hash(op, authorization)?,
+        hash: user_operation_hash_on(source_chain_id, op, authorization)?,
     })
 }
 

@@ -272,6 +272,7 @@ internal fun assertNoPendingPrivateWork(operations: List<JSONObject>, deposits: 
  */
 internal fun depositBlocksPrivateWork(row: JSONObject): Boolean {
   val phase = row.optString("phase")
+  if (row.optString("kind") == "fundingOnly" && phase == "paid") return false
   if (phase in setOf("draft", "invested", "cancelled")) return false
   val children = row.optJSONObject("children")
   if (children != null && children.length() > 0) return true

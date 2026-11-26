@@ -9,6 +9,62 @@ import org.junit.Test
 
 class EarnSourceReplannerTest {
   @Test
+  fun newFundingNetworksKeepTheirAccountOneSourceDuringRefresh() = runBlocking {
+    for (chain in listOf(8453, 42161)) {
+      val network = fundingNetwork(chain)
+      val origin =
+        if (chain == 8453) "nep141:base-${network.token}.omft.near"
+        else "nep141:arb-${network.token}.omft.near"
+      val row =
+        saved().also {
+          it
+            .getJSONObject("proposal")
+            .put("chainId", chain)
+            .put("sourceAccountIndex", 1)
+            .put("token", network.token)
+        }
+      val planner =
+        EarnSourceReplanner(
+          null,
+          feeReader = { _, request ->
+            JSONObject(
+                fees(request)
+                  .toString()
+                  .replace(MONAD_EARN_USDC, network.token)
+                  .replace(MONAD_EARN_USDC.drop(2).lowercase(), network.token.drop(2))
+              )
+              .put("chainId", chain)
+              .put("version", "gizu-source-funding-v2")
+          },
+          quoteCreator = { _, _, revision, _, _, amount, _ ->
+            quote(revision, amount) +
+              mapOf("chainId" to chain, "token" to network.token, "originAsset" to origin)
+          },
+          stateReader = {
+            EarnSourceReplanState(
+              owner,
+              "0x4",
+              "1000000",
+              4uL,
+              "0xef0100" + EARN_IMPLEMENTATION.drop(2),
+            )
+          },
+          sourceIdentity = { _, index ->
+            assertEquals(1, index)
+            owner
+          },
+          confidentialIdentity = { confidential },
+          now = { now },
+        )
+      val (proposal, unsigned) = record().use { planner.replan(it, row) }
+      assertEquals(chain, proposal.getInt("chainId"))
+      assertEquals(network.token, proposal.getString("token"))
+      assertEquals("989400", proposal.getString("amountAtoms"))
+      assertEquals(owner, unsigned.getString("sender"))
+    }
+  }
+
+  @Test
   fun depositApprovalRefreshKeepsTheExactReviewedAmountAndFeeCeiling() = runBlocking {
     val old =
       saved()
@@ -26,7 +82,7 @@ class EarnSourceReplannerTest {
     assertEquals("0x4", next.first.getString("nonce"))
     try {
       record().use {
-        replanner(feeReader = { request -> fees(request, multiplier = 2) }).replan(it, old)
+        replanner(feeReader = { _, request -> fees(request, multiplier = 2) }).replan(it, old)
       }
       fail("A refresh cannot increase an approved fee cap")
     } catch (_: IllegalStateException) {}
@@ -46,7 +102,7 @@ class EarnSourceReplannerTest {
     try {
       record().use {
         replanner(
-            quoteReader = { _, _, revision, _, _, amount ->
+            quoteReader = { _, _, revision, _, _, amount, _ ->
               quote(revision, amount) + ("minimumCreditAtoms" to "988999")
             }
           )
@@ -193,9 +249,9 @@ class EarnSourceReplannerTest {
 
   private fun replanner(
     quotes: EarnQuoteJournal? = null,
-    feeReader: suspend (JSONObject) -> JSONObject = { fees(it) },
-    quoteReader: suspend (Int, String, Int, String, String, String) -> Map<String, Any> =
-      { _, _, revision, _, _, amount ->
+    feeReader: suspend (Int, JSONObject) -> JSONObject = { _, request -> fees(request) },
+    quoteReader: suspend (Int, String, Int, String, String, String, Int) -> Map<String, Any> =
+      { _, _, revision, _, _, amount, _ ->
         quote(revision, amount)
       },
   ) =
@@ -225,7 +281,7 @@ class EarnSourceReplannerTest {
     for (signatureBytes in listOf(64, 65)) {
       val plan =
         record().use {
-          replanner(feeReader = { request -> fees(request, signatureBytes = signatureBytes) })
+          replanner(feeReader = { _, request -> fees(request, signatureBytes = signatureBytes) })
             .replan(it, saved())
         }
       assertEquals((118 + signatureBytes) * 2 + 2, plan.second.getString("paymasterData").length)
@@ -233,7 +289,7 @@ class EarnSourceReplannerTest {
     for (signatureBytes in listOf(63, 66)) {
       try {
         record().use {
-          replanner(feeReader = { request -> fees(request, signatureBytes = signatureBytes) })
+          replanner(feeReader = { _, request -> fees(request, signatureBytes = signatureBytes) })
             .replan(it, saved())
         }
         fail("Unsupported paymaster signature size")
@@ -270,8 +326,8 @@ class EarnSourceReplannerTest {
     val revisions = mutableListOf<Int>()
     val r =
       replanner(
-        feeReader = { fees(it, if (++calls == 1) 1 else 2) },
-        quoteReader = { _, id, revision, from, c, amount ->
+        feeReader = { _, request -> fees(request, if (++calls == 1) 1 else 2) },
+        quoteReader = { _, id, revision, from, c, amount, _ ->
           assertEquals("source1", id)
           assertEquals(owner, from)
           assertEquals(confidential, c)
@@ -290,9 +346,9 @@ class EarnSourceReplannerTest {
     var network = 0
     val r =
       replanner(
-        feeReader = {
+        feeReader = { _, request ->
           network++
-          fees(it)
+          fees(request)
         }
       )
     for (op in
@@ -306,7 +362,7 @@ class EarnSourceReplannerTest {
       } catch (_: IllegalStateException) {}
     }
     assertEquals(0, network)
-    val forged = replanner(feeReader = { fees(it).put("feeCap", "1") })
+    val forged = replanner(feeReader = { _, request -> fees(request).put("feeCap", "1") })
     try {
       record().use { forged.replan(it, saved()) }
       fail("Paymaster cap must be independently recomputed")
@@ -319,8 +375,8 @@ class EarnSourceReplannerTest {
     var quotesCalled = 0
     val r =
       replanner(
-        feeReader = { fees(it, ++feesCalled) },
-        quoteReader = { _, _, revision, _, _, amount ->
+        feeReader = { _, request -> fees(request, ++feesCalled) },
+        quoteReader = { _, _, revision, _, _, amount, _ ->
           quotesCalled++
           quote(revision, amount)
         },
@@ -334,7 +390,9 @@ class EarnSourceReplannerTest {
     assertEquals(7, original.getJSONObject("proposal").getInt("revision"))
     val changed =
       replanner(
-        feeReader = { fees(it).also { row -> row.getJSONObject("operation").put("nonce", "0x5") } }
+        feeReader = { _, request ->
+          fees(request).also { row -> row.getJSONObject("operation").put("nonce", "0x5") }
+        }
       )
     try {
       record().use { changed.replan(it, saved()) }

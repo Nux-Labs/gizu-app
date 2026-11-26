@@ -19,7 +19,9 @@ internal class EarnSponsoredChainRpc(chain: Int) : TransferRpc {
   private val transport =
     NativeRpcTransport(
       when (chain) {
-        143 -> "https://rpc.monad.xyz"
+        143,
+        8453,
+        42161 -> fundingNetwork(chain).rpc
         4663 -> "https://rpc.mainnet.chain.robinhood.com"
         else -> error("Unsupported chain")
       }
@@ -31,7 +33,7 @@ internal class EarnSponsoredChainRpc(chain: Int) : TransferRpc {
 
 internal class EarnSponsoredBundlerRpc(chain: Int) : TransferRpc {
   init {
-    check(chain in setOf(143, 4663))
+    check(chain in setOf(143, 8453, 42161, 4663))
   }
 
   private val transport = NativeRpcTransport("$EARN_NATIVE_BACKEND/bundler/$chain")
@@ -139,7 +141,10 @@ internal class NativeEarnQuoteGateway(
     amount: String,
     returning: Boolean,
     returnAsset: String = "usdc",
+    sourceChainId: Int = 143,
   ): Map<String, Any> {
+    val funding = fundingNetwork(sourceChainId)
+    check(!returning || sourceChainId == 143)
     check(
       chain in setOf(1, 4663) &&
         returnAsset in setOf("usdc", "native") &&
@@ -158,12 +163,13 @@ internal class NativeEarnQuoteGateway(
         .put("amountAtoms", amount)
         .put("settlementMode", "balance-delta-v1")
     if (returning && chain == 1) body.put("returnAsset", returnAsset)
+    if (!returning && sourceChainId != 143) body.put("sourceChainId", sourceChainId)
     val saved = quotes?.get(operationId, revision)
     val response =
       if (saved != null) {
-        val expectedChain = if (returning) chain else 143
+        val expectedChain = if (returning) chain else sourceChainId
         val expectedToken =
-          if (!returning) MONAD_EARN_USDC
+          if (!returning) funding.token
           else if (chain == 4663) HOOD_EARN_USDG
           else if (returnAsset == "native") ETH_NATIVE_TOKEN else ETH_EARN_USDC
         check(
@@ -191,9 +197,9 @@ internal class NativeEarnQuoteGateway(
         else if (chain == 4663) "returnRobinhood"
         else if (returnAsset == "native") "returnEth" else "returnUsdc",
       )
-    val expectedChain = if (returning) chain else 143
+    val expectedChain = if (returning) chain else sourceChainId
     val token =
-      if (!returning) MONAD_EARN_USDC
+      if (!returning) funding.token
       else if (chain == 4663) HOOD_EARN_USDG
       else if (returnAsset == "native") ETH_NATIVE_TOKEN else ETH_EARN_USDC
     check(
@@ -214,7 +220,7 @@ internal class NativeEarnQuoteGateway(
     check(minimum.toBigInteger().signum() > 0)
     check(
       response.getString("originAsset") ==
-        if (!returning) EARN_MONAD_ASSET
+        if (!returning) funding.originAsset
         else if (chain == 4663) EARN_HOOD_ASSET
         else if (returnAsset == "native") ETH_NATIVE_ORIGIN_ASSET else ETH_USDC_ORIGIN_ASSET
     )
@@ -292,7 +298,7 @@ internal class NativeEarnQuoteGateway(
     check(
       origin ==
         when (kind) {
-          "sourceFunding" -> EARN_MONAD_ASSET
+          "sourceFunding" -> fundingNetwork(proposal.getInt("chainId")).originAsset
           "hoodTokenReturn" -> EARN_HOOD_ASSET
           "returnEth" -> ETH_NATIVE_ORIGIN_ASSET
           else -> ETH_USDC_ORIGIN_ASSET
@@ -330,9 +336,13 @@ internal class EarnSponsoredStateLoader(
 ) {
   suspend fun load(p: JSONObject): NativeSponsoredState {
     val chain = p.getLong("chainId")
-    check(chain in setOf(143L, 4663L) && quantity(rpc.text("eth_chainId")) == chain.toBigInteger())
+    check(
+      chain in setOf(143L, 8453L, 42161L, 4663L) &&
+        quantity(rpc.text("eth_chainId")) == chain.toBigInteger()
+    )
     val owner = p.getString("expectedFrom")
-    val token = if (chain == 143L) MONAD_EARN_USDC else HOOD_EARN_USDG
+    val token = if (chain == 4663L) HOOD_EARN_USDG else fundingNetwork(chain.toInt()).token
+    check(p.getString("token").equals(token, true))
     val block = rpc.call("eth_getBlockByNumber", JSONArray().put("latest").put(false)) as JSONObject
     requireFreshEarnBlock(block)
     val blockHash = earnHash(block.getString("hash"))

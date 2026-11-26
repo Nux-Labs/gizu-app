@@ -16,6 +16,7 @@ export function useBalanceHistory(
   const fresh =
     snapshot &&
     snapshot.balanceComplete !== false &&
+    (!snapshot.fundingCash || snapshot.fundingCash.complete) &&
     !snapshot.stale &&
     (!valuation || valuation.complete);
   const at = fresh ? (valuation?.checkedAt ?? snapshot.checkedAt) : undefined;

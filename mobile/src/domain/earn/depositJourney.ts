@@ -1,5 +1,7 @@
 import { earnProfiles, type EarnDestination, type EarnOwner, type EarnProfileId } from "./types";
 import { distributionAmounts, parseEarnDistribution, type EarnDistribution } from "./distribution";
+import { fundingSourceIdentity, isFundingChain } from "@/domain/wallet/fundingNetworks";
+import type { FundingChainId } from "@/domain/wallet/storedSigner";
 
 export type DepositPhase =
   | "draft"
@@ -60,6 +62,11 @@ export type DepositWalletReview = {
   withdrawalReserveAtoms: string;
 };
 export type DepositReview = {
+  version?: 2;
+  combinedSourceId?: string;
+  fundedBudgetMinimumAtoms?: string;
+  approvedExistingPrivateAtoms?: string;
+  fundingSources?: (DepositSourceReview & { sourceChainId: FundingChainId; token: string })[];
   policyVersion: string;
   quotedAtMs: number;
   expiresAtMs: number;
@@ -341,6 +348,8 @@ function distributionReview(value: unknown, snapshot: DepositSnapshot): DepositR
     plan = snapshot.distribution!;
   const sources = r.sources,
     deposits = r.deposits;
+  if (r.version !== undefined && r.version !== 2) fail();
+  const combined = r.version === 2;
   if (
     !Array.isArray(sources) ||
     sources.length < 1 ||
@@ -450,13 +459,89 @@ function distributionReview(value: unknown, snapshot: DepositSnapshot): DepositR
     maximumFeeAtoms: sum("maximumFeeAtoms"),
     withdrawalReserveAtoms: sum("withdrawalReserveAtoms"),
   };
+  let funding: Partial<DepositReview> = {};
+  if (combined) {
+    if (
+      !Array.isArray(r.fundingSources) ||
+      !r.fundingSources.length ||
+      r.fundingSources.length > 256
+    )
+      fail();
+    const sourceIds = new Set<string>(),
+      operationIds = new Set<string>();
+    const fundingSources = r.fundingSources.map((raw) => {
+      const s = object(raw);
+      if (!isFundingChain(s.sourceChainId) || s.kind === "private") fail();
+      const token = address(s.token);
+      const source = {
+        operationId: text(s.operationId),
+        ...sourceIdentity(s),
+        sourceChainId: s.sourceChainId,
+        token,
+        budgetAtoms: atoms(s.budgetAtoms, true),
+        amountAtoms: atoms(s.amountAtoms, true),
+        maximumFeeAtoms: atoms(s.maximumFeeAtoms, true),
+        retainedAtoms: atoms(s.retainedAtoms),
+        minimumCreditAtoms: atoms(s.minimumCreditAtoms, true),
+      };
+      const identity = fundingSourceIdentity({
+        sourceChainId: source.sourceChainId,
+        token,
+        accountIndex: source.accountIndex,
+        owner: source.address,
+      });
+      if (
+        sourceIds.has(identity) ||
+        operationIds.has(source.operationId) ||
+        ids.has(source.operationId) ||
+        sourceCostsInvalid(source)
+      )
+        fail();
+      sourceIds.add(identity);
+      operationIds.add(source.operationId);
+      return source;
+    });
+    const combinedSourceId = text(r.combinedSourceId);
+    const selected = checkedSources.find((source) => source.operationId === combinedSourceId);
+    if (!selected || checkedSources.some((source) => source.kind !== "private")) fail();
+    const approved = BigInt(atoms(r.approvedExistingPrivateAtoms));
+    const minimumCombined = fundingSources.reduce(
+      (sum, source) => sum + BigInt(source.minimumCreditAtoms),
+      approved,
+    );
+    const maximumCombined = fundingSources.reduce(
+      (sum, source) => sum + BigInt(source.amountAtoms),
+      approved,
+    );
+    const selectedAmount = BigInt(selected.amountAtoms);
+    const gross =
+      fundingSources.reduce((sum, source) => sum + BigInt(source.budgetAtoms), approved) +
+      checkedSources
+        .filter((source) => source.operationId !== combinedSourceId)
+        .reduce((sum, source) => sum + BigInt(source.budgetAtoms), 0n);
+    if (
+      gross !== BigInt(snapshot.budgetAtoms) ||
+      selectedAmount < minimumCombined ||
+      selectedAmount > maximumCombined ||
+      budget !== BigInt(atoms(r.fundedBudgetMinimumAtoms, true))
+    )
+      fail();
+    funding = {
+      version: 2,
+      combinedSourceId,
+      approvedExistingPrivateAtoms: approved.toString(),
+      fundedBudgetMinimumAtoms: budget.toString(),
+      fundingSources,
+    };
+  }
   if (
-    budget !== BigInt(snapshot.budgetAtoms) ||
+    (!combined && budget !== BigInt(snapshot.budgetAtoms)) ||
     checkedDeposits.some((d) => d.shareDecimals !== deposit.shareDecimals) ||
     Object.entries(deposit).some(([key, v]) => aggregate[key] !== v)
   )
     fail();
   return {
+    ...funding,
     policyVersion: text(r.policyVersion),
     quotedAtMs,
     expiresAtMs,

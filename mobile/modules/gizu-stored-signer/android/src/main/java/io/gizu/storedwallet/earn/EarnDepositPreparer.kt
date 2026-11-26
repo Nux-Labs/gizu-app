@@ -13,7 +13,93 @@ internal data class DepositSourceDraft(
   val rows: List<JSONObject>,
   val reservation: JSONObject,
   val minimumCredits: Map<String, String>,
+  val publicFundingRows: List<JSONObject> = emptyList(),
+  val publicMinimumCredits: Map<String, String> = emptyMap(),
+  val approvedExistingPrivateAtoms: String = "0",
+  val combinedSourceId: String? = null,
 )
+
+/** Public sources credit the existing private owner; downstream sees its usual private row. */
+internal fun combineDepositSourceDraft(
+  record: WalletRecord,
+  draft: DepositSourceDraft,
+  combinedId: String,
+): DepositSourceDraft {
+  val public = draft.rows.filterNot(::isPrivateDepositSource)
+  if (public.isEmpty()) return draft
+  check(cycleConfidential(record).equals(sharedConfidential(record), true))
+  val private = draft.rows.filter(::isPrivateDepositSource)
+  val own =
+    private.filter {
+      it
+        .getJSONObject("proposal")
+        .getString("expectedFrom")
+        .equals(sharedConfidential(record), true)
+    }
+  check(own.size <= 1)
+  val approved =
+    own.fold(BigInteger.ZERO) { sum, row ->
+      sum + depositAtoms(row.getJSONObject("proposal").getString("amountAtoms"), true)
+    }
+  val publicCredits =
+    public.associate { row ->
+      row.getString("operationId") to
+        checkNotNull(draft.minimumCredits[row.getString("operationId")])
+    }
+  val minimum =
+    publicCredits.values.fold(approved) { sum, amount -> sum + depositAtoms(amount, true) }
+  val source =
+    JSONObject()
+      .put("kind", "swap")
+      .put("profileChainId", 0)
+      .put("cycleIndex", 0)
+      .put("address", sharedConfidential(record))
+      .put("amountAtoms", minimum.toString())
+  val row =
+    JSONObject()
+      .put("walletId", record.id)
+      .put("operationId", combinedId)
+      .put("revision", 1)
+      .put("status", "privateReserved")
+      .put(
+        "proposal",
+        JSONObject()
+          .put("kind", "privateEarnFunding")
+          .put("operationId", combinedId)
+          .put("revision", 1)
+          .put("profileChainId", record.earnChain)
+          .put("cycleIndex", record.earnCycleIndex)
+          .put("sourceAccountIndex", -1)
+          .put("expectedFrom", sharedConfidential(record))
+          .put("confidentialAccount", cycleConfidential(record))
+          .put("source", source)
+          .put("token", MONAD_EARN_USDC)
+          .put("amountAtoms", minimum.toString())
+          .put("budgetAtoms", minimum.toString())
+          .put("maximumTokenFeeAtoms", "0")
+          .put("deadline", public.minOf { it.getJSONObject("proposal").getLong("deadline") }),
+      )
+  val rows =
+    listOf(row) +
+      private
+        .filterNot { it in own }
+        .mapIndexed { index, original ->
+          JSONObject(original.toString()).also {
+            it.getJSONObject("proposal").put("sourceAccountIndex", -(index + 2))
+          }
+        }
+  return DepositSourceDraft(
+    rows,
+    draft.reservation,
+    rows.associate {
+      it.getString("operationId") to it.getJSONObject("proposal").getString("amountAtoms")
+    },
+    public,
+    publicCredits,
+    approved.toString(),
+    combinedId,
+  )
+}
 
 internal fun nativeDepositPreparer(
   context: Context,
@@ -26,6 +112,11 @@ internal fun nativeDepositPreparer(
     EarnDepositGateway(),
     { current, budget ->
       val own = journal.all().single { it.getInt("cycleIndex") == current.earnCycleIndex }
+      val combinedPrivateAddress =
+        sharedConfidential(current).takeIf {
+          savedCycleDistribution(current) != null && cycleConfidential(current).equals(it, true)
+        }
+      val privateObservations = mutableMapOf<String, String>()
       var private =
         if (savedCycleDistribution(current) != null) {
           assertNoPrivateDeposit(context, current, own.getString("journeyId"))
@@ -34,10 +125,14 @@ internal fun nativeDepositPreparer(
             budget,
             privateDepositCandidates(context, current),
             minimumRoutableSource(savedCycleDistribution(current)),
+            combinedPrivateAddress = combinedPrivateAddress,
           ) { source ->
-            readPrivateDepositBalance(context, current, source, privateReadAuthority)
-              .getValue("available")
-              .toString()
+            val owner = source.getString("address").lowercase()
+            privateObservations[owner]
+              ?: readPrivateDepositBalance(context, current, source, privateReadAuthority)
+                .getValue("available")
+                .toString()
+                .also { privateObservations[owner] = it }
           }
         } else PrivateDepositSelection(emptyList(), budget)
       fun sourceRows() =
@@ -80,7 +175,11 @@ internal fun nativeDepositPreparer(
       repeat(3) {
         if (planned == null) {
           try {
-            requireRoutablePublicRemainder(private, savedCycleDistribution(current))
+            requireRoutablePublicRemainder(
+              private,
+              savedCycleDistribution(current),
+              combinedPrivateAddress,
+            )
             planned =
               JSONObject(
                 NativeFundingPlanner(context, current)
@@ -109,8 +208,9 @@ internal fun nativeDepositPreparer(
           plan.getJSONArray("legs").objects().map { leg ->
             val id = "source_" + UUID.randomUUID().toString().replace("-", "")
             val index = leg.getInt("sourceIndex")
+            val sourceChainId = leg.optInt("sourceChainId", 143)
             val owner = publicAccountAddress(current, index)
-            ledger.bind(batchId, owner, id, leg.getString("budgetAtoms"))
+            ledger.bind(batchId, owner, id, leg.getString("budgetAtoms"), sourceChainId)
             val original =
               JSONObject()
                 .put("walletId", current.id)
@@ -123,7 +223,7 @@ internal fun nativeDepositPreparer(
                     .put("kind", "sourceFunding")
                     .put("operationId", id)
                     .put("revision", 1)
-                    .put("chainId", 143)
+                    .put("chainId", sourceChainId)
                     .put("profileChainId", 4663)
                     .put("cycleIndex", current.earnCycleIndex)
                     .put("sourceAccountIndex", index)
@@ -132,7 +232,7 @@ internal fun nativeDepositPreparer(
                     .put("expectedFrom", owner)
                     .put("refundOwner", owner)
                     .put("confidentialAccount", cycleConfidential(current))
-                    .put("token", MONAD_EARN_USDC)
+                    .put("token", fundingNetwork(sourceChainId).token)
                     .put("recipient", cycleConfidential(current))
                     .put("nonce", "0x0")
                     .put("budgetAtoms", leg.getString("budgetAtoms"))
@@ -152,7 +252,17 @@ internal fun nativeDepositPreparer(
           credits[it.getString("operationId")] =
             it.getJSONObject("proposal").getString("amountAtoms")
         }
-        DepositSourceDraft(privateRows + rows, ledger.batch(batchId), credits)
+        val draft = DepositSourceDraft(privateRows + rows, ledger.batch(batchId), credits)
+        if (
+          savedCycleDistribution(current) != null &&
+            cycleConfidential(current).equals(sharedConfidential(current), true)
+        )
+          combineDepositSourceDraft(
+            current,
+            draft,
+            "private_combined_" + own.getString("journeyId"),
+          )
+        else draft
       } catch (failure: Exception) {
         ledger.cancelBatchUnsigned(batchId)
         throw failure
@@ -518,7 +628,10 @@ internal class EarnDepositPreparer(
         val fees =
           sources.objects().fold(BigInteger.ZERO) { sum, source ->
             sum + depositAtoms(source.getString("maximumFeeAtoms"))
-          }
+          } +
+            draft.publicFundingRows.fold(BigInteger.ZERO) { sum, row ->
+              sum + depositAtoms(row.getJSONObject("proposal").getString("maximumTokenFeeAtoms"))
+            }
         it.put(
           "indicativeReview",
           JSONObject()
@@ -636,8 +749,380 @@ internal class EarnDepositPreparer(
         .put("reservation", draft.reservation)
         .put("deposits", JSONArray(deposits))
         .put("deposit", aggregateDepositBounds(deposits))
+    if (draft.combinedSourceId != null)
+      review
+        .put("version", 2)
+        .put("combinedSourceId", draft.combinedSourceId)
+        .put("approvedExistingPrivateAtoms", draft.approvedExistingPrivateAtoms)
+        .put("publicFundingRows", JSONArray(draft.publicFundingRows))
+        .put("publicMinimumCredits", JSONObject(draft.publicMinimumCredits))
+        .put(
+          "fundedBudgetMinimumAtoms",
+          sources
+            .objects()
+            .fold(BigInteger.ZERO) { sum, source ->
+              sum + depositAtoms(source.getString("budgetAtoms"), true)
+            }
+            .toString(),
+        )
     stage("review-validation")
     EarnDepositApproval.fromReview(record, review).invalidate()
     return journal.saveReview(id, saved.getInt("revision"), review)
   }
 }
+
+/** Public funding-only status contains no confidential descriptors or source proofs. */
+internal fun fundingOnlyParentPublic(row: JSONObject): Map<String, Any> {
+  check(row.getString("kind") == "fundingOnly" && row.getInt("version") == 2)
+  val phase = row.getString("phase")
+  check(
+    phase in
+      setOf("review", "funding", "pending", "ready", "payouts", "paid", "cancelled", "paused")
+  )
+  return mapOf(
+    "version" to 2,
+    "operationId" to row.getString("journeyId"),
+    "walletId" to row.getString("walletId"),
+    "revision" to row.getInt("revision"),
+    "cycleIndex" to row.getInt("cycleIndex"),
+    "profileChainId" to 1,
+    "budgetAtoms" to row.getString("budgetAtoms"),
+    "approvedExistingPrivateAtoms" to row.getString("approvedExistingPrivateAtoms"),
+    "creditedAtoms" to if (row.has("privateHandoff")) row.getString("creditedAtoms") else "0",
+    "phase" to phase,
+    "blocked" to (phase in setOf("pending", "paused")),
+    "canResume" to (phase !in setOf("paid", "cancelled")),
+  )
+}
+
+internal fun requireFundingOnlyParent(record: WalletRecord, row: JSONObject) {
+  requireSponsoredWallet(record, row.getString("walletId"))
+  check(
+    record.earnChain == 1 &&
+      row.getString("kind") == "fundingOnly" &&
+      row.getInt("version") == 2 &&
+      row.getInt("profileChainId") == 1
+  )
+  check(
+    record.journalId == row.getString("generation") &&
+      record.earnCycleIndex == row.getInt("cycleIndex")
+  )
+  check(nativeJsonEqual(row.optJSONObject("distribution"), savedCycleDistribution(record)))
+  check(
+    row.getJSONArray("destinations").objects().map { it.getString("address").lowercase() } ==
+      cycleAddresses(record).map(String::lowercase)
+  )
+}
+
+internal suspend fun prepareNativeFundingOnlyParent(
+  context: Context,
+  store: WalletStore,
+  record: WalletRecord,
+  budgetAtoms: String,
+  readAuthority: () -> Unit,
+): JSONObject {
+  requireSponsoredWallet(record, record.id)
+  check(record.earnChain == 1)
+  val budget = depositAtoms(budgetAtoms, true)
+  check(budget.bitLength() <= 64)
+  requireDistributionBudget(record, budgetAtoms)
+  val journal = earnDepositJournal(context, record)
+  journal
+    .all()
+    .singleOrNull {
+      it.optString("kind") == "fundingOnly" &&
+        it.getInt("cycleIndex") == record.earnCycleIndex &&
+        it.getInt("profileChainId") == 1
+    }
+    ?.let {
+      requireFundingOnlyParent(record, it)
+      check(it.getString("budgetAtoms") == budgetAtoms) { "Resume the original funding budget" }
+      return it
+    }
+  requireEthereumPrivateFundingAvailable()
+  assertCashoutCanStart(context, record)
+  val source =
+    JSONObject()
+      .put("kind", "swap")
+      .put("profileChainId", 0)
+      .put("cycleIndex", 0)
+      .put("address", sharedConfidential(record))
+      .put("amountAtoms", budgetAtoms)
+  val observed = readPrivateDepositBalance(context, record, source, readAuthority)
+  val available = depositAtoms(observed.getValue("available").toString())
+  var approved = available.min(budget)
+  var allocation: JSONObject? = null
+  if (approved < budget) {
+    repeat(3) {
+      if (allocation == null)
+        try {
+          allocation =
+            JSONObject(
+              NativeFundingPlanner(context, record)
+                .plan((budget - approved).toString(), "earn", budgetAtoms)
+            )
+        } catch (minimum: PublicFundingMinimum) {
+          val required = depositAtoms(minimum.minimumAtoms, true)
+          check(required <= budget) { "The original budget cannot cover source funding fees" }
+          approved = budget - required
+          check(approved <= available)
+        }
+    }
+    checkNotNull(allocation) { "Funding fees changed; review the original budget again" }
+  }
+  val rows = JSONArray()
+  val minimums = JSONObject()
+  val ledger = fundingReservations(context, record)
+  val batch = allocation
+  try {
+    if (batch != null) {
+      val quotes = earnQuoteJournal(context, record)
+      val replanner = EarnSourceReplanner(quotes, confidentialIdentity = ::sharedConfidential)
+      for (leg in batch.getJSONArray("legs").objects()) {
+        val id = "source_parent_" + UUID.randomUUID().toString().replace("-", "")
+        val chain = leg.getInt("sourceChainId")
+        val index = leg.getInt("sourceIndex")
+        val owner = publicAccountAddress(record, index)
+        ledger.bind(
+          batch.getString("fundingBatchId"),
+          owner,
+          id,
+          leg.getString("budgetAtoms"),
+          chain,
+        )
+        val original =
+          JSONObject()
+            .put("walletId", record.id)
+            .put("operationId", id)
+            .put("revision", 1)
+            .put("status", "planned")
+            .put(
+              "proposal",
+              JSONObject()
+                .put("kind", "sourceFunding")
+                .put("operationId", id)
+                .put("revision", 1)
+                .put("chainId", chain)
+                .put("profileChainId", 1)
+                .put("cycleIndex", record.earnCycleIndex)
+                .put("sourceAccountIndex", index)
+                .put("fundingBatchId", batch.getString("fundingBatchId"))
+                .put("fundingBatchSize", batch.getInt("fundingBatchSize"))
+                .put("expectedFrom", owner)
+                .put("refundOwner", owner)
+                .put("confidentialAccount", sharedConfidential(record))
+                .put("token", fundingNetwork(chain).token)
+                .put("recipient", sharedConfidential(record))
+                .put("nonce", "0x0")
+                .put("budgetAtoms", leg.getString("budgetAtoms"))
+                .put("amountAtoms", "1")
+                .put("maximumTokenFeeAtoms", "1")
+                .put("withdrawalReserveAtoms", "10000")
+                .put("slippageBps", 0)
+                .put("deadline", System.currentTimeMillis() / 1000 + 180),
+            )
+        val (p, unsigned) = replanner.replan(record, original)
+        val quote = checkNotNull(quotes.get(id, p.getInt("revision")))
+        minimums.put(id, quote.getString("minimumCreditAtoms"))
+        rows.put(original.put("proposal", p).put("unsignedUserOperation", unsigned))
+      }
+      ledger.commitBatch(batch.getString("fundingBatchId"))
+    }
+    val minimum =
+      minimums.keys().asSequence().fold(approved) { sum, id ->
+        sum + depositAtoms(minimums.getString(id), true)
+      }
+    check(minimum >= minimumRoutableSource(savedCycleDistribution(record))) {
+      "The funded amount is below the saved payout distribution minimum"
+    }
+    val reservation =
+      if (batch != null) ledger.batch(batch.getString("fundingBatchId"))
+      else JSONObject().put("id", "private_parent_${record.earnCycleIndex}")
+    return journal.createFundingOnlyParent(
+      record,
+      budgetAtoms,
+      approved.toString(),
+      rows,
+      minimums,
+      reservation,
+    )
+  } catch (failure: Exception) {
+    if (batch != null) ledger.cancelBatchUnsigned(batch.getString("fundingBatchId"))
+    throw failure
+  }
+}
+
+internal fun nativeFundingOnlySourceEngine(
+  context: Context,
+  store: WalletStore,
+  parentId: String,
+  sourceId: String,
+): EarnSponsoredEngine {
+  val identity =
+    store.load().use { record ->
+      val parent = earnDepositJournal(context, record).get(parentId)
+      requireFundingOnlyParent(record, parent)
+      val row =
+        parent.getJSONObject("review").getJSONArray("publicFundingRows").objects().single {
+          it.getString("operationId") == sourceId
+        }
+      row.getJSONObject("proposal").getInt("chainId") to record.id
+    }
+  val journal = store.load().use { earnSponsoredJournal(context, it) }
+  val ledger = store.load().use { fundingReservations(context, it) }
+  val quoteReader = NativeEarnQuoteGateway(quotes = journal.quotes)
+  return EarnSponsoredEngine(
+    store,
+    journal,
+    EarnSponsoredChainRpc(identity.first),
+    EarnSponsoredBundlerRpc(identity.first),
+    quoteReader = { proposal ->
+      val proof =
+        checkNotNull(quoteReader.binding(proposal)) { "A bound private-credit quote is required" }
+      check(!proof.recoveryEnvelope.isNullOrBlank() && proof.maximumCreditAtoms != null) {
+        "Authenticated baseline credit is required for a funding parent"
+      }
+      check(proof.originAsset == fundingNetwork(proposal.getInt("chainId")).originAsset)
+      check(
+        depositAtoms(checkNotNull(proof.maximumCreditAtoms), true) >=
+          depositAtoms(proof.minimumCreditAtoms, true)
+      )
+      proof
+    },
+    reservations = ledger,
+    sourceReplanner =
+      EarnSourceReplanner(journal.quotes, confidentialIdentity = ::sharedConfidential)::replan,
+    privateCreditRows = { address ->
+      store.load().use { earnPrivateCreditRowsForSigning(context, it, address) }
+    },
+    freshPrivateAccount = { record, kind, address ->
+      val parent = earnDepositJournal(context, record).get(parentId)
+      requireFundingOnlyParent(record, parent)
+      check(
+        !parent.optBoolean("cancelRequested") &&
+          kind == "sourceFunding" &&
+          address.equals(sharedConfidential(record), true)
+      )
+      check(
+        parent.getJSONObject("review").getJSONArray("publicFundingRows").objects().any {
+          it.getString("operationId") == sourceId
+        }
+      )
+    },
+  )
+}
+
+/** Saved credits are replayed from the parent; later private balance changes are irrelevant. */
+internal suspend fun reconcileFundingOnlySources(
+  journal: EarnDepositJournal,
+  parentId: String,
+  reconcile: suspend (JSONObject) -> JSONObject?,
+  validate: (JSONObject) -> Boolean,
+): JSONObject {
+  var parent = journal.get(parentId)
+  if (parent.has("privateHandoff")) return parent
+  val originals = parent.getJSONObject("review").getJSONArray("publicFundingRows").objects()
+  for (original in originals) {
+    val id = original.getString("operationId")
+    if (parent.getJSONObject("fundingCredits").has(id)) continue
+    val current = reconcile(original) ?: return parent
+    if (!validate(current)) return parent
+    parent = journal.recordFundingOnlyCredit(parentId, current)
+  }
+  return parent
+}
+
+internal suspend fun reconcileNativeFundingOnlyParent(
+  context: Context,
+  store: WalletStore,
+  parentId: String,
+  readAuthority: () -> Unit,
+): JSONObject {
+  val journal =
+    store.load().use { record ->
+      val result = earnDepositJournal(context, record)
+      requireFundingOnlyParent(record, result.get(parentId))
+      result
+    }
+  val sponsored = store.load().use { earnSponsoredJournal(context, it) }
+  return reconcileFundingOnlySources(
+    journal,
+    parentId,
+    { original ->
+      var row =
+        sponsored.all().singleOrNull {
+          it.getString("operationId") == original.getString("operationId")
+        } ?: return@reconcileFundingOnlySources null
+      val chain = row.getJSONObject("proposal").getInt("chainId")
+      reconcileEarnSponsoredOperations(
+        sponsored,
+        EarnSponsoredChainRpc(chain),
+        EarnSponsoredBundlerRpc(chain),
+        chainFilter = chain,
+        operationIds = setOf(row.getString("operationId")),
+      )
+      row = sponsored.get(row.getString("operationId"))
+      if (
+        row.getString("status") == "finalized" &&
+          row.optJSONObject("settlement")?.optString("status") != "credited"
+      ) {
+        val auth =
+          store.load().use { record ->
+            val source =
+              JSONObject()
+                .put("kind", "swap")
+                .put("profileChainId", 0)
+                .put("cycleIndex", 0)
+                .put("address", sharedConfidential(record))
+                .put("amountAtoms", "1")
+            privateDepositReadAuth(record, source, readAuthority)
+          }
+        val proof = readNativeSponsoredSettlement(auth, sponsoredSettlementExpected(row))
+        row =
+          sponsored.update(row.getString("operationId"), row.getInt("revision")) {
+            it.put("settlement", proof)
+          }
+      }
+      row
+    },
+    { row ->
+      if (
+        row.getString("status") != "finalized" ||
+          row.optJSONObject("settlement")?.optString("status") != "credited"
+      )
+        false
+      else {
+        store.load().use { record ->
+          val p = row.getJSONObject("proposal")
+          nativePayoutSource(
+            row,
+            row.getInt("revision"),
+            PayoutIdentities(
+              publicAccountAddress(record, p.optInt("sourceAccountIndex", 0)),
+              sharedConfidential(record),
+              cycleAddresses(record)[0],
+            ),
+            1,
+          )
+          fundingReservations(context, record).complete(row.getString("operationId"))
+        }
+        true
+      }
+    },
+  )
+}
+
+/**
+ * Selecting an old cycle still exposes its recovery row without poisoning another cycle's parser.
+ */
+internal fun fundingOnlyParentsForCycle(
+  record: WalletRecord,
+  rows: List<JSONObject>,
+): List<JSONObject> =
+  rows.filter {
+    it.optString("kind") == "fundingOnly" &&
+      it.getInt("profileChainId") == 1 &&
+      it.getInt("cycleIndex") == record.earnCycleIndex &&
+      it.getString("walletId") == record.id &&
+      it.getString("generation") == record.journalId
+  }

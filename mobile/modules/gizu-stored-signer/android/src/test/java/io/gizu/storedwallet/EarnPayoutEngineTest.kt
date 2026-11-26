@@ -323,6 +323,34 @@ class EarnPayoutEngineTest {
     }
   }
 
+  @Test
+  fun qualifiedNewNetworkCreditReusesTheExistingPrivateCreditValidator() {
+    for (chain in listOf(8453, 42161)) {
+      val row = f.source()
+      val p = row.getJSONObject("proposal")
+      val network = fundingNetwork(chain)
+      p.put("chainId", chain).put("sourceAccountIndex", 1).put("token", network.token)
+      row
+        .getJSONObject("stateBinding")
+        .put("privateBaseline", JSONObject().put("baselineEnvelope", "saved-baseline"))
+        .getJSONObject("routeProof")
+        .put("originAsset", network.originAsset)
+        .put("recoveryEnvelope", "saved-quote")
+        .put("maximumCreditAtoms", "1000100")
+      row
+        .getJSONObject("settlement")
+        .put("verification", "balance-delta-v1")
+        .put("settlementEnvelope", "saved-credit")
+      val credit = nativePayoutSource(row, 11, PayoutIdentities(f.owner, f.C, f.recipient), 1)
+      assertEquals(network.originAsset, credit.getString("originAsset"))
+      assertEquals("saved-credit", credit.getString("settlementEnvelope"))
+      p.put("token", MONAD_EARN_USDC)
+      assertThrows(IllegalStateException::class.java) {
+        nativePayoutSource(row, 11, PayoutIdentities(f.owner, f.C, f.recipient), 1)
+      }
+    }
+  }
+
   private fun delivered() =
     JSONObject()
       .put("operationId", "funding1")

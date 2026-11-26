@@ -15,6 +15,25 @@ const apiEnvSchema = z
     ONEINCH_API_KEY: z.string().min(1),
     AURORA_API_KEY: z.string().min(1),
     PIMLICO_API_KEY: z.string().min(1),
+    FUNDING_CHAIN_IDS: z
+      .string()
+      .default("143")
+      .transform((value, context) => {
+        const parts = value.split(",").map((part) => part.trim());
+        if (
+          parts.length === 0 ||
+          parts.some((part) => !["143", "8453", "42161"].includes(part)) ||
+          new Set(parts).size !== parts.length
+        ) {
+          context.addIssue({
+            code: "custom",
+            message:
+              "expected a unique comma-separated subset of 143,8453,42161",
+          });
+          return z.NEVER;
+        }
+        return parts.map((part) => Number(part) as 143 | 8453 | 42161);
+      }),
     ETHEREUM_RPC_URL: z
       .url()
       .refine((value) => value.startsWith("https://"))
@@ -35,12 +54,42 @@ const apiEnvSchema = z
       .string()
       .regex(/^[0-9a-f]{64}$/i)
       .optional(),
-    RECOVERY_UPLOAD_CALLS_PER_MINUTE:z.coerce.number().int().positive().max(100000).optional(),
-    RECOVERY_UPLOAD_BYTES_PER_MINUTE:z.coerce.number().int().positive().max(1024*1024*1024).optional(),
-    RECOVERY_UPLOAD_BYTES_PER_DAY:z.coerce.number().int().positive().max(1024*1024*1024*1024).optional(),
-    RECOVERY_UPLOAD_MAX_CLIENTS:z.coerce.number().int().positive().max(1000000).optional(),
-    RECOVERY_STORAGE_MAX_BYTES:z.coerce.number().int().positive().max(1024*1024*1024*1024).optional(),
-    RECOVERY_STORAGE_MAX_OBJECTS:z.coerce.number().int().positive().max(10000000).optional(),
+    RECOVERY_UPLOAD_CALLS_PER_MINUTE: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(100000)
+      .optional(),
+    RECOVERY_UPLOAD_BYTES_PER_MINUTE: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(1024 * 1024 * 1024)
+      .optional(),
+    RECOVERY_UPLOAD_BYTES_PER_DAY: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(1024 * 1024 * 1024 * 1024)
+      .optional(),
+    RECOVERY_UPLOAD_MAX_CLIENTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(1000000)
+      .optional(),
+    RECOVERY_STORAGE_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(1024 * 1024 * 1024 * 1024)
+      .optional(),
+    RECOVERY_STORAGE_MAX_OBJECTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(10000000)
+      .optional(),
     // Legacy client admission only; new native settlement uses balance snapshots.
     EARN_AURORA_HISTORY_QUALIFIED: z.enum(["true", "false"]).optional(),
     EARN_ANVIL_PATH: z.string().min(1).optional(),

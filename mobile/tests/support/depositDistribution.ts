@@ -56,3 +56,52 @@ export function distributionDepositSnapshot(count = 2) {
     })),
   };
 }
+
+export function pooledDistributionDepositSnapshot() {
+  const raw = distributionDepositSnapshot();
+  const source = raw.review.sources[0]!;
+  return {
+    ...raw,
+    review: {
+      ...raw.review,
+      version: 2,
+      combinedSourceId: source.operationId,
+      fundedBudgetMinimumAtoms: "2970000",
+      approvedExistingPrivateAtoms: "1000000",
+      sources: [
+        {
+          ...source,
+          kind: "private",
+          accountIndex: -1,
+          address: "",
+          budgetAtoms: "2970000",
+          amountAtoms: "2970000",
+          minimumCreditAtoms: "2970000",
+          maximumFeeAtoms: "0",
+          retainedAtoms: "0",
+        },
+      ],
+      fundingSources: [
+        {
+          operationId: "public_monad",
+          sourceChainId: 143,
+          token: "0x754704bc059f8c67012fed69bc8a327a5aafb603",
+        },
+        {
+          operationId: "public_base",
+          sourceChainId: 8453,
+          token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        },
+      ].map((row) => ({
+        ...row,
+        accountIndex: 1,
+        address: source.address,
+        budgetAtoms: "1000000",
+        amountAtoms: "985000",
+        minimumCreditAtoms: "985000",
+        maximumFeeAtoms: "5000",
+        retainedAtoms: "10000",
+      })),
+    },
+  };
+}

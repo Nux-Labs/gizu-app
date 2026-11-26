@@ -31,6 +31,9 @@ import Foundation
     _ = try await authorize(
       credential, walletId: walletId, purpose: "cashout-read:v1:\(journal.generation)")
     try checkAuthorization()
+    let permission = try store.load()
+    defer { permission.close() }
+    try grantPrivateReads(permission)
     let api = ConfidentialBalance()
     func auth(_ source: CashoutSource, _ salt: Data) throws -> EarnReadAuthentication {
       try self.checkAuthorization()

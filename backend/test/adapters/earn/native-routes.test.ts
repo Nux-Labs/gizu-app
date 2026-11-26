@@ -3,16 +3,87 @@ import assert from "node:assert/strict";
 import Fastify from "fastify";
 import { registerEarnNativeRoutes } from "../../../src/http/routes/earn-native.routes.ts";
 import { NativeEarnGateway } from "../../../src/adapters/earn/native-gateway.ts";
+
+test("disabled origins reject only fresh source quotes and preserve saved bindings and returns", async () => {
+  const app = Fastify();
+  const seen: string[] = [];
+  const gateway = {
+    sourceQuote: async () => {
+      seen.push("source");
+      return {};
+    },
+    sourcePreview: async () => {
+      seen.push("preview");
+      return {};
+    },
+    returnQuote: async () => {
+      seen.push("return");
+      return {};
+    },
+    quoteBinding: () => {
+      seen.push("binding");
+      return {};
+    },
+  };
+  registerEarnNativeRoutes(app, gateway as unknown as NativeEarnGateway);
+  for (const route of ["source-quote", "source-preview"]) {
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/earn/native/${route}`,
+      payload: { sourceChainId: 8453 },
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.json().code, "FUNDING_CHAIN_DISABLED");
+  }
+  for (const route of ["quote-binding", "return-quote"])
+    assert.equal(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/v1/earn/native/${route}`,
+          payload: { sourceChainId: 8453 },
+        })
+      ).statusCode,
+      200,
+    );
+  assert.deepEqual(seen, ["binding", "return"]);
+  await app.close();
+});
 for (const chain of [8453, 42161]) {
   test(`native bundler dispatch preserves funding source ${chain}`, async () => {
     const app = Fastify({ logger: false });
-    registerEarnNativeRoutes(app, new NativeEarnGateway({ pimlicoApiKey: "server-only" }, { fetcher: async url => {
-      assert.ok(String(url).includes(`/v2/${chain}/rpc`));
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: ["0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"] }));
-    } }));
-    const reply = await app.inject({ method: "POST", url: `/v1/earn/native/bundler/${chain}`, payload: { jsonrpc: "2.0", id: 1, method: "eth_supportedEntryPoints", params: [] } });
+    registerEarnNativeRoutes(
+      app,
+      new NativeEarnGateway(
+        { pimlicoApiKey: "server-only" },
+        {
+          fetcher: async (url) => {
+            assert.ok(String(url).includes(`/v2/${chain}/rpc`));
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                result: ["0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"],
+              }),
+            );
+          },
+        },
+      ),
+    );
+    const reply = await app.inject({
+      method: "POST",
+      url: `/v1/earn/native/bundler/${chain}`,
+      payload: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_supportedEntryPoints",
+        params: [],
+      },
+    });
     assert.equal(reply.statusCode, 200);
-    assert.deepEqual(reply.json().result, ["0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"]);
+    assert.deepEqual(reply.json().result, [
+      "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+    ]);
     await app.close();
   });
 }

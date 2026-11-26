@@ -30,6 +30,7 @@ export type StoredSignerCapabilities = {
   earnSponsoredExecution?: boolean;
   earnEthereumLiquidityExecution?: boolean;
   earnPrivatePayoutExecution?: boolean;
+  earnPrivateFundingVersion?: 2;
   earnDepositJourney?: boolean;
   earnDepositDistribution?: boolean;
   earnDepositPrivateFunding?: boolean;
@@ -140,6 +141,28 @@ export type OwnedPortfolioAsset = {
   /** Display value in millionths of USD, separate from native USDC-denominated values. */
   valueUsdAtoms?: string | null;
   valuationUnavailable: boolean;
+  /** Exact source-owner observations already represented in fundingSources. */
+  fundingIncludedAtoms?: string;
+  owner?: string;
+};
+export type FundingSourceObservation = FundingSourceKey & {
+  sourceId?: string;
+  decimals: 6;
+  balanceAtoms: string | null;
+  observedAtoms: string | null;
+  reservedAtoms: string | null;
+  availableAtoms: string | null;
+  complete: boolean;
+  stale: boolean;
+  syncPending: boolean;
+  checkedAt: number;
+};
+export type FundingCashObservation = {
+  observedAtoms: string;
+  availableAtoms: string | null;
+  complete: boolean;
+  stale: boolean;
+  syncPending: boolean;
 };
 export type OwnedPortfolioPosition = OwnedPortfolioAsset & {
   shareDecimals?: number | null;
@@ -150,6 +173,10 @@ export type OwnedPortfolioPosition = OwnedPortfolioAsset & {
 };
 
 export type MainnetPortfolioSnapshot = {
+  /** JS policy observation from native/backend capability intersection; null means unavailable. */
+  planningFundingChainIds?: FundingChainId[] | null;
+  fundingSources?: FundingSourceObservation[];
+  fundingCash?: FundingCashObservation;
   confidentialReadState?: "ready" | "locked" | "unavailable" | "partial";
   ownedAssets?: OwnedPortfolioAsset[];
   positions?: OwnedPortfolioPosition[];
@@ -292,6 +319,13 @@ export interface StoredSignerContract {
     operationId: string,
     revision: number,
   ): Promise<unknown>;
+  prepareEarnSourceQuoteForSource?(
+    walletId: string,
+    source: FundingSourceKey,
+    amountAtoms: string,
+    operationId: string,
+    revision: number,
+  ): Promise<unknown>;
   prepareNewEarnIntent?(walletId: string, profile: string): Promise<unknown>;
   listEarnIntents?(walletId: string): Promise<unknown>;
   listEarnInvestmentPositions?(walletId: string): Promise<unknown>;
@@ -387,6 +421,22 @@ export interface StoredSignerContract {
     walletId: string,
     operationId: string,
     revision: number,
+  ): Promise<unknown>;
+  createEarnFundingParent?(
+    request: import("@/domain/earn/privatePayout").FundingParentCreateRequest,
+  ): Promise<unknown>;
+  listEarnFundingParents?(walletId: string): Promise<unknown>;
+  executeEarnFundingParent?(
+    request: import("@/domain/earn/privatePayout").FundingParentRequest,
+  ): Promise<unknown>;
+  resumeEarnFundingParent?(
+    request: import("@/domain/earn/privatePayout").FundingParentRequest,
+  ): Promise<unknown>;
+  reconcileEarnFundingParent?(
+    request: import("@/domain/earn/privatePayout").FundingParentRequest,
+  ): Promise<unknown>;
+  cancelEarnFundingParent?(
+    request: import("@/domain/earn/privatePayout").FundingParentRequest,
   ): Promise<unknown>;
   executeEarnPrivatePayout?(
     request: import("@/domain/earn/privatePayout").PayoutRequest,

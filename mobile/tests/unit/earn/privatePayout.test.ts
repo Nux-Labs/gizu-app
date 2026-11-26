@@ -1,4 +1,9 @@
-import { parsePayoutOperations, payoutRequest } from "@/domain/earn/privatePayout";
+import {
+  parseFundingParents,
+  payoutParentRequest,
+  parsePayoutOperations,
+  payoutRequest,
+} from "@/domain/earn/privatePayout";
 import type { EarnIntent } from "@/domain/earn/types";
 const intent: EarnIntent & {
   destinations: [EarnIntent["destinations"][0], EarnIntent["destinations"][0]];
@@ -87,4 +92,43 @@ test("public payout progress binds exact native role and refuses private payload
     status: "paid",
     receivedAtoms: "885000",
   });
+});
+
+test("Ethereum private funding requests reference one native parent without public source proofs", () => {
+  const parent = {
+    version: 2,
+    operationId: "parent_1",
+    walletId: intent.walletId,
+    revision: 3,
+    cycleIndex: 0,
+    profileChainId: 1,
+    budgetAtoms: "15000000",
+    approvedExistingPrivateAtoms: "2000000",
+    creditedAtoms: "14700000",
+    phase: "ready",
+    blocked: false,
+    canResume: true,
+  };
+  const parsed = parseFundingParents([parent], intent)[0]!;
+  expect(payoutParentRequest(intent, parsed, "hold")).toEqual({
+    version: 2,
+    walletId: "wallet",
+    cycleIndex: 0,
+    parentOperationId: "parent_1",
+    leg: "hold",
+  });
+  for (const change of [
+    { phase: "pending" },
+    { walletId: "other" },
+    { profileChainId: 4663 },
+    { creditedAtoms: "15000001" },
+  ]) {
+    expect(() =>
+      payoutParentRequest(
+        intent,
+        parseFundingParents([{ ...parent, ...change }], intent)[0]!,
+        "hold",
+      ),
+    ).toThrow();
+  }
 });

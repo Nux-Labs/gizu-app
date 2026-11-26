@@ -40,7 +40,11 @@ import { BalanceCard } from "./BalanceCard";
 import { PortfolioAssetRow, type PortfolioAssetAction } from "./PortfolioAssetRow";
 import { usePortfolioTokenNames, type NamedPortfolioAsset } from "./usePortfolioTokenNames";
 import { VaultPositionCard } from "./VaultPositionCard";
-import { portfolioAssetValue, vaultPositionProfile } from "@/domain/wallet/portfolioValue";
+import {
+  portfolioAssetValue,
+  portfolioUsdcBalance,
+  vaultPositionProfile,
+} from "@/domain/wallet/portfolioValue";
 import type { EarnProfileId } from "@/domain/earn/types";
 
 function usePortfolio() {
@@ -328,7 +332,11 @@ export function MainnetPortfolioScreen({
     ? { ...wallet.snapshot, ownedAssets: owned }
     : wallet.snapshot;
   const assets = owned.filter(visible).sort(byValue);
-  const ready = !!wallet.snapshot && wallet.snapshot.balanceComplete !== false;
+  const ready =
+    !!wallet.snapshot &&
+    (wallet.snapshot.fundingCash
+      ? portfolioUsdcBalance(wallet.snapshot) !== null
+      : wallet.snapshot.balanceComplete !== false);
   return (
     <Screen refreshing={wallet.loading} onRefresh={() => void wallet.refresh()}>
       <MascotHero
@@ -349,19 +357,22 @@ export function MainnetPortfolioScreen({
       {valued && ready ? (
         <>
           <BalanceCard snapshot={valued} actions={actions} />
-          {!wallet.loading && (wallet.error || valued.stale) && (
-            // A failed refresh keeps the last balance; say so quietly instead of raising an error.
-            <View className="-mt-2 flex-row items-center justify-between gap-3 px-1">
-              <Typography variant="micro" className="flex-1">
-                Showing your last known balance.
-              </Typography>
-              <Button
-                label="Refresh balance"
-                variant="quiet"
-                onPress={() => void wallet.refresh()}
-              />
-            </View>
-          )}
+          {!wallet.loading &&
+            (wallet.error || valued.stale || valued.fundingCash?.complete === false) && (
+              // A failed refresh keeps the last balance; say so quietly instead of raising an error.
+              <View className="-mt-2 flex-row items-center justify-between gap-3 px-1">
+                <Typography variant="micro" className="flex-1">
+                  {valued.fundingCash?.complete === false
+                    ? "Showing your partial balance. Refresh to check remaining funds."
+                    : "Showing your last known balance."}
+                </Typography>
+                <Button
+                  label="Refresh balance"
+                  variant="quiet"
+                  onPress={() => void wallet.refresh()}
+                />
+              </View>
+            )}
         </>
       ) : (
         <BalanceSkeleton

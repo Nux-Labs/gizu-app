@@ -121,14 +121,17 @@ internal class EarnDepositCoordinator(
     if (start.getString("phase") == "invested") return
     if (grant != null) check(activeGrant === grant)
     try {
-      val review = start.getJSONObject("review")
-      val sources = review.getJSONArray("sources").objects().sortedBy { it.getInt("accountIndex") }
-      val originalRows = review.getJSONArray("fundingRows").objects()
+      var review = start.getJSONObject("review")
+      var sources = review.getJSONArray("sources").objects().sortedBy { it.getInt("accountIndex") }
+      val combined = review.optInt("version", 1) == 2
+      val fundingSources = depositFundingSources(review)
+      val originalRows =
+        review.getJSONArray(if (combined) "publicFundingRows" else "fundingRows").objects()
       // Each polling pass re-verifies from the first source; it must not rewind live progress.
       if (start.getString("phase") !in setOf("settlingCredit", "payouts", "depositing"))
         setPhase(id, "funding")
       val credits = linkedMapOf<String, String>()
-      for (s in sources) {
+      for (s in fundingSources) {
         if (s.optString("kind") == "private") continue
         val sourceId = s.getString("operationId")
         val children = journal.get(id).getJSONObject("children").optJSONArray("funding")
@@ -147,11 +150,11 @@ internal class EarnDepositCoordinator(
       }
       // Register every selected source before the first can spend; a partial write cannot start a
       // batch.
-      for (s in sources.filter { it.optString("kind") != "private" }) engines.child(
+      for (s in fundingSources.filter { it.optString("kind") != "private" }) engines.child(
         "funding",
         s.getString("operationId"),
       )
-      for (s in sources) {
+      for (s in fundingSources) {
         val sourceId = s.getString("operationId")
         if (s.optString("kind") == "private") {
           // Existing private funds never claim a public funding transaction or settlement credit.
@@ -188,10 +191,38 @@ internal class EarnDepositCoordinator(
           credits.values.fold(BigInteger.ZERO) { n, a -> n + depositAtoms(a) }.toString(),
         )
       }
-      if (credits.size != sources.size) {
+      if (credits.size != fundingSources.size) {
         if (grant != null) setPhase(id, "settlingCredit")
         else journal.pause(id, "settlementPending")
         return
+      }
+      if (combined) {
+        val combinedAmount = depositCombinedPrivateAmount(review, credits)
+        val handoff = JSONObject()
+        for (source in sources) {
+          val sourceId = source.getString("operationId")
+          val amount =
+            if (sourceId == review.getString("combinedSourceId")) combinedAmount
+            else source.getString("amountAtoms")
+          handoff.put(sourceId, amount)
+          grant?.recordCredit(sourceId, amount)
+        }
+        // The completed credit proof and approved handoff precede every downstream signature.
+        saveAmounts(id) {
+          if (it.has("privateHandoff"))
+            check(nativeJsonEqual(it.getJSONObject("privateHandoff"), handoff))
+          else it.put("privateHandoff", handoff)
+          it.put(
+            "creditedAtoms",
+            sources
+              .fold(BigInteger.ZERO) { sum, source ->
+                sum + depositAtoms(handoff.getString(source.getString("operationId")), true)
+              }
+              .toString(),
+          )
+        }
+        review = depositFundedPrivateReview(review, handoff)
+        sources = review.getJSONArray("sources").objects().sortedBy { it.getInt("accountIndex") }
       }
       saveAmounts(id) { it.put("completedSteps", JSONArray(listOf("funding", "credit"))) }
       if (review.has("distribution")) {

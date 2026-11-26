@@ -16,7 +16,11 @@ internal fun fundingReservations(context: Context, record: WalletRecord): Fundin
           row.getString("status") in setOf("finalized", "reverted") &&
           row.has("transactionHash")
       )
-        ledger.complete(row.getString("operationId"))
+        ledger.complete(row.getString("operationId")) {
+          io.gizu.storedwallet.swap
+            .MainnetPortfolio(context)
+            .invalidateConfirmedFunding(record, p.getInt("chainId"), p.getString("expectedFrom"))
+        }
       if (
         p.getString("kind") == "sourceFunding" &&
           row.sponsoredSpendSaved() &&
@@ -31,6 +35,7 @@ internal fun fundingReservations(context: Context, record: WalletRecord): Fundin
           index,
           p.getString("budgetAtoms"),
           p.optInt("cycleIndex", 0),
+          sourceChainId = p.getInt("chainId"),
         )
       }
     }
@@ -45,17 +50,33 @@ internal fun fundingReservations(context: Context, record: WalletRecord): Fundin
       val children = saved.optJSONObject("fundingBatch")?.getJSONArray("children")
       val states =
         if (children == null) listOf(saved.getString("state"))
-        else (0 until children.length()).map { children.getJSONObject(it).getString("state") }
+        else
+          (0 until children.length()).map { children.getJSONObject(it).getString("state") } +
+            listOfNotNull(
+              saved.optJSONObject("fundingBatch")?.optJSONObject("execution")?.getString("state")
+            )
       for (raw in states) {
         val state = JSONObject(raw)
         val p = state.getJSONObject("plan")
         val data = state.getJSONObject("data")
-        if (p.getString("kind") == "confidentialSwap" && !data.isNull("signedOperation")) {
+        if (
+          p.getString("kind") in setOf("confidentialSwap", "confidentialFunding") &&
+            !data.isNull("signedOperation")
+        ) {
           val operation =
             uniffi.gizu_stored_signer_core.SwapOperation.restore(raw, "https://api.gizu.io")
           val complete =
             operation.use { JSONObject(it.publicStatus()).getString("phase") == "COMPLETE" }
-          if (complete) ledger.complete(state.getString("id"))
+          if (complete)
+            ledger.complete(state.getString("id")) {
+              io.gizu.storedwallet.swap
+                .MainnetPortfolio(context)
+                .invalidateConfirmedFunding(
+                  record,
+                  p.optInt("sourceChainId", 143),
+                  state.getString("source"),
+                )
+            }
           if (!complete) {
             val index = p.optInt("sourceIndex", 1)
             val owner = publicAccountAddress(record, index)
@@ -71,6 +92,7 @@ internal fun fundingReservations(context: Context, record: WalletRecord): Fundin
               parsed.max(BigInteger.ONE).toString(),
               0,
               "swap",
+              p.optInt("sourceChainId", 143),
             )
           }
         }

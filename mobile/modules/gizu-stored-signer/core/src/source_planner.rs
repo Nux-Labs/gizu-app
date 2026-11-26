@@ -44,6 +44,53 @@ fn atoms(s: &str) -> Result<U256, SignerError> {
     }
     U256::from_str_radix(s, 10).map_err(|_| SignerError::InvalidInput)
 }
+
+/// Checked arithmetic only. The native parent must independently authenticate every credit
+/// and persist consumption before passing its approved private contribution to this helper.
+#[uniffi::export]
+pub fn funded_private_amount(
+    approved_existing_private_atoms: String,
+    credits_json: String,
+) -> Result<String, SignerError> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct Credit {
+        source_id: String,
+        operation_id: String,
+        credited_atoms: String,
+    }
+    if credits_json.len() > 131072 {
+        return Err(SignerError::InvalidInput);
+    }
+    let credits: Vec<Credit> =
+        serde_json::from_str(&credits_json).map_err(|_| SignerError::InvalidInput)?;
+    if credits.len() > 256 {
+        return Err(SignerError::InvalidInput);
+    }
+    let mut sources = std::collections::HashSet::new();
+    let mut operations = std::collections::HashSet::new();
+    let mut total = atoms(&approved_existing_private_atoms)?;
+    for credit in credits {
+        if credit.source_id.is_empty()
+            || credit.source_id.len() > 256
+            || credit.operation_id.is_empty()
+            || credit.operation_id.len() > 128
+            || !sources.insert(credit.source_id)
+            || !operations.insert(credit.operation_id)
+        {
+            return Err(SignerError::InvalidInput);
+        }
+        let amount = atoms(&credit.credited_atoms)?;
+        if amount.is_zero() {
+            return Err(SignerError::InvalidInput);
+        }
+        total = total.checked_add(amount).ok_or(SignerError::InvalidInput)?;
+    }
+    if total.is_zero() {
+        return Err(SignerError::InvalidInput);
+    }
+    Ok(total.to_string())
+}
 #[uniffi::export]
 pub fn plan_public_source_allocation(
     registry: String,
@@ -305,5 +352,29 @@ mod tests {
             bad[field] = value;
             assert!(plan("1000000", vec![bad]).is_err(), "accepted {field}");
         }
+    }
+
+    #[test]
+    fn combined_credit_amount_excludes_unapproved_private_cash_and_duplicates() {
+        let credits = json!([
+            {"sourceId":"143:account1", "operationId":"source_a", "creditedAtoms":"9900000"},
+            {"sourceId":"8453:account1", "operationId":"source_b", "creditedAtoms":"4900000"}
+        ]);
+        assert_eq!(
+            funded_private_amount("2000000".into(), credits.to_string()).unwrap(),
+            "16800000"
+        );
+        let mut duplicate = credits.clone();
+        duplicate[1]["operationId"] = duplicate[0]["operationId"].clone();
+        assert!(funded_private_amount("2000000".into(), duplicate.to_string()).is_err());
+        duplicate = credits.clone();
+        duplicate[1]["sourceId"] = duplicate[0]["sourceId"].clone();
+        assert!(funded_private_amount("0".into(), duplicate.to_string()).is_err());
+        assert!(funded_private_amount(U256::MAX.to_string(), credits.to_string()).is_err());
+        assert_eq!(
+            funded_private_amount("15".into(), "[]".into()).unwrap(),
+            "15"
+        );
+        assert!(funded_private_amount("0".into(), "[]".into()).is_err());
     }
 }

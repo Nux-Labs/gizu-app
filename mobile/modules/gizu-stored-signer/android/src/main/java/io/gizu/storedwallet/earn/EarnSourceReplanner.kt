@@ -19,19 +19,32 @@ internal data class EarnSourceReplanState(
  */
 internal class EarnSourceReplanner(
   private val quotes: EarnQuoteJournal?,
-  private val feeReader: suspend (JSONObject) -> JSONObject = { request ->
+  private val feeReader: suspend (Int, JSONObject) -> JSONObject = { chain, request ->
     JSONObject(
-      NativeRpcTransport(EARN_NATIVE_BACKEND.removeSuffix("/native") + "/monad/funding-plan")
+      NativeRpcTransport(
+          if (chain == 143) EARN_NATIVE_BACKEND.removeSuffix("/native") + "/monad/funding-plan"
+          else EARN_NATIVE_BACKEND.removeSuffix("/earn/native") + "/funding/$chain/plan"
+        )
         .post(request.toString())
     )
   },
-  private val quoteCreator: suspend (Int, String, Int, String, String, String) -> Map<String, Any> =
-    { profile, id, revision, owner, confidential, amount ->
+  private val quoteCreator:
+    suspend (Int, String, Int, String, String, String, Int) -> Map<String, Any> =
+    { profile, id, revision, owner, confidential, amount, sourceChain ->
       NativeEarnQuoteGateway(quotes = quotes)
-        .create(profile, id, revision, owner, confidential, amount, false)
+        .create(
+          profile,
+          id,
+          revision,
+          owner,
+          confidential,
+          amount,
+          false,
+          sourceChainId = sourceChain,
+        )
     },
   private val stateReader: suspend (JSONObject) -> EarnSourceReplanState = { p ->
-    EarnSponsoredStateLoader(EarnSponsoredChainRpc(143)).load(p).let {
+    EarnSponsoredStateLoader(EarnSponsoredChainRpc(p.getInt("chainId"))).load(p).let {
       EarnSourceReplanState(
         it.owner,
         it.entryPointNonce,
@@ -56,9 +69,11 @@ internal class EarnSourceReplanner(
       "Signed source funding must retain its exact saved bytes"
     }
     val old = op.getJSONObject("proposal")
+    val sourceChainId = old.getInt("chainId")
+    val network = fundingNetwork(sourceChainId)
+    check(sourceChainId == 143 || old.optInt("sourceAccountIndex", 0) == 1)
     check(
       old.getString("kind") == "sourceFunding" &&
-        old.getInt("chainId") == 143 &&
         old.getInt("profileChainId") == record.earnChain &&
         old.getString("operationId") == op.getString("operationId")
     )
@@ -69,7 +84,7 @@ internal class EarnSourceReplanner(
       old.getString("expectedFrom").equals(owner, true) &&
         old.getString("refundOwner").equals(owner, true) &&
         old.getString("confidentialAccount").equals(confidential, true) &&
-        old.getString("token").equals(MONAD_EARN_USDC, true)
+        old.getString("token").equals(network.token, true)
     )
     check(old.getString("withdrawalReserveAtoms") == "10000")
     val budget = sourceAtoms(old.getString("budgetAtoms"))
@@ -102,7 +117,7 @@ internal class EarnSourceReplanner(
     if (auth != null)
       check(
         auth.getString("from").equals(owner, true) &&
-          auth.getLong("chainId") == 143L &&
+          auth.getLong("chainId") == sourceChainId.toLong() &&
           auth.getString("address").equals(EARN_IMPLEMENTATION, true) &&
           state.senderCode == "0x" &&
           auth.getLong("nonce").toULong() == state.transactionNonce
@@ -118,13 +133,14 @@ internal class EarnSourceReplanner(
           .put("amount", amount)
           .put("budget", budget.toString())
       return parseSourceReplanFees(
-        feeReader(request),
+        feeReader(sourceChainId, request),
         owner,
         recipient,
         amount,
         budget.toString(),
         state,
         now(),
+        sourceChainId,
       )
     }
     val reserve = BigInteger.valueOf(10000)
@@ -159,20 +175,21 @@ internal class EarnSourceReplanner(
             owner,
             confidential,
             amount.toString(),
+            sourceChainId,
           )
         )
       val clock = now() / 1000
       check(
         quote.getString("operationId") == op.getString("operationId") &&
           quote.getInt("revision") == revision &&
-          quote.getInt("chainId") == 143 &&
-          quote.getString("token").equals(MONAD_EARN_USDC, true) &&
+          quote.getInt("chainId") == sourceChainId &&
+          quote.getString("token").equals(network.token, true) &&
           quote.getString("amountAtoms") == amount.toString()
       )
       check(
         quote.getString("confidentialAccount").equals(confidential, true) &&
           quote.getString("refundOwner").equals(owner, true) &&
-          quote.getString("originAsset") == EARN_MONAD_ASSET
+          quote.getString("originAsset") == network.originAsset
       )
       earnHash(quote.getString("quoteId"))
       earnAddressWord(quote.getString("recipient"))
@@ -241,13 +258,16 @@ private fun parseSourceReplanFees(
   budget: String,
   state: EarnSourceReplanState,
   now: Long,
+  sourceChainId: Int,
 ): SourceReplanFees {
+  val network = fundingNetwork(sourceChainId)
   check(
-    row.getString("version") == "gizu-monad-funding-v1" &&
-      row.getInt("chainId") == 143 &&
+    row.getString("version") ==
+      (if (sourceChainId == 143) "gizu-monad-funding-v1" else "gizu-source-funding-v2") &&
+      row.getInt("chainId") == sourceChainId &&
       row.getString("owner").equals(owner, true) &&
       row.getString("recipient").equals(recipient, true) &&
-      row.getString("token").equals(MONAD_EARN_USDC, true)
+      row.getString("token").equals(network.token, true)
   )
   check(
     row.getString("amount") == amount &&
@@ -306,7 +326,7 @@ private fun parseSourceReplanFees(
   check(quantity(operation.getString("nonce")) == quantity(state.entryPointNonce))
   if (operation.has("factory") || operation.has("factoryData"))
     check(operation.getString("factory") == "0x7702" && operation.getString("factoryData") == "0x")
-  val cap = sourceReplanFeeCap(operation, now / 1000)
+  val cap = sourceReplanFeeCap(operation, now / 1000, network.token)
   check(sourceAtoms(row.getString("feeCap")) == cap && cap > BigInteger.ZERO)
   check(
     sourceAtoms(amount) + cap + sourceAtoms(row.getString("remainingBudget")) == sourceAtoms(budget)
@@ -315,10 +335,10 @@ private fun parseSourceReplanFees(
 }
 
 /** Same parser, bounds and ceil cap as the native signing authority. */
-private fun sourceReplanFeeCap(op: JSONObject, now: Long): BigInteger =
+private fun sourceReplanFeeCap(op: JSONObject, now: Long, token: String): BigInteger =
   try {
     uniffi.gizu_stored_signer_core
-      .earnErc20FeeCap(op.toString(), MONAD_EARN_USDC, now.toULong())
+      .earnErc20FeeCap(op.toString(), token, now.toULong())
       .toBigInteger()
   } catch (failure: uniffi.gizu_stored_signer_core.SignerException) {
     // Preserve the adapter's existing validation failure contract at its callers.

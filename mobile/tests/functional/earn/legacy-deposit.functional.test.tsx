@@ -27,7 +27,12 @@ function SelectedDeposit() {
     />
   ) : null;
 }
-function setup(enabled = true, savedIntent: EarnIntent = intent, resumeSaved = false) {
+function setup(
+  enabled = true,
+  savedIntent: EarnIntent = intent,
+  resumeSaved = false,
+  combined: false | { privateAtoms: string; restored?: boolean; qualified?: boolean } = false,
+) {
   let current = savedIntent;
   const filledSlots = new Set<number | undefined>(),
     investedSlots = new Set<number | undefined>();
@@ -64,11 +69,64 @@ function setup(enabled = true, savedIntent: EarnIntent = intent, resumeSaved = f
     cancelUnsigned: jest.fn(),
     cancel: jest.fn(),
   };
+  let parent: any =
+    combined && combined.restored
+      ? {
+          version: 2,
+          operationId: "parent_1",
+          walletId: intent.walletId,
+          revision: 2,
+          cycleIndex: savedIntent.cycleIndex ?? 0,
+          profileChainId: 1,
+          budgetAtoms: "15000000",
+          approvedExistingPrivateAtoms: combined.privateAtoms,
+          creditedAtoms: combined.privateAtoms === "15000000" ? "15000000" : "14900000",
+          phase: "ready",
+          blocked: false,
+          canResume: true,
+        }
+      : null;
   const payout = {
+    fundingAvailable: jest
+      .fn()
+      .mockResolvedValue(Boolean(combined) && combined && combined.qualified !== false),
+    fundingRecoveryAvailable: jest.fn().mockResolvedValue(Boolean(combined)),
+    listFunding: jest.fn().mockImplementation(async () => (parent ? [parent] : [])),
+    planFunding: jest.fn().mockImplementation(async (_intent: EarnIntent, budgetAtoms: string) => {
+      parent = {
+        version: 2,
+        operationId: "parent_1",
+        walletId: intent.walletId,
+        revision: 1,
+        cycleIndex: savedIntent.cycleIndex ?? 0,
+        profileChainId: 1,
+        budgetAtoms,
+        approvedExistingPrivateAtoms: combined ? combined.privateAtoms : "0",
+        creditedAtoms: "0",
+        phase: "review",
+        blocked: false,
+        canResume: true,
+      };
+      return parent;
+    }),
+    executeFunding: jest.fn().mockImplementation(async () => {
+      parent = {
+        ...parent,
+        revision: 2,
+        creditedAtoms: combined && combined.privateAtoms === "15000000" ? "15000000" : "14900000",
+        phase: "ready",
+      };
+      return parent;
+    }),
+    resumeFunding: jest.fn(),
+    reconcileFunding: jest.fn(),
+    executeFromParent: jest.fn().mockImplementation(async () => {
+      paid++;
+    }),
     available: jest.fn().mockResolvedValue(enabled),
     list: jest.fn().mockImplementation(async () =>
       legs.slice(0, paid).map((leg) => ({
-        sourceOperationId: "source_1",
+        sourceOperationId: combined ? "parent_1" : "source_1",
         operationId: `payout_${leg}`,
         leg,
         status: "paid",
@@ -248,46 +306,70 @@ test("an unsupported Ethereum signer never receives a Robinhood coordinator subs
   expect(vault.execute).not.toHaveBeenCalled();
 });
 
-test("Ethereum invests every distributed wallet without repeating funding or successful payouts", async () => {
-  const distributed: EarnIntent = {
-    ...intent,
-    distribution: { version: 1, weightsBps: [4300, 5700] },
-    distributionBudgetAtoms: "3000000",
-    investmentSlot: 0,
-    destinations: [
-      { role: "invest", slot: 0, chainId: 1, address: "0x" + "5".repeat(40) },
-      { role: "invest", slot: 1, chainId: 1, address: "0x" + "6".repeat(40) },
-    ],
-  };
-  const { source, payout, liquidity, vault, selectInvestmentSlot } = setup(true, distributed);
-  const user = userEvent.setup();
-  await user.press(await screen.findByRole("button", { name: "Review USDC funding" }));
-  expect(screen.getByText("Source budget: 3 USDC")).toBeVisible();
-  await user.press(await screen.findByRole("button", { name: "Authorize USDC funding" }));
-  for (const wallet of [1, 2]) {
-    await user.press(
-      await screen.findByRole("button", { name: `Review and authorize wallet ${wallet} payout` }),
+test.each([false, true])(
+  "Ethereum invests every distributed wallet without repeating funding or successful payouts (native parent %s)",
+  async (combined) => {
+    const distributed: EarnIntent = {
+      ...intent,
+      distribution: { version: 1, weightsBps: [4300, 5700] },
+      distributionBudgetAtoms: "3000000",
+      investmentSlot: 0,
+      destinations: [
+        { role: "invest", slot: 0, chainId: 1, address: "0x" + "5".repeat(40) },
+        { role: "invest", slot: 1, chainId: 1, address: "0x" + "6".repeat(40) },
+      ],
+    };
+    const { source, payout, liquidity, vault, selectInvestmentSlot } = setup(
+      true,
+      distributed,
+      false,
+      combined ? { privateAtoms: "0" } : false,
     );
-  }
-  expect(payout.execute.mock.calls.map((call) => call[2])).toEqual(["invest:0", "invest:1"]);
-  for (const slot of [0, 1]) {
-    await user.press(await screen.findByRole("button", { name: "Review vault deposit" }));
-    await user.press(await screen.findByRole("button", { name: "Authorize ETH funding" }));
-    await user.press(await screen.findByRole("button", { name: "Review vault deposit" }));
-    await user.press(await screen.findByRole("button", { name: "Authorize vault deposit" }));
-    expect(await screen.findByText(`Wallet ${slot + 1} invested`)).toBeVisible();
-    if (slot === 0) {
-      await user.press(screen.getByRole("button", { name: "Continue with wallet 2" }));
-      expect(selectInvestmentSlot).toHaveBeenCalledWith(expect.anything(), distributed.intentId, 1);
+    const user = userEvent.setup();
+    await user.press(await screen.findByRole("button", { name: "Review USDC funding" }));
+    expect(
+      screen.getByText(combined ? "Total budget: 3 USDC including fees" : "Source budget: 3 USDC"),
+    ).toBeVisible();
+    await user.press(await screen.findByRole("button", { name: "Authorize USDC funding" }));
+    for (const wallet of [1, 2]) {
+      await user.press(
+        await screen.findByRole("button", { name: `Review and authorize wallet ${wallet} payout` }),
+      );
     }
-  }
-  expect(source.planMany).toHaveBeenCalledTimes(1);
-  expect(source.executeMany).toHaveBeenCalledTimes(1);
-  expect(payout.execute).toHaveBeenCalledTimes(2);
-  expect(liquidity.execute.mock.calls.map((call) => call[0].investmentSlot)).toEqual([0, 1]);
-  expect(vault.execute.mock.calls.map((call) => call[0].investmentSlot)).toEqual([0, 1]);
-  expect(screen.queryByRole("button", { name: /Continue with wallet/ })).toBeNull();
-});
+    expect(
+      (combined ? payout.executeFromParent : payout.execute).mock.calls.map((call) => call[2]),
+    ).toEqual(["invest:0", "invest:1"]);
+    for (const slot of [0, 1]) {
+      await user.press(await screen.findByRole("button", { name: "Review vault deposit" }));
+      await user.press(await screen.findByRole("button", { name: "Authorize ETH funding" }));
+      await user.press(await screen.findByRole("button", { name: "Review vault deposit" }));
+      await user.press(await screen.findByRole("button", { name: "Authorize vault deposit" }));
+      expect(await screen.findByText(`Wallet ${slot + 1} invested`)).toBeVisible();
+      if (slot === 0) {
+        await user.press(screen.getByRole("button", { name: "Continue with wallet 2" }));
+        expect(selectInvestmentSlot).toHaveBeenCalledWith(
+          expect.anything(),
+          distributed.intentId,
+          1,
+        );
+      }
+    }
+    if (combined) {
+      expect(source.planMany).not.toHaveBeenCalled();
+      expect(payout.planFunding).toHaveBeenCalledTimes(1);
+      expect(payout.executeFunding).toHaveBeenCalledTimes(1);
+      expect(payout.executeFromParent).toHaveBeenCalledTimes(2);
+      expect(payout.execute).not.toHaveBeenCalled();
+    } else {
+      expect(source.planMany).toHaveBeenCalledTimes(1);
+      expect(source.executeMany).toHaveBeenCalledTimes(1);
+      expect(payout.execute).toHaveBeenCalledTimes(2);
+    }
+    expect(liquidity.execute.mock.calls.map((call) => call[0].investmentSlot)).toEqual([0, 1]);
+    expect(vault.execute.mock.calls.map((call) => call[0].investmentSlot)).toEqual([0, 1]);
+    expect(screen.queryByRole("button", { name: /Continue with wallet/ })).toBeNull();
+  },
+);
 
 test("a reopened Ethereum distribution continues the unfinished wallet from saved investment", async () => {
   const distributed: EarnIntent = {
@@ -318,4 +400,98 @@ test("a reopened Ethereum distribution continues the unfinished wallet from save
   await user.press(screen.getByRole("button", { name: "View investment" }));
   expect(await screen.findByText("Saved investment")).toBeVisible();
   expect(await screen.findByRole("button", { name: "Withdraw investment" })).toBeVisible();
+});
+
+test.each(["0", "2000000", "15000000"])(
+  "Ethereum budget with %s private atoms uses one native parent before existing liquidity and vault stages",
+  async (privateAtoms) => {
+    const { source, payout, liquidity, vault } = setup(true, intent, false, { privateAtoms });
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("USDC deposit amount"), "15");
+    await user.press(screen.getByRole("button", { name: "Review USDC funding" }));
+    expect(payout.planFunding).toHaveBeenCalledWith(intent, "15000000");
+    expect(source.planMany).not.toHaveBeenCalled();
+    await user.press(await screen.findByRole("button", { name: "Authorize USDC funding" }));
+    await user.press(
+      await screen.findByRole("button", { name: "Review and authorize 10% hold payout" }),
+    );
+    await user.press(
+      await screen.findByRole("button", { name: "Review and authorize 90% investment payout" }),
+    );
+    expect(payout.executeFromParent).toHaveBeenNthCalledWith(
+      1,
+      intent,
+      expect.objectContaining({ operationId: "parent_1", budgetAtoms: "15000000" }),
+      "hold",
+    );
+    expect(payout.executeFromParent).toHaveBeenNthCalledWith(
+      2,
+      intent,
+      expect.objectContaining({ operationId: "parent_1", budgetAtoms: "15000000" }),
+      "invest",
+    );
+    expect(payout.execute).not.toHaveBeenCalled();
+    await user.press(await screen.findByRole("button", { name: "Review vault deposit" }));
+    await user.press(await screen.findByRole("button", { name: "Authorize ETH funding" }));
+    await user.press(await screen.findByRole("button", { name: "Review vault deposit" }));
+    await user.press(await screen.findByRole("button", { name: "Authorize vault deposit" }));
+    expect(await screen.findByText("Invested")).toBeVisible();
+    expect(liquidity.execute).toHaveBeenCalledTimes(1);
+    expect(vault.execute).toHaveBeenCalledTimes(1);
+  },
+);
+test("Ethereum restart after private handoff resumes the saved parent without another funding plan", async () => {
+  const { source, payout } = setup(true, intent, false, {
+    privateAtoms: "2000000",
+    restored: true,
+  });
+  const user = userEvent.setup();
+  await user.press(
+    await screen.findByRole("button", { name: "Review and authorize 10% hold payout" }),
+  );
+  expect(payout.executeFromParent).toHaveBeenCalledWith(
+    intent,
+    expect.objectContaining({ operationId: "parent_1", creditedAtoms: "14900000" }),
+    "hold",
+  );
+  expect(source.planMany).not.toHaveBeenCalled();
+  expect(payout.planFunding).not.toHaveBeenCalled();
+});
+
+test("unqualified Ethereum private funding never authorizes a Base plan through the legacy proof path", async () => {
+  const { source } = setup();
+  source.planMany.mockResolvedValue([
+    {
+      budget: "3000000",
+      expiresAtMs: Date.now() + 45000,
+      quote: { chainId: 8453 },
+      source: {
+        sourceChainId: 8453,
+        token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        accountIndex: 1,
+        owner: intent.sourceAddress,
+      },
+    },
+  ] as never);
+  const user = userEvent.setup();
+  await user.type(await screen.findByLabelText("USDC deposit amount"), "3");
+  await user.press(screen.getByRole("button", { name: "Review USDC funding" }));
+  expect(await screen.findByText(/qualified Ethereum private funding/i)).toBeVisible();
+  expect(source.executeMany).not.toHaveBeenCalled();
+  expect(source.execute).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Authorize USDC funding" })).toBeNull();
+});
+
+test("revoking new Ethereum funding admission preserves the saved private parent recovery", async () => {
+  const { source, payout } = setup(true, intent, false, {
+    privateAtoms: "2000000",
+    restored: true,
+    qualified: false,
+  });
+  expect(
+    await screen.findByRole("button", { name: "Review and authorize 10% hold payout" }),
+  ).toBeVisible();
+  expect(payout.listFunding).toHaveBeenCalledWith(intent);
+  expect(source.planMany).not.toHaveBeenCalled();
+  expect(payout.planFunding).not.toHaveBeenCalled();
 });

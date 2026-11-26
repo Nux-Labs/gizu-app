@@ -106,14 +106,23 @@ pub struct QuoteRequest {
 
 impl QuoteRequest {
     pub fn funding(confidential: Address, source: Address, asset: &str, amount: U256) -> Self {
+        Self::funding_to_private(confidential, source, asset, asset, amount)
+    }
+    pub fn funding_to_private(
+        confidential: Address,
+        source: Address,
+        origin_asset: &str,
+        private_asset: &str,
+        amount: U256,
+    ) -> Self {
         Self::new(
             "ORIGIN_CHAIN",
             "CONFIDENTIAL_INTENTS",
             format!("{confidential:#x}"),
             "ORIGIN_CHAIN",
             source.to_checksum(None),
-            asset,
-            asset,
+            origin_asset,
+            private_asset,
             amount,
         )
     }

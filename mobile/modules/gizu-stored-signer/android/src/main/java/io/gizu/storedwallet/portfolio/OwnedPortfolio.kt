@@ -89,6 +89,16 @@ internal class NativeOwnedPortfolio(
 
   private fun groupKey(chain: Long, token: String) = "$chain:${token.lowercase()}"
 
+  private fun isFundingToken(chain: Long, token: String) =
+    chain in setOf(143L, 8453L, 42161L) && token.equals(fundingNetwork(chain.toInt()).token, true)
+
+  private fun fundingOwners(record: WalletRecord, root: JSONObject, chain: Long): Set<String> =
+    publicAccountIndices(record)
+      .zip(addresses(root.getJSONObject("owners").getJSONArray("public")))
+      .filter { (index, _) -> fundingCandidate(index, chain.toInt()) }
+      .map { it.second.lowercase() }
+      .toSet()
+
   private fun digest(value: String) =
     MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") {
       "%02x".format(it)
@@ -214,6 +224,52 @@ internal class NativeOwnedPortfolio(
           )
           .invalidate()
       }
+    }
+    save(record, root)
+  }
+
+  /**
+   * Suppress the same funding owner in the existing owned-token cache, without losing recipients.
+   */
+  fun invalidateConfirmedFunding(record: WalletRecord, chain: Long, owner: String) {
+    val token = fundingNetwork(chain.toInt()).token
+    if (chain !in SWAP_CHAINS) return
+    val root = load(record)
+    val id = groupKey(chain, token)
+    val catalogue = owners(record, root)
+    val public = addresses(catalogue.getJSONArray("public"))
+    val balances =
+      public
+        .chunked(8192)
+        .flatMapIndexed { index, addresses ->
+          val sync =
+            TokenBalanceSync(
+              file("gizu-owned-token-${record.journalId}-${digest(id)}-$index.enc"),
+              key,
+              record.journalId,
+              chain,
+              token,
+              rpc(chain),
+            )
+          sync.invalidateConfirmedFunding(owner)
+          sync.cachedSnapshot(addresses, clock())?.balances?.entries?.map { it.toPair() }
+            ?: emptyList()
+        }
+        .toMap()
+    root.getJSONObject("snapshots").optJSONObject(id)?.let { saved ->
+      saved
+        .put(
+          "observed",
+          balances.values
+            .fold(BigInteger.ZERO) { sum, amount -> sum + amount.toBigInteger() }
+            .toString(),
+        )
+        .put(
+          "fundingIncludedAtoms",
+          fundingIncludedAtoms(chain.toInt(), token, balances, fundingOwners(record, root, chain)),
+        )
+        .put("complete", false)
+        .put("syncPending", true)
     }
     save(record, root)
   }
@@ -363,6 +419,23 @@ internal class NativeOwnedPortfolio(
           "observationFinality" to if (group.chain in LATEST_CHAINS) "latest" else "finalized",
         )
       if (group.underlying == null) {
+        if (isFundingToken(group.chain, group.token)) {
+          // Only funding-eligible owners overlap the dedicated cash reader. Other owners of
+          // the same token (for example Swap recipients) remain independently owned cash.
+          if ("aggregate" !in snapshot.balances) {
+            row["fundingIncludedAtoms"] =
+              fundingIncludedAtoms(
+                group.chain.toInt(),
+                group.token,
+                snapshot.balances,
+                fundingOwners(record, root, group.chain),
+              )
+          } else
+            root.getJSONObject("snapshots").optJSONObject(id)?.let { saved ->
+              if (saved.has("fundingIncludedAtoms"))
+                row["fundingIncludedAtoms"] = saved.getString("fundingIncludedAtoms")
+            }
+        }
         if (group.symbol == "USDC" && complete && !stale) {
           row["valueUsdcAtoms"] = observed.toString()
           row["valuationUnavailable"] = false
@@ -499,6 +572,16 @@ internal class NativeOwnedPortfolio(
               .toString(),
           )
           .put("owners", digest(group.owners.sorted().joinToString(",")))
+      if (group.underlying == null && isFundingToken(group.chain, group.token))
+        summary.put(
+          "fundingIncludedAtoms",
+          fundingIncludedAtoms(
+            group.chain.toInt(),
+            group.token,
+            balances,
+            fundingOwners(record, root, group.chain),
+          ),
+        )
       snapshots.put(id, summary)
       return result
     } catch (e: CancellationException) {

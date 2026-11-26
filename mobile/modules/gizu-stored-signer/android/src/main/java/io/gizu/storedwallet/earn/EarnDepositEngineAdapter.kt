@@ -125,10 +125,8 @@ internal class EarnDepositEngineAdapter(
     )
 
   private fun depositReview(): JSONObject = record { r ->
-    earnDepositJournal(context, r)
-      .all()
-      .single { it.getInt("cycleIndex") == cycle }
-      .getJSONObject("review")
+    val row = earnDepositJournal(context, r).all().single { it.getInt("cycleIndex") == cycle }
+    depositFundedPrivateReview(row.getJSONObject("review"), row.optJSONObject("privateHandoff"))
   }
 
   private fun privateSource(sourceId: String): Boolean =
@@ -198,7 +196,7 @@ internal class EarnDepositEngineAdapter(
 
   override suspend fun registerFunding(row: JSONObject): JSONObject {
     foreground()
-    return sponsoredEngine(143).use {
+    return sponsoredEngine(row.getJSONObject("proposal").getInt("chainId")).use {
       it.create(
         mapOf(
           "walletId" to walletId,
@@ -352,7 +350,7 @@ internal class EarnDepositEngineAdapter(
         }
       }
     } else {
-      val chain = if (stage == "funding") 143 else 4663
+      val chain = sponsored().get(id).getJSONObject("proposal").getInt("chainId")
       sponsoredEngine(chain).use { engine ->
         // A required delegation and subsequent UserOperation share this bounded grant.
         for (attempt in 0..1) {
@@ -413,7 +411,7 @@ internal class EarnDepositEngineAdapter(
       return payoutEngine(grant).use { it.reconcile(id, row.getInt("revision")) }
     }
     val journal = sponsored()
-    val chain = if (stage == "funding") 143 else 4663
+    val chain = journal.get(id).getJSONObject("proposal").getInt("chainId")
     reconcileEarnSponsoredOperations(
       journal,
       EarnSponsoredChainRpc(chain),

@@ -6,6 +6,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EarnFundingBatchApprovalTest {
+  @Test
+  fun sameAccountOneOnTwoNetworksIsOneReviewedFundingBatch() {
+    val rows =
+      listOf(143, 8453).map { chain ->
+        row(1).also {
+          it.put("operationId", "source_$chain")
+          it
+            .getJSONObject("proposal")
+            .put("operationId", "source_$chain")
+            .put("chainId", chain)
+            .put("token", fundingNetwork(chain).token)
+        }
+      }
+    val ledger = ledger(rows)
+    ledger.getJSONArray("legs").getJSONObject(0).put("sourceChainId", 143)
+    ledger
+      .getJSONArray("legs")
+      .getJSONObject(1)
+      .put("sourceChainId", 8453)
+      .put("token", fundingNetwork(8453).token)
+    val grant = approval(rows, ledger)
+    grant.approveAfterPasskey(1000)
+    record().use { wallet -> rows.forEach { grant.assertAuthorized(wallet, it, 1001) } }
+    val switched = JSONObject(rows[1].toString())
+    switched.getJSONObject("proposal").put("chainId", 42161)
+    try {
+      record().use { grant.assertAuthorized(it, switched, 1002) }
+      fail("Reviewed Base authority must not authorize an Arbitrum operation")
+    } catch (_: IllegalStateException) {}
+  }
+
   private val wallet = "7aafcc2e-0891-4e31-a7d4-03780d7b4f12"
   private val registry = "{\"version\":1,\"nextRecipient\":5}"
 

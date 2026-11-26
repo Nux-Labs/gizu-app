@@ -60,7 +60,9 @@ internal final class SwapPortfolioStore {
     case 1:
       // Version 1 tracked Robinhood tokens only; the next save writes version 2.
       try require(root.assets == nil || root.assets == [])
-      root.assets = (root.tokens ?? []).map { Asset(chainId: SwapChain.robinhood.rawValue, token: $0) }
+      root.assets = (root.tokens ?? []).map {
+        Asset(chainId: SwapChain.robinhood.rawValue, token: $0)
+      }
       root.tokens = nil
       root.version = 2
     case 2: try require(root.tokens == nil)
@@ -93,7 +95,8 @@ internal final class SwapPortfolioStore {
   }
   /// The one chain whose ledger tracks `token`; a token on two chains is refused, not guessed.
   func chainOf(_ token: String) throws -> UInt64 {
-    let chains = Set(try (load().assets ?? []).filter { $0.token == token.lowercased() }.map(\.chainId))
+    let chains = Set(
+      try (load().assets ?? []).filter { $0.token == token.lowercased() }.map(\.chainId))
     guard chains.count == 1, let chain = chains.first else { throw WalletFailure.invalid }
     return chain
   }
@@ -150,6 +153,11 @@ internal final class SwapPortfolioStore {
   }
   func rememberActive(_ saved: StoredSwapFile, gateway: String) throws {
     if let root = try saved.load(), let state = root["state"] as? String {
+      if root["version"] as? Int == 2, let batch = root["batch"] as? [String: Any],
+        batch["downstreamState"] == nil || batch["downstreamState"] is NSNull
+      {
+        return
+      }
       let op = try SwapOperation.restore(state: state, gateway: gateway)
       try remember(state: state, status: op.publicStatus())
     }

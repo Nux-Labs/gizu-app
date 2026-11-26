@@ -28,13 +28,31 @@ internal fun assertCashoutCanStart(
   SwapStore(context, record).load()?.let { root ->
     val saved = listOf(root) + (root.optJSONArray("history")?.objects() ?: emptyList())
     for (entry in saved) {
-      val states =
-        entry.optJSONObject("fundingBatch")?.getJSONArray("children")?.objects()?.map {
-          it.getString("state")
-        } ?: listOf(entry.getString("state"))
-      for (raw in states) {
-        assertSavedSwapPrivateWorkFinished(JSONObject(raw))
-      }
+      assertSavedSwapEntryPrivateWorkFinished(entry)
+    }
+  }
+}
+
+/** Funding completion alone cannot release a reviewed parent's private contribution. */
+internal fun assertSavedSwapEntryPrivateWorkFinished(entry: JSONObject) {
+  val batch = entry.optJSONObject("fundingBatch")
+  if (batch == null) {
+    assertSavedSwapPrivateWorkFinished(JSONObject(entry.getString("state")))
+    return
+  }
+  batch.getJSONArray("children").objects().forEach {
+    val state = JSONObject(it.getString("state"))
+    if (batch.optBoolean("cancelled")) state.put("cancelled", true)
+    assertSavedSwapPrivateWorkFinished(state)
+  }
+  val execution = batch.optJSONObject("execution")
+  execution?.let { assertSavedSwapPrivateWorkFinished(JSONObject(it.getString("state"))) }
+  if (batch.getInt("version") == 2 && !batch.getBoolean("cancelled")) {
+    check(
+      execution != null &&
+        JSONObject(execution.getString("state")).getJSONObject("step").getString("step") == "done"
+    ) {
+      "Resume or cancel the saved Swap before using its private funding"
     }
   }
 }

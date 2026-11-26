@@ -75,17 +75,28 @@ export function useFundingWallet() {
   const mainnet = useOptionalMainnetWallet();
   if (mainnet) {
     const observed = mainnet.snapshot ? portfolioUsdcBalance(mainnet.snapshot) : null;
-    const publicAtoms = mainnet.snapshot ? portfolioPublicUsdcAtoms(mainnet.snapshot) : null;
+    const publicAtoms =
+      mainnet.snapshot && !mainnet.error ? portfolioPublicUsdcAtoms(mainnet.snapshot) : null;
+    const reviewPublic = mainnet.snapshot?.fundingSources
+      ? publicAtoms
+      : (observed?.publicAtoms ?? null);
+    const reviewAtoms =
+      observed && reviewPublic !== null
+        ? (BigInt(reviewPublic) + BigInt(observed.privateAtoms)).toString()
+        : null;
     return {
       session: mainnet.session,
       balance: publicAtoms !== null ? formatUsdc(publicAtoms) : null,
       depositBalance: observed
         ? {
-            balance: formatUsdc(observed.totalAtoms),
-            breakdown: {
-              privateBalance: formatUsdc(observed.privateAtoms),
-              publicBalance: formatUsdc(observed.publicAtoms),
-            },
+            balance: reviewAtoms === null ? null : formatUsdc(reviewAtoms),
+            breakdown:
+              reviewPublic !== null
+                ? {
+                    privateBalance: formatUsdc(observed.privateAtoms),
+                    publicBalance: formatUsdc(reviewPublic),
+                  }
+                : null,
           }
         : null,
       loading: mainnet.loading && mainnet.snapshot === null,

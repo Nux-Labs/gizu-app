@@ -1,4 +1,3 @@
-/* eslint-disable import/no-unresolved -- isolated synthetic viem reference */
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { parseTransaction, recoverTransactionAddress, keccak256 } from "viem";

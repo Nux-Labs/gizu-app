@@ -5,6 +5,104 @@ import { validatorCompiler } from "@fastify/type-provider-zod";
 import { registerPrivateHttp } from "../../src/http/private-http.ts";
 import { registerFundingRoutes } from "../../src/http/routes/funding.routes.ts";
 
+test("rollout capabilities default to Monad and disabled new starts preserve signed recovery", async () => {
+  const app = Fastify();
+  app.setValidatorCompiler(validatorCompiler);
+  let starts = 0,
+    receipts = 0,
+    submits = 0;
+  const gateway = {
+    planner: {
+      prepare: async () => {
+        starts++;
+        return {};
+      },
+    },
+    funding: {
+      prepare: async () => {
+        starts++;
+        return {};
+      },
+      submit: async () => {
+        submits++;
+        return "0x01";
+      },
+      receipt: async () => {
+        receipts++;
+        return { found: false };
+      },
+    },
+  };
+  registerFundingRoutes(app, {
+    143: gateway,
+    8453: gateway,
+    42161: gateway,
+  } as never);
+  const capabilities = await app.inject({
+    method: "GET",
+    url: "/v1/funding/capabilities",
+  });
+  assert.deepEqual(capabilities.json(), {
+    fundingContractVersion: 2,
+    fundingChainIds: [143],
+  });
+  const payload = {
+    owner: "0x1111111111111111111111111111111111111111",
+    recipient: "0x2222222222222222222222222222222222222222",
+    amount: "1",
+  };
+  for (const chain of [8453, 42161])
+    for (const action of ["plan", "prepare"]) {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/funding/${chain}/${action}`,
+        payload: { ...payload, ...(action === "plan" ? { budget: "2" } : {}) },
+      });
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.json().code, "FUNDING_CHAIN_DISABLED");
+    }
+  assert.equal(starts, 0);
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/funding/8453/receipt",
+        payload: { userOperationHash: "0x" + "11".repeat(32) },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(receipts, 1);
+  const owner = payload.owner;
+  const operation = {
+    sender: owner,
+    nonce: "0x0",
+    callData: "0x12",
+    signature: "0x12",
+    callGasLimit: "0x1",
+    verificationGasLimit: "0x1",
+    preVerificationGas: "0x1",
+    maxFeePerGas: "0x1",
+    maxPriorityFeePerGas: "0x0",
+    paymaster: owner,
+    paymasterVerificationGasLimit: "0x1",
+    paymasterPostOpGasLimit: "0x1",
+    paymasterData: "0x12",
+  };
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/funding/8453/submit",
+        payload: { userOperation: operation },
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(submits, 1);
+  await app.close();
+});
+
 test("funding routes select the source network, bind response identity and reject unknown sources", async () => {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -35,7 +133,7 @@ test("funding routes select the source network, bind response identity and rejec
       },
     ]),
   );
-  registerFundingRoutes(app, gateways as never);
+  registerFundingRoutes(app, gateways as never, [143, 8453, 42161]);
   const payload = {
     owner: "0x1111111111111111111111111111111111111111",
     recipient: "0x2222222222222222222222222222222222222222",
@@ -130,4 +228,62 @@ test("funding submit rejects a signature authorization for a different source ch
   assert.equal(reply.statusCode, 400);
   assert.equal(sends, 0);
   await app.close();
+});
+
+test("Ethereum private funding admission requires its exact configured payout fee qualification", async () => {
+  const { observedAuroraFeeQualification, parseAuroraFeeQualification } =
+    await import("../../src/adapters/earn/fee-policy.ts");
+  const qualified = parseAuroraFeeQualification(
+    JSON.stringify({
+      version: "ethereum-qualified",
+      routes: {
+        payoutEthereum: {
+          collectors: [
+            { recipient: "widget_collect.sputnik-dao.near", maximumBps: 4 },
+          ],
+          maximumTotalBps: 4,
+          referral: null,
+          integratorFeeBps: 0,
+          applicationFeeAtoms: "0",
+          qualificationReference: "operator-qualified",
+        },
+      },
+    }),
+  );
+  for (const [policy, enabled] of [
+    [undefined, false],
+    [observedAuroraFeeQualification, false],
+    [qualified, true],
+  ] as const) {
+    const app = Fastify();
+    app.setValidatorCompiler(validatorCompiler);
+    const gateway = {
+      planner: { prepare: async () => ({}) },
+      funding: {
+        prepare: async () => ({}),
+        submit: async () => "0x01",
+        receipt: async () => ({ found: false }),
+      },
+    };
+    registerFundingRoutes(
+      app,
+      { 143: gateway, 8453: gateway, 42161: gateway } as never,
+      [143, 8453, 42161],
+      policy,
+    );
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/funding/capabilities",
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(
+      response.json().earnPrivateFundingVersion,
+      enabled ? 2 : undefined,
+    );
+    assert.deepEqual(
+      response.json().earnPrivateFundingProfileChainIds,
+      enabled ? [1] : undefined,
+    );
+    await app.close();
+  }
 });

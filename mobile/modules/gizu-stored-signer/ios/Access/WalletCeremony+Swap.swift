@@ -3,6 +3,34 @@ import Foundation
 
 @available(iOS 18.0, *)
 @MainActor extension WalletCeremony {
+  func mainnetPortfolio() async throws -> [String: Any] {
+    let record = try store.load()
+    defer { record.close() }
+    let walletId = record.id
+    let generation = record.journalId
+    let ledger = FundingReservations(store: store, record: record)
+    return try await MainnetPortfolio(
+      rpc: NativeMainnetPortfolioRPC(),
+      privateBalance: { identity in
+        try self.checkPrivateRead(identity)
+        return try await SwapFundingServices.readPrivateBalance(
+          identity,
+          authority: {
+            try self.checkPrivateRead(identity)
+          })
+      },
+      privateReadAuthority: {
+        let identity = try self.store.load()
+        defer { identity.close() }
+        try require(identity.id == walletId && identity.journalId == generation)
+        try self.checkPrivateRead(identity)
+      },
+      reservedAtoms: { chain, owner in
+        try? ledger.reservedAtoms(chainId: chain, owner: owner)
+      }
+    ).read(store: store)
+  }
+
   func swapDeposit() throws -> [String: Any] {
     let record = try store.load()
     defer { record.close() }
@@ -35,8 +63,7 @@ import Foundation
     try await runSwap(gateway: gateway, intent: .recover(target, chainId))
   }
 
-  func startPayout(target: String, gateway: String, chainId: UInt64) async throws -> [String: Any]
-  {
+  func startPayout(target: String, gateway: String, chainId: UInt64) async throws -> [String: Any] {
     try await runSwap(gateway: gateway, intent: .payout(target, chainId))
   }
 
@@ -52,7 +79,7 @@ import Foundation
   func swapStatus(gateway: String) throws -> [String: Any] {
     let record = try store.load()
     defer { record.close() }
-    let saved = try StoredSwapFile(store: store, record: record)
+    let saved = StoredSwapFile(store: store, record: record)
     if try saved.load() == nil { return ["phase": "NONE"] }
     let engine = StoredSwapEngine(storage: store, saved: saved, gateway: gateway)
     defer { engine.close() }
@@ -63,7 +90,7 @@ import Foundation
   func cancelSwap(gateway: String) throws -> [String: Any] {
     let record = try store.load()
     defer { record.close() }
-    let engine = try StoredSwapEngine(
+    let engine = StoredSwapEngine(
       storage: store, saved: StoredSwapFile(store: store, record: record), gateway: gateway)
     defer { engine.close() }
     try engine.restore()
@@ -80,7 +107,7 @@ import Foundation
     try assertCashoutInactive(store: store, record: record)
     let credential = record.credential
     let walletId = record.id
-    let engine = try StoredSwapEngine(
+    let engine = StoredSwapEngine(
       storage: store, saved: StoredSwapFile(store: store, record: record), gateway: gateway)
     defer {
       record.close()
@@ -93,11 +120,30 @@ import Foundation
       try engine.retry()
     case .sell(let id): try engine.startSell(record: record, holdingId: id)
     case .buy(let target, let amount, let chain):
-      try engine.start(record: record, target: target, amountAtoms: amount, chainId: chain)
+      if let amount {
+        record.close()
+        let screen = try await presentWalletUI()
+        try await screen.confirm(
+          "Check Swap funding",
+          "Authenticate a read-only check of your private USDC and public funding balances. You will review the total budget, sources and each spending stage separately before signing."
+        )
+        _ = try await authorize(credential, walletId: walletId, purpose: "swap-funding-read:v2")
+        try checkAuthorization()
+        let fresh = try store.load()
+        defer { fresh.close() }
+        try require(fresh.id == walletId && fresh.verified)
+        try grantPrivateReads(fresh)
+        try await engine.startFunding(
+          record: fresh, target: target, amountAtoms: amount, chainId: chain)
+        try checkAuthorization()
+      } else {
+        try engine.start(record: record, target: target, amountAtoms: amount, chainId: chain)
+      }
     case .recover(let target, let chain):
       try engine.startRecovery(record: record, target: target, chainId: chain)
     case .payout(let target, let chain):
-      try engine.start(record: record, target: target, amountAtoms: nil, payout: true, chainId: chain)
+      try engine.start(
+        record: record, target: target, amountAtoms: nil, payout: true, chainId: chain)
     }
     record.close()
     let screen = try await presentWalletUI()

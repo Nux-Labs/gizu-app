@@ -10,6 +10,33 @@ internal protocol MainnetPortfolioRPC {
   func calls(_ requests: [PortfolioRequest]) async throws -> [Any]
 }
 
+/// Independent observation deadline for each source, shared across that source's batches.
+internal struct BudgetedPortfolioRPC: MainnetPortfolioRPC {
+  let upstream: MainnetPortfolioRPC
+  let deadline: ContinuousClock.Instant
+  let requestBudget: Duration
+  init(upstream: MainnetPortfolioRPC, totalMilliseconds: Int = 10_000, requestMilliseconds: Int = 3_000) {
+    self.upstream = upstream
+    deadline = ContinuousClock.now.advanced(by: .milliseconds(totalMilliseconds))
+    requestBudget = .milliseconds(requestMilliseconds)
+  }
+  func calls(_ requests: [PortfolioRequest]) async throws -> [Any] {
+    try Task.checkCancellation()
+    let remaining = ContinuousClock.now.duration(to: deadline)
+    guard remaining > .zero else { throw URLError(.timedOut) }
+    return try await withThrowingTaskGroup(of: [Any].self) { group in
+      group.addTask { try await upstream.calls(requests) }
+      group.addTask {
+        try await Task.sleep(for: min(remaining, requestBudget))
+        throw URLError(.timedOut)
+      }
+      defer { group.cancelAll() }
+      guard let result = try await group.next() else { throw URLError(.timedOut) }
+      return result
+    }
+  }
+}
+
 /// Fixed-chain native transport. Never shares or changes the testnet signing endpoint.
 internal final class NativeMainnetPortfolioRPC: NSObject, MainnetPortfolioRPC,
   URLSessionTaskDelegate
@@ -19,6 +46,7 @@ internal final class NativeMainnetPortfolioRPC: NSObject, MainnetPortfolioRPC,
     case ethereum = "https://ethereum-rpc.publicnode.com"
     case robinhood = "https://rpc.mainnet.chain.robinhood.com"
     case base = "https://mainnet.base.org"
+    case arbitrum = "https://arb1.arbitrum.io/rpc"
   }
   private let network: Network
   private let post: ((Data) async throws -> Data)?

@@ -1,4 +1,3 @@
-/* eslint-disable import/no-unresolved -- isolated synthetic reference dependencies; see N1 documentation */
 import { HDKey } from "@scure/bip32";
 import { entropyToMnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";

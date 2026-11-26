@@ -87,6 +87,8 @@ public final class GizuStoredSignerModule: Module {
         "contractVersion": 1, "available": Self.supported, "walletStorage": Self.supported,
         "backup": Self.supported, "transfers": Self.supported, "swaps": Self.supported,
         "confidentialSaleProceeds": Self.supported,
+        "fundingContractVersion": 2,
+        "fundingChainIds": [143, 8453, 42161],
         "earnWallets": Self.supported,
         "earnVaultExecution": Self.supported,
         "earnSponsoredExecution": false,
@@ -276,7 +278,7 @@ public final class GizuStoredSignerModule: Module {
     }
     AsyncFunction("getMainnetPortfolio") { (promise: Promise) in
       self.run(promise, operation: "getMainnetPortfolio") { scope in
-        try await MainnetPortfolio(rpc: NativeMainnetPortfolioRPC()).read(store: scope.store)
+        try await scope.mainnetPortfolio()
       }
     }
     // `chainId` names the chain the target trades on. JS omits it for Robinhood, so builds on
@@ -329,6 +331,7 @@ public final class GizuStoredSignerModule: Module {
     }
     Function("lock") {
       Task { @MainActor in
+        WalletCeremony.revokePrivateReads()
         self.task?.cancel()
         self.ceremony?.cancel()
       }
@@ -336,6 +339,7 @@ public final class GizuStoredSignerModule: Module {
 
     OnDestroy {
       Task { @MainActor in
+        WalletCeremony.revokePrivateReads()
         self.task?.cancel()
         self.ceremony?.cancel()
       }

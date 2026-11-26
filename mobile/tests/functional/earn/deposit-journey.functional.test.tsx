@@ -11,7 +11,10 @@ import { EarnInvestmentScreen } from "@/features/earn/EarnInvestmentScreen";
 import type { RootStackParamList } from "@/navigation/types";
 import type { EarnDepositService, DepositSnapshot } from "@/domain/earn/depositJourney";
 import { depositSnapshot } from "../../support/depositJourney";
-import { distributionDepositSnapshot } from "../../support/depositDistribution";
+import {
+  distributionDepositSnapshot,
+  pooledDistributionDepositSnapshot,
+} from "../../support/depositDistribution";
 import { parseDepositSnapshot } from "@/domain/earn/depositJourney";
 import { hoodIntent } from "../../support/robinhoodEarn";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
@@ -28,6 +31,21 @@ function ready(): DepositSnapshot {
   raw.review.expiresAtMs = Date.now() + 45000;
   return raw as DepositSnapshot;
 }
+
+test("pooled Earn review shows its funding networks and one combined private amount", async () => {
+  const raw = pooledDistributionDepositSnapshot();
+  raw.review.quotedAtMs = Date.now();
+  raw.review.expiresAtMs = Date.now() + 45000;
+  const reviewed = parseDepositSnapshot(raw, { walletId: hoodIntent.walletId });
+  setup({ prepare: jest.fn().mockResolvedValue(reviewed) });
+  await userEvent.type(await screen.findByPlaceholderText("0.00"), "3");
+  await userEvent.press(screen.getByRole("button", { name: "Review deposit" }));
+  await screen.findByRole("button", { name: "Confirm deposit" });
+  await userEvent.press(screen.getByRole("button", { name: "Details" }));
+  expect(screen.getByText("Monad funding")).toBeVisible();
+  expect(screen.getByText("Base funding")).toBeVisible();
+  expect(screen.getByText(/Combined private USDC · 2.97 USDC/)).toBeVisible();
+});
 
 test("shows the native calculated private amount and public shortfall instead of asking the user to guess", async () => {
   const paused = {

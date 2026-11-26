@@ -95,6 +95,21 @@ export function LegacyEthereumDepositScreen({
                   </Typography>
                 </>
               )}
+              {v.review?.kind === "privateFunding" && (
+                <>
+                  <Typography>
+                    Total budget: {formatUsdc(v.review.parent.budgetAtoms)} USDC including fees
+                  </Typography>
+                  <Typography>
+                    Existing private contribution:{" "}
+                    {formatUsdc(v.review.parent.approvedExistingPrivateAtoms)} USDC
+                  </Typography>
+                  <Typography>
+                    Native approval saves every funding source, then confirms one private handoff
+                    before the payout, ETH funding and vault approvals.
+                  </Typography>
+                </>
+              )}
               {v.review?.kind === "liquidity" && (
                 <>
                   <Typography>

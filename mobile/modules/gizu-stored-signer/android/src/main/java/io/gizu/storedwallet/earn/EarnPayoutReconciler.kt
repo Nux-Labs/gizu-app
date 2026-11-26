@@ -196,7 +196,10 @@ internal fun earnPrivateCreditInvalidationTargets(
     )
   check(proof.getBoolean("authenticated") && proof.getBoolean("operationScoped"))
   return when (operation.getJSONObject("proposal").getString("kind")) {
-    "sourceFunding" -> 143L to setOf(io.gizu.storedwallet.swap.MainnetPortfolio.USDC, "native")
+    "sourceFunding" ->
+      operation.getJSONObject("proposal").optInt("chainId", 143).let { chain ->
+        chain.toLong() to setOf(fundingNetwork(chain).token, "native")
+      }
     "hoodTokenReturn" -> 4663L to setOf(HOOD_EARN_USDG, HOOD_EARN_VAULT, "native")
     "returnUsdc",
     "returnEth" -> 1L to setOf(ETH_EARN_USDC, ETH_EARN_VAULT, ETH_EARN_WETH, "native")
@@ -212,7 +215,15 @@ internal fun invalidateEarnPrivateCreditCaches(
   proof: JSONObject,
 ) {
   val (chain, tokens) = earnPrivateCreditInvalidationTargets(operation, proof) ?: return
-  if (chain == 143L) io.gizu.storedwallet.swap.MainnetPortfolio(context).invalidate(record)
+  if (operation.getJSONObject("proposal").getString("kind") == "sourceFunding") {
+    io.gizu.storedwallet.swap
+      .MainnetPortfolio(context)
+      .invalidateConfirmedFunding(
+        record,
+        chain.toInt(),
+        operation.getJSONObject("proposal").getString("expectedFrom"),
+      )
+  }
   io.gizu.storedwallet.portfolio
     .NativeOwnedPortfolio(context)
     .invalidateTokens(record, chain, tokens)

@@ -31,6 +31,7 @@ import java.util.UUID
 import kotlin.coroutines.resume
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
+import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.gizu_stored_signer_core.EarnReadAuthentication
 import uniffi.gizu_stored_signer_core.deriveAccountAddressRange
@@ -459,6 +460,9 @@ class GizuStoredSignerModule : Module() {
           "earnVaultExecution" to eligible(appContext.currentActivity),
           "earnSponsoredExecution" to eligible(appContext.currentActivity),
           "earnPrivatePayoutExecution" to eligible(appContext.currentActivity),
+          "earnPrivateFundingVersion" to 2,
+          "fundingContractVersion" to 2,
+          "fundingChainIds" to listOf(143, 8453, 42161),
           "earnEthereumLiquidityExecution" to eligible(appContext.currentActivity),
           "earnDepositJourney" to eligible(appContext.currentActivity),
           "earnDepositDistribution" to eligible(appContext.currentActivity),
@@ -483,9 +487,30 @@ class GizuStoredSignerModule : Module() {
             val portfolio = io.gizu.storedwallet.swap.MainnetPortfolio(activity)
             portfolio.invalidate(record)
             val public = portfolio.read(record, emptyList(), includeOwned = false)
-            check(public["balanceComplete"] == true && public["stale"] == false) {
-              "Public balance is still syncing"
-            }
+            val enabledSources =
+              try {
+                enabledFundingChains().toSet()
+              } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                null
+              }
+            val fundingSources =
+              (public["fundingSources"] as? List<*>)
+                ?.map { it as Map<*, *> }
+                ?.filter {
+                  enabledSources?.contains((it["sourceChainId"] as Number).toInt()) == true
+                } ?: error("Funding observations are unavailable")
+            val publicComplete =
+              enabledSources != null &&
+                enabledSources.all { chain ->
+                  fundingSources.any {
+                    (it["sourceChainId"] as Number).toInt() == chain &&
+                      (it["accountIndex"] as Number).toInt() == 1
+                  }
+                } &&
+                fundingSources.all {
+                  it["complete"] == true && it["stale"] == false && it["balanceAtoms"] is String
+                }
             val candidates = privateDepositCandidates(activity, record)
             val limit = kotlinx.coroutines.sync.Semaphore(4)
             val observations = coroutineScope {
@@ -521,23 +546,25 @@ class GizuStoredSignerModule : Module() {
             }
             val ledger = fundingReservations(activity, record)
             val publicAtoms =
-              (public["accounts"] as List<*>).fold(java.math.BigInteger.ZERO) { sum, raw ->
-                val account = raw as Map<*, *>
-                val address = account["address"] as String
-                val balance = depositAtoms(account["balanceAtoms"] as String)
+              fundingSources.fold(java.math.BigInteger.ZERO) { sum, account ->
+                val chain = (account["sourceChainId"] as Number).toInt()
+                val address = account["owner"] as String
+                val balance =
+                  (account["balanceAtoms"] as? String)?.let { depositAtoms(it) } ?: return@fold sum
                 sum +
-                  if (ledger.hasUnsettledSigned(address)) java.math.BigInteger.ZERO
+                  if (ledger.hasUnsettledSigned(address, chain)) java.math.BigInteger.ZERO
                   else
                     maxOf(
                       java.math.BigInteger.ZERO,
-                      balance - depositAtoms(ledger.reservedAtoms(address)),
+                      balance - depositAtoms(ledger.reservedAtoms(address, chain)),
                     )
               }
+            check((private + publicAtoms).bitLength() <= 256)
             mapOf(
               "publicAtoms" to publicAtoms.toString(),
               "privateAtoms" to private.toString(),
               "totalAtoms" to (private + publicAtoms).toString(),
-              "complete" to true,
+              "complete" to publicComplete,
               "checkedAtMs" to System.currentTimeMillis(),
             )
           }
@@ -951,7 +978,11 @@ class GizuStoredSignerModule : Module() {
       runCeremony(promise, timeoutMs = 180_000L) { activity, store ->
         store.load().use { record ->
           check(record.id == walletId && record.verified && !record.earnRecoveryRequired)
-          NativeFundingPlanner(activity.applicationContext, record).plan(budgetAtoms)
+          NativeFundingPlanner(activity.applicationContext, record)
+            .plan(
+              budgetAtoms,
+              allowedSourceChainIds = if (record.earnChain == 1) setOf(143) else null,
+            )
         }
       }
     }
@@ -982,6 +1013,43 @@ class GizuStoredSignerModule : Module() {
             identity.third,
             amountAtoms,
             false,
+          )
+      }
+    }
+    AsyncFunction("prepareEarnSourceQuoteForSource") {
+      walletId: String,
+      source: Map<String, Any?>,
+      amountAtoms: String,
+      operationId: String,
+      revision: Int,
+      promise: Promise ->
+      runCeremony(promise) { activity, store ->
+        check(source.keys == setOf("sourceChainId", "token", "accountIndex", "owner"))
+        val chain = (source["sourceChainId"] as? Number)?.toInt() ?: error("Missing source chain")
+        val index = (source["accountIndex"] as? Number)?.toInt() ?: error("Missing source account")
+        check((source["sourceChainId"] as Number).toDouble() == chain.toDouble())
+        check((source["accountIndex"] as Number).toDouble() == index.toDouble())
+        val network = fundingNetwork(chain)
+        check((source["token"] as? String)?.equals(network.token, true) == true)
+        check(fundingCandidate(index, chain))
+        val identity =
+          store.load().use { record ->
+            requireSponsoredWallet(record, walletId)
+            val owner = publicAccountAddress(record, index)
+            check((source["owner"] as? String)?.equals(owner, true) == true)
+            Triple(record.earnChain, owner, cycleConfidential(record))
+          }
+        val quotes = store.load().use { earnQuoteJournal(activity, it) }
+        NativeEarnQuoteGateway(quotes = quotes)
+          .create(
+            identity.first,
+            operationId,
+            revision,
+            identity.second,
+            identity.third,
+            amountAtoms,
+            false,
+            sourceChainId = chain,
           )
       }
     }
@@ -1151,6 +1219,123 @@ class GizuStoredSignerModule : Module() {
         quote
       }
     }
+    AsyncFunction("createEarnFundingParent") { request: Map<String, Any?>, promise: Promise ->
+      runCeremony(promise, timeoutMs = 300_000L) { activity, store ->
+        val parsed = fundingParentRequest(request, true)
+        val wallet = parsed.getString("walletId")
+        ensurePrivateReadPermission(activity, store, wallet)
+        withContext(Dispatchers.IO) {
+          store.load().use { record ->
+            requireSponsoredWallet(record, wallet)
+            check(record.earnChain == 1 && record.earnCycleIndex == parsed.getInt("cycleIndex"))
+            val parent =
+              prepareNativeFundingOnlyParent(
+                activity,
+                store,
+                record,
+                parsed.getString("budgetAtoms"),
+              ) {
+                requireForeground(activity)
+                requirePrivateReadPermission(activity, record)
+              }
+            fundingOnlyParentPublic(parent)
+          }
+        }
+      }
+    }
+    AsyncFunction("listEarnFundingParents") { walletId: String, promise: Promise ->
+      runCeremony(promise, readOnly = true) { activity, store ->
+        withContext(Dispatchers.IO) {
+          store.load().use { record ->
+            check(record.id == walletId && record.verified)
+            fundingOnlyParentsForCycle(record, earnDepositJournal(activity, record).all())
+              .map(::fundingOnlyParentPublic)
+          }
+        }
+      }
+    }
+    for (action in listOf("execute", "resume", "reconcile")) AsyncFunction(
+      "${action}EarnFundingParent"
+    ) { request: Map<String, Any?>, promise: Promise ->
+      runCeremony(promise, timeoutMs = 900_000L) { activity, store ->
+        runFundingParent(activity, store, request, action != "reconcile")
+      }
+    }
+    AsyncFunction("cancelEarnFundingParent") { request: Map<String, Any?>, promise: Promise ->
+      scope.launch {
+        task?.cancel()
+        runCeremony(promise, wait = true) { activity, store ->
+          val parsed = fundingParentRequest(request, false)
+          withContext(Dispatchers.IO) {
+            store.load().use { record ->
+              requireSponsoredWallet(record, parsed.getString("walletId"))
+              val journal = earnDepositJournal(activity, record)
+              val id = parsed.getString("parentOperationId")
+              val parent = journal.get(id)
+              requireFundingOnlyParent(record, parent)
+              check(parent.getInt("revision") == parsed.getInt("revision"))
+              refreshFundingParentSnapshots(activity, record, journal, parent)
+              val payoutJournal = earnPayoutJournal(activity, record)
+              val knownPayouts =
+                parent
+                  .getJSONObject("payoutChildren")
+                  .keys()
+                  .asSequence()
+                  .map { parent.getJSONObject("payoutChildren").getString(it) }
+                  .toSet()
+              for (child in
+                payoutJournal.all().filter { it.getString("operationId") in knownPayouts }) {
+                if (
+                  !child.has("signedData") &&
+                    !child.optBoolean("signingPending") &&
+                    !child.optBoolean("signingAuthorizationPending") &&
+                    child.getString("status") !in setOf("paid", "cancelled")
+                )
+                  payoutJournal.update(
+                    child.getString("operationId"),
+                    child.getJSONObject("proposal").getString("leg"),
+                    child.getInt("revision"),
+                  ) {
+                    it.put("status", "cancelled").put("cancelled", true)
+                  }
+              }
+              val cancelled = journal.cancelFundingOnlyParent(id, record, payoutJournal.all())
+              val batch =
+                cancelled.getJSONObject("review").getJSONObject("reservation").getString("id")
+              if (!batch.startsWith("private_")) {
+                val sponsored = earnSponsoredJournal(activity, record)
+                for (original in
+                  cancelled.getJSONObject("review").getJSONArray("publicFundingRows").objects()) {
+                  val row =
+                    sponsored.all().singleOrNull {
+                      it.getString("operationId") == original.getString("operationId")
+                    } ?: continue
+                  if (
+                    !row.sponsoredSpendSaved() &&
+                      !row.optBoolean("signingPending") &&
+                      !row.optBoolean("signingAuthorizationPending") &&
+                      !row.optBoolean("cancelled") &&
+                      row.getString("status") !in terminalSteps
+                  )
+                    sponsored.cancel(row.getString("operationId"), row.getInt("revision"))
+                }
+                fundingReservations(activity, record)
+                  .cancelParentUnsigned(
+                    batch,
+                    cancelled
+                      .getJSONObject("review")
+                      .getJSONArray("publicFundingRows")
+                      .objects()
+                      .map { it.getString("operationId") }
+                      .toSet(),
+                  )
+              }
+              fundingOnlyParentPublic(cancelled)
+            }
+          }
+        }
+      }
+    }
     AsyncFunction("registerEarnFundingPlans") {
       walletId: String,
       requests: List<Map<String, Any?>>,
@@ -1170,7 +1355,7 @@ class GizuStoredSignerModule : Module() {
               val p = JSONObject(r["proposal"] as? Map<*, *> ?: error("Missing proposal"))
               check(
                 p.getString("kind") == "sourceFunding" &&
-                  p.getInt("chainId") == 143 &&
+                  p.getInt("chainId") in setOf(143, 8453, 42161) &&
                   p.getInt("fundingBatchSize") == requests.size
               )
               p.getString("fundingBatchId")
@@ -1179,21 +1364,22 @@ class GizuStoredSignerModule : Module() {
         check(batchIds.size == 1)
         val ids = mutableSetOf<String>()
         val rows =
-          EarnSponsoredEngine(
-              store,
-              journal,
-              EarnSponsoredChainRpc(143),
-              EarnSponsoredBundlerRpc(143),
-              privateCreditRows = { address ->
-                store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
-              },
-              reservations = ledger,
-            )
-            .use { engine ->
-              requests.map { r ->
-                engine.create(r).also { check(ids.add(it.getString("operationId"))) }
+          requests.map { request ->
+            val chain = JSONObject(request["proposal"] as Map<*, *>).getInt("chainId")
+            EarnSponsoredEngine(
+                store,
+                journal,
+                EarnSponsoredChainRpc(chain),
+                EarnSponsoredBundlerRpc(chain),
+                privateCreditRows = { address ->
+                  store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
+                },
+                reservations = ledger,
+              )
+              .use { engine ->
+                engine.create(request).also { check(ids.add(it.getString("operationId"))) }
               }
-            }
+          }
         val batch = ledger.batch(batchIds.single())
         val legs = batch.getJSONArray("legs")
         check(
@@ -1633,8 +1819,58 @@ class GizuStoredSignerModule : Module() {
     }
     AsyncFunction("executeEarnPrivatePayout") { request: Map<String, Any?>, promise: Promise ->
       runCeremony(promise) { activity, store ->
-        store.load().use { assertCashoutInactive(activity, it) }
         val walletId = request["walletId"] as? String ?: error("Missing wallet")
+        if ((request["version"] as? Number)?.toDouble() == 2.0) {
+          check(
+            request.keys == setOf("version", "walletId", "cycleIndex", "parentOperationId", "leg")
+          )
+          val parentId = request["parentOperationId"] as? String ?: error("Missing funding parent")
+          val leg = request["leg"] as? String ?: error("Missing payout role")
+          ensurePrivateReadPermission(activity, store, walletId)
+          val parent =
+            store.load().use { record ->
+              requireSponsoredWallet(record, walletId)
+              check(
+                (request["cycleIndex"] as? Number)?.toDouble() == record.earnCycleIndex.toDouble()
+              )
+              earnDepositJournal(activity, record).fundingOnlyHandoff(parentId, record).also {
+                assertCashoutInactive(activity, record, deposit = true)
+                assertNoPrivateDeposit(activity, record, except = parentId)
+              }
+            }
+          val journal = store.load().use { earnPayoutJournal(activity, it) }
+          val existing =
+            parent.getJSONObject("payoutChildren").optString(leg).takeIf { it.isNotBlank() }
+          // A crash after child persistence but before attachment adopts that exact unsigned child.
+          val orphan =
+            if (existing == null)
+              journal.all().singleOrNull { row ->
+                val p = row.getJSONObject("proposal")
+                p.getString("kind") == "privateEarnPayout" &&
+                  p.getInt("profileChainId") == 1 &&
+                  p.getString("operationId") == parentId &&
+                  p.getString("leg") == leg
+              }
+            else null
+          val child =
+            if (existing != null) journal.get(existing)
+            else
+              orphan
+                ?: privateParentPayoutEngine(activity, store, walletId)
+                  .createFromFundingParent(parent, leg)
+          store.load().use { record ->
+            earnDepositJournal(activity, record)
+              .attachFundingOnlyPayout(parentId, leg, child.getString("operationId"), record)
+          }
+          return@runCeremony approvePrivateParentPayout(
+            activity,
+            store,
+            walletId,
+            child.getString("operationId"),
+            child.getInt("revision"),
+          )
+        }
+        store.load().use { assertCashoutInactive(activity, it) }
         payoutEngine(activity, store, walletId).use { engine ->
           val op = engine.create(request)
           approveEarnPayout(
@@ -1649,14 +1885,14 @@ class GizuStoredSignerModule : Module() {
     }
     AsyncFunction("listEarnPrivatePayoutOperations") { walletId: String, promise: Promise ->
       runCeremony(promise) { activity, store ->
-        val journal =
-          store.load().use { record ->
-            requireSponsoredWallet(record, walletId)
-            earnPayoutJournal(activity, record)
-          }
         store.load().use { record ->
+          requireSponsoredWallet(record, walletId)
+          val journal = earnPayoutJournal(activity, record)
           currentCycleRows(record, journal.all())
-            .filter { it.getJSONObject("proposal").getString("kind") != "privateEarnPayout" }
+            .filter {
+              val p = it.getJSONObject("proposal")
+              p.getString("kind") != "privateEarnPayout" || p.getInt("profileChainId") == 1
+            }
             .map { journal.public(it) }
         }
       }
@@ -1667,12 +1903,20 @@ class GizuStoredSignerModule : Module() {
       revision: Int,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
+        val saved =
+          store.load().use { record ->
+            requireSponsoredWallet(record, walletId)
+            earnPayoutJournal(activity, record).get(id)
+          }
+        if (saved.getJSONObject("proposal").getString("kind") == "privateEarnPayout") {
+          check(saved.getJSONObject("proposal").getInt("profileChainId") == 1) {
+            "Resume this payout from its saved deposit"
+          }
+          return@runCeremony approvePrivateParentPayout(activity, store, walletId, id, revision)
+        }
         store.load().use { assertCashoutInactive(activity, it) }
         payoutEngine(activity, store, walletId).use { engine ->
           var op = engine.journal.get(id)
-          check(op.getJSONObject("proposal").getString("kind") != "privateEarnPayout") {
-            "Resume this payout from its saved deposit"
-          }
           check(op.getInt("revision") == revision)
           if (op.has("signedData")) op = engine.reconcile(id, revision)
           if (
@@ -1693,15 +1937,25 @@ class GizuStoredSignerModule : Module() {
       revision: Int,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
-        val journal =
-          store.load().use { record ->
-            requireSponsoredWallet(record, walletId)
-            earnPayoutJournal(activity, record)
+        store.load().use { record ->
+          requireSponsoredWallet(record, walletId)
+          val journal = earnPayoutJournal(activity, record)
+          val row = journal.get(id)
+          requireActiveEarnCycle(record, row.getJSONObject("proposal"))
+          if (row.getJSONObject("proposal").getString("kind") == "privateEarnPayout") {
+            check(row.getJSONObject("proposal").getInt("profileChainId") == 1) {
+              "Cancel this payout from its saved deposit"
+            }
+            requirePrivateParentPayoutBinding(
+              activity,
+              record,
+              row,
+              allowCancelled = true,
+              allowUnattached = true,
+            )
           }
-        check(journal.get(id).getJSONObject("proposal").getString("kind") != "privateEarnPayout") {
-          "Cancel this payout from its saved deposit"
+          journal.public(journal.cancelUnsigned(id, revision))
         }
-        journal.public(journal.cancelUnsigned(id, revision))
       }
     }
     AsyncFunction("readEarnPrivatePayoutSettlement") {
@@ -1710,13 +1964,19 @@ class GizuStoredSignerModule : Module() {
       revision: Int,
       promise: Promise ->
       runCeremony(promise) { activity, store ->
-        payoutEngine(activity, store, walletId).use { engine ->
-          check(
-            engine.journal.get(id).getJSONObject("proposal").getString("kind") !=
-              "privateEarnPayout"
-          ) {
+        val row =
+          store.load().use { record ->
+            requireSponsoredWallet(record, walletId)
+            earnPayoutJournal(activity, record).get(id)
+          }
+        if (row.getJSONObject("proposal").getString("kind") == "privateEarnPayout") {
+          check(row.getJSONObject("proposal").getInt("profileChainId") == 1) {
             "Check this payout from its saved deposit"
           }
+          check(row.getInt("revision") == revision)
+          return@runCeremony reconcilePrivateParentPayout(activity, store, walletId, id)
+        }
+        payoutEngine(activity, store, walletId).use { engine ->
           engine.journal.public(engine.reconcile(id, revision))
         }
       }
@@ -2731,12 +2991,309 @@ class GizuStoredSignerModule : Module() {
     )
   }
 
+  private fun fundingParentRequest(request: Map<String, Any?>, create: Boolean): JSONObject {
+    val keys =
+      if (create) setOf("version", "walletId", "cycleIndex", "budgetAtoms")
+      else setOf("version", "walletId", "parentOperationId", "revision")
+    check(request.keys == keys && (request["version"] as? Number)?.toDouble() == 2.0)
+    check(request["walletId"] is String)
+    val row = JSONObject(request)
+    if (create) {
+      val cycle = request["cycleIndex"] as? Number ?: error("Missing saved cycle")
+      check(cycle.toDouble() == cycle.toInt().toDouble() && cycle.toInt() >= 0)
+      check(
+        request["budgetAtoms"] is String &&
+          depositAtoms(row.getString("budgetAtoms"), true).bitLength() <= 64
+      )
+    } else {
+      check(
+        request["parentOperationId"] is String &&
+          row.getString("parentOperationId").matches(Regex("[-A-Za-z0-9_]{1,128}"))
+      )
+      val revision = request["revision"] as? Number ?: error("Missing parent revision")
+      check(revision.toDouble() == revision.toInt().toDouble() && revision.toInt() > 0)
+    }
+    return row
+  }
+
+  private fun refreshFundingParentSnapshots(
+    activity: Activity,
+    record: WalletRecord,
+    journal: EarnDepositJournal,
+    parent: JSONObject,
+  ): JSONObject {
+    if (parent.has("privateHandoff")) return parent
+    val sponsored = earnSponsoredJournal(activity, record).all()
+    val quotes = earnQuoteJournal(activity, record)
+    val minimums = JSONObject()
+    val rows =
+      parent.getJSONObject("review").getJSONArray("publicFundingRows").objects().map { original ->
+        val id = original.getString("operationId")
+        val current = sponsored.singleOrNull { it.getString("operationId") == id } ?: original
+        val p = current.getJSONObject("proposal")
+        val minimum =
+          parent.getJSONObject("fundingCredits").optJSONObject(id)?.getString("creditedAtoms")
+            ?: quotes.get(id, p.getInt("revision"))?.getString("minimumCreditAtoms")
+            ?: parent.getJSONObject("review").getJSONObject("publicMinimumCredits").getString(id)
+        minimums.put(id, minimum)
+        current
+      }
+    return journal.refreshFundingOnlySources(
+      parent.getString("journeyId"),
+      JSONArray(rows),
+      minimums,
+    )
+  }
+
+  private suspend fun runFundingParent(
+    activity: Activity,
+    store: WalletStore,
+    request: Map<String, Any?>,
+    execute: Boolean,
+  ): Map<String, Any> {
+    val parsed = fundingParentRequest(request, false)
+    val wallet = parsed.getString("walletId")
+    val id = parsed.getString("parentOperationId")
+    val initial =
+      store.load().use { record ->
+        requireSponsoredWallet(record, wallet)
+        val parent = earnDepositJournal(activity, record).get(id)
+        requireFundingOnlyParent(record, parent)
+        check(parent.getInt("revision") == parsed.getInt("revision"))
+        assertCashoutInactive(activity, record, deposit = true)
+        assertNoPrivateDeposit(activity, record, except = id)
+        parent
+      }
+    if (initial.has("privateHandoff") || initial.getString("phase") == "cancelled")
+      return fundingOnlyParentPublic(initial)
+    ensurePrivateReadPermission(activity, store, wallet)
+    fun readAuthority() {
+      requireForeground(activity)
+      store.load().use { record ->
+        requireSponsoredWallet(record, wallet)
+        requirePrivateReadPermission(activity, record)
+      }
+    }
+    var parent =
+      withContext(Dispatchers.IO) {
+        reconcileNativeFundingOnlyParent(activity, store, id, ::readAuthority)
+      }
+    if (execute && !parent.optBoolean("cancelRequested") && !parent.has("privateHandoff")) {
+      approveEarnFundingBatch(
+        activity,
+        store,
+        wallet,
+        parent.getJSONObject("review").getJSONObject("reservation").getString("id"),
+      )
+      parent = store.load().use { earnDepositJournal(activity, it).get(id) }
+    }
+    if (parent.optBoolean("cancelRequested"))
+      parent =
+        store.load().use { record ->
+          earnDepositJournal(activity, record)
+            .cancelFundingOnlyParent(id, record, earnPayoutJournal(activity, record).all())
+        }
+    return fundingOnlyParentPublic(parent)
+  }
+
+  private suspend fun approveFundingOnlyParentBatch(
+    activity: Activity,
+    store: WalletStore,
+    walletId: String,
+    parentId: String,
+  ): List<Map<String, Any>> {
+    val parentJournal = store.load().use { earnDepositJournal(activity, it) }
+    var parent = parentJournal.get(parentId)
+    store.load().use { record ->
+      requireFundingOnlyParent(record, parent)
+      check(record.id == walletId)
+    }
+    check(!parent.optBoolean("cancelRequested"))
+    val journal = store.load().use { earnSponsoredJournal(activity, it) }
+    val ledger = store.load().use { fundingReservations(activity, it) }
+    val batchId = parent.getJSONObject("review").getJSONObject("reservation").getString("id")
+    val originals = parent.getJSONObject("review").getJSONArray("publicFundingRows").objects()
+    val ids = originals.map { it.getString("operationId") }
+    if (parent.has("privateHandoff")) return ids.map { journal.public(journal.get(it)) }
+    fun readAuthority() {
+      requireForeground(activity)
+      store.load().use { record ->
+        requireSponsoredWallet(record, walletId)
+        requirePrivateReadPermission(activity, record)
+      }
+    }
+    // Native membership and every unsigned child are durably registered before any source signs.
+    for (original in originals) if (
+      journal.all().none { it.getString("operationId") == original.getString("operationId") }
+    )
+      nativeFundingOnlySourceEngine(activity, store, parentId, original.getString("operationId"))
+        .use { it.create(depositJsonMap(original)) }
+    val engines = linkedMapOf<String, Pair<EarnSponsoredEngine, SponsoredReview>>()
+    var grant: EarnFundingBatchApproval? = null
+    try {
+      parent = reconcileNativeFundingOnlyParent(activity, store, parentId, ::readAuthority)
+      if (parent.has("privateHandoff")) return ids.map { journal.public(journal.get(it)) }
+      for (id in ids) {
+        val row = journal.get(id)
+        if (parent.getJSONObject("fundingCredits").has(id)) continue
+        if (row.getString("status") !in setOf("planned", "authorizationSaved", "signed")) continue
+        val engine = nativeFundingOnlySourceEngine(activity, store, parentId, id)
+        try {
+          engines[id] = engine to engine.prepare(id, row.getInt("revision"))
+        } catch (failure: Exception) {
+          engine.close()
+          throw failure
+        }
+      }
+      parent =
+        store.load().use { record ->
+          refreshFundingParentSnapshots(
+            activity,
+            record,
+            parentJournal,
+            parentJournal.get(parentId),
+          )
+        }
+      if (engines.isNotEmpty()) {
+        val freshSignature =
+          engines.any { (id, pair) ->
+            val row = journal.get(id)
+            !row.has("signedUserOperation")
+          }
+        if (freshSignature) requireEthereumPrivateFundingAvailable()
+        val rows = ids.map(journal::get)
+        val credential =
+          store.load().use { record ->
+            requireFundingOnlyParent(record, parent)
+            rows.forEach { requireEarnFundingCapacity(activity, record, it) }
+            grant =
+              EarnFundingBatchApproval.createManifest(
+                rows,
+                walletId,
+                record.journalId,
+                record.earnCycleIndex,
+                batchId,
+                record.roleRegistry,
+                ledger.batch(batchId),
+              )
+            record.credential
+          }
+        val approval = checkNotNull(grant)
+        val binding =
+          JSONObject()
+            .put("parentOperationId", parentId)
+            .put("budgetAtoms", parent.getString("budgetAtoms"))
+            .put("approvedExistingPrivateAtoms", parent.getString("approvedExistingPrivateAtoms"))
+            .put("distribution", parent.optJSONObject("distribution") ?: JSONObject.NULL)
+            .put("destinations", parent.getJSONArray("destinations"))
+            .put("fundingDigest", approval.digest)
+        val digest = depositDigest(depositCanonical(binding))
+        val publicBudget =
+          originals.fold(java.math.BigInteger.ZERO) { sum, row ->
+            sum + depositAtoms(row.getJSONObject("proposal").getString("budgetAtoms"), true)
+          }
+        val terms =
+          rows.joinToString("\n\n") { row ->
+            val p = row.getJSONObject("proposal")
+            "Funding network ${p.getInt("chainId")} · ${p.getString("expectedFrom")}\nSource gross budget ${p.getString("budgetAtoms")} atoms; transfer ${p.getString("amountAtoms")} atoms; gas at most ${p.getString("maximumTokenFeeAtoms")} atoms.\nPrivate recipient ${p.getString("confidentialAccount")}."
+          }
+        confirm(
+          activity,
+          "Review Ethereum funding",
+          "Original total budget ${java.math.BigDecimal(parent.getString("budgetAtoms").toBigInteger(),6).toPlainString()} USDC, including all fees.\nApproved existing private USDC ${java.math.BigDecimal(parent.getString("approvedExistingPrivateAtoms").toBigInteger(),6).toPlainString()}.\nPublic funding budget ${java.math.BigDecimal(publicBudget,6).toPlainString()} USDC.\nSaved receiving wallets ${parent.getJSONArray("destinations")}.\nSaved distribution ${parent.optJSONObject("distribution") ?: "10% hold / 90% invest"}.\n\n$terms\n\nThis approval funds the confidential account only. Every source must have confirmed private credit before the next source signs. One downstream private payout per saved recipient has its own native review.\n\n" +
+            engines.values.joinToString("\n\n") { it.second.text },
+          fullReview = true,
+        )
+        withProviderUi(activity) {
+          PasskeyGate(activity)
+            .authorize(credential, walletId, "earn-funding-parent:v2:$parentId:$digest")
+        }
+        currentCoroutineContext().ensureActive()
+        readAuthority()
+        approval.approveAfterPasskey(System.currentTimeMillis())
+        parentJournal.update(parentId, parentJournal.get(parentId).getInt("revision")) {
+          it.put("phase", "funding")
+        }
+      }
+      for (id in ids) {
+        parent = parentJournal.get(parentId)
+        if (parent.getJSONObject("fundingCredits").has(id)) continue
+        engines[id]?.let { (engine, first) ->
+          var review = first
+          for (pass in 0..1) {
+            val authorize = {
+              readAuthority()
+              store.load().use { record ->
+                val current = parentJournal.get(parentId)
+                requireFundingOnlyParent(record, current)
+                check(!current.optBoolean("cancelRequested"))
+                checkNotNull(grant)
+                  .assertAuthorized(record, journal.get(review.id), System.currentTimeMillis())
+                requireEarnFundingCapacity(activity, record, journal.get(review.id))
+                ledger.assertActive(review.id)
+              }
+            }
+            val saved = journal.get(id)
+            val freshSignature = !saved.has("signedUserOperation")
+            if (freshSignature) requireEthereumPrivateFundingAvailable()
+            authorize()
+            engine.execute(review, authorize)
+            if (review.kind == "delegation") {
+              val row = journal.get(id)
+              review = engine.prepare(id, row.getInt("revision"))
+            } else break
+          }
+        }
+        var credited = false
+        for (poll in 0 until 36) {
+          parent = reconcileNativeFundingOnlyParent(activity, store, parentId, ::readAuthority)
+          if (parent.getJSONObject("fundingCredits").has(id)) {
+            credited = true
+            break
+          }
+          if (journal.get(id).getString("status") == "reverted") break
+          kotlinx.coroutines.delay(5000)
+        }
+        if (!credited) {
+          parentJournal.update(parentId, parentJournal.get(parentId).getInt("revision")) {
+            it.put("phase", "pending")
+          }
+          break
+        }
+      }
+      return ids.map { journal.public(journal.get(it)) }
+    } catch (failure: Exception) {
+      if (failure is CancellationException) throw failure
+      store.load().use { record ->
+        refreshFundingParentSnapshots(activity, record, parentJournal, parentJournal.get(parentId))
+      }
+      parentJournal.update(parentId, parentJournal.get(parentId).getInt("revision")) {
+        it.put("phase", "paused")
+      }
+      if (ids.any { journal.get(it).sponsoredSpendSaved() })
+        return ids.map { journal.public(journal.get(it)) }
+      throw failure
+    } finally {
+      grant?.invalidate()
+      engines.values.forEach { it.first.close() }
+    }
+  }
+
   private suspend fun approveEarnFundingBatch(
     activity: Activity,
     store: WalletStore,
     walletId: String,
     batchId: String,
   ): List<Map<String, Any>> {
+    val parent =
+      store.load().use { record ->
+        earnDepositJournal(activity, record).all().singleOrNull {
+          it.optString("kind") == "fundingOnly" &&
+            it.getJSONObject("review").getJSONObject("reservation").getString("id") == batchId
+        }
+      }
+    if (parent != null)
+      return approveFundingOnlyParentBatch(activity, store, walletId, parent.getString("journeyId"))
     val journal =
       store.load().use { record ->
         requireSponsoredWallet(record, walletId)
@@ -2748,12 +3305,15 @@ class GizuStoredSignerModule : Module() {
     val legs = batch.getJSONArray("legs")
     val ids = (0 until legs.length()).map { legs.getJSONObject(it).getString("operationId") }
     check(ids.distinct().size == ids.size)
-    reconcileEarnSponsoredOperations(
+    for ((chain, selected) in
+      ids.groupBy {
+        journal.get(it).getJSONObject("proposal").getInt("chainId")
+      }) reconcileEarnSponsoredOperations(
       journal,
-      EarnSponsoredChainRpc(143),
-      EarnSponsoredBundlerRpc(143),
-      chainFilter = 143,
-      operationIds = ids.toSet(),
+      EarnSponsoredChainRpc(chain),
+      EarnSponsoredBundlerRpc(chain),
+      chainFilter = chain,
+      operationIds = selected.toSet(),
     )
     val engines = mutableListOf<Pair<EarnSponsoredEngine, SponsoredReview>>()
     var grant: EarnFundingBatchApproval? = null
@@ -2770,8 +3330,8 @@ class GizuStoredSignerModule : Module() {
           EarnSponsoredEngine(
             store,
             journal,
-            EarnSponsoredChainRpc(143),
-            EarnSponsoredBundlerRpc(143),
+            EarnSponsoredChainRpc(row.getJSONObject("proposal").getInt("chainId")),
+            EarnSponsoredBundlerRpc(row.getJSONObject("proposal").getInt("chainId")),
             privateCreditRows = { address ->
               store.load().use { earnPrivateCreditRowsForSigning(activity, it, address) }
             },
@@ -3134,6 +3694,207 @@ class GizuStoredSignerModule : Module() {
         throw failure
     }
     return engine.journal.public(engine.journal.get(id))
+  }
+
+  private fun requirePrivateParentPayoutBinding(
+    activity: Activity,
+    record: WalletRecord,
+    row: JSONObject,
+    allowCancelled: Boolean = false,
+    allowUnattached: Boolean = false,
+  ) {
+    val p = row.getJSONObject("proposal")
+    requireSponsoredWallet(record, row.getString("walletId"))
+    requireActiveEarnCycle(record, p)
+    check(
+      p.getString("kind") == "privateEarnPayout" &&
+        p.getInt("version") == 2 &&
+        p.getInt("profileChainId") == 1
+    )
+    val deposits = earnDepositJournal(activity, record)
+    val parent =
+      if (allowCancelled) deposits.get(p.getString("operationId"))
+      else deposits.fundingOnlyHandoff(p.getString("operationId"), record)
+    check(
+      parent.getString("walletId") == record.id &&
+        parent.getString("generation") == record.journalId &&
+        parent.getInt("cycleIndex") == record.earnCycleIndex
+    )
+    val source = parent.getJSONObject("privateHandoff").getJSONObject("source")
+    check(
+      nativeJsonEqual(source, p.getJSONObject("source")) &&
+        p.getString("creditedAtoms") == source.getString("amountAtoms")
+    )
+    check(nativeJsonEqual(parent.optJSONObject("distribution"), p.optJSONObject("distribution")))
+    check(
+      p.getString("splitOffsetAtoms") == "0" &&
+        nativePayoutAmount(
+          source.getString("amountAtoms"),
+          "0",
+          p.getString("leg"),
+          parent.optJSONObject("distribution"),
+        ) == p.getString("amountAtoms")
+    )
+    val attached = parent.getJSONObject("payoutChildren").optString(p.getString("leg"))
+    check(
+      attached == row.getString("operationId") ||
+        allowUnattached && attached.isBlank() && !row.has("signedData")
+    )
+    assertCashoutInactive(activity, record, deposit = true)
+    assertNoPrivateDeposit(activity, record, except = parent.getString("journeyId"))
+  }
+
+  private fun privateParentPayoutEngine(
+    activity: Activity,
+    store: WalletStore,
+    walletId: String,
+  ): EarnPrivatePayoutEngine {
+    val journal =
+      store.load().use { record ->
+        requireSponsoredWallet(record, walletId)
+        earnPayoutJournal(activity, record)
+      }
+    fun authority() {
+      requireForeground(activity)
+      store.load().use { record ->
+        requireSponsoredWallet(record, walletId)
+        check(record.journalId == journal.generation && record.earnChain == 1)
+        requirePrivateReadPermission(activity, record)
+      }
+    }
+    val gateway =
+      NativeCashoutGateway(
+        auth = { source ->
+          val proof =
+            store.load().use { record ->
+              authority()
+              privateDepositReadAuth(record, source, ::authority)
+            }
+          JSONObject()
+            .put("standard", "erc191")
+            .put("payload", proof.payload)
+            .put("signature", proof.signature)
+        },
+        rpc = EthereumEarnRpc(),
+        route = "private-funding",
+        profileChainId = 1,
+      )
+    return EarnPrivatePayoutEngine(
+      store,
+      journal,
+      gateway,
+      read = { source ->
+        store.load().use { record ->
+          authority()
+          readPrivateDepositBalance(activity, record, source, ::authority)
+        }
+      },
+      authority = ::authority,
+      invalidate = { record, addresses ->
+        io.gizu.storedwallet.portfolio
+          .NativeOwnedConfidentialPortfolio(activity)
+          .invalidateSources(record, addresses)
+        io.gizu.storedwallet.swap.MainnetPortfolio(activity).invalidate(record)
+      },
+    )
+  }
+
+  private suspend fun reconcilePrivateParentPayout(
+    activity: Activity,
+    store: WalletStore,
+    walletId: String,
+    id: String,
+  ): Map<String, Any> {
+    val journal =
+      store.load().use { record ->
+        requireSponsoredWallet(record, walletId)
+        earnPayoutJournal(activity, record)
+      }
+    val initial = journal.get(id)
+    store.load().use {
+      requirePrivateParentPayoutBinding(activity, it, initial, allowCancelled = true)
+    }
+    if (initial.has("signedData") && initial.getString("status") != "paid")
+      ensurePrivateReadPermission(activity, store, walletId)
+    val row = privateParentPayoutEngine(activity, store, walletId).reconcile(id)
+    if (row.getString("status") == "paid")
+      store.load().use { record ->
+        val p = row.getJSONObject("proposal")
+        earnDepositJournal(activity, record)
+          .recordFundingOnlyPayoutPaid(p.getString("operationId"), p.getString("leg"), id, record)
+      }
+    return journal.public(row)
+  }
+
+  private suspend fun approvePrivateParentPayout(
+    activity: Activity,
+    store: WalletStore,
+    walletId: String,
+    id: String,
+    revision: Int,
+  ): Map<String, Any> {
+    val journal =
+      store.load().use { record ->
+        requireSponsoredWallet(record, walletId)
+        earnPayoutJournal(activity, record)
+      }
+    var row = journal.get(id)
+    check(row.getInt("revision") == revision)
+    if (!row.has("signedData"))
+      store.load().use { record ->
+        // Resume can discover a child that reached disk just before parent attachment.
+        requirePrivateParentPayoutBinding(activity, record, row, allowUnattached = true)
+        val p = row.getJSONObject("proposal")
+        earnDepositJournal(activity, record)
+          .attachFundingOnlyPayout(p.getString("operationId"), p.getString("leg"), id, record)
+      }
+    if (row.has("signedData")) {
+      reconcilePrivateParentPayout(activity, store, walletId, id)
+      row = journal.get(id)
+      if (row.getString("status") != "submissionUnknown") return journal.public(row)
+    }
+    ensurePrivateReadPermission(activity, store, walletId)
+    val engine = privateParentPayoutEngine(activity, store, walletId)
+    engine.executeStage(
+      id,
+      { record, saved -> requirePrivateParentPayoutBinding(activity, record, saved) },
+    ) { saved, witness ->
+      val credential =
+        store.load().use { record ->
+          requirePrivateParentPayoutBinding(
+            activity,
+            record,
+            saved,
+            allowCancelled = saved.has("signedData"),
+          )
+          record.credential
+        }
+      confirm(
+        activity,
+        "Review Ethereum private payout",
+        witness.getString("text"),
+        fullReview = true,
+      )
+      withProviderUi(activity) {
+        PasskeyGate(activity)
+          .authorize(
+            credential,
+            walletId,
+            "earn-private-parent:v2:$id:${saved.getInt("revision")}:${witness.getString("hash")}",
+          )
+      }
+      currentCoroutineContext().ensureActive()
+      requireForeground(activity)
+      store.load().use {
+        requirePrivateParentPayoutBinding(
+          activity,
+          it,
+          saved,
+          allowCancelled = saved.has("signedData"),
+        )
+      }
+    }
+    return reconcilePrivateParentPayout(activity, store, walletId, id)
   }
 
   private fun payoutEngine(

@@ -427,11 +427,34 @@ export function DepositJourneyScreen({
             <Typography selectable variant="caption">
               {profile.vault}
             </Typography>
+            {review?.fundingSources?.map((source) => (
+              <View key={source.operationId} className="gap-1">
+                <Typography variant="caption">
+                  {source.sourceChainId === 143
+                    ? "Monad"
+                    : source.sourceChainId === 8453
+                      ? "Base"
+                      : "Arbitrum"}{" "}
+                  funding
+                </Typography>
+                <Typography selectable variant="caption">
+                  {source.address}
+                </Typography>
+                <Typography variant="caption">
+                  Budget {formatUsdc(source.budgetAtoms)} USDC · gas cap{" "}
+                  {formatUsdc(source.maximumFeeAtoms)} USDC · retained{" "}
+                  {formatUsdc(source.retainedAtoms)} USDC
+                </Typography>
+              </View>
+            ))}
             {review?.sources.map((source) => (
               <View key={source.operationId} className="gap-1">
                 {source.kind === "private" ? (
                   <Typography variant="caption">
-                    Private USDC source · {formatUsdc(source.budgetAtoms)} USDC
+                    {review.version === 2 && source.operationId === review.combinedSourceId
+                      ? "Combined private USDC"
+                      : "Private USDC source"}{" "}
+                    · {formatUsdc(source.budgetAtoms)} USDC
                   </Typography>
                 ) : (
                   <>

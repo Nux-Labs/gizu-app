@@ -7,6 +7,61 @@ import org.junit.Test
 
 class EarnPrivateFundingTest {
   @Test
+  fun sharedPrivateCashAndSmallPublicTopUpUseOneDownstreamMinimum() {
+    val c2 = source(1).getString("address")
+    val selection =
+      PrivateDepositSelection(listOf(source(1).put("amountAtoms", "1800000")), "142172")
+    val distribution = JSONObject("""{"version":1,"weightsBps":[4300,5700]}""")
+    requireRoutablePublicRemainder(selection, distribution, c2)
+    assertThrows(DepositBelowRouteMinimum::class.java) {
+      requireRoutablePublicRemainder(selection, distribution)
+    }
+  }
+
+  @Test
+  fun smallCanonicalContributionJoinsPublicCreditWithoutLoweringLegacyOwnerMinimums() =
+    runBlocking {
+      val distribution = JSONObject("""{"version":1,"weightsBps":[4300,5700]}""")
+      val c2 = source(1).getString("address")
+      val selected =
+        selectPrivateDepositSources(
+          "1000000",
+          listOf(source(1), source(2)),
+          minimumRoutableSource(distribution),
+          combinedPrivateAddress = c2,
+        ) {
+          "60000"
+        }
+      assertEquals(listOf(c2), selected.sources.map { it.getString("address") })
+      assertEquals("60000", selected.sources.single().getString("amountAtoms"))
+      assertEquals("940000", selected.publicBudget)
+      val legacyOnly =
+        selectPrivateDepositSources(
+          "1000000",
+          listOf(source(1), source(2)),
+          minimumRoutableSource(distribution),
+        ) {
+          "60000"
+        }
+      assertTrue(legacyOnly.sources.isEmpty())
+      val noPublicTopUp =
+        selectPrivateDepositSources(
+          "1000000",
+          listOf(source(1), source(2)),
+          minimumRoutableSource(distribution),
+          combinedPrivateAddress = c2,
+        ) {
+          if (it.getInt("cycleIndex") == 1) "60000" else "2000000"
+        }
+      assertEquals(
+        listOf(source(2).getString("address")),
+        noPublicTopUp.sources.map { it.getString("address") },
+      )
+      assertEquals("1000000", noPublicTopUp.sources.single().getString("amountAtoms"))
+      assertEquals("0", noPublicTopUp.publicBudget)
+    }
+
+  @Test
   fun tinyPublicRemainderPaysRealOverheadWithoutChangingTotalBudget() {
     val initial = PrivateDepositSelection(listOf(source(1).put("amountAtoms", "4999999")), "1")
     val adjusted = rebalancePrivateDepositSources(initial, "22000")

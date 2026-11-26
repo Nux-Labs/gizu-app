@@ -110,6 +110,31 @@ class EarnSponsoredRpcTest {
   }
 
   @Test
+  fun newFundingNetworksBindTheirOriginToTheSamePrivateCashRoute() = runBlocking {
+    for ((chain, token, origin) in
+      listOf(
+        Triple(
+          8453,
+          "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+        ),
+        Triple(
+          42161,
+          "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+          "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+        ),
+      )) {
+      val p = proposal().put("chainId", chain).put("token", token)
+      val r = response().put("chainId", chain).put("token", token).put("originAsset", origin)
+      val gateway = NativeEarnQuoteGateway({ _, _ -> r.toString() }, { hash }, { 100 })
+      val proof = gateway.binding(p)!!
+      assertEquals(chain.toULong(), proof.binding.chainId)
+      assertEquals(token, proof.binding.token)
+      assertEquals(origin, proof.originAsset)
+    }
+  }
+
+  @Test
   fun nativeBindingRejectsChangedAmountIdFeeAndExpiredProof() = runBlocking {
     for (changed in
       listOf(
@@ -182,41 +207,53 @@ class EarnSponsoredRpcTest {
 
   @Test
   fun financialSponsoredReadsUseOneCanonicalBlockAndRequireFreshBlock() = runBlocking {
-    var pinnedReads = 0
-    val rpc =
-      object : TransferRpc {
-        override suspend fun call(method: String, params: JSONArray): Any =
-          when (method) {
-            "eth_chainId" -> "0x8f"
-            "eth_getBlockByNumber" ->
-              JSONObject()
-                .put("number", "0x10")
-                .put("hash", hash)
-                .put("parentHash", "0x" + "b".repeat(64))
-                .put("timestamp", "0x" + (System.currentTimeMillis() / 1000).toString(16))
-                .put("baseFeePerGas", "0x1")
-            "eth_getTransactionCount" -> {
-              if (params.get(1) is JSONObject) pinnedReads++
-              "0x4"
+    for ((sourceChainId, token) in
+      listOf(
+        143 to MONAD_EARN_USDC,
+        8453 to "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        42161 to "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+      )) {
+      var pinnedReads = 0
+      val rpc =
+        object : TransferRpc {
+          override suspend fun call(method: String, params: JSONArray): Any =
+            when (method) {
+              "eth_chainId" -> "0x" + sourceChainId.toString(16)
+              "eth_getBlockByNumber" ->
+                JSONObject()
+                  .put("number", "0x10")
+                  .put("hash", hash)
+                  .put("parentHash", "0x" + "b".repeat(64))
+                  .put("timestamp", "0x" + (System.currentTimeMillis() / 1000).toString(16))
+                  .put("baseFeePerGas", "0x1")
+              "eth_getTransactionCount" -> {
+                if (params.get(1) is JSONObject) pinnedReads++
+                "0x4"
+              }
+              "eth_getCode",
+              "eth_call" -> {
+                assertEquals(hash, params.getJSONObject(1).getString("blockHash"))
+                assertTrue(params.getJSONObject(1).getBoolean("requireCanonical"))
+                pinnedReads++
+                if (method == "eth_getCode") {
+                  if (params.getString(0) in setOf(owner, recipient)) "0x" else "0x6000"
+                } else
+                  "0x" +
+                    "0".repeat(63) +
+                    if (params.getJSONObject(0).getString("data") == "0x313ce567") "6" else "0"
+              }
+              else -> error("Unexpected $method")
             }
-            "eth_getCode",
-            "eth_call" -> {
-              assertEquals(hash, params.getJSONObject(1).getString("blockHash"))
-              assertTrue(params.getJSONObject(1).getBoolean("requireCanonical"))
-              pinnedReads++
-              if (method == "eth_getCode") {
-                if (params.getString(0) in setOf(owner, recipient)) "0x" else "0x6000"
-              } else
-                "0x" +
-                  "0".repeat(63) +
-                  if (params.getJSONObject(0).getString("data") == "0x313ce567") "6" else "0"
-            }
-            else -> error("Unexpected $method")
-          }
-      }
-    val state = EarnSponsoredStateLoader(rpc) { hash }.load(proposal().put("expectedFrom", owner))
-    assertEquals("0x0", state.entryPointNonce)
-    assertEquals(4uL, state.transactionNonce)
-    assertEquals(11, pinnedReads)
+        }
+      val state =
+        EarnSponsoredStateLoader(rpc) { hash }
+          .load(
+            proposal().put("expectedFrom", owner).put("chainId", sourceChainId).put("token", token)
+          )
+      assertEquals(sourceChainId.toULong(), state.chainId)
+      assertEquals("0x0", state.entryPointNonce)
+      assertEquals(4uL, state.transactionNonce)
+      assertEquals(11, pinnedReads)
+    }
   }
 }

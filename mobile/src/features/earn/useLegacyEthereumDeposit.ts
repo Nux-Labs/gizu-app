@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EarnIntent } from "@/domain/earn/types";
 import type { SourceFundingPlan, SponsoredOperation } from "@/domain/earn/sourceFunding";
-import type { PayoutOperation } from "@/domain/earn/privatePayout";
+import type { PayoutOperation, EarnFundingParent } from "@/domain/earn/privatePayout";
 import type { VaultOperation, VaultPlan } from "@/domain/earn/vaultExecution";
 import type { LiquidityOperation, LiquidityPlan } from "@/domain/earn/ethereumLiquidity";
 import { useFundingWallet } from "@/features/wallet/WalletProvider";
@@ -9,6 +9,18 @@ import { useEarn } from "./EarnProvider";
 import { depositBudgetAtoms } from "./useDepositJourney";
 import { payoutLegs } from "@/domain/earn/distribution";
 import { formatUsdc } from "@/domain/wallet/amounts";
+function requireLegacyMonadPlans(plans: SourceFundingPlan[]) {
+  if (
+    plans.some((plan) =>
+      [plan.source?.sourceChainId, plan.quote?.chainId, plan.fees?.sourceChainId].some(
+        (chain) => chain !== undefined && chain !== 143,
+      ),
+    )
+  )
+    throw new Error(
+      "This network requires qualified Ethereum private funding. No transfer was authorized.",
+    );
+}
 /** Ethereum keeps its existing per-stage approvals, payload validation and durable engines. */
 export function useLegacyEthereumDeposit(intent: EarnIntent) {
   const { sourceFunding: source, payout, liquidity, vaultExecution: vault } = useEarn(),
@@ -18,10 +30,13 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
     ),
     [fundings, setFundings] = useState<SponsoredOperation[]>([]),
     [payouts, setPayouts] = useState<PayoutOperation[]>([]),
+    [fundingParents, setFundingParents] = useState<EarnFundingParent[]>([]),
+    [combinedFunding, setCombinedFunding] = useState(false),
     [fills, setFills] = useState<LiquidityOperation[]>([]),
     [positions, setPositions] = useState<VaultOperation[]>([]),
     [review, setReview] = useState<
       | { kind: "funding"; plans: SourceFundingPlan[] }
+      | { kind: "privateFunding"; parent: EarnFundingParent }
       | { kind: "liquidity"; plan: LiquidityPlan }
       | { kind: "vault"; plan: VaultPlan }
       | null
@@ -40,21 +55,32 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
         payout.available(),
         liquidity.available(),
         vault.available(),
+        payout.fundingAvailable?.().catch(() => false) ?? Promise.resolve(false),
+        payout.fundingRecoveryAvailable?.() ?? Promise.resolve(undefined),
       ]);
       if (attempt !== generation.current) return;
-      setAvailable(caps.every(Boolean));
-      if (!caps.every(Boolean)) return;
-      const [s, p, l, v] = await Promise.all([
+      setAvailable(caps.slice(0, 4).every(Boolean));
+      if (!caps.slice(0, 4).every(Boolean)) return;
+      const parentCapable =
+        (caps[5] ?? caps[4]) === true &&
+        !!payout.listFunding &&
+        !!payout.planFunding &&
+        !!payout.executeFunding &&
+        !!payout.executeFromParent;
+      const [s, p, l, v, parents] = await Promise.all([
         source.list(intent),
         payout.list(intent),
         liquidity.list(intent),
         vault.list(intent),
+        parentCapable ? payout.listFunding!(intent) : Promise.resolve([]),
       ]);
       if (attempt === generation.current) {
         setFundings(s.filter((r) => r.kind === "sourceFunding"));
         setPayouts(p);
         setFills(l);
         setPositions(v);
+        setFundingParents(parents);
+        setCombinedFunding(caps[4] === true && parentCapable);
       }
     },
     [source, payout, liquidity, vault, intent],
@@ -79,7 +105,7 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
     };
   }, [intent, source, payout, liquidity, vault, load]);
   useEffect(() => {
-    if (!review) return;
+    if (!review || review.kind === "privateFunding") return;
     const expiry =
       review.kind === "funding"
         ? Math.min(...review.plans.map((p) => p.expiresAtMs))
@@ -97,26 +123,39 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
     (p) => p.status === "invested" || p.status === "residualShares" || p.status === "withdrawn",
   );
   const active = fundings.filter((s) => s.status !== "cancelled" && s.status !== "reverted");
-  const allCredit =
-    active.length > 0 &&
-    active.every(
-      (s) =>
-        s.status === "credited" &&
-        !s.blocked &&
-        (!s.fundingBatchId ||
-          active.filter((r) => r.fundingBatchId === s.fundingBatchId).length ===
-            s.fundingBatchSize),
-    );
+  const fundingParent = fundingParents[0];
+  // Saved public-source proof operations retain their original handlers after upgrade.
+  const parentFlow = !!fundingParent || (combinedFunding && active.length === 0);
+  const allCredit = parentFlow
+    ? !!fundingParent && ["ready", "payouts", "paid"].includes(fundingParent.phase)
+    : active.length > 0 &&
+      active.every(
+        (s) =>
+          s.status === "credited" &&
+          !s.blocked &&
+          (!s.fundingBatchId ||
+            active.filter((r) => r.fundingBatchId === s.fundingBatchId).length ===
+              s.fundingBatchSize),
+      );
   const nextPayout = allCredit
-    ? active
-        .flatMap((s) =>
-          payoutLegs(intent).map((leg) => ({
-            source: s,
+    ? (parentFlow && fundingParent
+        ? payoutLegs(intent).map((leg) => ({
+            parent: fundingParent,
             leg,
-            existing: payouts.find((p) => p.sourceOperationId === s.operationId && p.leg === leg),
-          })),
-        )
-        .find((p) => p.existing?.status !== "paid")
+            existing: payouts.find(
+              (p) => p.sourceOperationId === fundingParent.operationId && p.leg === leg,
+            ),
+          }))
+        : active.flatMap((source) =>
+            payoutLegs(intent).map((leg) => ({
+              source,
+              leg,
+              existing: payouts.find(
+                (p) => p.sourceOperationId === source.operationId && p.leg === leg,
+              ),
+            })),
+          )
+      ).find((p) => p.existing?.status !== "paid")
     : undefined;
   const paid = allCredit && !nextPayout;
   const stage: "funding" | "payouts" | "liquidity" | "vault" = !allCredit
@@ -158,12 +197,13 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
   let label = "Review USDC funding";
   if (review)
     label =
-      review.kind === "funding"
+      review.kind === "funding" || review.kind === "privateFunding"
         ? "Authorize USDC funding"
         : review.kind === "liquidity"
           ? "Authorize ETH funding"
           : "Authorize vault deposit";
-  else if (stage === "funding" && active.length) label = "Check funding progress";
+  else if (stage === "funding" && (active.length || fundingParent))
+    label = "Check funding progress";
   else if (stage === "payouts")
     label = nextPayout?.existing
       ? "Check payout progress"
@@ -180,7 +220,10 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
       if (review) {
         const selected = review;
         setReview(null);
-        if (selected.kind === "funding") {
+        if (selected.kind === "privateFunding") {
+          await payout.executeFunding!(intent, selected.parent);
+        } else if (selected.kind === "funding") {
+          requireLegacyMonadPlans(selected.plans);
           if (source.executeMany) await source.executeMany(intent, selected.plans);
           else {
             if (selected.plans.length !== 1) throw new Error("Multi-source signing unavailable.");
@@ -191,6 +234,23 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
         return;
       }
       if (stage === "funding") {
+        if (parentFlow) {
+          if (fundingParent) {
+            if (fundingParent.phase === "cancelled")
+              throw new Error("Saved funding was cancelled. Its confirmed credit remains private.");
+            if (fundingParent.phase === "review")
+              setReview({ kind: "privateFunding", parent: fundingParent });
+            else if (fundingParent.canResume && payout.resumeFunding)
+              await payout.resumeFunding(intent, fundingParent);
+            else if (payout.reconcileFunding) await payout.reconcileFunding(intent, fundingParent);
+          } else {
+            const budget = depositBudgetAtoms(amount);
+            if (!budget) throw new Error("Choose a positive total USDC budget including fees.");
+            const parent = await payout.planFunding!(intent, budget);
+            if (!signal.aborted) setReview({ kind: "privateFunding", parent });
+          }
+          return;
+        }
         if (active.length) {
           for (const row of active.filter((r) => r.status !== "credited")) {
             if (
@@ -208,6 +268,7 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
         const plans = source.planMany
           ? await source.planMany(intent, budget, depositBudgetAtoms(wallet.balance)!, signal)
           : [await source.plan(intent, budget, depositBudgetAtoms(wallet.balance)!, signal)];
+        requireLegacyMonadPlans(plans);
         if (!signal.aborted) setReview({ kind: "funding", plans });
         return;
       }
@@ -216,7 +277,9 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
           if (nextPayout.existing.canResume || nextPayout.existing.canRefreshUnsigned)
             await payout.resume(intent, nextPayout.existing);
           else await payout.reconcile(intent, nextPayout.existing);
-        } else await payout.execute(intent, nextPayout.source, nextPayout.leg);
+        } else if ("parent" in nextPayout)
+          await payout.executeFromParent!(intent, nextPayout.parent, nextPayout.leg);
+        else await payout.execute(intent, nextPayout.source, nextPayout.leg);
         return;
       }
       if (stage === "liquidity") {
@@ -257,6 +320,11 @@ export function useLegacyEthereumDeposit(intent: EarnIntent) {
       loading ||
       !available ||
       intent.status !== "prepared" ||
-      (!active.length && stage === "funding" && !review && !depositBudgetAtoms(amount)),
+      fundingParent?.phase === "cancelled" ||
+      (!fundingParent &&
+        !active.length &&
+        stage === "funding" &&
+        !review &&
+        !depositBudgetAtoms(amount)),
   };
 }

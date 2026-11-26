@@ -1,5 +1,7 @@
 import { assertNotAborted } from "./abort";
 import type { EarnIntent } from "@/domain/earn/types";
+import type { FundingSourceKey } from "@/domain/wallet/storedSigner";
+import { fundingSourceIdentity } from "@/domain/wallet/fundingNetworks";
 import { earnAtoms } from "@/domain/earn/vaultExecution";
 import {
   parsePublicFundingPlan,
@@ -48,6 +50,7 @@ export function createEarnSourceFundingService(
     amount: string,
     budget: string,
     signal: AbortSignal,
+    source?: FundingSourceKey,
   ) {
     if (!baseUrl) throw new Error("USDC funding service is not configured.");
     assertNotAborted(signal);
@@ -56,12 +59,17 @@ export function createEarnSourceFundingService(
     signal.addEventListener("abort", abort);
     const timeout = setTimeout(abort, 60000);
     try {
-      const response = await fetch(baseUrl.replace(/\/$/, "") + "/v1/earn/monad/funding-plan", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ owner: intent.sourceAddress, recipient, amount, budget }),
-        signal: controller.signal,
-      });
+      const chain = source?.sourceChainId ?? 143;
+      const response = await fetch(
+        baseUrl.replace(/\/$/, "") +
+          (chain === 143 ? "/v1/earn/monad/funding-plan" : `/v1/funding/${chain}/plan`),
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ owner: intent.sourceAddress, recipient, amount, budget }),
+          signal: controller.signal,
+        },
+      );
       if (!response.ok)
         throw new Error(
           response.status === 404
@@ -70,7 +78,7 @@ export function createEarnSourceFundingService(
         );
       const raw = await response.json();
       assertNotAborted(controller.signal);
-      return parseSourceFeePlan(raw, intent, recipient, amount, budget, now());
+      return parseSourceFeePlan(raw, intent, recipient, amount, budget, now(), source);
     } finally {
       clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
@@ -87,6 +95,7 @@ export function createEarnSourceFundingService(
       plan.budget,
       now(),
       plan.sourceAccountIndex,
+      plan.source,
     );
     if (plan.fundingBatchId) {
       request.proposal.fundingBatchId = plan.fundingBatchId;
@@ -98,8 +107,24 @@ export function createEarnSourceFundingService(
     async available() {
       return (await getSignerCapabilities()).earnSponsoredExecution === true;
     },
-    async plan(intent, budget, sourceBalance, signal, selectedSourceIndex) {
+    async plan(intent, budget, sourceBalance, signal, selectedSourceIndex, source) {
       return action(async () => {
+        if (source) {
+          fundingSourceIdentity(source);
+          if (
+            source.accountIndex !== selectedSourceIndex ||
+            source.owner.toLowerCase() !== intent.sourceAddress.toLowerCase()
+          )
+            throw new Error("Funding source changed");
+          if (source.sourceChainId !== 143) {
+            const capabilities = await getSignerCapabilities();
+            if (
+              capabilities.fundingContractVersion !== 2 ||
+              !capabilities.fundingChainIds?.includes(source.sourceChainId)
+            )
+              throw new Error("This funding network requires the updated native signer.");
+          }
+        }
         const total = BigInt(earnAtoms(budget));
         if (
           intent.status !== "prepared" ||
@@ -107,7 +132,7 @@ export function createEarnSourceFundingService(
           total > BigInt(earnAtoms(sourceBalance))
         )
           throw new Error("Choose a budget within your funded source USDC balance, including gas.");
-        const probe = await fees(intent, intent.confidentialAddress, "1", budget, signal);
+        const probe = await fees(intent, intent.confidentialAddress, "1", budget, signal, source);
         let amount = total - BigInt(probe.feeCap) - 10000n;
         const operationId = `source_${now()}_${Math.random().toString(36).slice(2, 10)}`;
         for (let revision = 1; revision <= 4; revision++) {
@@ -117,20 +142,30 @@ export function createEarnSourceFundingService(
           let q: unknown;
           try {
             const signer = bridge();
-            q = await (selectedSourceIndex !== undefined && signer.prepareEarnSourceQuoteForAccount
-              ? signer.prepareEarnSourceQuoteForAccount(
+            if (source && source.sourceChainId !== 143 && !signer.prepareEarnSourceQuoteForSource)
+              throw new Error("This funding network requires the updated native source signer.");
+            q = await (source && signer.prepareEarnSourceQuoteForSource
+              ? signer.prepareEarnSourceQuoteForSource(
                   intent.walletId,
-                  selectedSourceIndex,
+                  source,
                   amount.toString(),
                   operationId,
                   revision,
                 )
-              : signer.prepareEarnSourceQuote(
-                  intent.walletId,
-                  amount.toString(),
-                  operationId,
-                  revision,
-                ));
+              : selectedSourceIndex !== undefined && signer.prepareEarnSourceQuoteForAccount
+                ? signer.prepareEarnSourceQuoteForAccount(
+                    intent.walletId,
+                    selectedSourceIndex,
+                    amount.toString(),
+                    operationId,
+                    revision,
+                  )
+                : signer.prepareEarnSourceQuote(
+                    intent.walletId,
+                    amount.toString(),
+                    operationId,
+                    revision,
+                  ));
           } catch (error) {
             const code = (error as { code?: string })?.code;
             if (
@@ -156,6 +191,9 @@ export function createEarnSourceFundingService(
                     operationId,
                     revision,
                     profileChainId: intent.profileId === "ethereum-usdc" ? 1 : 4663,
+                    ...(source && source.sourceChainId !== 143
+                      ? { sourceChainId: source.sourceChainId }
+                      : {}),
                     sourceOwner: intent.sourceAddress,
                     confidentialAccount: intent.confidentialAddress,
                     amountAtoms: amount.toString(),
@@ -189,13 +227,15 @@ export function createEarnSourceFundingService(
               revision,
               amount.toString(),
               now(),
+              source,
             ),
-            plan = await fees(intent, quote.recipient, amount.toString(), budget, signal);
+            plan = await fees(intent, quote.recipient, amount.toString(), budget, signal, source);
           if (amount + BigInt(plan.feeCap) + 10000n <= total)
             return {
               ...(selectedSourceIndex !== undefined
                 ? { sourceAccountIndex: selectedSourceIndex, sourceAddress: intent.sourceAddress }
                 : {}),
+              ...(source ? { source } : {}),
               quote,
               fees: plan,
               budget,
@@ -226,7 +266,12 @@ export function createEarnSourceFundingService(
             !p.sourceAddress,
         ) ||
         new Set(plans.map((p) => p.quote.operationId)).size !== plans.length ||
-        new Set(plans.map((p) => p.sourceAccountIndex)).size !== plans.length
+        new Set(
+          plans.map(
+            (p) =>
+              `${p.quote.chainId}:${p.quote.token.toLowerCase()}:${p.sourceAddress!.toLowerCase()}`,
+          ),
+        ).size !== plans.length
       )
         throw new Error("Saved native funding batch binding changed. Review saved progress.");
       return action(async () => {
@@ -248,6 +293,7 @@ export function createEarnSourceFundingService(
               row.fundingBatchId !== batchId ||
               row.fundingBatchSize !== plans.length ||
               row.sourceAccountIndex !== plan.sourceAccountIndex ||
+              row.chainId !== plan.quote.chainId ||
               row.from.toLowerCase() !== plan.sourceAddress!.toLowerCase() ||
               BigInt(row.amountAtoms) > BigInt(plan.budget) - 10000n
             );
@@ -287,6 +333,7 @@ export function createEarnSourceFundingService(
         )[0]!;
         if (
           operation.from.toLowerCase() !== selectedIntent.sourceAddress.toLowerCase() ||
+          operation.chainId !== plan.quote.chainId ||
           (plan.sourceAccountIndex !== undefined &&
             operation.sourceAccountIndex !== plan.sourceAccountIndex) ||
           (plan.fundingBatchId &&
@@ -367,7 +414,7 @@ export function createEarnSourceFundingService(
     const native = bridge();
     if (!native.planPublicFunding)
       return [await service.plan(intent, budget, sourceBalance, signal)];
-    if (!native.prepareEarnSourceQuoteForAccount)
+    if (!native.prepareEarnSourceQuoteForAccount && !native.prepareEarnSourceQuoteForSource)
       throw new Error("Multi-account funding requires the updated native signer.");
     const selection = parsePublicFundingPlan(
       await action(() => native.planPublicFunding!(intent.walletId, budget)),
@@ -383,6 +430,14 @@ export function createEarnSourceFundingService(
         leg.budgetAtoms,
         signal,
         leg.sourceIndex,
+        leg.sourceChainId !== undefined
+          ? {
+              sourceChainId: leg.sourceChainId,
+              token: leg.token!,
+              accountIndex: leg.sourceIndex,
+              owner: leg.address,
+            }
+          : undefined,
       );
       plans.push({
         ...reviewed,
@@ -409,6 +464,7 @@ export function createEarnSourceFundingService(
                 row.operationId === request.proposal.operationId &&
                 row.from.toLowerCase() === request.proposal.expectedFrom.toLowerCase() &&
                 row.sourceAccountIndex === request.proposal.sourceAccountIndex &&
+                row.chainId === request.proposal.chainId &&
                 row.fundingBatchId === request.proposal.fundingBatchId &&
                 row.fundingBatchSize === request.proposal.fundingBatchSize &&
                 row.status === "planned" &&

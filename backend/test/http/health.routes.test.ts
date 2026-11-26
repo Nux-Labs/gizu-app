@@ -6,10 +6,12 @@ test("health reports database unavailable when postgres is unreachable", async (
   const app = await buildApp({
     NODE_ENV: "test",
     PORT: 3000,
-    DATABASE_URL: "postgres://private_investment:private_investment@127.0.0.1:1/none",
+    DATABASE_URL:
+      "postgres://private_investment:private_investment@127.0.0.1:1/none",
     ONEINCH_API_KEY: "oneinch-api-key",
     AURORA_API_KEY: "aurora-api-key",
     PIMLICO_API_KEY: "pimlico-api-key",
+    FUNDING_CHAIN_IDS: [143],
   });
   const response = await app.inject({
     method: "GET",

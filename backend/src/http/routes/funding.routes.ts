@@ -1,3 +1,4 @@
+import type { AuroraFeeQualification } from "../../adapters/earn/fee-policy.ts";
 import type {
   FastifyInstance,
   FastifyError,
@@ -48,16 +49,14 @@ const options = {
         : error.statusCode === 413
           ? 413
           : 502;
-    return reply
-      .code(status)
-      .send({
-        code: known
-          ? error.code
-          : status === 400 || status === 413
-            ? "INVALID_FUNDING_REQUEST"
-            : "FUNDING_UNAVAILABLE",
-        message: "The funding request could not be verified.",
-      });
+    return reply.code(status).send({
+      code: known
+        ? error.code
+        : status === 400 || status === 413
+          ? "INVALID_FUNDING_REQUEST"
+          : "FUNDING_UNAVAILABLE",
+      message: "The funding request could not be verified.",
+    });
   },
 };
 
@@ -65,11 +64,27 @@ const options = {
 export function registerFundingRoutes(
   app: FastifyInstance,
   gateways: Gateways,
+  enabledChainIds: readonly FundingChainId[] = [143],
+  privateFundingQualification?: AuroraFeeQualification,
 ) {
+  const enabled = new Set(enabledChainIds);
+  const requireEnabled = (id: FundingChainId) => {
+    if (!enabled.has(id))
+      throw new InfrastructureError(
+        403,
+        "FUNDING_CHAIN_DISABLED",
+        "New funding on this network is not enabled.",
+      );
+  };
   const routes = app.withTypeProvider<ZodTypeProvider>();
   routes.get("/v1/funding/capabilities", async () => ({
     fundingContractVersion: 2,
-    fundingChainIds: [143, 8453, 42161],
+    fundingChainIds: [...enabled],
+    ...(privateFundingQualification &&
+    ("protocolFeeBps" in privateFundingQualification ||
+      privateFundingQualification.routes.payoutEthereum)
+      ? { earnPrivateFundingVersion: 2, earnPrivateFundingProfileChainIds: [1] }
+      : {}),
   }));
   routes.post(
     "/v1/funding/:chainId/plan",
@@ -80,6 +95,7 @@ export function registerFundingRoutes(
     },
     async (request) => {
       const id = Number(request.params.chainId) as FundingChainId;
+      requireEnabled(id);
       const result = await gateways[id].planner.prepare(request.body);
       return { ...result, sourceChainId: id, token: fundingChain(id).token };
     },
@@ -89,6 +105,7 @@ export function registerFundingRoutes(
     { ...options, bodyLimit: 2048, schema: { params, body: transfer } },
     async (request) => {
       const id = Number(request.params.chainId) as FundingChainId;
+      requireEnabled(id);
       const result = await gateways[id].funding.prepare(
         request.body.owner,
         request.body.recipient,

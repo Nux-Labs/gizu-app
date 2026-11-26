@@ -5,7 +5,11 @@ import java.math.BigInteger
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal data class DepositRemainingSource(val row: JSONObject, val minimumCredit: String)
+internal data class DepositRemainingSource(
+  val row: JSONObject,
+  val minimumCredit: String,
+  val confirmedCredit: String? = null,
+)
 
 internal fun depositRemainingSourceRecord(
   original: JSONObject,
@@ -46,6 +50,7 @@ internal class EarnDepositRemaining(
     check(root.getInt("revision") == revision && root.getString("phase") == "paused")
     val old = root.getJSONObject("review")
     val refs = root.getJSONObject("children")
+    if (old.optInt("version", 1) == 2) return refreshCombined(record, root, old, refs, id, revision)
     savedCycleDistribution(record)?.let { distribution ->
       return refreshDistribution(record, root, old, refs, distribution, id, revision)
     }
@@ -156,6 +161,92 @@ internal class EarnDepositRemaining(
     return journal.saveRemainingReview(id, revision, next)
   }
 
+  private suspend fun refreshCombined(
+    record: WalletRecord,
+    root: JSONObject,
+    old: JSONObject,
+    refs: JSONObject,
+    id: String,
+    revision: Int,
+  ): JSONObject {
+    val distribution = checkNotNull(savedCycleDistribution(record))
+    val handoff = root.optJSONObject("privateHandoff")
+    if (handoff != null) {
+      // A saved handoff already contains the independently verified, consumed source credits.
+      // Reauthentication may reconcile payouts, but never attributes those credits again.
+      return refreshDistribution(
+        record,
+        root,
+        depositFundedPrivateReview(old, handoff),
+        refs,
+        distribution,
+        id,
+        revision,
+      )
+    }
+    check(
+      refs
+        .keys()
+        .asSequence()
+        .filter { it != "funding" && it != "deposit" }
+        .none { refs.getJSONArray(it).length() > 0 }
+    ) {
+      "A saved private payout requires its original funded handoff"
+    }
+    val publicRows = JSONArray()
+    val minimums = JSONObject()
+    var allConfirmed = true
+    for (original in old.getJSONArray("publicFundingRows").objects()) {
+      val updated = source(original)
+      assertDepositPublicSourceRefresh(original, updated.row)
+      val p = updated.row.getJSONObject("proposal")
+      val minimum = depositAtoms(updated.minimumCredit, true)
+      check(minimum <= depositAtoms(p.getString("amountAtoms"), true))
+      updated.confirmedCredit?.let { check(depositAtoms(it, true) == minimum) }
+      if (updated.confirmedCredit == null) allConfirmed = false
+      publicRows.put(updated.row)
+      minimums.put(original.getString("operationId"), minimum.toString())
+    }
+    val next =
+      JSONObject(old.toString())
+        .put("publicFundingRows", publicRows)
+        .put("publicMinimumCredits", minimums)
+    val combined = next.getString("combinedSourceId")
+    val amounts = minimums.keys().asSequence().associateWith { minimums.getString(it) }
+    val available = depositCombinedPrivateAmount(next, amounts)
+    val combinedRow =
+      next.getJSONArray("fundingRows").objects().single { it.getString("operationId") == combined }
+    combinedRow
+      .getJSONObject("proposal")
+      .put("amountAtoms", available)
+      .put("budgetAtoms", available)
+      .put("deadline", now() / 1000 + 180)
+      .getJSONObject("source")
+      .put("amountAtoms", available)
+    next
+      .getJSONArray("sources")
+      .objects()
+      .single { it.getString("operationId") == combined }
+      .put("amountAtoms", available)
+      .put("budgetAtoms", available)
+      .put("minimumCreditAtoms", available)
+    next.put(
+      "fundedBudgetMinimumAtoms",
+      next
+        .getJSONArray("sources")
+        .objects()
+        .fold(BigInteger.ZERO) { sum, row ->
+          sum + depositAtoms(row.getString("budgetAtoms"), true)
+        }
+        .toString(),
+    )
+    return refreshDistribution(record, root, next, refs, distribution, id, revision) { original ->
+      if (original.getString("operationId") == combined && !allConfirmed)
+        DepositRemainingSource(original, available)
+      else source(original)
+    }
+  }
+
   private suspend fun refreshDistribution(
     record: WalletRecord,
     root: JSONObject,
@@ -164,6 +255,7 @@ internal class EarnDepositRemaining(
     distribution: JSONObject,
     id: String,
     revision: Int,
+    refreshSource: suspend (JSONObject) -> DepositRemainingSource = source,
   ): JSONObject {
     check(nativeJsonEqual(distribution, old.getJSONObject("distribution")))
     val weights = distributionWeights(distribution)
@@ -177,7 +269,7 @@ internal class EarnDepositRemaining(
     for (previous in old.getJSONArray("sources").objects().sortedBy { it.getInt("accountIndex") }) {
       val sourceId = previous.getString("operationId")
       val updated =
-        source(
+        refreshSource(
           old.getJSONArray("fundingRows").objects().single {
             it.getString("operationId") == sourceId
           }
@@ -325,6 +417,52 @@ internal class EarnDepositRemaining(
   }
 }
 
+/**
+ * Fresh quotes keep the source identity and gross budget; signatures retain their exact evidence.
+ */
+internal fun assertDepositPublicSourceRefresh(original: JSONObject, updated: JSONObject) {
+  check(original.getString("operationId") == updated.getString("operationId"))
+  val before = original.getJSONObject("proposal")
+  val after = updated.getJSONObject("proposal")
+  for (field in
+    listOf(
+      "operationId",
+      "kind",
+      "profileChainId",
+      "cycleIndex",
+      "chainId",
+      "token",
+      "expectedFrom",
+      "refundOwner",
+      "confidentialAccount",
+      "budgetAtoms",
+    )) check(nativeJsonEqual(before.get(field), after.get(field))) {
+    "Saved public source identity or gross budget changed"
+  }
+  check(before.optInt("sourceAccountIndex", 0) == after.optInt("sourceAccountIndex", 0))
+  if (original.sponsoredSpendSaved()) {
+    for (field in
+      listOf(
+        "proposal",
+        "unsignedUserOperation",
+        "authorization",
+        "signedUserOperation",
+        "stateBinding",
+        "privateBaseline",
+        "userOperationHash",
+      )) if (original.has(field))
+      check(nativeJsonEqual(original.get(field), updated.get(field))) {
+        "Signed source funding evidence changed"
+      }
+  }
+  if (original.optJSONObject("settlement")?.optString("status") == "credited")
+    check(
+      nativeJsonEqual(original.getJSONObject("settlement"), updated.getJSONObject("settlement"))
+    ) {
+      "Confirmed credit evidence changed"
+    }
+}
+
 /** Shared balance-only permission; this never grants execution authority. */
 internal fun requireDepositReadPermission(record: WalletRecord, read: PrivateUsdcRead) {
   check(record.verified && read.allows(record.id, record.journalId)) {
@@ -437,7 +575,7 @@ internal fun nativeDepositRemaining(
             .get(current.getString("operationId"), p.getInt("revision"))
             ?.getString("minimumCreditAtoms")
           ?: error("Missing source credit proof")
-      DepositRemainingSource(current, minimum)
+      DepositRemainingSource(current, minimum, credited)
     },
     { id -> rootAdapter.reconcileBeforeRemaining("payouts", id, readAuth, readAuthority) },
     rootAdapter::payoutReceipt,

@@ -22,7 +22,30 @@ test("parses a complete api env", () => {
     ONEINCH_API_KEY: "oneinch-api-key",
     AURORA_API_KEY: "aurora-api-key",
     PIMLICO_API_KEY: "pimlico-api-key",
+    FUNDING_CHAIN_IDS: [143],
   });
+});
+
+test("public funding starts default to Monad and explicit feature opt-in is allowlisted", () => {
+  assert.deepEqual(parseApiEnv(apiEnv).FUNDING_CHAIN_IDS, [143]);
+  assert.deepEqual(
+    parseApiEnv({ ...apiEnv, FUNDING_CHAIN_IDS: "143,8453,42161" })
+      .FUNDING_CHAIN_IDS,
+    [143, 8453, 42161],
+  );
+  for (const FUNDING_CHAIN_IDS of [
+    "",
+    "143,",
+    "143,143",
+    "1",
+    "143,4663",
+    "8453.0",
+    "0x8f",
+  ])
+    assert.throws(
+      () => parseApiEnv({ ...apiEnv, FUNDING_CHAIN_IDS }),
+      /FUNDING_CHAIN_IDS/,
+    );
 });
 
 test("rejects missing swap provider keys", () => {
@@ -33,9 +56,17 @@ test("rejects missing swap provider keys", () => {
 });
 
 test("Arbitrum funding RPC configuration is preserved and must use HTTPS", () => {
-  const configured = parseApiEnv({ ...apiEnv, ARBITRUM_RPC_URL: "https://arb1.arbitrum.io/rpc" });
-  assert.equal((configured as Record<string, unknown>).ARBITRUM_RPC_URL, "https://arb1.arbitrum.io/rpc");
-  assert.throws(() => parseApiEnv({ ...apiEnv, ARBITRUM_RPC_URL: "http://untrusted.example" }));
+  const configured = parseApiEnv({
+    ...apiEnv,
+    ARBITRUM_RPC_URL: "https://arb1.arbitrum.io/rpc",
+  });
+  assert.equal(
+    (configured as Record<string, unknown>).ARBITRUM_RPC_URL,
+    "https://arb1.arbitrum.io/rpc",
+  );
+  assert.throws(() =>
+    parseApiEnv({ ...apiEnv, ARBITRUM_RPC_URL: "http://untrusted.example" }),
+  );
 });
 
 test("rejects a missing 1inch key", () => {
@@ -190,7 +221,19 @@ test("VAULT_CHAINS accepts custom chain metadata and retains inactive known-chai
   assert.deepEqual(env.VAULT_CHAINS, [1, 4663, 8453]);
 });
 
-test('recovery upload admission and global storage limits accept bounded configuration and reject invalid budgets',()=>{
-  assert.equal(parseApiEnv({...apiEnv,RECOVERY_UPLOAD_CALLS_PER_MINUTE:'1024'}).RECOVERY_UPLOAD_CALLS_PER_MINUTE,1024);
-  for(const name of ['RECOVERY_UPLOAD_CALLS_PER_MINUTE','RECOVERY_UPLOAD_BYTES_PER_MINUTE','RECOVERY_UPLOAD_BYTES_PER_DAY','RECOVERY_UPLOAD_MAX_CLIENTS','RECOVERY_STORAGE_MAX_BYTES','RECOVERY_STORAGE_MAX_OBJECTS'])assert.throws(()=>parseApiEnv({...apiEnv,[name]:'-1'}));
+test("recovery upload admission and global storage limits accept bounded configuration and reject invalid budgets", () => {
+  assert.equal(
+    parseApiEnv({ ...apiEnv, RECOVERY_UPLOAD_CALLS_PER_MINUTE: "1024" })
+      .RECOVERY_UPLOAD_CALLS_PER_MINUTE,
+    1024,
+  );
+  for (const name of [
+    "RECOVERY_UPLOAD_CALLS_PER_MINUTE",
+    "RECOVERY_UPLOAD_BYTES_PER_MINUTE",
+    "RECOVERY_UPLOAD_BYTES_PER_DAY",
+    "RECOVERY_UPLOAD_MAX_CLIENTS",
+    "RECOVERY_STORAGE_MAX_BYTES",
+    "RECOVERY_STORAGE_MAX_OBJECTS",
+  ])
+    assert.throws(() => parseApiEnv({ ...apiEnv, [name]: "-1" }));
 });

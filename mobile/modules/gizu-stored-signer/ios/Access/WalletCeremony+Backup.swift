@@ -67,7 +67,8 @@ import UIKit
         && restored.entropy == original.entropy && restored.roleRegistry == original.roleRegistry
         && restored.earnChain == original.earnChain
         && restored.earnRecoveryRequired == original.earnRecoveryRequired
-        && restored.earnCycleIndex == original.earnCycleIndex && restored.earnCycles == original.earnCycles)
+        && restored.earnCycleIndex == original.earnCycleIndex
+        && restored.earnCycles == original.earnCycles)
     try require(
       try deriveAccountAddresses(entropy: restored.entropy)
         == deriveAccountAddresses(entropy: original.entropy))
@@ -75,6 +76,7 @@ import UIKit
     diagnostics.mark("backup-commit")
     original.verified = true
     try store.save(original)
+    try grantPrivateReads(original)
     return try publicState()
   }
 
@@ -122,10 +124,14 @@ import UIKit
     let committed = try WalletRecord(
       id: recovered.id, credential: recovered.credential, entropy: Data(recovered.entropy),
       roleRegistry: registry, earnChain: recovered.earnChain,
-      earnRecoveryRequired: recovered.earnRecoveryRequired, earnCycleIndex: recovered.earnCycleIndex,
+      earnRecoveryRequired: recovered.earnRecoveryRequired,
+      earnCycleIndex: recovered.earnCycleIndex,
       earnCycles: recovered.earnCycles)
     defer { committed.close() }
     try store.restore(committed)
+    let restoredIdentity = try store.load()
+    defer { restoredIdentity.close() }
+    try grantPrivateReads(restoredIdentity)
     return try publicState()
   }
 }

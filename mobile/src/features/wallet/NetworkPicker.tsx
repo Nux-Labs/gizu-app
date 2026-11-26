@@ -12,21 +12,34 @@ import {
 import { haptic } from "@/theme/haptics";
 import colors from "@/theme/colors.json";
 import monadLogo from "../../../assets/logos/monad-white.png";
+import baseLogo from "../../../assets/logos/base.png";
 import usdcLogo from "../../../assets/logos/tokens/usdc.png";
 
-const logos: Record<DepositNetworkId, ImageSourcePropType> = { monad: monadLogo };
+const logos: Partial<Record<DepositNetworkId, ImageSourcePropType>> = {
+  monad: monadLogo,
+  base: baseLogo,
+};
 
 function NetworkLogo({ id }: { id: DepositNetworkId }) {
-  return <Image source={logos[id]} className="h-6 w-6" resizeMode="contain" accessible={false} />;
+  const logo = logos[id];
+  return logo ? (
+    <Image source={logo} className="h-6 w-6" resizeMode="contain" accessible={false} />
+  ) : (
+    <View className="h-6 w-6 items-center justify-center rounded-full border border-cardEdge">
+      <Typography variant="micro">A</Typography>
+    </View>
+  );
 }
 
 /** The selected deposit network; opens a sheet listing every network Gizu accepts USDC on. */
 export function NetworkPicker({
   network,
   onChange,
+  options = [depositNetworks[0]!],
 }: {
   network: DepositNetwork;
   onChange: (network: DepositNetwork) => void;
+  options?: readonly DepositNetwork[];
 }) {
   const [open, setOpen] = useState(false);
   const insets = useSafeAreaInsets();
@@ -89,7 +102,7 @@ export function NetworkPicker({
               </Typography>
             </View>
             <View accessibilityRole="radiogroup" className="gap-2">
-              {depositNetworks.map((option) => {
+              {options.map((option) => {
                 const selected = option.id === network.id;
                 return (
                   <PressableScale
@@ -110,9 +123,11 @@ export function NetworkPicker({
                 );
               })}
             </View>
-            <Typography variant="micro" className="text-center">
-              More networks are coming soon.
-            </Typography>
+            {options.length === 1 ? (
+              <Typography variant="micro" className="text-center">
+                More networks are coming soon.
+              </Typography>
+            ) : null}
           </View>
         </View>
       </Modal>

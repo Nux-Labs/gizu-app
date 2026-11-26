@@ -35,6 +35,7 @@ private constructor(
   private var lastObservedAt = 0L
   private var invalidated = false
   private val credits = linkedMapOf<String, String>()
+  private val publicCredits = linkedMapOf<String, String>()
   private val payouts = linkedMapOf<String, String>()
   private val logicalChildren = linkedMapOf<String, String>()
   private val proposals = linkedMapOf<String, String>()
@@ -54,6 +55,8 @@ private constructor(
     }
 
     fun fromReview(record: WalletRecord, review: JSONObject): EarnDepositApproval {
+      check(!review.has("version") || review.getInt("version") == 2)
+      val combined = review.optInt("version", 1) == 2
       check(record.verified && !record.earnRecoveryRequired && record.earnChain == 4663)
       check(
         review.getString("walletId") == record.id &&
@@ -165,7 +168,75 @@ private constructor(
         offset += credit
         totalBudget += budget
       }
-      check(totalBudget == depositAtoms(review.getString("sourceBudgetAtoms"), true))
+      check(
+        totalBudget ==
+          depositAtoms(
+            review.getString(if (combined) "fundedBudgetMinimumAtoms" else "sourceBudgetAtoms"),
+            true,
+          )
+      )
+      if (combined) {
+        check(
+          distribution != null && cycleConfidential(record).equals(sharedConfidential(record), true)
+        )
+        val public = depositFundingSources(review)
+        check(public.isNotEmpty())
+        val source =
+          sources.single { it.getString("operationId") == review.getString("combinedSourceId") }
+        check(
+          source.optString("kind") == "private" &&
+            source.getString("address").equals(sharedConfidential(record), true)
+        )
+        val minima =
+          public.associate { it.getString("operationId") to it.getString("minimumCreditAtoms") }
+        val minimumCombined = depositAtoms(depositCombinedPrivateAmount(review, minima), true)
+        val amount = depositAtoms(source.getString("amountAtoms"), true)
+        if (review.has("privateHandoff")) {
+          check(
+            review
+              .getJSONObject("privateHandoff")
+              .getString(review.getString("combinedSourceId")) == amount.toString()
+          )
+          val maximums =
+            public.associate { it.getString("operationId") to it.getString("amountAtoms") }
+          check(
+            amount in
+              minimumCombined..depositAtoms(depositCombinedPrivateAmount(review, maximums), true)
+          )
+        } else check(amount == minimumCombined)
+        val publicRows = review.getJSONArray("publicFundingRows").objects()
+        check(
+          publicRows
+            .map { it.getString("operationId") }
+            .toSet()
+            .intersect(rows.map { it.getString("operationId") }.toSet())
+            .isEmpty()
+        )
+        for (row in publicRows) {
+          val p = row.getJSONObject("proposal")
+          val chain = p.getInt("chainId")
+          val index = p.optInt("sourceAccountIndex", 0)
+          check(
+            p.getString("kind") == "sourceFunding" && p.getInt("profileChainId") == record.earnChain
+          )
+          check(chain == 143 || index == 1)
+          check(p.getString("token").equals(fundingNetwork(chain).token, true))
+          check(p.getString("expectedFrom").equals(publicAccountAddress(record, index), true))
+          check(p.getString("refundOwner").equals(p.getString("expectedFrom"), true))
+          check(p.getString("confidentialAccount").equals(sharedConfidential(record), true))
+        }
+        val gross =
+          publicRows.fold(BigInteger.ZERO) { sum, row ->
+            sum + depositAtoms(row.getJSONObject("proposal").getString("budgetAtoms"), true)
+          } +
+            depositAtoms(review.getString("approvedExistingPrivateAtoms")) +
+            sources
+              .filter { it.getString("operationId") != review.getString("combinedSourceId") }
+              .fold(BigInteger.ZERO) { sum, source ->
+                sum + depositAtoms(source.getString("budgetAtoms"), true)
+              }
+        check(gross == depositAtoms(review.getString("sourceBudgetAtoms"), true))
+      }
       check(deposits.size == if (distribution == null) 1 else addresses.size)
       for ((slot, d) in deposits.withIndex()) {
         if (distribution != null) {
@@ -185,7 +256,9 @@ private constructor(
       if (distribution != null)
         check(nativeJsonEqual(review.getJSONObject("deposit"), aggregateDepositBounds(deposits)))
       val reservation = review.getJSONObject("reservation")
-      val publicRows = rows.filterNot(::isPrivateDepositSource)
+      val publicRows =
+        if (combined) review.getJSONArray("publicFundingRows").objects()
+        else rows.filterNot(::isPrivateDepositSource)
       val funding =
         if (publicRows.isEmpty()) {
           check(reservation.getString("id").startsWith("private_"))
@@ -291,12 +364,14 @@ private constructor(
               envelope.getJSONArray("fundingRows").objects().single {
                 it.getString("operationId") == sourceId
               }
-            check(
-              nativeJsonEqual(
-                p.getJSONObject("source"),
-                original.getJSONObject("proposal").getJSONObject("source"),
-              )
+            val expected =
+              JSONObject(original.getJSONObject("proposal").getJSONObject("source").toString())
+            if (
+              envelope.optInt("version", 1) == 2 &&
+                sourceId == envelope.getString("combinedSourceId")
             )
+              expected.put("amountAtoms", checkNotNull(credits[sourceId]))
+            check(nativeJsonEqual(p.getJSONObject("source"), expected))
             check(
               p.getString("expectedSigner")
                 .equals(privateDepositAddress(record, p.getJSONObject("source")), true)
@@ -408,7 +483,7 @@ private constructor(
   /** Exact original limits for refreshing unsigned source terms, never a new source allocation. */
   fun fundingRefreshLimits(sourceId: String): JSONObject? {
     if (!review.optBoolean("sourceRefreshWithinLimits", false)) return null
-    val source = sources.single { it.getString("operationId") == sourceId }
+    val source = depositFundingSources(envelope).single { it.getString("operationId") == sourceId }
     return JSONObject()
       .put("amountAtoms", source.getString("amountAtoms"))
       .put("maximumFeeAtoms", source.getString("maximumFeeAtoms"))
@@ -418,12 +493,39 @@ private constructor(
   /** Called only with independently authenticated, operation-specific native journal evidence. */
   @Synchronized
   fun recordCredit(sourceId: String, atoms: String) {
+    if (
+      envelope.optInt("version", 1) == 2 &&
+        depositFundingSources(envelope).any { it.getString("operationId") == sourceId }
+    ) {
+      val source =
+        depositFundingSources(envelope).single { it.getString("operationId") == sourceId }
+      check(
+        depositAtoms(atoms, true) in
+          depositAtoms(source.getString("minimumCreditAtoms"), true)..depositAtoms(
+              source.getString("amountAtoms"),
+              true,
+            )
+      )
+      check(publicCredits[sourceId] == null || publicCredits[sourceId] == atoms)
+      publicCredits[sourceId] = atoms
+      return
+    }
     val source = sources.singleOrNull { it.getString("operationId") == sourceId }
     check(source != null)
     val credit = depositAtoms(atoms, true)
     check(
       credit >= depositAtoms(source.getString("minimumCreditAtoms"), true) &&
-        credit <= depositAtoms(source.getString("amountAtoms"), true)
+        credit <=
+          depositAtoms(source.getString("amountAtoms"), true).let { limit ->
+            if (
+              envelope.optInt("version", 1) == 2 &&
+                sourceId == envelope.getString("combinedSourceId")
+            ) {
+              val verified = depositCombinedPrivateAmount(envelope, publicCredits)
+              check(verified == atoms)
+              depositAtoms(verified, true)
+            } else limit
+          }
     )
     check(credits[sourceId] == null || credits[sourceId] == atoms)
     credits[sourceId] = atoms
@@ -467,6 +569,95 @@ private constructor(
 }
 
 internal fun JSONArray.objects(): List<JSONObject> = (0 until length()).map(::getJSONObject)
+
+/** Version 1 sources are kept intact; version 2 public rows are funding provenance only. */
+internal fun depositFundingSources(review: JSONObject): List<JSONObject> {
+  if (review.optInt("version", 1) != 2) return review.getJSONArray("sources").objects()
+  val minimums = review.getJSONObject("publicMinimumCredits")
+  val rows = review.getJSONArray("publicFundingRows").objects()
+  check(minimums.keys().asSequence().toSet() == rows.map { it.getString("operationId") }.toSet())
+  return rows.map { row ->
+    val p = row.getJSONObject("proposal")
+    JSONObject()
+      .put("operationId", row.getString("operationId"))
+      .put("accountIndex", p.optInt("sourceAccountIndex", 0))
+      .put("sourceChainId", p.getInt("chainId"))
+      .put("address", p.getString("expectedFrom"))
+      .put("amountAtoms", p.getString("amountAtoms"))
+      .put("budgetAtoms", p.getString("budgetAtoms"))
+      .put("maximumFeeAtoms", p.getString("maximumTokenFeeAtoms"))
+      .put("minimumCreditAtoms", minimums.getString(row.getString("operationId")))
+  }
+}
+
+internal fun depositCombinedPrivateAmount(
+  review: JSONObject,
+  credits: Map<String, String>,
+): String {
+  val sources = depositFundingSources(review)
+  check(sources.map { it.getString("operationId") }.toSet() == credits.keys)
+  val verified =
+    sources.map { source ->
+      val id = source.getString("operationId")
+      val amount = depositAtoms(checkNotNull(credits[id]), true)
+      check(
+        amount in
+          depositAtoms(source.getString("minimumCreditAtoms"), true)..depositAtoms(
+              source.getString("amountAtoms"),
+              true,
+            )
+      )
+      JSONObject()
+        .put("operationId", id)
+        .put("creditedAtoms", amount.toString())
+        .put(
+          "sourceId",
+          fundingSourceId(source.getInt("sourceChainId"), source.getString("address")),
+        )
+    }
+  return uniffi.gizu_stored_signer_core.fundedPrivateAmount(
+    review.getString("approvedExistingPrivateAtoms"),
+    JSONArray(verified).toString(),
+  )
+}
+
+/** Only a durably verified parent handoff may adjust the existing private-source contract. */
+internal fun depositFundedPrivateReview(review: JSONObject, handoff: JSONObject?): JSONObject {
+  if (review.optInt("version", 1) != 2 || handoff == null) return review
+  val result = JSONObject(review.toString())
+  val distribution = result.getJSONObject("distribution")
+  var offset = BigInteger.ZERO
+  for (source in result.getJSONArray("sources").objects().sortedBy { it.getInt("accountIndex") }) {
+    val id = source.getString("operationId")
+    val amount = depositAtoms(handoff.getString(id), true)
+    check(amount >= depositAtoms(source.getString("minimumCreditAtoms"), true))
+    source
+      .put("amountAtoms", amount.toString())
+      .put("budgetAtoms", amount.toString())
+      .put("minimumCreditAtoms", amount.toString())
+    val allocations = distributionAmounts(distribution, amount, offset)
+    source.getJSONArray("allocations").objects().forEachIndexed { slot, allocation ->
+      allocation.put("inputAtoms", allocations[slot].toString())
+    }
+    val p =
+      result
+        .getJSONArray("fundingRows")
+        .objects()
+        .single { it.getString("operationId") == id }
+        .getJSONObject("proposal")
+    p.put("amountAtoms", amount.toString()).put("budgetAtoms", amount.toString())
+    p.getJSONObject("source").put("amountAtoms", amount.toString())
+    offset += amount
+  }
+  check(
+    handoff.keys().asSequence().toSet() ==
+      result.getJSONArray("sources").objects().map { it.getString("operationId") }.toSet()
+  )
+  result
+    .put("privateHandoff", JSONObject(handoff.toString()))
+    .put("fundedBudgetMinimumAtoms", offset.toString())
+  return result
+}
 
 internal fun depositAtoms(value: String, positive: Boolean = false): BigInteger {
   check(value.matches(Regex("0|[1-9][0-9]{0,77}")))

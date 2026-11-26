@@ -197,6 +197,8 @@ internal class EarnSponsoredEngine(
         proposal.getString("confidentialAccount"),
       )
     },
+  private val freshPrivateAccount: (WalletRecord, String, String) -> Unit =
+    ::requireFreshEarnPrivateAccount,
 ) : AutoCloseable {
   private var signer: NativeSponsoredSigner? = null
   private var delegation: EarnDelegationOperation? = null
@@ -235,13 +237,16 @@ internal class EarnSponsoredEngine(
       val incoming = JSONObject(request["proposal"] as? Map<*, *> ?: error("Missing proposal"))
       val chain = incoming.getLong("chainId")
       val owner =
-        if (chain == 143L) publicAccountAddress(record, incoming.optInt("sourceAccountIndex", 0))
-        else {
+        if (chain in setOf(143L, 8453L, 42161L)) {
+          val index = incoming.optInt("sourceAccountIndex", 0)
+          check(chain == 143L || index == 1)
+          publicAccountAddress(record, index)
+        } else {
           check(chain == 4663L && record.earnChain == 4663)
           cycleInvestmentAddress(record)
         }
       val (p, op) = sponsoredPublicProposal(record.id, owner, record.earnChain, request)
-      if (chain == 143L) check(!p.has("investmentSlot")) else attachInvestmentSlot(record, p)
+      if (chain != 4663L) check(!p.has("investmentSlot")) else attachInvestmentSlot(record, p)
       requireActiveEarnCycle(record, p)
       if (p.getString("kind") in setOf("sourceFunding", "hoodTokenReturn")) {
         requireEarnConfidentialAccount(record, p.getString("confidentialAccount"))
@@ -260,11 +265,7 @@ internal class EarnSponsoredEngine(
         return@use existing
       }
       if (p.getString("kind") in setOf("sourceFunding", "hoodTokenReturn"))
-        requireFreshEarnPrivateAccount(
-          record,
-          p.getString("kind"),
-          p.getString("confidentialAccount"),
-        )
+        freshPrivateAccount(record, p.getString("kind"), p.getString("confidentialAccount"))
       if (p.getString("kind") == "sourceFunding") {
         val prior =
           currentCycleRows(record, journal.all()).filter {
@@ -294,6 +295,7 @@ internal class EarnSponsoredEngine(
             owner,
             p.getString("operationId"),
             p.getString("budgetAtoms"),
+            chain.toInt(),
           )
         } else {
           val fresh = stateReader(p)
@@ -305,6 +307,7 @@ internal class EarnSponsoredEngine(
             p.optInt("sourceAccountIndex", 0),
             p.getString("budgetAtoms"),
             fresh.tokenBalanceAtoms,
+            chain.toInt(),
           )
         }
       }
@@ -335,7 +338,7 @@ internal class EarnSponsoredEngine(
 
   private fun delegationProposal(p: JSONObject, state: NativeSponsoredState) =
     JSONObject()
-      .put("kind", if (state.chainId == 143uL) "authorizeSource7702" else "authorizeHood7702")
+      .put("kind", if (state.chainId != 4663uL) "authorizeSource7702" else "authorizeHood7702")
       .put("operationId", p.getString("operationId"))
       .put("revision", p.getLong("revision"))
       .put("chainId", state.chainId.toLong())
@@ -344,7 +347,7 @@ internal class EarnSponsoredEngine(
       .put("deadline", p.getLong("deadline"))
       .put("cycleIndex", p.optInt("cycleIndex", 0))
       .also {
-        if (state.chainId == 143uL) it.put("sourceAccountIndex", p.optInt("sourceAccountIndex", 0))
+        if (state.chainId != 4663uL) it.put("sourceAccountIndex", p.optInt("sourceAccountIndex", 0))
         else if (p.has("investmentSlot")) it.put("investmentSlot", p.getInt("investmentSlot"))
       }
 

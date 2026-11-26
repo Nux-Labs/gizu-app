@@ -216,3 +216,82 @@ test("capability gate reflects native availability and missing bridge never reac
     /unavailable/,
   );
 });
+
+test("combined funding payout sends only the native parent reference and selected legacy leg", async () => {
+  const { native, fetcher } = setup();
+  const parent = {
+    version: 2 as const,
+    operationId: "parent_1",
+    walletId: "wallet",
+    revision: 5,
+    cycleIndex: 0,
+    profileChainId: 1 as const,
+    budgetAtoms: "15000000",
+    approvedExistingPrivateAtoms: "2000000",
+    creditedAtoms: "14900000",
+    phase: "ready" as const,
+    blocked: false,
+    canResume: true,
+  };
+  const service = createEarnPayoutService(() => native);
+  const result = await service.executeFromParent!(intent, parent, "hold");
+  expect(native.executeEarnPrivatePayout).toHaveBeenCalledWith({
+    version: 2,
+    walletId: "wallet",
+    cycleIndex: 0,
+    parentOperationId: "parent_1",
+    leg: "hold",
+  });
+  expect(result.leg).toBe("hold");
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+test.each([
+  [404, undefined, false],
+  [200, { fundingContractVersion: 2, fundingChainIds: [143, 8453] }, false],
+  [
+    200,
+    {
+      fundingContractVersion: 2,
+      fundingChainIds: [143, 8453],
+      earnPrivateFundingVersion: 2,
+      earnPrivateFundingProfileChainIds: [1],
+    },
+    true,
+  ],
+] as const)(
+  "Ethereum private path requires backend admission status %s and exact profile flag",
+  async (status, body, enabled) => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(2000000000000 + (status === 404 ? 0 : enabled ? 62000 : 31000));
+    jest.mocked(getSignerCapabilities).mockResolvedValue({
+      contractVersion: 1,
+      available: true,
+      walletStorage: true,
+      backup: true,
+      transfers: true,
+      swaps: true,
+      earnPrivatePayoutExecution: true,
+      earnPrivateFundingVersion: 2,
+      fundingContractVersion: 2,
+      fundingChainIds: [143, 8453, 42161],
+    });
+    jest
+      .spyOn(global, "fetch")
+      .mockResolvedValue({ status, ok: status === 200, json: async () => body } as Response);
+    const parent = {
+      createEarnFundingParent: jest.fn(),
+      listEarnFundingParents: jest.fn(),
+      executeEarnFundingParent: jest.fn(),
+      resumeEarnFundingParent: jest.fn(),
+      reconcileEarnFundingParent: jest.fn(),
+      cancelEarnFundingParent: jest.fn(),
+      lock: jest.fn(),
+    };
+    const service = createEarnPayoutService(undefined, () => parent);
+    expect(await service.fundingRecoveryAvailable!()).toBe(true);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(await service.fundingAvailable!()).toBe(enabled);
+  },
+);

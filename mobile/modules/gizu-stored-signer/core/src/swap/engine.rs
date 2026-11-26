@@ -77,6 +77,7 @@ enum Step {
     FusionEstimate,
     Review,
     FundingSign,
+    FundingBaselineSaved,
     FundingSubmit,
     FundingReceipt {
         polls: u32,
@@ -152,6 +153,8 @@ struct Plan {
     completion_target: Option<String>,
     #[serde(default = "legacy_source_index")]
     source_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_chain_id: Option<u64>,
     target: Address,
     #[serde(default)]
     amount_atoms: Option<String>,
@@ -355,6 +358,8 @@ struct Data {
     /// operation-history check for their sales.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     private_baseline: Option<U256>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    funding_route_confirmed: bool,
 }
 
 /// One sale's credit from C's balance growth, as Earn's balance-delta-v1 settlement does.
@@ -364,6 +369,24 @@ enum BalanceCredit {
     /// Shrunk, or grew by more than the sale deposited: other private cash moved meanwhile.
     Ambiguous,
     Credited(U256),
+}
+
+fn bounded_balance_credit(
+    baseline: U256,
+    available: U256,
+    minimum: U256,
+    maximum: U256,
+) -> BalanceCredit {
+    let Some(delta) = available.checked_sub(baseline) else {
+        return BalanceCredit::Ambiguous;
+    };
+    if delta.is_zero() || delta < minimum {
+        return BalanceCredit::Pending;
+    }
+    if delta > maximum || delta > U256::from(MAX_SOURCE_ATOMS) {
+        return BalanceCredit::Ambiguous;
+    }
+    BalanceCredit::Credited(delta)
 }
 
 /// The least credit a sale's deposit guarantees. The inbound quote is EXACT_INPUT for the
@@ -594,7 +617,7 @@ impl Engine {
     fn rpc(&mut self, chain: &str, calls: Vec<(&str, Value)>) -> SwapStep {
         let batch: Vec<Value> = calls.into_iter().enumerate().map(|(i, (method, params))| json!({"jsonrpc": "2.0", "id": i, "method": method, "params": params})).collect();
         let url = if chain == "monad" {
-            MONAD_RPC
+            self.source_config().rpc
         } else {
             self.chain.rpc
         };
@@ -611,7 +634,8 @@ impl Engine {
     // unlock still renews only the existing 15-minute session for this immutable sale.
     fn operation_expired(&self, now: u64) -> bool {
         now >= self.m.created_ms + OPERATION_MS
-            && !(self.private_sell() && self.m.approved_ms.is_some())
+            && !((self.private_sell() && self.m.approved_ms.is_some())
+                || (self.fund_only() && self.m.data.signed_operation.is_some()))
     }
     fn can_sign(&mut self, now: u64) -> bool {
         if now >= self.m.session_until_ms {
@@ -680,6 +704,41 @@ impl Engine {
         )
     }
     /// A buy that spends the private balance C already holds and sends nothing from Monad.
+    fn fund_only(&self) -> bool {
+        self.m.plan.kind == "confidentialFunding"
+    }
+    fn source_config(&self) -> FundingSourceConfig {
+        funding_source(self.m.plan.source_chain_id.unwrap_or(MONAD_CHAIN_ID))
+            .expect("validated source chain")
+    }
+    fn check_source_response(&self, value: &Value) -> Result<(), SignerError> {
+        if self.fund_only()
+            && (((self.source_config().chain_id != MONAD_CHAIN_ID
+                || value.get("sourceChainId").is_some())
+                && value.get("sourceChainId").and_then(Value::as_u64)
+                    != Some(self.source_config().chain_id))
+                || ((self.source_config().chain_id != MONAD_CHAIN_ID
+                    || value.get("token").is_some())
+                    && evm::addr(text(value, "token")?)? != self.source_config().usdc))
+        {
+            return Err(SignerError::InvalidInput);
+        }
+        Ok(())
+    }
+    fn funding_path(&self, action: &str) -> String {
+        if self.fund_only() && self.source_config().chain_id != MONAD_CHAIN_ID {
+            format!("/v1/funding/{}/{action}", self.source_config().chain_id)
+        } else {
+            format!(
+                "/v1/swap/monad/{}",
+                if action == "prepare" {
+                    "prepare-funding"
+                } else {
+                    action
+                }
+            )
+        }
+    }
     fn payout_only(&self) -> bool {
         self.m.plan.kind == "confidentialPayout"
     }
@@ -763,10 +822,10 @@ impl Engine {
                 let (src, pm) = (self.m.source, PIMLICO_ERC20_PAYMASTER);
                 self.rpc("monad", vec![
                     ("eth_chainId", json!([])),
-                    ("eth_call", Self::eth_call(MONAD_USDC, call_data("balanceOf(address)", &[src]))),
+                    ("eth_call", Self::eth_call(self.source_config().usdc, call_data("balanceOf(address)", &[src]))),
                     ("eth_getCode", json!([src.to_checksum(None), "latest"])),
                     ("eth_getTransactionCount", json!([src.to_checksum(None), "latest"])),
-                    ("eth_call", Self::eth_call(MONAD_USDC, call_data("allowance(address,address)", &[src, pm]))),
+                    ("eth_call", Self::eth_call(self.source_config().usdc, call_data("allowance(address,address)", &[src, pm]))),
                 ])
             }
             Step::TargetChain => {
@@ -800,15 +859,17 @@ impl Engine {
                 }
                 self.rpc("target", calls)
             }
-            Step::FundingProbe => self.post("/v1/swap/monad/prepare-funding", json!({"owner": self.m.source.to_checksum(None), "recipient": PROBE_RECIPIENT.to_checksum(None), "amount": "1"})),
+            Step::FundingProbe => self.post(&self.funding_path("prepare"), json!({"owner": self.m.source.to_checksum(None), "recipient": PROBE_RECIPIENT.to_checksum(None), "amount": "1"})),
             Step::FundingQuote { .. } => {
-                let request = QuoteRequest::funding(self.m.confidential, self.m.source, &d.source_asset, d.funding_amount);
+                let request = if self.fund_only() {
+                    QuoteRequest::funding_to_private(self.m.confidential, self.m.source, self.source_config().origin_asset, PRIVATE_USDC_ASSET, d.funding_amount)
+                } else { QuoteRequest::funding(self.m.confidential, self.m.source, &d.source_asset, d.funding_amount) };
                 self.m.data.funding_request = Some(request.clone());
                 self.post("/v1/swap/aurora/quote", serde_json::to_value(request).map_err(|_| SignerError::InvalidInput)?)
             }
             Step::FundingPrepare { .. } => {
                 let quote = d.funding_quote.as_ref().ok_or(SignerError::InvalidInput)?;
-                self.post("/v1/swap/monad/prepare-funding", json!({"owner": self.m.source.to_checksum(None), "recipient": quote.deposit_address, "amount": d.funding_amount.to_string()}))
+                self.post(&self.funding_path("prepare"), json!({"owner": self.m.source.to_checksum(None), "recipient": quote.deposit_address, "amount": d.funding_amount.to_string()}))
             }
             Step::PayoutEstimate { index } => {
                 let portion = self.portions(self.payout_base()?)[index];
@@ -850,6 +911,11 @@ impl Engine {
                 }
                 return Ok(SwapStep::Review { text: self.review() });
             }
+            Step::FundingBaselineSaved => {
+                // Native hosts persist every yielded step, including this barrier, before signing.
+                self.go(Step::FundingSign);
+                return Ok(SwapStep::Wait { millis: 0 });
+            }
             Step::FundingSign => {
                 if d.signed_operation.is_some() {
                     // A saved signature is immutable; reconcile it instead of preparing/signing again.
@@ -861,7 +927,7 @@ impl Engine {
                     return self.next(now);
                 }
                 if let Some(op) = d.prepared.as_ref().map(|p| &p.0)
-                    && funding::readiness_code(op, now / 1000)?.is_some()
+                    && funding::readiness_code_on(self.source_config().chain_id, op, now / 1000)?.is_some()
                 {
                     self.m.data.prepared = None;
                     self.go(Step::SourceChain { execute: true });
@@ -876,7 +942,12 @@ impl Engine {
                     return self.next(now);
                 }
                 if !self.can_sign(now) {
+                    if self.fund_only() { self.m.data.private_baseline = None; }
                     return Ok(self.unlock_or_expire(now));
+                }
+                if self.fund_only() && d.private_baseline.is_none() {
+                    self.go(Step::AuthSalt);
+                    return self.next(now);
                 }
                 match self.sign_funding(now) {
                     Ok(()) => {}
@@ -893,11 +964,11 @@ impl Engine {
             }
             Step::FundingSubmit => {
                 let (_, rpc) = d.signed_operation.clone().ok_or(SignerError::InvalidInput)?;
-                self.post("/v1/swap/monad/submit", json!({"userOperation": rpc}))
+                self.post(&self.funding_path("submit"), json!({"userOperation": rpc}))
             }
             Step::FundingReceipt { .. } => {
                 let (hash, _) = d.signed_operation.clone().ok_or(SignerError::InvalidInput)?;
-                self.post("/v1/swap/monad/receipt", json!({"userOperationHash": format!("{hash:#x}")}))
+                self.post(&self.funding_path("receipt"), json!({"userOperationHash": format!("{hash:#x}")}))
             }
             Step::Credit => {
                 let quote = d.funding_quote.clone().ok_or(SignerError::InvalidInput)?;
@@ -1118,7 +1189,11 @@ impl Engine {
         self.m.approved_ms = None;
         self.m.data.review_limits = None;
         self.m.data.funding_review_changed = true;
-        self.go(Step::PayoutEstimate { index: 0 });
+        self.go(if self.fund_only() {
+            Step::Review
+        } else {
+            Step::PayoutEstimate { index: 0 }
+        });
     }
 
     fn sign_funding(&mut self, now: u64) -> Result<(), SignerError> {
@@ -1135,7 +1210,8 @@ impl Engine {
             .clone()
             .ok_or(SignerError::InvalidInput)?;
         let chain = self.chain()?;
-        let checked = funding::check_funding(
+        let checked = funding::check_funding_on(
+            self.source_config().chain_id,
             &op,
             authorization.as_ref(),
             self.m.source,
@@ -1249,6 +1325,28 @@ impl Engine {
                     }
                 };
                 self.m.data.source_asset = find("monad", MONAD_USDC)?;
+                if self.payout_only()
+                    && self.m.plan.amount_atoms.is_some()
+                    && self.m.data.source_asset != PRIVATE_USDC_ASSET
+                {
+                    return Err(SignerError::InvalidInput);
+                }
+                if self.fund_only() {
+                    let config = self.source_config();
+                    let blockchain = match config.chain_id {
+                        143 => "monad",
+                        8453 => "base",
+                        42161 => "arb",
+                        _ => unreachable!(),
+                    };
+                    if self.m.data.source_asset != PRIVATE_USDC_ASSET
+                        || find(blockchain, config.usdc)? != config.origin_asset
+                    {
+                        return Err(SignerError::InvalidInput);
+                    }
+                    self.go(Step::SourceChain { execute: false });
+                    return Ok(());
+                }
                 self.m.data.destination_asset =
                     find(self.chain.aurora_blockchain, self.chain.settlement_token)?;
                 self.go(Step::TargetChain);
@@ -1378,7 +1476,7 @@ impl Engine {
                 self.go(Step::FusionEstimate);
             }
             (Step::SourceChain { execute }, None) => {
-                if rpc_quantity(&value, 0)? != U256::from(MONAD_CHAIN_ID) {
+                if rpc_quantity(&value, 0)? != U256::from(self.source_config().chain_id) {
                     return Err(SignerError::InvalidInput);
                 }
                 let balance = rpc_uint(&value, 1)?;
@@ -1418,13 +1516,16 @@ impl Engine {
                 }
             }
             (Step::FundingProbe, None) => {
+                self.check_source_response(&value)?;
                 let op: UserOperation = serde_json::from_value(value["userOperation"].clone())
                     .map_err(|_| SignerError::InvalidInput)?;
-                if let Some(code) = funding::readiness_code(&op, now / 1000)? {
+                if let Some(code) =
+                    funding::readiness_code_on(self.source_config().chain_id, &op, now / 1000)?
+                {
                     self.m.paused = Some(code.into());
                     return Ok(());
                 }
-                let fee = funding::fee_cap(&op, now / 1000)?;
+                let fee = funding::fee_cap_on(self.source_config().chain_id, &op, now / 1000)?;
                 if fee >= self.m.data.budget {
                     self.m.paused = Some("FEE_EXCEEDS_BUDGET".into());
                     return Ok(());
@@ -1455,16 +1556,19 @@ impl Engine {
                 });
             }
             (Step::FundingPrepare { attempt, execute }, None) => {
+                self.check_source_response(&value)?;
                 let op: UserOperation = serde_json::from_value(value["userOperation"].clone())
                     .map_err(|_| SignerError::InvalidInput)?;
                 let authorization: Option<UnsignedAuthorization> =
                     serde_json::from_value(value["authorization"].clone())
                         .map_err(|_| SignerError::InvalidInput)?;
-                if let Some(code) = funding::readiness_code(&op, now / 1000)? {
+                if let Some(code) =
+                    funding::readiness_code_on(self.source_config().chain_id, &op, now / 1000)?
+                {
                     self.m.paused = Some(code.into());
                     return Ok(());
                 }
-                let fee = funding::fee_cap(&op, now / 1000)?;
+                let fee = funding::fee_cap_on(self.source_config().chain_id, &op, now / 1000)?;
                 let room = self
                     .m
                     .data
@@ -1505,7 +1609,8 @@ impl Engine {
                     self.m.paused = Some(code.into());
                     return Ok(());
                 }
-                let checked = funding::check_funding(
+                let checked = funding::check_funding_on(
+                    self.source_config().chain_id,
                     &op,
                     authorization.as_ref(),
                     self.m.source,
@@ -1517,12 +1622,19 @@ impl Engine {
                 )?;
                 self.m.data.funding_fee = checked.fee_cap;
                 self.m.data.prepared = Some((op, authorization));
+                if self.fund_only() && self.m.data.signed_operation.is_none() {
+                    // Re-preparing or requoting invalidates only an unsigned snapshot. Saved
+                    // signed operations keep their original baseline for every reconciliation.
+                    self.m.data.private_baseline = None;
+                }
                 if execute && !self.within_funding_review()? {
                     self.request_funding_review();
                     return Ok(());
                 }
                 self.go(if execute {
                     Step::FundingSign
+                } else if self.fund_only() {
+                    Step::Review
                 } else {
                     Step::PayoutEstimate { index: 0 }
                 });
@@ -1584,6 +1696,14 @@ impl Engine {
                 self.wait(now, POLL_MS);
             }
             (Step::FundingReceipt { polls, resubmitted }, None) => {
+                if self.fund_only()
+                    && (self.source_config().chain_id != MONAD_CHAIN_ID
+                        || value.get("sourceChainId").is_some())
+                    && value.get("sourceChainId").and_then(Value::as_u64)
+                        != Some(self.source_config().chain_id)
+                {
+                    return Err(SignerError::InvalidInput);
+                }
                 if value["found"] == json!(true) {
                     if value["success"] != json!(true) {
                         self.m.paused = Some("FUNDING_REVERTED".into());
@@ -1604,6 +1724,11 @@ impl Engine {
             }
             (Step::Credit, None) => match text(&value, "status")? {
                 // A pooled sell banks each sale and moves on; payouts start after the last one.
+                "SUCCESS" if self.fund_only() => {
+                    self.m.data.funding_route_confirmed = true;
+                    self.m.data.access_token = None;
+                    self.go(Step::AuthSalt);
+                }
                 "SUCCESS" if self.private_sell() => self.go(Step::AuthSalt),
                 "SUCCESS" if self.pooled_sell() => {
                     let leg = self.m.data.leg;
@@ -1650,7 +1775,7 @@ impl Engine {
             (Step::Authenticate { .. }, Some(401))
             | (Step::PrivateCredit { .. }, Some(401))
             | (Step::Balances, Some(401))
-                if self.private_sell() =>
+                if self.private_sell() || self.fund_only() =>
             {
                 self.m.data.access_token = None;
                 self.go(Step::AuthSalt);
@@ -1737,6 +1862,48 @@ impl Engine {
             }
             (Step::Balances, None) => {
                 let available = aurora::private_available(&value, &self.m.data.source_asset)?;
+                if self.fund_only() {
+                    if self.m.data.signed_operation.is_none() {
+                        // Fresh, authenticated snapshot after approval, immediately before signing.
+                        self.m.data.private_baseline = Some(available);
+                        self.m.data.access_token = None;
+                        self.go(Step::FundingBaselineSaved);
+                        return Ok(());
+                    }
+                    if !self.m.data.funding_route_confirmed {
+                        return Err(SignerError::InvalidInput);
+                    }
+                    let baseline = self
+                        .m
+                        .data
+                        .private_baseline
+                        .ok_or(SignerError::InvalidInput)?;
+                    let quote = self
+                        .m
+                        .data
+                        .funding_quote
+                        .as_ref()
+                        .ok_or(SignerError::InvalidInput)?;
+                    match bounded_balance_credit(
+                        baseline,
+                        available,
+                        quote.min_amount_out,
+                        quote.amount_out,
+                    ) {
+                        BalanceCredit::Pending => self.wait(now, POLL_MS * 2),
+                        BalanceCredit::Ambiguous => {
+                            self.m.data.access_token = None;
+                            self.m.paused = Some("FUNDING_CREDIT_AMBIGUOUS".into());
+                        }
+                        BalanceCredit::Credited(amount) => {
+                            self.m.data.available = amount;
+                            self.m.data.credit_basis = Some("authenticated_balance_delta".into());
+                            self.m.data.access_token = None;
+                            self.go(Step::Done);
+                        }
+                    }
+                    return Ok(());
+                }
                 if self.private_sell() {
                     // Baseline for the first sale's credit; no Fusion order exists yet.
                     if !self.needs_sale_baseline() {
@@ -1773,7 +1940,16 @@ impl Engine {
                     )?;
                     return Ok(());
                 }
-                let available = available.min(U256::from(MAX_SOURCE_ATOMS));
+                let available = if let Some(amount) = &self.m.plan.amount_atoms {
+                    let approved = evm::decimal(amount)?;
+                    if approved > available {
+                        self.m.paused = Some("INSUFFICIENT_PRIVATE_BALANCE".into());
+                        return Ok(());
+                    }
+                    approved
+                } else {
+                    available.min(U256::from(MAX_SOURCE_ATOMS))
+                };
                 if available.is_zero() {
                     self.m.paused = Some("NO_PRIVATE_BALANCE".into());
                     return Ok(());
@@ -2664,9 +2840,21 @@ impl Engine {
         }
         let d = &self.m.data;
         let q = d.funding_quote.as_ref();
+        if self.fund_only() {
+            return format!(
+                "CONFIDENTIAL FUNDING · MAINNET\nSource network {}\nGross budget {} USDC including gas\nPrincipal {} USDC; maximum gas {} USDC\nPrivate USDC credit at least {} (quoted {})\nFunds remain in the confidential account {}.\nOne approval authorizes funding only. Uncertain credit pauses for recovery.",
+                self.source_config().chain_id,
+                usdc(d.budget),
+                usdc(d.funding_amount),
+                usdc(d.funding_fee),
+                q.map(|q| usdc(q.min_amount_out)).unwrap_or_default(),
+                q.map(|q| usdc(q.amount_out)).unwrap_or_default(),
+                self.m.confidential.to_checksum(None)
+            );
+        }
         let mut out = if self.payout_only() {
             format!(
-                "CONFIDENTIAL BUY FROM PRIVATE BALANCE · MAINNET\nConfidential balance → {via} → {sym}\nNothing is sent from Monad: this spends USDC that C already holds.\n\nTarget {sym} ({dec} decimals)\nContract {target}\n\nConfidential balance C {c}\nUsed now {available} USDC (up to 10 USDC per operation)\n",
+                "CONFIDENTIAL BUY FROM PRIVATE BALANCE · MAINNET\nConfidential balance → {via} → {sym}\nNothing is sent from Monad: this spends USDC that C already holds.\n\nTarget {sym} ({dec} decimals)\nContract {target}\n\nConfidential balance C {c}\nUsed now {available} USDC\n",
                 sym = d.target_symbol,
                 dec = d.target_decimals,
                 target = self.m.plan.target.to_checksum(None),
@@ -2894,12 +3082,16 @@ impl Engine {
                 | Step::FundingQuote { .. }
                 | Step::FundingPrepare { .. }
                 | Step::FundingSign
+                | Step::FundingBaselineSaved
                 | Step::FundingSubmit
                 | Step::FundingReceipt { .. } => "FUNDING",
                 Step::AuthSalt | Step::Authenticate { .. } | Step::Balances
                     if self.m.approved_ms.is_none() =>
                 {
                     "PLANNING"
+                }
+                Step::AuthSalt | Step::Authenticate { .. } | Step::Balances if self.fund_only() => {
+                    "FUNDING"
                 }
                 // `Credit` still waits for Aurora; the balance is credited once it succeeds.
                 Step::Credit => "FUNDING",
@@ -2921,17 +3113,21 @@ impl Engine {
             "targetSymbol": d.target_symbol,
             "targetDecimals": d.target_decimals,
             "sourceAtoms": d.funding_amount.to_string(),
+            "sourceChainId": self.source_config().chain_id,
+            "budgetAtoms": d.budget.to_string(),
+            "originAsset": self.source_config().origin_asset,
+            "privateAsset": PRIVATE_USDC_ASSET,
             "creditedAtoms": d.available.to_string(),
             "payoutsSubmitted": d.payouts.iter().filter(|p| p.signed.is_some()).count(),
             "ordersComplete": d.orders.iter().filter(|o| o.complete).count(),
             "receivedTargetAtoms": d.orders.iter().fold(U256::ZERO, |sum, o| sum + o.received_total).to_string(),
             "direction": if self.sell() { "sell" } else { "buy" },
             "kind": self.m.plan.kind,
-            "completionTarget": if self.private_sell() { "confidential" } else { "public" },
-            "privateCreditedAtoms": if self.private_sell() { d.available.to_string() } else { "0".into() },
+            "completionTarget": if self.private_sell() || self.fund_only() { "confidential" } else { "public" },
+            "privateCreditedAtoms": if self.private_sell() || self.fund_only() { d.available.to_string() } else { "0".into() },
             "soldAtoms": d.orders.iter().fold(U256::ZERO, |sum, row| sum + row.sold_total).to_string(),
             "receivedUsdgAtoms": if self.sell() { d.orders.iter().fold(U256::ZERO, |sum, row| sum + row.received_total).to_string() } else { "0".into() },
-            "legs": if self.private_sell() { 0 } else { self.legs() },
+            "legs": if self.private_sell() || self.fund_only() { 0 } else { self.legs() },
             "holders": self.sales(),
             // After approval funds may be in flight: the UI must pause, never cancel, on leave.
             "approved": self.m.approved_ms.is_some(),
@@ -2976,6 +3172,20 @@ impl SwapOperation {
             return Err(SignerError::InvalidInput);
         }
         let plan: Plan = serde_json::from_str(&plan).map_err(|_| SignerError::InvalidInput)?;
+        let fund_only = plan.kind == "confidentialFunding";
+        if fund_only {
+            let source_chain = plan.source_chain_id.ok_or(SignerError::InvalidInput)?;
+            funding_source(source_chain).ok_or(SignerError::InvalidInput)?;
+            if (source_chain != MONAD_CHAIN_ID && plan.source_index != FUNDING_ACCOUNT)
+                || plan.amount_atoms.is_none()
+                || !plan.recipient_indices.is_empty()
+                || plan.weights.is_some()
+            {
+                return Err(SignerError::InvalidInput);
+            }
+        } else if plan.source_chain_id.is_some() {
+            return Err(SignerError::InvalidInput);
+        }
         crate::roles::validate_public_source_index(plan.source_index)?;
         if plan.recipient_indices.contains(&plan.source_index) {
             return Err(SignerError::InvalidInput);
@@ -2991,7 +3201,7 @@ impl SwapOperation {
         } else {
             MAX_LEGS
         };
-        if legs == 0
+        if (!fund_only && legs == 0)
             || legs > max_legs
             || (private_sell && plan.recipient_indices.iter().any(|i| *i >= 8192))
         {
@@ -3020,7 +3230,7 @@ impl SwapOperation {
         if (plan.kind == "confidentialSwap" || payout) && !chain.is_buy_target(plan.target) {
             return Err(SignerError::InvalidInput);
         }
-        if (plan.kind != "confidentialSwap" && !sell && !payout && !recovery)
+        if (plan.kind != "confidentialSwap" && !sell && !payout && !recovery && !fund_only)
             || plan.recipient_indices.iter().any(|i| *i < FIRST_RECIPIENT)
             || plan
                 .recipient_indices
@@ -3089,7 +3299,7 @@ impl SwapOperation {
             None
         };
         if let Some(amount) = &plan.amount_atoms {
-            if sell || payout || recovery {
+            if sell || recovery {
                 return Err(SignerError::InvalidInput);
             }
             let v = evm::decimal(amount)?;
@@ -3114,13 +3324,26 @@ impl SwapOperation {
             version: STATE_VERSION,
             id: format!(
                 "{:#x}",
-                keccak256(format!(
-                    "{}:{}:{:?}:{}",
-                    now_ms,
-                    at(plan.source_index)?,
-                    plan.recipient_indices,
-                    plan.kind
-                ))
+                if fund_only {
+                    keccak256(
+                        serde_json::to_vec(&(
+                            "gizu-funding-v2",
+                            now_ms,
+                            at(plan.source_index)?,
+                            at(CONFIDENTIAL_ACCOUNT)?,
+                            &plan,
+                        ))
+                        .map_err(|_| SignerError::InvalidInput)?,
+                    )
+                } else {
+                    keccak256(format!(
+                        "{}:{}:{:?}:{}",
+                        now_ms,
+                        at(plan.source_index)?,
+                        plan.recipient_indices,
+                        plan.kind
+                    ))
+                }
             ),
             source: at(plan.source_index)?,
             confidential: at(CONFIDENTIAL_ACCOUNT)?,
@@ -3167,6 +3390,64 @@ impl SwapOperation {
             return Err(SignerError::InvalidInput);
         }
         let chain = target_chain(m.plan.chain_id).ok_or(SignerError::InvalidInput)?;
+        if m.plan.kind == "confidentialFunding" {
+            let source_id = m.plan.source_chain_id.ok_or(SignerError::InvalidInput)?;
+            funding_source(source_id).ok_or(SignerError::InvalidInput)?;
+            if source_id != MONAD_CHAIN_ID && m.plan.source_index != FUNDING_ACCOUNT {
+                return Err(SignerError::InvalidInput);
+            }
+            if let Some((saved_hash, rpc)) = &m.data.signed_operation {
+                let mut fields = rpc.clone();
+                let fields_obj = fields.as_object_mut().ok_or(SignerError::InvalidInput)?;
+                let signature = fields_obj
+                    .remove("signature")
+                    .ok_or(SignerError::InvalidInput)?;
+                let authorization = fields_obj.remove("eip7702Auth");
+                let op: UserOperation =
+                    serde_json::from_value(fields).map_err(|_| SignerError::InvalidInput)?;
+                let auth = authorization
+                    .as_ref()
+                    .map(|a| -> Result<UnsignedAuthorization, SignerError> {
+                        let chain_id = evm::quantity(text(a, "chainId")?)?
+                            .try_into()
+                            .map_err(|_| SignerError::InvalidInput)?;
+                        let address = evm::addr(text(a, "address")?)?;
+                        if chain_id != source_id || address != SIMPLE_7702 {
+                            return Err(SignerError::InvalidInput);
+                        }
+                        Ok(UnsignedAuthorization {
+                            chain_id,
+                            address,
+                            nonce: evm::quantity(text(a, "nonce")?)?
+                                .try_into()
+                                .map_err(|_| SignerError::InvalidInput)?,
+                        })
+                    })
+                    .transpose()?;
+                let computed = funding::user_operation_hash_on(source_id, &op, auth.as_ref())?;
+                let sig = evm::hex_bytes(signature.as_str().ok_or(SignerError::InvalidInput)?)?;
+                if computed != *saved_hash
+                    || sig.len() != 65
+                    || !(27..=28).contains(&sig[64])
+                    || evm::recover(
+                        computed,
+                        sig[..32]
+                            .try_into()
+                            .map_err(|_| SignerError::InvalidInput)?,
+                        sig[32..64]
+                            .try_into()
+                            .map_err(|_| SignerError::InvalidInput)?,
+                        sig[64] - 27,
+                    )? != m.source
+                {
+                    return Err(SignerError::InvalidInput);
+                }
+            } else {
+                m.data.private_baseline = None;
+            }
+        } else if m.plan.source_chain_id.is_some() {
+            return Err(SignerError::InvalidInput);
+        }
         if m.plan.kind == "confidentialSwap"
             && m.approved_ms.is_some()
             && m.data.review_limits.is_none()
@@ -3237,7 +3518,7 @@ impl SwapOperation {
         if e.m.step != Step::Review || e.m.approved_ms.is_some() {
             return Err(SignerError::InvalidInput);
         }
-        if e.m.plan.kind == "confidentialSwap" {
+        if e.m.plan.kind == "confidentialSwap" || e.fund_only() {
             e.m.data.review_limits = Some(e.funding_review_limits()?);
             e.m.data.funding_review_changed = false;
         }
@@ -3292,6 +3573,12 @@ impl SwapOperation {
                 // Ambiguity cleared the token; reauthenticate even for already-saved journals.
                 e.go(Step::AuthSalt);
             }
+            if e.fund_only()
+                && e.m.data.access_token.is_none()
+                && matches!(e.m.step, Step::Balances | Step::Authenticate { .. })
+            {
+                e.go(Step::AuthSalt);
+            }
             e.m.paused = None;
             e.m.failures = 0;
             e.m.wait_until_ms = 0;
@@ -3301,6 +3588,16 @@ impl SwapOperation {
     /// Stops all future signatures. Submitted steps cannot be undone.
     pub fn cancel(&self) {
         if let Ok(mut e) = self.inner.lock() {
+            if e.fund_only() {
+                if e.m.step == Step::Done {
+                    return;
+                }
+                if e.m.data.signed_operation.is_some() {
+                    e.m.paused = Some("FUNDING_PAUSED_SAVED_PROGRESS".into());
+                    e.seed = None;
+                    return;
+                }
+            }
             if e.private_sell() {
                 if e.m.step == Step::Done {
                     return;
