@@ -24,8 +24,8 @@ Deploy compatible backend recovery handlers before enabling clients/new starts.
 Complete funded source-USDC gas, first-use/delegated operation, settlement, refund
 and interrupted-recovery checks in the feature environment before general rollout.
 The implementation checks and public read-only feasibility evidence do not claim
-those transfers have occurred. See the [funding expansion plan](../superpowers/plans/2026-11-26-funding-expansion.md)
-and [public evidence](../superpowers/feasibility/2026-11-26-funding-expansion.md).
+those transfers have occurred. See the [implementation verification](NATIVE_SIGNER_VERIFICATION.md#funding-expansion-verification-2026-11-26)
+and [public provider evidence](funding-expansion-public-checks.json).
 
 ## Pinned simulator release
 
@@ -76,7 +76,7 @@ The two observed referrals are `aurora-jh500bnyo9` and `aurora-1u3j2qzclc`. This
 
 The existing `/v1/earn/native/private-funding/prepare` endpoint accepts either the unchanged Robinhood request or an explicit `{ "version": 2, "profileChainId": 1 | 4663, ... }` request. Profile 1 pins Ethereum USDC (`0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`) and its existing Aurora asset; `ETHEREUM_RPC_URL` supplies receipt reads. The saved recovery envelope selects the same profile on status/restart, so status requests keep their existing shape. The cashout endpoint remains separate and cannot select this profile.
 
-Ethereum balance-funded Earn uses the existing `payoutEthereum` fee rule. The [unfunded feasibility sample](../superpowers/feasibility/2026-11-26-funding-expansion-public-checks.json) observed `widget_collect.sputnik-dao.near` at 4 bps, but its sanitized record did not retain the referral. It therefore does not automatically qualify an Ethereum default. An operator must qualify the actual quote echo's referral and service fee limits. This deterministic example adds a 4-bps rule to the current registry while preserving its other routes; **use `referral: null` only after verifying a missing/null referral**, otherwise substitute the exact qualified referral. From `backend/`, generate the value for `EARN_AURORA_FEE_QUALIFICATION_JSON`:
+Ethereum balance-funded Earn uses the existing `payoutEthereum` fee rule. The [unfunded feasibility sample](funding-expansion-public-checks.json) observed `widget_collect.sputnik-dao.near` at 4 bps, but its sanitized record did not retain the referral. It therefore does not automatically qualify an Ethereum default. An operator must qualify the actual quote echo's referral and service fee limits. This deterministic example adds a 4-bps rule to the current registry while preserving its other routes; **use `referral: null` only after verifying a missing/null referral**, otherwise substitute the exact qualified referral. From `backend/`, generate the value for `EARN_AURORA_FEE_QUALIFICATION_JSON`:
 
 ```sh
 node --experimental-transform-types --input-type=module -e '

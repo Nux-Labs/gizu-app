@@ -9,6 +9,11 @@ and Arbitrum and combines confirmed credits at Account 2 before using the existi
 private-funded Earn or Swap action. The amount entered remains the gross budget,
 including fees. iOS guided Earn availability is unchanged.
 
+The [public provider evidence](funding-expansion-public-checks.json) records
+unfunded quotes and read-only deployment/token checks from 2026-11-26. These
+time-sensitive observations do not establish funded settlement, charged gas or
+fixed operating minimums.
+
 Recorded local checks for this implementation:
 
 - Pinned Rust 1.94.1: 286 tests passed. Android arm64 and iOS device/simulator

@@ -14,7 +14,7 @@ reviewed caps. More sources can require more delegation/UserOperation signatures
 but do not multiply downstream investments or reroll saved recipients.
 
 Public RPC/token support and executable Aurora quotes are recorded in the
-[feasibility evidence](../superpowers/feasibility/2026-11-26-funding-expansion.md).
+[feasibility evidence](funding-expansion-public-checks.json).
 Actual charged gas, rollup overhead, refunds and interrupted funded recovery
 remain provider/device qualification before general enablement.
 
