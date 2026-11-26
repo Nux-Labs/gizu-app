@@ -12,9 +12,31 @@
 
 **Feasibility:** [Audit, live evidence and remaining gates](../feasibility/2026-11-26-funding-expansion.md). Base/Arbitrum canonical-private route quotes and public Pimlico token support passed. Existing recovery facilities are reused; a new funding-credit database and standalone Rust pool object are not baseline requirements. Ethereum Earn needs an explicit private-balance handoff adaptation.
 
+## Implementation record — 2026-11-26
+
+Tasks 1–10, including the Ethereum handoff in task 5b, are implemented on
+`feat/funding-expansion`. Existing adapters, native grants, parent/child journals,
+private payout engines and UI are reused. The additional iOS source ledger fills
+the previously missing native reservation boundary. No separate pool service or
+credit database was introduced.
+
+The implementation also covers older Monad-only backends, qualification rollback
+with signed recovery retained, source-qualified cache invalidation, interrupted
+handoff recovery and canonical-private asset validation. Final independent review
+reported no remaining actionable P1/P2 issues. Automated results and environment
+limits are recorded in
+[native signer verification](../../internal/NATIVE_SIGNER_VERIFICATION.md#funding-expansion-verification-2026-11-26).
+
+Task 0's public qualification evidence is recorded. Task 11's documentation,
+admission controls and deterministic checks are implemented; its funded provider
+and physical-device qualification remains the agreed step before general
+enablement. Use the explicit feature-build network opt-in to perform those checks.
+No deployment or paid transaction was performed. The checklists below retain the
+original procedure and do not claim live checks that were not run.
+
 ## Global Constraints
 
-- Work in `feat/funding-expansion`, based on main `23a82ec77bf568b277b01f8d004497798cafcd40`; do not move changes to an unrelated branch. No production implementation has started.
+- Work in `feat/funding-expansion`, based on main `23a82ec77bf568b277b01f8d004497798cafcd40`; do not move changes to an unrelated branch.
 - Funding networks: Monad `143`, Base `8453`, Arbitrum One `42161`; USDC only, six decimals, exact contracts/asset IDs from the spec.
 - Account 1 is `m/44'/60'/0'/0/1` on all funding networks; Account 2 remains the shared confidential owner. Preserve existing eligible Monad return accounts and legacy private-owner recovery.
 - Network is visible only within funding. Main balances and downstream actions are chain-abstracted. Internal identity is always chain + token + owner + account index.

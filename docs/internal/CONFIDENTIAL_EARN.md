@@ -1,5 +1,35 @@
 # Confidential Earn integration
 
+## Funding expansion (2026-11-26)
+
+Funding contract 2 can use Account 1 USDC on Monad (143), Base (8453) and
+Arbitrum (42161). These are source networks, independent of the saved Earn
+profile. Account 1 uses the same EVM address on each network. New funding credits
+converge into the existing canonical private USDC asset in Account 2.
+
+The entered amount remains the total budget including fees. A 15 USDC budget
+can use two 10 USDC public balances; source gas, bridge fees and the existing
+execution reserves reduce the final investment. This does not change recipient
+allocation, distribution weights or the existing vault calculations.
+
+Shared-account Android deposits retain public funding rows as provenance and
+construct ordinary private-source payout rows for downstream execution. Each
+source credit is verified and persisted before the next source can sign. The
+handoff is the approved existing private contribution plus unique confirmed
+credits, rather than the whole current private balance. The existing private
+payout runs once per saved recipient; it is not repeated for each public network.
+An ordinary legacy private owner remains a separate existing private source.
+
+Ethereum keeps its existing payout, ETH-liquidity and vault stage reviews. Its
+new funding-only parent binds the combined Account 2 amount to those stages;
+legacy public-source proofs retain their original recovery handlers. iOS guided
+Earn availability is unchanged. Investment sales and exits still return to private
+USDC; public withdrawal remains a separate explicit action.
+
+New networks require the controlled backend enablement described in
+[backend runtime](BACKEND_RUNTIME.md#funding-network-enablement). Funded tests
+remain release qualification, not evidence supplied by the deterministic suites.
+
 Reviewed against `main` source on 14 November 2026. This is the current app
 integration reference. The [research handover](../../research/confidential-earn/APP-INTEGRATION-HANDOVER.md)
 retains the original fee/economic rationale and dated experiment evidence; its

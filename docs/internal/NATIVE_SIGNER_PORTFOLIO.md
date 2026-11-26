@@ -1,5 +1,32 @@
 # Native portfolio, holdings and swap recovery
 
+## Multi-network funding cash (2026-11-26)
+
+The native portfolio adds `fundingSources` and `fundingCash` while preserving
+legacy Monad fields. It observes Account 1 USDC on Monad, Base and Arbitrum in
+parallel, with independent caches, wallet-generation checks and chain-qualified
+reservations. Eligible historical Monad source accounts remain included.
+
+Home adds public funding cash and private USDC once. Public owned-USDC rows carry
+`fundingIncludedAtoms` so the same Account 1 balance is deducted from the owned
+asset contribution without removing recipient-wallet cash. Missing or stale
+observations are explicit, not zero. Observed totals can remain visible while
+spendable balances and Max require fresh observations for enabled sources.
+Disabled funding networks do not block a sufficient qualified source.
+
+iOS includes Account 2 private USDC as one owned-asset observation. It reuses a
+read-only grant from an existing successful native passkey ceremony; portfolio
+refreshes add no approval prompt and confer no spending authority. The grant is
+bound to the wallet generation, expires after 15 minutes and is revoked on lock,
+backgrounding, protected-data loss or module teardown. Unavailable authority
+leaves the last observation stale and Max disabled. Authority and generation are
+checked again after the authenticated read before publishing or caching it.
+
+Signing, confirmed credit and reservation release invalidate the relevant caches.
+Source reservations remain held until their pre-transfer observations are
+invalidated; failed invalidation cannot release the lock. Provider success alone
+does not create a spendable private credit.
+
 **Complexity: 2 — Technical.** [Signer overview](NATIVE_SIGNER.md).
 
 Reviewed against source on 2026-11-14; no new native build, provider or device

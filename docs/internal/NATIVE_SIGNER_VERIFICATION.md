@@ -1,5 +1,54 @@
 # Native signer verification
 
+## Funding expansion verification (2026-11-26)
+
+Implementation revision: `1bf739d` on `feat/funding-expansion`.
+
+The `feat/funding-expansion` implementation extends Account 1 funding to Base
+and Arbitrum and combines confirmed credits at Account 2 before using the existing
+private-funded Earn or Swap action. The amount entered remains the gross budget,
+including fees. iOS guided Earn availability is unchanged.
+
+Recorded local checks for this implementation:
+
+- Pinned Rust 1.94.1: 286 tests passed. Android arm64 and iOS device/simulator
+  libraries, host library and UniFFI bindings regenerated with that toolchain.
+- Backend: 551 passed, 13 skipped, zero failures; TypeScript and both gas-policy
+  checks passed. Skipped provider/Postgres cases are not funded or database proof.
+- Android signer: 637 Debug and 637 Release unit tests passed; both library
+  variants built. Tests exercise maintained Kotlin and the actual Rust host
+  library, including mixed-network recovery and bounded private handoff.
+  The complete arm64 Debug app also built successfully. APK inspection includes
+  `libgizu_stored_signer_core.so` and excludes the retired Gizu signer. APK SHA-256:
+  `7bfb31ed15e5f717dfdf8a2675de469f8f7c606d931ffaa5d02657062f8ac56f`.
+- Maintained Swift native sources: 111 portable tests passed against the Rust
+  host library; iOS device-SDK typecheck passed for native and UI classes.
+  The portable harness excludes Apple-service-dependent diagnostics tests.
+- iOS prebuild, CocoaPods installation and stored-signer-only registration check
+  passed. The complete unsigned app build could not select an eligible iOS
+  destination. Building the signer Pod directly then stopped in the existing
+  ExpoModulesJSI dependency: it requires Swift tools 6.2, while installed Xcode
+  provides 6.1. Full Expo module/app compilation is therefore unverified.
+- Mobile JavaScript: 1,191 tests passed across 116 suites with coverage enabled.
+  TypeScript, formatting and lint passed. `npm run check` stops at Expo Doctor
+  (20/21) because the existing installed Expo, dev-client and splash-screen
+  versions are one patch behind its recommendations; coverage was run separately.
+  This feature does not update those dependencies.
+
+The independent final correctness review found no remaining actionable P1/P2
+findings. This does not establish funded provider or physical-device acceptance.
+No transaction, deployment, push or merge was performed. Default backend funding
+admission remains Monad; development qualification explicitly enables
+`FUNDING_CHAIN_IDS=143,8453,42161`. Ethereum private-funded Earn also requires its
+explicit fee-policy qualification. See
+[network enablement and rollback](BACKEND_RUNTIME.md#funding-network-enablement).
+
+Before general enablement, run funded Base/Arbitrum single-source and mixed-source
+journeys, real gas/fee and private settlement/refund checks, and device background,
+process-death and Resume checks. This is qualification of the new networks; it
+does not invalidate the existing Monad flow. Full simulator execution is unavailable
+on this host because no iPhone simulator runtime is installed.
+
 Historical evidence consolidated on 2026-10-08. Source references reviewed on
 2026-11-14; no native builds, application suites or live/device checks were rerun
 for this documentation review.
