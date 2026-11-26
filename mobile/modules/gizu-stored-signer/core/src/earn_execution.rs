@@ -1065,8 +1065,9 @@ mod tests {
             ("vault", json!(OWNER)),
             ("token", json!(OWNER)),
             ("router", json!(OWNER)),
-            ("deadline", json!(now() + 601)),
-            ("deadline", json!(now())),
+            // Fixed invalid values stay invalid even if CI pauses before validation.
+            ("deadline", json!(u64::MAX)),
+            ("deadline", json!(0)),
             ("slippageBps", json!(101)),
             ("amountAtoms", json!("0")),
             ("kind", json!("nativeTransfers")),
