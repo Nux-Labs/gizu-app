@@ -13,6 +13,7 @@ import { ScrambleText } from "@/components/atoms/ScrambleText";
 import { ParticleOrb, type ParticleOrbProps } from "@/components/molecules/ParticleOrb";
 import colors from "@/theme/colors.json";
 import { reduceMotion, springs } from "@/theme/motion";
+import { haptic } from "@/theme/haptics";
 
 export type SignState = "signing" | "done" | "failed";
 
@@ -45,18 +46,25 @@ type SignStatusProps = {
 };
 
 // Web: scale 0.4 → 1 and fade in after 0.55s on a 220/18 spring.
+const MARK_DELAY = 550;
 const markEntering: EntryExitAnimationFunction = () => {
   "worklet";
   return {
     initialValues: { opacity: 0, transform: [{ scale: 0.4 }] },
     animations: {
-      opacity: withDelay(550, withSpring(1, springs.check), reduceMotion),
-      transform: [{ scale: withDelay(550, withSpring(1, springs.check), reduceMotion) }],
+      opacity: withDelay(MARK_DELAY, withSpring(1, springs.check), reduceMotion),
+      transform: [{ scale: withDelay(MARK_DELAY, withSpring(1, springs.check), reduceMotion) }],
     },
   };
 };
 
 function Mark({ state, accent, size }: { state: SignState; accent: string; size: number }) {
+  useEffect(() => {
+    if (state === "signing") return;
+    // Lands with the mark's delayed spring so the tap and the check arrive together.
+    const timer = setTimeout(state === "done" ? haptic.success : haptic.error, MARK_DELAY);
+    return () => clearTimeout(timer);
+  }, [state]);
   if (state === "signing") return null;
   return (
     <Animated.View key={state} entering={markEntering} testID="gizu-sign-mark">

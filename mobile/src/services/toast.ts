@@ -1,4 +1,5 @@
 import Toast from "react-native-toast-message";
+import { haptic } from "@/theme/haptics";
 
 export type ToastVariant = "success" | "error" | "info" | "warning";
 export type ToastAction = { label: string; onPress: () => void };
@@ -27,6 +28,8 @@ export function showToast({
   action,
 }: ToastMessage) {
   if (!title.trim()) return;
+  if (variant === "success") haptic.success();
+  if (variant === "error") haptic.error();
   Toast.show({
     type: variant,
     text1: title,
