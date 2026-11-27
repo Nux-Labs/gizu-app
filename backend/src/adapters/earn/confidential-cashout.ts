@@ -23,7 +23,11 @@ import {
   erc20Abi,
 } from "viem";
 import type { Address, Hex } from "viem";
-import { monadUsdcAssetId, robinhoodUsdgAssetId } from "../aurora/assets.ts";
+import {
+  monadUsdcAssetId,
+  robinhoodUsdgAssetId,
+  ethereumUsdcAssetId,
+} from "../aurora/assets.ts";
 import { auroraApi } from "../aurora/http.ts";
 import {
   authenticateEarnRead,
@@ -96,11 +100,12 @@ interface ConfidentialPayoutConfiguration {
   recoveryKey?: string;
   coordination?: Pick<OperationCoordinator, "bind">;
   robinhoodRpcUrl?: string;
+  ethereumRpcUrl?: string;
   auroraFeeQualification?: AuroraFeeQualification;
 }
 interface PayoutDestination {
   purpose: "confidential-cashout" | "confidential-private-funding";
-  chainId: 143 | 4663;
+  chainId: 1 | 143 | 4663;
   token: Address;
   assetId: string;
   rpcUrl: string;
@@ -362,7 +367,9 @@ class ConfidentialPayoutGateway {
       this.config.auroraFeeQualification
         ? qualifyAuroraFees(
             this.config.auroraFeeQualification,
-            "payoutRobinhood",
+            this.destination.chainId === 1
+              ? "payoutEthereum"
+              : "payoutRobinhood",
             echo,
           )
         : undefined;
@@ -470,6 +477,9 @@ class ConfidentialPayoutGateway {
       );
     }
     const prepared = {
+      ...(input.version === 2
+        ? { version: 2, profileChainId: this.destination.chainId }
+        : {}),
       operationId: input.operationId,
       confidentialAccount: C,
       destinationRecipient: input.recipient,
@@ -1185,8 +1195,10 @@ export class ConfidentialCashoutGateway extends ConfidentialPayoutGateway {
     );
   }
 }
-/** Private Earn funding pays the exact native-selected investment recipient in Robinhood USDG. */
+/** Private Earn funding pays the exact native-selected recipient on a pinned Earn profile. */
 export class ConfidentialPrivateFundingGateway extends ConfidentialPayoutGateway {
+  private readonly ethereum: ConfidentialPayoutGateway;
+  private readonly profileEnvelope: EarnRecoveryEnvelope;
   constructor(
     config: ConfidentialPayoutConfiguration,
     providers?: CashoutProviders,
@@ -1205,5 +1217,47 @@ export class ConfidentialPrivateFundingGateway extends ConfidentialPayoutGateway
       providers,
       now,
     );
+    this.profileEnvelope = new EarnRecoveryEnvelope(config.recoveryKey);
+    this.ethereum = new ConfidentialPayoutGateway(
+      config,
+      {
+        purpose: "confidential-private-funding",
+        chainId: 1,
+        token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        assetId: ethereumUsdcAssetId,
+        rpcUrl: config.ethereumRpcUrl ?? "https://ethereum-rpc.publicnode.com",
+      },
+      providers,
+      now,
+    );
+  }
+  override async prepare(input: any, receiptOnly = false): Promise<any> {
+    if (input.version === undefined && input.profileChainId === undefined)
+      return super.prepare(input, receiptOnly);
+    if (input.version !== 2 || ![1, 4663].includes(input.profileChainId))
+      throw Error("Invalid private funding profile version");
+    return input.profileChainId === 1
+      ? this.ethereum.prepare(input, receiptOnly)
+      : super.prepare(input, receiptOnly);
+  }
+  override async status(input: any, receiptOnly = false): Promise<any> {
+    const saved = obj(
+      this.profileEnvelope.open(
+        "confidential-private-funding",
+        input.recoveryEnvelope,
+      ),
+    );
+    // Old seals remain Robinhood-only. New seals select only their immutable profile.
+    if (saved.version === undefined && saved.profileChainId === undefined)
+      return super.status(input, receiptOnly);
+    if (
+      saved.version !== 2 ||
+      ![1, 4663].includes(saved.profileChainId) ||
+      saved.profileChainId !== saved.destinationChainId
+    )
+      throw Error("Changed saved private funding profile");
+    return saved.profileChainId === 1
+      ? this.ethereum.status(input, receiptOnly)
+      : super.status(input, receiptOnly);
   }
 }

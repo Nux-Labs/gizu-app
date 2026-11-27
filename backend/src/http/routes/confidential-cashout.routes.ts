@@ -14,7 +14,7 @@ function registerConfidentialPayoutRoutes(
   gateway: Pick<ConfidentialCashoutGateway, "prepare" | "status">,
   purpose: "cashout" | "private-funding",
 ) {
-  const prepare = z
+  const legacyPrepare = z
     .object({
       operationId: z.string().regex(/^[-a-zA-Z0-9_]{1,128}$/),
       amountAtoms: z.string().regex(/^[1-9][0-9]{0,77}$/),
@@ -22,6 +22,18 @@ function registerConfidentialPayoutRoutes(
       signedData: signed,
     })
     .strict();
+  const prepare =
+    purpose === "private-funding"
+      ? z.union([
+          legacyPrepare,
+          legacyPrepare
+            .extend({
+              version: z.literal(2),
+              profileChainId: z.union([z.literal(1), z.literal(4663)]),
+            })
+            .strict(),
+        ])
+      : legacyPrepare;
   const status = z
     .object({
       recoveryEnvelope: z.string().min(1).max(180000),

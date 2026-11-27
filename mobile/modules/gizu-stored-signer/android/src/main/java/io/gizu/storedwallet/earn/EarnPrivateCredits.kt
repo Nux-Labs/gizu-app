@@ -72,11 +72,7 @@ internal fun earnPrivateCreditRowsForSigning(
   SwapStore(context, record).load()?.let { root ->
     val entries = listOf(root) + (root.optJSONArray("history")?.objects() ?: emptyList())
     for (entry in entries) {
-      val states =
-        entry.optJSONObject("fundingBatch")?.getJSONArray("children")?.objects()?.map {
-          it.getString("state")
-        } ?: listOf(entry.getString("state"))
-      states.forEach { assertSavedSwapPrivateWorkFinished(JSONObject(it)) }
+      assertSavedSwapEntryPrivateWorkFinished(entry)
     }
   }
   return earnPrivateCreditRows(context, record)

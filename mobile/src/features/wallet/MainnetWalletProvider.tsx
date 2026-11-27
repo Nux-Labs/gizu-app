@@ -1,4 +1,7 @@
 import { AppState } from "react-native";
+import { validateFundingPortfolio } from "@/domain/wallet/fundingPortfolio";
+import { fundingCapabilityService } from "@/services/wallet/fundingCapabilities";
+import { isFundingChain } from "@/domain/wallet/fundingNetworks";
 import {
   createContext,
   useCallback,
@@ -10,7 +13,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import type { MainnetWalletSession } from "@/services/access";
-import type { MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
+import type { FundingChainId, MainnetPortfolioSnapshot } from "@/domain/wallet/storedSigner";
 import { getStoredSigner, getStoredSwapSigner } from "@/services/wallet/nativeBridge";
 import {
   portfolioValuationService,
@@ -110,12 +113,14 @@ export function validateMainnetPortfolio(
     )
       atoms(asset.observedUnderlyingAtoms as string);
   }
+  validateFundingPortfolio(value);
   return value;
 }
 
 export type MainnetPortfolioService = {
   getMainnetPortfolio(): Promise<MainnetPortfolioSnapshot>;
   getCachedMainnetPortfolio?(): Promise<MainnetPortfolioSnapshot>;
+  getFundingChainIds?(): Promise<readonly FundingChainId[]>;
 };
 function useMainnetState(
   session: MainnetWalletSession,
@@ -202,18 +207,32 @@ function useMainnetState(
             );
             if (cached.fundingAddress.toLowerCase() !== session.address.toLowerCase())
               throw new Error("Funding account mismatch");
-            if (current() && cached.checkedAt > 0) setSnapshot(cached);
+            if (current() && cached.checkedAt > 0)
+              setSnapshot(
+                cached.fundingSources ? { ...cached, planningFundingChainIds: null } : cached,
+              );
           } catch {
             // A missing or invalid cache never prevents a fresh native read.
           }
           if (!current()) return;
         }
-        const result = validateMainnetPortfolio(
-          await signer.getMainnetPortfolio(),
-          session.walletId,
-        );
+        let result = validateMainnetPortfolio(await signer.getMainnetPortfolio(), session.walletId);
         if (result.fundingAddress.toLowerCase() !== session.address.toLowerCase())
           throw new Error("Funding account mismatch");
+        if (result.fundingSources) {
+          let enabled: FundingChainId[] | null = null;
+          try {
+            const ids = service?.getFundingChainIds
+              ? [...(await service.getFundingChainIds())]
+              : (await fundingCapabilityService.networks()).map((network) => network.chainId);
+            if (!ids.every(isFundingChain) || new Set(ids).size !== ids.length)
+              throw new Error("Invalid funding capabilities");
+            enabled = ids;
+          } catch {
+            /* Balance observations remain visible; planning requires known admission. */
+          }
+          result = { ...result, planningFundingChainIds: enabled };
+        }
         if (current()) setSnapshot(result);
         if (valuator && current()) {
           const valued = await valuator.value(result, abort.signal);

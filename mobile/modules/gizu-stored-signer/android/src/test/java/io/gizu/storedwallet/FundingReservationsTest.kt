@@ -7,6 +7,154 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class FundingReservationsTest {
+  @Test
+  fun parentCancellationReleasesOnlyItsUnsignedSourcesAndBindsMembership() {
+    val file = File()
+    val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+    val ledger = FundingReservations(file, { key }, "wallet", "generation") { 0L }
+    val owner = "0x" + "1".repeat(40)
+    val legs =
+      JSONArray(
+        listOf(143, 8453).map { chain ->
+          JSONObject()
+            .put("sourceChainId", chain)
+            .put("token", fundingNetwork(chain).token)
+            .put("sourceIndex", 1)
+            .put("address", owner)
+            .put("budgetAtoms", "100")
+            .put("balanceAtoms", "100")
+        }
+      )
+    ledger.reserveBatch("parent", "earn", 0, legs)
+    ledger.bind("parent", owner, "signed", "100", 143)
+    ledger.bind("parent", owner, "unsigned", "100", 8453)
+    ledger.commitBatch("parent")
+    ledger.markSigned("signed")
+    assertThrows(IllegalStateException::class.java) {
+      ledger.cancelParentUnsigned("parent", setOf("signed"))
+    }
+    assertThrows(IllegalStateException::class.java) { ledger.cancelBatchUnsigned("parent") }
+    ledger.cancelParentUnsigned("parent", setOf("signed", "unsigned"))
+    assertEquals("100", ledger.reservedAtoms(owner, 143))
+    assertEquals("0", ledger.reservedAtoms(owner, 8453))
+    assertTrue(ledger.hasUnsettledSigned(owner, 143))
+    ledger.complete("signed")
+    assertEquals("0", ledger.reservedAtoms(owner, 143))
+  }
+
+  @Test
+  fun sourceObservationInvalidatesBeforeItsReservationIsReleasedOnlyOnce() {
+    val file = File()
+    val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+    val ledger = FundingReservations(file, { key }, "wallet", "generation") { 0L }
+    val owner = "0x" + "1".repeat(40)
+    ledger.reserveOperation("source", "swap", 0, owner, 1, "100", "100", 8453)
+    ledger.markSigned("source")
+    var invalidations = 0
+    ledger.complete("source") {
+      assertEquals("100", ledger.reservedAtoms(owner, 8453))
+      invalidations++
+    }
+    assertEquals("0", ledger.reservedAtoms(owner, 8453))
+    ledger.complete("source") { invalidations++ }
+    assertEquals(1, invalidations)
+    ledger.reserveOperation("another", "swap", 0, owner, 1, "100", "100", 8453)
+    assertThrows(IllegalStateException::class.java) {
+      ledger.complete("another") { error("Observation invalidation failed") }
+    }
+    assertEquals("100", ledger.reservedAtoms(owner, 8453))
+  }
+
+  @Test
+  fun sameAddressOnDifferentFundingNetworksDoesNotCollideOrReserveOtherChains() {
+    val file = File()
+    val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+    val ledger = FundingReservations(file, { key }, "wallet", "generation") { 0L }
+    val owner = "0x" + "1".repeat(40)
+    fun leg(chain: Int, token: String) =
+      JSONObject()
+        .put("sourceChainId", chain)
+        .put("token", token)
+        .put("decimals", 6)
+        .put("address", owner)
+        .put("sourceIndex", 1)
+        .put("budgetAtoms", "5000000")
+        .put("balanceAtoms", "5000000")
+    val monad = leg(143, "0x754704bc059f8c67012fed69bc8a327a5aafb603")
+    val base = leg(8453, "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913")
+    ledger.reserveBatch("combined", "swap", 0, JSONArray().put(monad).put(base))
+    assertEquals(2, ledger.batch("combined").getJSONArray("legs").length())
+    val restarted = FundingReservations(file, { key }, "wallet", "generation") { 0L }
+    assertEquals(2, restarted.batch("combined").getJSONArray("legs").length())
+    assertEquals("5000000", restarted.reservedAtoms(owner, 143))
+    assertEquals("5000000", restarted.reservedAtoms(owner, 8453))
+    assertEquals("0", restarted.reservedAtoms(owner, 42161))
+    restarted.bind("combined", owner, "base-source", "5000000", 8453)
+    restarted.markSigned("base-source")
+    assertTrue(restarted.hasUnsettledSigned(owner, 8453))
+    assertFalse(restarted.hasUnsettledSigned(owner, 143))
+    assertThrows(IllegalStateException::class.java) {
+      restarted.adoptSavedSource("base-source", owner, 1, "5000000", 0, "swap", 143)
+    }
+    restarted.complete("base-source")
+    assertEquals("0", restarted.reservedAtoms(owner, 8453))
+    assertEquals("5000000", restarted.reservedAtoms(owner, 143))
+  }
+
+  @Test
+  fun sameOwnerBudgetOnAnotherChainRemainsAvailable() {
+    val file = File()
+    val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+    val ledger = FundingReservations(file, { key }, "wallet", "generation") { 0L }
+    val owner = "0x" + "1".repeat(40)
+    fun leg(chain: Int, token: String) =
+      JSONObject()
+        .put("sourceChainId", chain)
+        .put("token", token)
+        .put("decimals", 6)
+        .put("address", owner)
+        .put("sourceIndex", 1)
+        .put("budgetAtoms", "5000000")
+        .put("balanceAtoms", "5000000")
+    ledger.reserveBatch(
+      "base",
+      "swap",
+      0,
+      JSONArray().put(leg(8453, "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913")),
+    )
+    ledger.reserveBatch(
+      "monad",
+      "earn",
+      1,
+      JSONArray().put(leg(143, "0x754704bc059f8c67012fed69bc8a327a5aafb603")),
+    )
+    assertEquals(1, ledger.batch("monad").getJSONArray("legs").length())
+  }
+
+  @Test
+  fun qualifiedReservationRejectsWrongTokenAndNonFundingAccount() {
+    val file = File()
+    val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+    val ledger = FundingReservations(file, { key }, "wallet", "generation") { 0L }
+    val base =
+      JSONObject()
+        .put("sourceChainId", 8453)
+        .put("token", "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913")
+        .put("address", "0x" + "1".repeat(40))
+        .put("sourceIndex", 1)
+        .put("budgetAtoms", "1")
+        .put("balanceAtoms", "10")
+    for (changed in
+      listOf(
+        JSONObject(base.toString()).put("token", "0x754704bc059f8c67012fed69bc8a327a5aafb603"),
+        JSONObject(base.toString()).put("sourceIndex", 3),
+        JSONObject(base.toString()).put("decimals", 18),
+        JSONObject(base.toString()).put("sourceChainId", 196),
+      )) assertThrows(IllegalStateException::class.java) {
+      ledger.reserveBatch("bad", "swap", 0, JSONArray().put(changed))
+    }
+  }
+
   private class File : WalletFile {
     var data: ByteArray? = null
 

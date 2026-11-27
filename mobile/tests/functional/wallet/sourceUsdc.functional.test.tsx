@@ -8,6 +8,8 @@ import { defaultPreferences } from "@/domain/preferences";
 import { deferred } from "../../support/renderApp";
 import { earnProfiles } from "@/domain/earn/types";
 import { tokenCatalogService } from "@/services/tokenCatalog";
+import { fundingCapabilityService } from "@/services/wallet/fundingCapabilities";
+import { depositNetworks } from "@/domain/wallet/depositNetworks";
 
 import { requireOptionalNativeModule } from "expo";
 
@@ -20,6 +22,61 @@ const sellHolding = jest.fn();
 
 const address = "0x" + "1".repeat(40);
 const walletId = "7aafcc2e-0891-4e31-a7d4-03780d7b4f12";
+function multiFunding(partial = false) {
+  const at = Date.now();
+  const sources = depositNetworks.map((network) => ({
+    sourceChainId: network.chainId,
+    token: network.token,
+    accountIndex: 1,
+    owner: address,
+    decimals: 6 as const,
+    balanceAtoms:
+      partial && network.chainId === 8453
+        ? null
+        : network.chainId === 42161
+          ? "5000000"
+          : "10000000",
+    observedAtoms: network.chainId === 42161 ? "5000000" : "10000000",
+    reservedAtoms: "0",
+    availableAtoms:
+      partial && network.chainId === 8453
+        ? null
+        : network.chainId === 42161
+          ? "5000000"
+          : "10000000",
+    checkedAt: at,
+    complete: !(partial && network.chainId === 8453),
+    stale: partial && network.chainId === 8453,
+    syncPending: partial && network.chainId === 8453,
+  }));
+  return {
+    ...mainnetPortfolio(walletId, address, "10000000"),
+    fundingSources: sources,
+    fundingCash: {
+      observedAtoms: "25000000",
+      availableAtoms: partial ? null : "25000000",
+      complete: !partial,
+      stale: partial,
+      syncPending: partial,
+    },
+    ownedAssets: [
+      {
+        assetId: "private-usdc",
+        chainId: 143,
+        token: "confidential:monad-usdc",
+        symbol: "USDC (private)",
+        decimals: 6,
+        balanceAtoms: "2000000",
+        observedAtoms: "2000000",
+        complete: true,
+        stale: false,
+        checkedAt: at,
+        valueUsdcAtoms: "2000000",
+        valuationUnavailable: false,
+      },
+    ],
+  };
+}
 const state = {
   status: "ready",
   walletId,
@@ -68,6 +125,7 @@ function setup() {
   };
   const portfolio = {
     getMainnetPortfolio: jest.fn().mockResolvedValue(mainnetPortfolio(walletId, address)),
+    getFundingChainIds: jest.fn().mockResolvedValue([143, 8453, 42161]),
   };
   const clipboard = { copy: jest.fn().mockResolvedValue(undefined) };
   render(
@@ -147,6 +205,32 @@ test("mainnet Home and Earn share the native portfolio without another source RP
   expect(transfers.history).not.toHaveBeenCalled();
 });
 
+test("Home and Earn show one combined cash balance without choosing funding networks", async () => {
+  const { portfolio } = setup();
+  portfolio.getMainnetPortfolio.mockResolvedValue(multiFunding());
+  await open();
+  expect(await screen.findByLabelText("27 USD")).toBeVisible();
+  expect(screen.queryByText("Base")).toBeNull();
+  expect(screen.queryByText("Arbitrum")).toBeNull();
+  await openEarnLink();
+  expect(await screen.findByText("Source balance: 25 USDC")).toBeVisible();
+});
+
+test("an unavailable network retains partial cash and does not claim a spendable zero", async () => {
+  const { portfolio } = setup();
+  portfolio.getMainnetPortfolio.mockResolvedValue(multiFunding(true));
+  await open();
+  expect(await screen.findByLabelText("27 USD")).toBeVisible();
+  expect(
+    screen.getByText("Showing your partial balance. Refresh to check remaining funds."),
+  ).toBeVisible();
+  await openEarnLink();
+  expect(
+    await screen.findByText("Your balance will be checked during deposit review."),
+  ).toBeVisible();
+  expect(screen.queryByText("Source balance: 0 USDC")).toBeNull();
+});
+
 test("mainnet deposit keeps the explicit USDC receiving address", async () => {
   const { clipboard } = setup();
   await open();
@@ -156,6 +240,55 @@ test("mainnet deposit keeps the explicit USDC receiving address", async () => {
   expect(screen.getByRole("button", { name: "Network: Monad. Change network" })).toBeVisible();
   await userEvent.press(screen.getByRole("button", { name: "Copy address" }));
   expect(clipboard.copy).toHaveBeenCalledWith(address);
+});
+
+test("qualified funding networks retain Account 1 and display the selected native USDC contract", async () => {
+  jest.spyOn(fundingCapabilityService, "networks").mockResolvedValue(depositNetworks);
+  const { clipboard } = setup();
+  await open();
+  await screen.findByLabelText("19.990574 USD");
+  await userEvent.press(screen.getByRole("button", { name: "Add funds" }));
+  await userEvent.press(
+    await screen.findByRole("button", { name: "Network: Monad. Change network" }),
+  );
+  await userEvent.press(screen.getByRole("radio", { name: "Base, USDC" }));
+  expect(screen.getByRole("button", { name: "Network: Base. Change network" })).toBeVisible();
+  expect(
+    screen.getByLabelText("USDC token contract: 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"),
+  ).toBeVisible();
+  await userEvent.press(screen.getByRole("button", { name: "Copy address" }));
+  expect(clipboard.copy).toHaveBeenCalledWith(address);
+  await userEvent.press(screen.getByRole("button", { name: "Network: Base. Change network" }));
+  await userEvent.press(screen.getByRole("radio", { name: "Arbitrum, USDC" }));
+  expect(
+    screen.getByLabelText("USDC token contract: 0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+  ).toBeVisible();
+  expect(screen.getByLabelText(`Wallet address: ${address}`)).toBeVisible();
+});
+
+test("a feature native build still offers only the backend-enabled funding network", async () => {
+  capabilities.mockResolvedValue({
+    contractVersion: 1,
+    available: true,
+    swaps: true,
+    fundingContractVersion: 2,
+    fundingChainIds: [143, 8453, 42161],
+  });
+  jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ fundingContractVersion: 2, fundingChainIds: [143] }),
+  } as Response);
+  setup();
+  await open();
+  await screen.findByLabelText("19.990574 USD");
+  await userEvent.press(screen.getByRole("button", { name: "Add funds" }));
+  await userEvent.press(
+    await screen.findByRole("button", { name: "Network: Monad. Change network" }),
+  );
+  expect(screen.getByRole("radio", { name: "Monad, USDC" })).toBeVisible();
+  expect(screen.queryByRole("radio", { name: "Base, USDC" })).toBeNull();
+  expect(screen.queryByRole("radio", { name: "Arbitrum, USDC" })).toBeNull();
 });
 
 test("mainnet Home has no Send action and never calls the testnet transfer signer", async () => {

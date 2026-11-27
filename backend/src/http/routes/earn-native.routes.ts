@@ -9,8 +9,10 @@ import {
   NativeGatewayError,
 } from "../../adapters/earn/native-gateway.ts";
 import { CoordinationError } from "../../adapters/earn/operation-coordinator.ts";
+import type { FundingChainId } from "../../adapters/pimlico/funding-chains.ts";
 function failure(reply: FastifyReply, error: unknown) {
-  const known = error instanceof NativeGatewayError || error instanceof CoordinationError;
+  const known =
+    error instanceof NativeGatewayError || error instanceof CoordinationError;
   return reply.code(known ? error.statusCode : 502).send({
     code: known ? error.code : "EARN_NATIVE_UNAVAILABLE",
     message: "The native Earn request could not be verified.",
@@ -20,6 +22,7 @@ function failure(reply: FastifyReply, error: unknown) {
 export function registerEarnNativeRoutes(
   app: FastifyInstance,
   gateway: NativeEarnGateway,
+  enabledFundingChainIds: readonly FundingChainId[] = [143],
 ) {
   const options = {
     bodyLimit: 65536,
@@ -44,7 +47,7 @@ export function registerEarnNativeRoutes(
     async (request, reply) => {
       reply.header("Cache-Control", "no-store");
       try {
-        if (!["143", "4663"].includes(request.params.chainId))
+        if (!["143", "8453", "42161", "4663"].includes(request.params.chainId))
           throw new NativeGatewayError(400, "INVALID_NATIVE_CHAIN");
         return reply.send(
           await gateway.bundler(
@@ -69,6 +72,15 @@ export function registerEarnNativeRoutes(
       async (request, reply) => {
         reply.header("Cache-Control", "no-store");
         try {
+          if (method === "sourceQuote" || method === "sourcePreview") {
+            const body = request.body as { sourceChainId?: unknown } | null;
+            const source = body?.sourceChainId ?? 143;
+            if (
+              (source === 143 || source === 8453 || source === 42161) &&
+              !enabledFundingChainIds.includes(source)
+            )
+              throw new NativeGatewayError(403, "FUNDING_CHAIN_DISABLED");
+          }
           return reply.send(
             await gateway[method](
               request.body as Parameters<NativeEarnGateway[typeof method]>[0],

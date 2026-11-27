@@ -1,5 +1,20 @@
 # Wallet discovery and recovery
 
+## Funding source identities (2026-11-26)
+
+Base and Arbitrum reuse the existing Account 1 derivation
+`m/44'/60'/0'/0/1`; they do not create new wallet secrets or addresses. A source is
+identified by network, exact native-USDC token, account index and owner, so equal
+addresses on different networks do not collide. New networks admit Account 1
+only. Existing eligible Monad return accounts preserve their discovery policy.
+
+Account 2 remains the shared private owner. Funding-expansion parents and all
+signed children are stored through the existing encrypted journals and recovery
+system. Old envelope AAD and legacy decoding remain unchanged. Signed reservations
+survive timeouts and restart; completed credits are replayed from saved evidence,
+not inferred again from today's balance after spending. Cancelling future work
+does not erase an uncertain signed transfer.
+
 This feature is implemented on Android. The Account screen exposes native
 capability-gated sync, restore and read-only discovery controls. Older native
 builds and iOS do not advertise these capabilities. Rebuild the native app after

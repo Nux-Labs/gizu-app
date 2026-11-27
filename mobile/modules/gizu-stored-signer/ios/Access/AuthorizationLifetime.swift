@@ -14,3 +14,28 @@ internal struct AuthorizationLifetime {
     try require(!cancelled && now < deadline && active && protected)
   }
 }
+
+/// Read-only authority established by an existing native passkey ceremony; never a spending grant.
+extension AuthorizationLifetime {
+  struct PrivateReadGrant {
+    let walletId: String
+    let generation: String
+    private var lifetime: AuthorizationLifetime
+    init(
+      walletId: String, generation: String, now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+      self.walletId = walletId
+      self.generation = generation
+      lifetime = AuthorizationLifetime(now: now, window: .swap)
+    }
+    mutating func revoke() { lifetime.cancel() }
+    func check(
+      walletId: String, generation: String,
+      now: TimeInterval = ProcessInfo.processInfo.systemUptime,
+      active: Bool, protected: Bool
+    ) throws {
+      try require(self.walletId == walletId && self.generation == generation)
+      try lifetime.check(now: now, active: active, protected: protected)
+    }
+  }
+}

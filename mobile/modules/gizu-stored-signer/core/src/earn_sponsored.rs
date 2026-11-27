@@ -17,6 +17,7 @@ use zeroize::Zeroizing;
 const IMPLEMENTATION: &str = "0xe6Cae83BdE06E4c305530e199D7217f42808555B";
 const ENTRY_POINT: &str = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108";
 const PAYMASTER: &str = "0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402";
+#[cfg(test)]
 const SOURCE_TOKEN: &str = "0x754704Bc059F8C67012fEd69BC8A327a5aafb603";
 const HOOD_TOKEN: &str = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
 const HOOD_VAULT: &str = "0xBeEff033F34C046626B8D0A041844C5d1A5409dd";
@@ -206,7 +207,7 @@ impl Authority {
         } = config;
         let started = Instant::now();
         let clock = now()?;
-        if ![143, 4663].contains(&chain)
+        if !(crate::swap::pins::funding_source(chain).is_some() || chain == 4663)
             || revision == 0
             || deadline <= clock
             || deadline > clock.checked_add(600).ok_or(SignerError::InvalidInput)?
@@ -227,7 +228,9 @@ impl Authority {
         let seed = Zeroizing::new(mnemonic.to_seed(""));
         drop(mnemonic);
         drop(entropy);
-        if chain != 143 && source_account_index.is_some() {
+        if chain == 4663 && source_account_index.is_some()
+            || chain != 143 && chain != 4663 && source_account_index != Some(1)
+        {
             return Err(SignerError::InvalidInput);
         }
         let source_account_index = source_account_index.unwrap_or(0);
@@ -350,12 +353,18 @@ impl SponsoredEarnOperation {
             _ => return Err(SignerError::InvalidInput),
         }
         let source = p.kind == "sourceFunding";
-        if !(source && p.chain_id == 143
+        let funding = crate::swap::pins::funding_source(p.chain_id);
+        if !(source && funding.is_some()
             || ["hoodDeposit", "hoodRedeemAll", "hoodTokenReturn"].contains(&p.kind.as_str())
                 && p.chain_id == 4663)
             || ![1, 4663].contains(&p.profile_chain_id)
             || p.chain_id == 4663 && p.profile_chain_id != 4663
-            || addr(&p.token)? != addr(if source { SOURCE_TOKEN } else { HOOD_TOKEN })?
+            || addr(&p.token)?
+                != if source {
+                    funding.ok_or(SignerError::InvalidInput)?.usdc
+                } else {
+                    addr(HOOD_TOKEN)?
+                }
             || dec(&p.amount_atoms)? == U256::ZERO
             || dec(&p.maximum_token_fee_atoms)? == U256::ZERO
             || dec(&p.budget_atoms)? == U256::ZERO
@@ -702,7 +711,8 @@ impl EarnDelegationOperation {
     #[uniffi::constructor]
     pub fn new(proposal: String, entropy: Vec<u8>) -> Result<Arc<Self>, SignerError> {
         let p: DelegationProposal = parse(&proposal)?;
-        if !(p.kind == "authorizeSource7702" && p.chain_id == 143
+        if !(p.kind == "authorizeSource7702"
+            && crate::swap::pins::funding_source(p.chain_id).is_some()
             || p.kind == "authorizeHood7702" && p.chain_id == 4663)
             || p.nonce == u64::MAX
         {
@@ -877,8 +887,8 @@ fn key(
     investment_slot: Option<u32>,
     source_account_index: u32,
 ) -> Result<XPrv, SignerError> {
-    if chain == 143 {
-        if investment_slot.is_some() {
+    if crate::swap::pins::funding_source(chain).is_some() {
+        if investment_slot.is_some() || chain != 143 && source_account_index != 1 {
             return Err(SignerError::InvalidInput);
         }
         crate::roles::validate_public_source_index(source_account_index)?;
@@ -1604,6 +1614,89 @@ mod tests {
             .unwrap();
         assert!(review.contains("sourceFunding"));
         o
+    }
+    #[test]
+    fn new_funding_networks_sign_account_one_and_bind_chain_and_token() {
+        let owner = crate::derive_account_address_range(vec![0; 32], 1, 1).unwrap()[0].clone();
+        assert_eq!(
+            owner.to_lowercase(),
+            "0xf785bd075874b8423d3583728a981399f31e95aa"
+        );
+        let mut hashes = Vec::new();
+        for (chain, token) in [
+            (8453, "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"),
+            (42161, "0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+        ] {
+            let mut p = proposal();
+            p["sourceAccountIndex"] = json!(1);
+            p["chainId"] = json!(chain);
+            p["expectedFrom"] = json!(owner);
+            p["refundOwner"] = json!(owner);
+            p["token"] = json!(token);
+            let mut rpc = op();
+            rpc["sender"] = json!(owner);
+            rpc["callData"] = json!(
+                rpc["callData"]
+                    .as_str()
+                    .unwrap()
+                    .replace(&TOKEN[2..].to_lowercase(), &token[2..])
+            );
+            rpc["paymasterData"] = json!(
+                rpc["paymasterData"]
+                    .as_str()
+                    .unwrap()
+                    .replace(&TOKEN[2..].to_lowercase(), &token[2..])
+            );
+            let mut evidence = state(chain);
+            evidence.owner = owner.clone();
+            let mut quote = proof(&p);
+            quote.chain_id = chain;
+            quote.token = token.into();
+            quote.refund_owner = owner.clone();
+            let operation = SponsoredEarnOperation::new(p.to_string(), vec![0; 32]).unwrap();
+            operation
+                .prepare(7, rpc.to_string(), evidence.clone(), Some(quote), None)
+                .unwrap();
+            operation
+                .approve(7, operation.review_hash().unwrap())
+                .unwrap();
+            let signed = operation.sign(7, evidence).unwrap();
+            assert_eq!(
+                signed.user_operation_hash,
+                if chain == 8453 {
+                    "0x745b094b1fe7241f1977e347258ab00f9c8a61386d4dd8ef322977909b3ff526"
+                } else {
+                    "0x191ced8bb58fae5d2111576f8b1dcc0834ecc2901dbbbacf9ead1114e1f44237"
+                }
+            );
+            hashes.push(signed.user_operation_hash);
+            let mut invalid = p.clone();
+            invalid["sourceAccountIndex"] = json!(0);
+            assert!(SponsoredEarnOperation::new(invalid.to_string(), vec![0; 32]).is_err());
+            invalid = p.clone();
+            invalid["token"] = json!(TOKEN);
+            assert!(SponsoredEarnOperation::new(invalid.to_string(), vec![0; 32]).is_err());
+        }
+        assert_ne!(hashes[0], hashes[1]);
+    }
+    #[test]
+    fn new_funding_networks_authorize_first_use_on_the_selected_chain_only() {
+        let owner = crate::derive_account_address_range(vec![0; 32], 1, 1).unwrap()[0].clone();
+        for chain in [8453, 42161] {
+            let p = json!({"kind":"authorizeSource7702","operationId":"first-use","revision":1,"chainId":chain,"sourceAccountIndex":1,"expectedFrom":owner,"nonce":4,"deadline":now()+300});
+            let mut state = state(chain);
+            state.owner = owner.clone();
+            state.sender_code = "0x".into();
+            let operation = EarnDelegationOperation::new(p.to_string(), vec![0; 32]).unwrap();
+            operation.prepare(1, state.clone()).unwrap();
+            operation
+                .approve(1, operation.review_hash().unwrap())
+                .unwrap();
+            let signed = operation.sign(1, state).unwrap();
+            assert_eq!(signed.chain_id, chain);
+            assert_eq!(signed.from.to_lowercase(), owner.to_lowercase());
+            assert_eq!(signed.address.to_lowercase(), IMPL.to_lowercase());
+        }
     }
     #[test]
     fn source_hash_matches_viem_2569_and_signature_recovers_legacy_owner() {

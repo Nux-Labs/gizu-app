@@ -168,9 +168,9 @@ class EarnPrivatePayoutEngineTest {
         }
       }
 
-    fun engine(j: EarnPayoutJournal = journal) =
+    fun engine(j: EarnPayoutJournal = journal, walletStore: WalletStore = store) =
       EarnPrivatePayoutEngine(
-        store,
+        walletStore,
         j,
         gateway,
         read = {
@@ -229,6 +229,126 @@ class EarnPrivatePayoutEngineTest {
     override fun close() {
       grant.invalidate()
       record.close()
+    }
+  }
+
+  @Test
+  fun ethereumPrivateBalanceProposalExplicitlyBindsVersionAndDestinationProfile() = runBlocking {
+    Fixture().use { f ->
+      f.review.put("profileChainId", 1)
+      val row = f.engine().create(f.review, "source0", "invest:0")
+      val proposal = row.getJSONObject("proposal")
+      assertEquals(1, proposal.getInt("profileChainId"))
+      assertEquals(2, proposal.getInt("version"))
+      assertFalse(proposal.has("sourceTransactionHash"))
+      assertEquals("swap", proposal.getJSONObject("source").getString("kind"))
+    }
+  }
+
+  @Test
+  fun ethereumPrivateFeesUseTheEthereumRouteQualification() {
+    val prepared =
+      JSONObject()
+        .put("destinationChainId", 1)
+        .put("providerFeeBps", 4)
+        .put(
+          "feePolicy",
+          JSONObject()
+            .put("version", "qualified")
+            .put("route", "payoutEthereum")
+            .put("totalBps", 4)
+            .put(
+              "appFees",
+              JSONArray()
+                .put(JSONObject().put("recipient", "widget_collect.sputnik-dao.near").put("fee", 4)),
+            )
+            .put("referral", JSONObject.NULL)
+            .put("integratorFeeBps", 0)
+            .put("applicationFeeAtoms", "0"),
+        )
+    assertEquals(4, privateFundingFeeBps(prepared))
+  }
+
+  @Test
+  fun ethereumFundingParentReusesPrivateSignerForDistributionAndLegacyStages() = runBlocking {
+    for (distributed in listOf(true, false)) Fixture().use { f ->
+      val cycle =
+        JSONObject().put("cycleIndex", 0).put("chainId", 1).put("privateAccount", "shared")
+      if (distributed)
+        cycle.put(
+          "distribution",
+          JSONObject().put("version", 1).put("weightsBps", JSONArray().put(4000).put(6000)),
+        )
+      val record =
+        WalletRecord(
+          f.record.id,
+          f.record.credential,
+          f.record.entropy.copyOf(),
+          true,
+          f.record.journalId,
+          f.record.roleRegistry,
+          1,
+          false,
+          0,
+          JSONArray().put(cycle).toString(),
+        )
+      val stageStore =
+        WalletStore(
+            File(),
+            object : WalletKeys {
+              override fun existing() = f.key
+
+              override fun create() = f.key
+
+              override fun reset() = f.key
+            },
+          )
+          .also { it.create(record) }
+      record.close()
+      val parent =
+        stageStore.load().use { saved ->
+          JSONObject()
+            .put("journeyId", "ethereum_parent")
+            .put("walletId", saved.id)
+            .put("generation", saved.journalId)
+            .put("profileChainId", 1)
+            .put("cycleIndex", 0)
+            .put(
+              "privateHandoff",
+              JSONObject().put("operationId", "ethereum_parent").put("source", f.descriptor),
+            )
+            .put(
+              "destinations",
+              JSONArray(cycleAddresses(saved).map { JSONObject().put("address", it) }),
+            )
+            .also { if (distributed) it.put("distribution", savedCycleDistribution(saved)) }
+        }
+      val leg = if (distributed) "invest:0" else "hold"
+      val engine = f.engine(walletStore = stageStore)
+      val row = engine.createFromFundingParent(parent, leg)
+      val p = row.getJSONObject("proposal")
+      assertEquals(2, p.getInt("version"))
+      assertEquals(1, p.getInt("profileChainId"))
+      assertEquals(if (distributed) "396000" else "99000", p.getString("amountAtoms"))
+      assertEquals("990000", p.getString("creditedAtoms"))
+      assertFalse(p.has("sourceTransactionHash"))
+      assertEquals(distributed, p.has("distribution"))
+      f.lostSubmit = false
+      var stageApprovals = 0
+      engine.executeStage(
+        row.getString("operationId"),
+        { saved, child ->
+          assertEquals(1, saved.earnChain)
+          assertEquals("ethereum_parent", child.getJSONObject("proposal").getString("operationId"))
+        },
+      ) { _, witness ->
+        assertTrue(witness.getString("hash").isNotBlank())
+        stageApprovals++
+      }
+      assertEquals(1, stageApprovals)
+      assertEquals(1, f.signed)
+      assertEquals("submitted", f.journal.get(row.getString("operationId")).getString("status"))
+      assertTrue(f.submissions.single().contains("secp256k1:"))
     }
   }
 

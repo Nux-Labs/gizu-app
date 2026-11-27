@@ -1,19 +1,19 @@
-/**
- * Networks a user can add USDC from. Only networks whose deposits Gizu can observe and invest
- * belong here: today that is the Monad funding address. Adding a network is one entry, plus the
- * arrival detection and receiving address that network needs.
- */
-export type DepositNetworkId = "monad";
+import { fundingTokens } from "./fundingNetworks";
+import type { FundingChainId } from "./storedSigner";
+export type DepositNetworkId = "monad" | "base" | "arbitrum";
 
 export type DepositNetwork = {
   id: DepositNetworkId;
   name: string;
-  chainId: number;
+  chainId: FundingChainId;
   asset: "USDC";
+  token: string;
 };
 
 export const depositNetworks: readonly DepositNetwork[] = [
-  { id: "monad", name: "Monad", chainId: 143, asset: "USDC" },
+  { id: "monad", name: "Monad", chainId: 143, asset: "USDC", token: fundingTokens[143] },
+  { id: "base", name: "Base", chainId: 8453, asset: "USDC", token: fundingTokens[8453] },
+  { id: "arbitrum", name: "Arbitrum", chainId: 42161, asset: "USDC", token: fundingTokens[42161] },
 ];
 
 export const defaultDepositNetwork: DepositNetwork = depositNetworks[0]!;

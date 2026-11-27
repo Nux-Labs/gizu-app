@@ -159,4 +159,35 @@ class SwapBatchApprovalTest {
     changed.put("state", s.toString())
     assertThrows(IllegalStateException::class.java) { scope(listOf(child(0), changed)) }
   }
+
+  private fun fundingChild(index: Int, chain: Int): JSONObject {
+    val child =
+      child(index)
+        .put("sourceIndex", 1)
+        .put("sourceChainId", chain)
+        .put("fundingAddress", "0x" + "1".repeat(40))
+    val s = state(index).put("source", "0x" + "1".repeat(40)).put("recipients", JSONArray())
+    s.getJSONObject("plan")
+      .put("kind", "confidentialFunding")
+      .put("sourceIndex", 1)
+      .put("sourceChainId", chain)
+      .put("chainId", 4663)
+      .put("recipientIndices", JSONArray())
+    return child.put("state", s.toString())
+  }
+
+  @Test
+  fun pooledFundingApprovalAdmitsSameAccountOnDifferentNetworksAndBindsOrigin() {
+    val first = fundingChild(0, 143)
+    val second = fundingChild(1, 8453)
+    val scope = scope(listOf(first, second))
+    record().use { r ->
+      scope.approveAfterPasskey(r, 1000)
+      scope.assertAuthorized(r, JSONObject(first.getString("state")), 1001)
+      scope.assertAuthorized(r, JSONObject(second.getString("state")), 1001)
+      val rebound = JSONObject(second.getString("state"))
+      rebound.getJSONObject("plan").put("sourceChainId", 42161)
+      assertThrows(IllegalStateException::class.java) { scope.assertAuthorized(r, rebound, 1001) }
+    }
+  }
 }

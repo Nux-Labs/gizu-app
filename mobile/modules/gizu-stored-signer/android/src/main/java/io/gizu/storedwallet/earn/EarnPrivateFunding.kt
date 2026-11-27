@@ -37,10 +37,26 @@ internal fun routeUsdc(amount: BigInteger): String =
 internal fun requireRoutablePublicRemainder(
   selection: PrivateDepositSelection,
   distribution: JSONObject?,
+  combinedPrivateAddress: String? = null,
 ) {
   val remainder = depositAtoms(selection.publicBudget)
   val minimum = minimumRoutablePublicBudget(distribution)
   if (remainder == BigInteger.ZERO || remainder >= minimum) return
+  val combinedPrivate =
+    selection.sources
+      .filter {
+        combinedPrivateAddress != null &&
+          it.getString("address").equals(combinedPrivateAddress, true)
+      }
+      .fold(BigInteger.ZERO) { sum, source ->
+        sum + depositAtoms(source.getString("amountAtoms"), true)
+      }
+  // Only this owner receives the public credits. Distinct legacy owners still route separately.
+  if (
+    combinedPrivate > BigInteger.ZERO &&
+      combinedPrivate + remainder >= minimumRoutableSource(distribution)
+  )
+    return
   if (distribution == null)
     throw DepositBelowRouteMinimum(
       "This saved deposit needs at least ${routeUsdc(minimum)} USDC of public funding, but its " +
@@ -113,30 +129,53 @@ internal suspend fun selectPrivateDepositSources(
   budget: String,
   candidates: List<JSONObject>,
   minimumDebit: BigInteger = PAYOUT_QUOTE_FLOOR,
+  combinedPrivateAddress: String? = null,
   readAvailable: suspend (JSONObject) -> String,
 ): PrivateDepositSelection {
   check(candidates.map { it.getString("address").lowercase() }.distinct().size == candidates.size)
   require(minimumDebit > BigInteger.ZERO)
   var remaining = depositAtoms(budget, true)
-  data class Pick(val row: JSONObject, var amount: BigInteger)
+  data class Pick(val row: JSONObject, var amount: BigInteger, val minimum: BigInteger)
   val selected = mutableListOf<Pick>()
   for (candidate in candidates) {
     if (remaining == BigInteger.ZERO) break
     val available = depositAtoms(readAvailable(candidate))
-    if (available < minimumDebit) continue
+    val floor =
+      if (
+        combinedPrivateAddress != null &&
+          candidate.getString("address").equals(combinedPrivateAddress, true)
+      )
+        PRIVATE_DEPOSIT_MINIMUM
+      else minimumDebit
+    if (available < floor) continue
     check(selected.size < 32) {
       "This deposit needs too many private sources; use a smaller amount"
     }
     var debit = minOf(remaining, available)
-    if (debit < minimumDebit) {
-      val need = minimumDebit - debit
-      val donor = selected.indexOfLast { it.amount - need >= minimumDebit }
+    if (debit < floor) {
+      val need = floor - debit
+      val donor = selected.indexOfLast { it.amount - need >= it.minimum }
       if (donor < 0) continue
       selected[donor].amount -= need
-      debit = minimumDebit
+      debit = floor
       remaining = BigInteger.ZERO
     } else remaining -= debit
-    selected += Pick(JSONObject(candidate.toString()), debit)
+    selected += Pick(JSONObject(candidate.toString()), debit, floor)
+  }
+  if (
+    combinedPrivateAddress != null &&
+      remaining == BigInteger.ZERO &&
+      selected.any {
+        it.row.getString("address").equals(combinedPrivateAddress, true) && it.amount < minimumDebit
+      }
+  ) {
+    // Without a public top-up this small owner would require its own unusable payout.
+    return selectPrivateDepositSources(
+      budget,
+      candidates,
+      minimumDebit,
+      readAvailable = readAvailable,
+    )
   }
   return PrivateDepositSelection(
     selected.map { it.row.put("amountAtoms", it.amount.toString()) },
@@ -235,7 +274,12 @@ internal fun assertNoPrivateDeposit(
   record: WalletRecord,
   except: String? = null,
 ) {
-  check(privateDepositRows(context, record).none { it.getString("journeyId") != except }) {
+  assertNoPrivateDeposit(privateDepositRows(context, record), except)
+}
+
+/** Only the validated owning parent is exempt; every unrelated private lock stays active. */
+internal fun assertNoPrivateDeposit(rows: List<JSONObject>, except: String? = null) {
+  check(rows.none { it.getString("journeyId") != except }) {
     "Resume or discard the saved deposit before spending private USDC elsewhere"
   }
 }

@@ -54,6 +54,58 @@ internal fun distributionDepositRecord(
 
 class EarnDepositPreparerTest {
   @Test
+  fun combinedFundingPreviewsOneExistingPrivatePayoutPerRecipient() = runBlocking {
+    distributionDepositRecord().use { legacy ->
+      val cycles = JSONArray(legacy.earnCycles)
+      cycles.getJSONObject(0).put("privateAccount", "shared")
+      WalletRecord(
+          legacy.id,
+          legacy.credential,
+          legacy.entropy.copyOf(),
+          true,
+          legacy.journalId,
+          legacy.roleRegistry,
+          4663,
+          false,
+          0,
+          cycles.toString(),
+        )
+        .use { record ->
+          val journal = testDepositJournal()
+          val requests = mutableListOf<Pair<String, JSONObject>>()
+          val gateway =
+            EarnDepositGateway(
+              { path, text ->
+                val body = JSONObject(text)
+                requests += path to body
+                previewResponse(path, body, 1000)
+              },
+              { 1000 },
+              feeValidator = { 0 },
+            )
+          val draft =
+            combineDepositSourceDraft(record, privateSourceDraft(record, true), "private_combined")
+          val row =
+            EarnDepositPreparer(journal, gateway, { _, _ -> draft }, {}, { 1000 })
+              .prepare(record, 4663, "2000000", null)
+          assertEquals("review", row.getString("phase"))
+          val review = row.getJSONObject("review")
+          assertEquals(2, review.getInt("version"))
+          assertEquals(1, review.getJSONArray("publicFundingRows").length())
+          assertEquals(1, review.getJSONArray("sources").length())
+          assertEquals("2000000", review.getString("sourceBudgetAtoms"))
+          assertEquals("1980000", review.getString("fundedBudgetMinimumAtoms"))
+          assertEquals("990000", review.getString("approvedExistingPrivateAtoms"))
+          assertEquals(2, requests.count { it.first == "/native/payout/preview" })
+          val source = review.getJSONArray("sources").getJSONObject(0)
+          assertEquals("private", source.getString("kind"))
+          assertEquals(sharedConfidential(record), source.getString("address"))
+          assertEquals("1980000", source.getString("amountAtoms"))
+        }
+    }
+  }
+
+  @Test
   fun routeMinimumExplanationSurvivesThePublicSnapshot() = runBlocking {
     distributionDepositRecord(weights = listOf(10000)).use { record ->
       val journal = testDepositJournal()

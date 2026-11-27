@@ -7,6 +7,64 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ConfidentialWithdrawalJournalTest {
+  @Test
+  fun paidFundingOnlyParentReleasesItsPrivateLockWhileUnknownWorkStillBlocks() {
+    val row =
+      JSONObject()
+        .put("kind", "fundingOnly")
+        .put("phase", "paid")
+        .put("creditedAtoms", "16800000")
+        .put("children", JSONObject().put("payouts", JSONArray().put("paid-child")))
+    assertFalse(depositBlocksPrivateWork(row))
+    row.put("kind", "unknown")
+    assertTrue(depositBlocksPrivateWork(row))
+    row.put("kind", "fundingOnly").put("phase", "funded")
+    assertTrue(depositBlocksPrivateWork(row))
+    val unknown =
+      JSONObject()
+        .put("status", "submissionUnknown")
+        .put("signedData", "saved bytes")
+        .put("proposal", JSONObject().put("kind", "privateEarnPayout"))
+    row.put("phase", "paid")
+    assertThrows(UnfinishedPrivateWork::class.java) {
+      assertNoPendingPrivateWork(listOf(unknown), listOf(row))
+    }
+  }
+
+  @Test
+  fun completedFundingDoesNotReleaseAnUnfinishedPooledSwap() {
+    val complete = """{"step":{"step":"done"},"data":{"payouts":[]}}"""
+    val entry =
+      JSONObject()
+        .put("state", complete)
+        .put(
+          "fundingBatch",
+          JSONObject()
+            .put("version", 2)
+            .put("cancelled", false)
+            .put("children", JSONArray().put(JSONObject().put("state", complete))),
+        )
+    assertThrows(IllegalStateException::class.java) {
+      assertSavedSwapEntryPrivateWorkFinished(entry)
+    }
+    entry.getJSONObject("fundingBatch").put("execution", JSONObject().put("state", complete))
+    assertSavedSwapEntryPrivateWorkFinished(entry)
+    entry.getJSONObject("fundingBatch").remove("execution")
+    entry.getJSONObject("fundingBatch").put("cancelled", true)
+    assertSavedSwapEntryPrivateWorkFinished(entry)
+    entry
+      .getJSONObject("fundingBatch")
+      .getJSONArray("children")
+      .getJSONObject(0)
+      .put(
+        "state",
+        """{"cancelled":true,"step":{"step":"credit"},"data":{"signedOperation":{},"creditBasis":null,"payouts":[]}}""",
+      )
+    assertThrows(IllegalStateException::class.java) {
+      assertSavedSwapEntryPrivateWorkFinished(entry)
+    }
+  }
+
   private class File : WalletFile {
     var bytes: ByteArray? = null
 

@@ -92,16 +92,19 @@ internal fun nativePayoutSource(
       op.has("signedUserOperation")
   )
   val p = op.getJSONObject("proposal")
-  check(
-    p.getString("kind") == "sourceFunding" &&
-      p.getInt("chainId") == 143 &&
-      p.getInt("profileChainId") == profile
-  )
+  val sourceChain = p.getInt("chainId")
+  val network = fundingNetwork(sourceChain)
+  check(p.getString("kind") == "sourceFunding" && p.getInt("profileChainId") == profile)
+  if (sourceChain != 143) {
+    check(p.getInt("sourceAccountIndex") == 1 && p.getString("token").equals(network.token, true))
+    check(op.getJSONObject("stateBinding").has("privateBaseline"))
+  } else if (p.has("token")) check(p.getString("token").equals(network.token, true))
   check(
     p.getString("expectedFrom").equals(identities.source, true) &&
       p.getString("confidentialAccount").equals(identities.confidential, true)
   )
   val source = sponsoredSettlementExpected(op)
+  check(source.getString("originAsset") == network.originAsset)
   val settlement = op.getJSONObject("settlement")
   // The saved authenticated settlement revision precedes the mutable journal save.
   val expected = JSONObject(source.toString()).put("revision", settlement.getInt("revision"))

@@ -2,6 +2,8 @@ import UIKit
 
 @available(iOS 18.0, *)
 @MainActor internal final class WalletCeremony {
+  private static var privateReadGrant: AuthorizationLifetime.PrivateReadGrant?
+  private static var privateReadObservers: [NSObjectProtocol] = []
   let diagnostics: WalletDiagnostics
   let store: WalletStorage
   let presenter: UIViewController
@@ -21,6 +23,17 @@ import UIKit
     self.diagnostics = diagnostics
     self.presenter = presenter
     store = WalletStorage(files: try ProtectedFiles())
+    if Self.privateReadObservers.isEmpty {
+      for event in [
+        UIApplication.didEnterBackgroundNotification,
+        UIApplication.protectedDataWillBecomeUnavailableNotification,
+      ] {
+        Self.privateReadObservers.append(
+          NotificationCenter.default.addObserver(forName: event, object: nil, queue: .main) { _ in
+            Task { @MainActor in Self.revokePrivateReads() }
+          })
+      }
+    }
     for event in [
       UIApplication.didEnterBackgroundNotification,
       UIApplication.protectedDataWillBecomeUnavailableNotification,
@@ -40,6 +53,21 @@ import UIKit
         })
     }
   }
+  static func revokePrivateReads() { privateReadGrant = nil }
+  func grantPrivateReads(_ record: WalletRecord) throws {
+    try checkAuthorization()
+    try require(record.verified)
+    Self.privateReadGrant = .init(walletId: record.id, generation: record.journalId)
+  }
+  func checkPrivateRead(_ record: WalletRecord) throws {
+    try checkAuthorization()
+    guard let grant = Self.privateReadGrant else { throw WalletFailure.unavailable }
+    try grant.check(
+      walletId: record.id, generation: record.journalId,
+      active: UIApplication.shared.applicationState == .active,
+      protected: UIApplication.shared.isProtectedDataAvailable)
+  }
+
   func checkAuthorization() throws {
     do {
       try Task.checkCancellation()
@@ -192,6 +220,9 @@ import UIKit
     record.close()
     _ = try await authorize(credential, walletId: id, purpose: "open:v1")
     try checkAuthorization()
+    let opened = try store.load()
+    defer { opened.close() }
+    if opened.verified { try grantPrivateReads(opened) }
     return try publicState()
   }
 }

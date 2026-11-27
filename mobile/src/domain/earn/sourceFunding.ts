@@ -3,6 +3,8 @@ import { parseMinimumReturn, type MinimumReturnReceipt } from "./minimumReturn";
 import { parseEarnFeeProof, type EarnFeeProof } from "./policy";
 import { earnObject, earnAtoms } from "./vaultExecution";
 import type { EarnIntent } from "./types";
+import type { FundingChainId, FundingSourceKey } from "../wallet/storedSigner";
+import { fundingSourceIdentity, fundingTokens, isFundingChain } from "../wallet/fundingNetworks";
 export const sourceUsdc = "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
   earnPaymaster = "0x888888888888Ec68A58AB8094Cc1AD20Ba3D2402",
   earnEntryPoint = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
@@ -14,7 +16,7 @@ export type SourceQuote = {
   revision: number;
   quoteId: string;
   recipient: string;
-  chainId: 143;
+  chainId: FundingChainId;
   token: string;
   amountAtoms: string;
   confidentialAccount: string;
@@ -23,6 +25,7 @@ export type SourceQuote = {
   minimumCreditAtoms: string;
 };
 export type SourceFeePlan = {
+  sourceChainId?: FundingChainId;
   amount: string;
   budget: string;
   feeCap: string;
@@ -40,7 +43,7 @@ export type SponsoredRequest = {
     kind: "sourceFunding";
     operationId: string;
     revision: number;
-    chainId: 143;
+    chainId: FundingChainId;
     profileChainId: 1 | 4663;
     expectedFrom: string;
     token: string;
@@ -59,6 +62,8 @@ export type SponsoredRequest = {
   userOperation: Record<string, string>;
 };
 export type SponsoredOperation = {
+  sourceChainId?: FundingChainId;
+  token?: string;
   requestedWithdrawalAtoms?: string;
   withdrawAllShares?: true;
   minimumRetainedUsdgAtoms?: string;
@@ -74,7 +79,7 @@ export type SponsoredOperation = {
   walletId: string;
   revision: number;
   kind: "sourceFunding" | "hoodDeposit" | "hoodRedeemAll" | "hoodTokenReturn";
-  chainId: 143 | 4663;
+  chainId: FundingChainId | 4663;
   from: string;
   amountAtoms: string;
   nonce: string;
@@ -151,6 +156,7 @@ export function privateReturnConfirmed(rows: readonly SponsoredOperation[]): boo
   return required !== null && BigInt(required) > 0n;
 }
 export type SourceFundingPlan = {
+  source?: FundingSourceKey;
   fundingBatchId?: string;
   fundingBatchSize?: number;
   sourceAccountIndex?: number;
@@ -174,6 +180,7 @@ export interface EarnSourceFundingService {
     sourceBalance: string,
     signal: AbortSignal,
     sourceAccountIndex?: number,
+    source?: FundingSourceKey,
   ): Promise<SourceFundingPlan>;
   executeMany?(intent: EarnIntent, plans: SourceFundingPlan[]): Promise<SponsoredOperation[]>;
   resumeBatch?(intent: EarnIntent, fundingBatchId: string): Promise<SponsoredOperation[]>;
@@ -202,6 +209,15 @@ function hash(v: unknown): v is string {
 function hex(v: unknown, max = 16384): v is string {
   return typeof v === "string" && /^0x[0-9a-f]*$/i.test(v) && v.length <= max;
 }
+function sourceBinding(
+  intent: EarnIntent,
+  source?: FundingSourceKey,
+): { chainId: FundingChainId; token: string } {
+  if (!source) return { chainId: 143, token: sourceUsdc };
+  fundingSourceIdentity(source);
+  if (!same(source.owner, intent.sourceAddress)) throw new Error("Funding owner changed");
+  return { chainId: source.sourceChainId, token: fundingTokens[source.sourceChainId] };
+}
 export function parseSourceQuote(
   value: unknown,
   intent: EarnIntent,
@@ -209,7 +225,9 @@ export function parseSourceQuote(
   revision: number,
   amount: string,
   now: number,
+  source?: FundingSourceKey,
 ): SourceQuote {
+  const selected = sourceBinding(intent, source);
   const r = earnObject(value);
   if (
     intent.status !== "prepared" ||
@@ -217,8 +235,9 @@ export function parseSourceQuote(
     r.revision !== revision ||
     !operationId(id) ||
     !integer(revision, 1) ||
-    r.chainId !== 143 ||
-    !same(r.token, sourceUsdc) ||
+    r.chainId !== selected.chainId ||
+    (r.sourceChainId !== undefined && r.sourceChainId !== selected.chainId) ||
+    !same(r.token, selected.token) ||
     !same(r.confidentialAccount, intent.confidentialAddress) ||
     !same(r.refundOwner, intent.sourceAddress) ||
     !address(r.recipient) ||
@@ -248,8 +267,8 @@ export function parseSourceQuote(
     revision,
     quoteId: r.quoteId,
     recipient: r.recipient,
-    chainId: 143,
-    token: sourceUsdc,
+    chainId: selected.chainId,
+    token: selected.token,
     amountAtoms: amount,
     confidentialAccount: intent.confidentialAddress,
     refundOwner: intent.sourceAddress,
@@ -264,14 +283,17 @@ export function parseSourceFeePlan(
   amount: string,
   budget: string,
   now: number,
+  source?: FundingSourceKey,
 ): SourceFeePlan {
+  const selected = sourceBinding(intent, source);
   const r = earnObject(value);
   if (
-    r.version !== "gizu-monad-funding-v1" ||
-    r.chainId !== 143 ||
+    r.version !== (selected.chainId === 143 ? "gizu-monad-funding-v1" : "gizu-source-funding-v2") ||
+    r.chainId !== selected.chainId ||
+    (r.sourceChainId !== undefined && r.sourceChainId !== selected.chainId) ||
     !same(r.owner, intent.sourceAddress) ||
     !same(r.recipient, recipient) ||
-    !same(r.token, sourceUsdc) ||
+    !same(r.token, selected.token) ||
     r.amount !== amount ||
     r.budget !== budget ||
     !same(r.entryPoint, earnEntryPoint) ||
@@ -340,7 +362,15 @@ export function parseSourceFeePlan(
     userOperation.factoryData = "0x";
   }
   userOperation.signature = "0x";
-  return { amount, budget, feeCap, remainingBudget, expiresAtMs: r.expiresAtMs, userOperation };
+  return {
+    ...(source ? { sourceChainId: selected.chainId } : {}),
+    amount,
+    budget,
+    feeCap,
+    remainingBudget,
+    expiresAtMs: r.expiresAtMs,
+    userOperation,
+  };
 }
 export function sourceFundingProposal(
   intent: EarnIntent,
@@ -349,12 +379,16 @@ export function sourceFundingProposal(
   budget: string,
   now: number,
   sourceAccountIndex?: number,
+  source?: FundingSourceKey,
 ): SponsoredRequest {
-  parseSourceQuote(quote, intent, quote.operationId, quote.revision, fees.amount, now);
+  const selected = sourceBinding(intent, source);
+  parseSourceQuote(quote, intent, quote.operationId, quote.revision, fees.amount, now, source);
   if (
     intent.status !== "prepared" ||
     fees.budget !== budget ||
     fees.expiresAtMs <= now ||
+    (fees.sourceChainId !== undefined && fees.sourceChainId !== selected.chainId) ||
+    (source !== undefined && sourceAccountIndex !== source.accountIndex) ||
     BigInt(fees.remainingBudget) < 10000n ||
     !same(fees.userOperation.sender, intent.sourceAddress) ||
     !same(fees.userOperation.paymaster, earnPaymaster)
@@ -368,10 +402,10 @@ export function sourceFundingProposal(
       kind: "sourceFunding",
       operationId: quote.operationId,
       revision: quote.revision,
-      chainId: 143,
+      chainId: selected.chainId,
       profileChainId: intent.profileId === "ethereum-usdc" ? 1 : 4663,
       expectedFrom: intent.sourceAddress,
-      token: sourceUsdc,
+      token: selected.token,
       amountAtoms: fees.amount,
       nonce: fees.userOperation.nonce!,
       deadline: Math.min(quote.expiresAt, Math.floor(now / 1000) + 180),
@@ -441,7 +475,15 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
           : source
             ? intent.sourceAddress
             : investmentDestination(intent).address,
-      chainId = source ? 143 : 4663;
+      chainId = source && isFundingChain(r.chainId) ? r.chainId : source ? 143 : 4663;
+    if (source && chainId !== 143 && (!selectedSource || r.sourceAccountIndex !== 1))
+      throw new Error("Invalid native funding source");
+    if (
+      source &&
+      ((r.sourceChainId !== undefined && r.sourceChainId !== chainId) ||
+        (r.token !== undefined && !same(r.token, fundingTokens[chainId as FundingChainId])))
+    )
+      throw new Error("Native funding asset changed");
     if (
       r.chainId !== chainId ||
       !same(r.from, from) ||
@@ -557,6 +599,12 @@ export function parseSponsoredOperations(value: unknown, intent: EarnIntent): Sp
         ? { investmentSlot: r.investmentSlot as number }
         : {}),
       kind: kind as SponsoredOperation["kind"],
+      ...(source && r.sourceChainId !== undefined
+        ? { sourceChainId: chainId as FundingChainId }
+        : {}),
+      ...(source && r.token !== undefined
+        ? { token: fundingTokens[chainId as FundingChainId] }
+        : {}),
       chainId,
       from,
       amountAtoms,
@@ -684,6 +732,10 @@ export function parseSourcePreview(
 }
 
 export type PublicFundingLeg = {
+  sourceChainId?: FundingChainId;
+  token?: string;
+  decimals?: 6;
+  sourceId?: string;
   sourceIndex: number;
   address: string;
   budgetAtoms: string;
@@ -704,6 +756,8 @@ export function parsePublicFundingPlan(
   requestedBudgetAtoms: string,
 ): PublicFundingPlan {
   const raw = earnObject(value);
+  if (raw.version !== undefined && raw.version !== 1 && raw.version !== 2)
+    throw new Error("Unsupported funding contract");
   if (
     raw.fundingBatchId !== undefined &&
     (typeof raw.fundingBatchId !== "string" || !/^[-a-zA-Z0-9_:]{1,128}$/.test(raw.fundingBatchId))
@@ -718,23 +772,37 @@ export function parsePublicFundingPlan(
     throw new Error("Invalid native funding selection.");
   if (raw.legs.length > 1 && !raw.fundingBatchId)
     throw new Error("Native funding batch identity required.");
-  const indices = new Set<number>();
-  const addresses = new Set<string>();
+  const identities = new Set<string>();
+  const indices = new Set<string>();
   let amount = 0n,
     fee = 0n,
     reserve = 0n,
     budget = 0n;
   const legs = raw.legs.map((value) => {
     const leg = earnObject(value);
+    const versioned = raw.version === 2 || leg.sourceChainId !== undefined;
+    const chain = versioned ? leg.sourceChainId : 143;
+    if (!isFundingChain(chain)) throw new Error("Invalid native funding network");
+    const identity = `${chain}:${fundingTokens[chain]}:${String(leg.address).toLowerCase()}`;
     if (
       !integer(leg.sourceIndex) ||
-      indices.has(leg.sourceIndex) ||
       !address(leg.address) ||
-      addresses.has(leg.address.toLowerCase())
+      indices.has(`${chain}:${leg.sourceIndex}`) ||
+      identities.has(identity)
     )
       throw new Error("Invalid native funding account.");
-    indices.add(leg.sourceIndex);
-    addresses.add(leg.address.toLowerCase());
+    if (versioned) {
+      fundingSourceIdentity({
+        sourceChainId: chain,
+        token: String(leg.token),
+        accountIndex: leg.sourceIndex,
+        owner: leg.address,
+      });
+      if (leg.decimals !== 6 || (leg.sourceId !== undefined && leg.sourceId !== identity))
+        throw new Error("Invalid native funding asset");
+    }
+    identities.add(identity);
+    indices.add(`${chain}:${leg.sourceIndex}`);
     const budgetAtoms = earnAtoms(leg.budgetAtoms),
       amountAtoms = earnAtoms(leg.amountAtoms),
       feeAtoms = earnAtoms(leg.feeAtoms),
@@ -751,6 +819,14 @@ export function parsePublicFundingPlan(
     reserve += BigInt(reserveAtoms);
     budget += BigInt(budgetAtoms);
     return {
+      ...(versioned
+        ? {
+            sourceChainId: chain,
+            token: fundingTokens[chain],
+            decimals: 6 as const,
+            sourceId: identity,
+          }
+        : {}),
       sourceIndex: leg.sourceIndex,
       address: leg.address,
       budgetAtoms,

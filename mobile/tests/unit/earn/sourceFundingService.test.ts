@@ -185,6 +185,182 @@ test("budget probe re-estimates the actual recipient and re-quotes a reduced amo
   expect(native.executeEarnSponsored).not.toHaveBeenCalled();
 });
 
+test("a Base source uses its native quote and funding endpoint without changing Ethereum investment", async () => {
+  jest.mocked(getSignerCapabilities).mockResolvedValue({
+    contractVersion: 1,
+    available: true,
+    walletStorage: true,
+    backup: true,
+    transfers: true,
+    swaps: true,
+    earnSponsoredExecution: true,
+    fundingContractVersion: 2,
+    fundingChainIds: [143, 8453, 42161],
+  });
+  const { native, fetcher } = setup();
+  const source = {
+    sourceChainId: 8453 as const,
+    token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    accountIndex: 1,
+    owner,
+  };
+  const funding = {
+    ...native,
+    prepareEarnSourceQuoteForSource: jest
+      .fn()
+      .mockImplementation(async (_wallet, selected, amount, id, revision) => ({
+        ...quote(amount, id, revision),
+        chainId: selected.sourceChainId,
+        token: selected.token,
+      })),
+  };
+  fetcher.mockImplementation(
+    async (_url, init) =>
+      ({
+        ok: true,
+        json: async () => ({
+          ...feeResponse(JSON.parse(String(init?.body)), 100),
+          version: "gizu-source-funding-v2",
+          chainId: 8453,
+          sourceChainId: 8453,
+          token: source.token,
+        }),
+      }) as Response,
+  );
+  const service = createEarnSourceFundingService(
+    "https://backend.example/",
+    () => funding,
+    () => now,
+  );
+  const plan = await service.plan(intent, "1000000", "2000000", signal(), 1, source);
+  expect(plan.source).toEqual(source);
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+    "https://backend.example/v1/funding/8453/plan",
+    "https://backend.example/v1/funding/8453/plan",
+  ]);
+  expect(funding.prepareEarnSourceQuoteForSource).toHaveBeenCalledWith(
+    intent.walletId,
+    source,
+    "989900",
+    expect.any(String),
+    1,
+  );
+  expect(native.prepareEarnSourceQuote).not.toHaveBeenCalled();
+  funding.executeEarnSponsored.mockImplementation(async (request: SponsoredRequest) =>
+    operation({
+      operationId: request.proposal.operationId,
+      revision: request.proposal.revision,
+      chainId: 8453,
+      sourceAccountIndex: 1,
+      amountAtoms: request.proposal.amountAtoms,
+    }),
+  );
+  await service.execute(intent, plan);
+  expect(funding.executeEarnSponsored.mock.calls[0]![0].proposal).toMatchObject({
+    chainId: 8453,
+    profileChainId: 1,
+    token: source.token,
+  });
+});
+
+test("one fifteen USDC review can register and execute Account 1 on two networks", async () => {
+  jest.mocked(getSignerCapabilities).mockResolvedValue({
+    contractVersion: 1,
+    available: true,
+    walletStorage: true,
+    backup: true,
+    transfers: true,
+    swaps: true,
+    earnSponsoredExecution: true,
+    fundingContractVersion: 2,
+    fundingChainIds: [143, 8453, 42161],
+  });
+  const { native, fetcher } = setup();
+  let registered: SponsoredRequest[] = [];
+  const leg = {
+    sourceIndex: 1,
+    address: owner,
+    budgetAtoms: "7500000",
+    amountAtoms: "7489900",
+    feeAtoms: "100",
+    reserveAtoms: "10000",
+    decimals: 6,
+  };
+  const publicOperation = (request: SponsoredRequest) =>
+    operation({
+      operationId: request.proposal.operationId,
+      revision: request.proposal.revision,
+      chainId: request.proposal.chainId,
+      sourceAccountIndex: 1,
+      fundingBatchId: "multi",
+      fundingBatchSize: 2,
+      amountAtoms: request.proposal.amountAtoms,
+      status: "planned",
+      userOperationHash: undefined,
+      transactionHash: undefined,
+    });
+  const funding = {
+    ...native,
+    planPublicFunding: jest.fn().mockResolvedValue({
+      version: 2,
+      fundingBatchId: "multi",
+      requestedBudgetAtoms: "15000000",
+      totalAmountAtoms: "14979800",
+      totalFeeAtoms: "200",
+      totalReserveAtoms: "20000",
+      legs: [
+        { ...leg, sourceChainId: 143, token: sourceUsdc },
+        { ...leg, sourceChainId: 8453, token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" },
+      ],
+    }),
+    prepareEarnSourceQuoteForSource: jest
+      .fn()
+      .mockImplementation(async (_wallet, source, amount, id, revision) => ({
+        ...quote(amount, id, revision),
+        chainId: source.sourceChainId,
+        token: source.token,
+      })),
+    registerEarnFundingPlans: jest
+      .fn()
+      .mockImplementation(async (_wallet, requests: SponsoredRequest[]) => {
+        registered = requests;
+        return requests.map(publicOperation);
+      }),
+    executeEarnFundingBatch: jest
+      .fn()
+      .mockImplementation(async () => registered.map(publicOperation)),
+  };
+  fetcher.mockImplementation(async (url, init) => {
+    const base = String(url).includes("/8453/");
+    return {
+      ok: true,
+      json: async () => ({
+        ...feeResponse(JSON.parse(String(init?.body)), 100),
+        ...(base
+          ? {
+              version: "gizu-source-funding-v2",
+              chainId: 8453,
+              sourceChainId: 8453,
+              token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            }
+          : {}),
+      }),
+    } as Response;
+  });
+  const service = createEarnSourceFundingService(
+    "https://backend.example/",
+    () => funding,
+    () => now,
+  );
+  const plans = await service.planMany!(intent, "15000000", "20000000", signal());
+  expect(plans.map((plan) => plan.source?.sourceChainId)).toEqual([143, 8453]);
+  expect(plans.reduce((sum, plan) => sum + BigInt(plan.budget), 0n)).toBe(15000000n);
+  expect(registered.map((request) => request.proposal.profileChainId)).toEqual([1, 1]);
+  expect(await service.executeMany!(intent, plans)).toHaveLength(2);
+  expect(funding.executeEarnFundingBatch).toHaveBeenCalledTimes(1);
+  expect(funding.executeEarnSponsored).not.toHaveBeenCalled();
+});
+
 test("execution binds the final budget and strips SDK signature and authorization placeholders", async () => {
   const { service, native } = setup();
   const plan = await service.plan(intent, "1000000", "1000000", signal());

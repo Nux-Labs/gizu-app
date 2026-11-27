@@ -66,26 +66,40 @@ private constructor(
         }
       check(
         legs.size == rows.size &&
-          legs.map { it.getInt("sourceIndex") }.distinct().size == legs.size &&
+          legs
+            .map { it.optInt("sourceChainId", 143) to it.getInt("sourceIndex") }
+            .distinct()
+            .size == legs.size &&
           legs.map { it.getString("operationId") }.distinct().size == legs.size
       )
       val next = JSONObject(roleRegistry).getInt("nextRecipient")
-      val indices = mutableSetOf<Int>()
+      val indices = mutableSetOf<Pair<Int, Int>>()
       val ids = mutableSetOf<String>()
       val owners = mutableSetOf<String>()
       val entries = linkedMapOf<String, Entry>()
       val children = JSONArray()
-      for (row in rows.sortedBy { it.getJSONObject("proposal").optInt("sourceAccountIndex", 0) }) {
+      for (row in
+        rows.sortedWith(
+          compareBy(
+            { it.getJSONObject("proposal").optInt("sourceAccountIndex", 0) },
+            { it.getJSONObject("proposal").getInt("chainId") },
+          )
+        )) {
         val p = row.getJSONObject("proposal")
         val id = row.getString("operationId")
         val index = p.optInt("sourceAccountIndex", 0)
+        val chain = p.getInt("chainId")
+        val network = fundingNetwork(chain)
+        check(chain == 143 || index == 1)
+        if (chain != 143 || p.has("token")) check(p.getString("token").equals(network.token, true))
         check(index == 0 || index == 1 || index in 3 until next)
-        check(indices.add(index) && ids.add(id) && id.matches(Regex("[-a-zA-Z0-9_]{1,128}")))
+        check(
+          indices.add(chain to index) && ids.add(id) && id.matches(Regex("[-a-zA-Z0-9_]{1,128}"))
+        )
         check(
           row.getString("walletId") == walletId &&
             p.getString("operationId") == id &&
-            p.getString("kind") == "sourceFunding" &&
-            p.getInt("chainId") == 143
+            p.getString("kind") == "sourceFunding"
         )
         check(
           rows.all {
@@ -100,10 +114,14 @@ private constructor(
         check(
           owner != "0x" + "0".repeat(40) &&
             owner.matches(Regex("0x[0-9a-fA-F]{40}")) &&
-            owners.add(owner.lowercase())
+            owners.add(fundingSourceId(chain, owner))
         )
-        val leg = legs.singleOrNull { it.getInt("sourceIndex") == index }
+        val leg =
+          legs.singleOrNull {
+            it.getInt("sourceIndex") == index && it.optInt("sourceChainId", 143) == chain
+          }
         check(leg != null)
+        check(fundingSourceId(leg) == fundingSourceId(chain, owner))
         check(
           leg.getString("operationId") == id &&
             leg.getString("address").equals(owner, true) &&

@@ -49,6 +49,42 @@ pub const ROBINHOOD_BUY_TARGETS: [Address; 25] = [
 pub const BASE_CHAIN_ID: u64 = 8453;
 pub const BASE_RPC: &str = "https://mainnet.base.org";
 pub const BASE_USDC: Address = address!("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+pub const ARBITRUM_CHAIN_ID: u64 = 42161;
+pub const ARBITRUM_RPC: &str = "https://arb1.arbitrum.io/rpc";
+pub const ARBITRUM_USDC: Address = address!("0xaf88d065e77c8cC2239327C5EDb3A432268e5831");
+pub const PRIVATE_USDC_ASSET: &str = "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx";
+
+#[derive(Clone, Copy)]
+pub struct FundingSourceConfig {
+    pub chain_id: u64,
+    pub usdc: Address,
+    pub origin_asset: &'static str,
+    pub rpc: &'static str,
+}
+
+/// Exact funding sources; unrelated EVM tokens and action destination chains are not admitted.
+pub fn funding_source(chain_id: u64) -> Option<FundingSourceConfig> {
+    let (usdc, origin_asset, rpc) = match chain_id {
+        MONAD_CHAIN_ID => (MONAD_USDC, PRIVATE_USDC_ASSET, MONAD_RPC),
+        BASE_CHAIN_ID => (
+            BASE_USDC,
+            "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+            BASE_RPC,
+        ),
+        ARBITRUM_CHAIN_ID => (
+            ARBITRUM_USDC,
+            "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+            ARBITRUM_RPC,
+        ),
+        _ => return None,
+    };
+    Some(FundingSourceConfig {
+        chain_id,
+        usdc,
+        origin_asset,
+        rpc,
+    })
+}
 /// Base runs the canonical LOP v4 deployment; only Robinhood Chain has its own.
 pub const BASE_LOP: Address = address!("0x111111125421cA6dc452d289314280a0f8842A65");
 /// The Fusion `settlementAddress` 1inch quotes for chain 8453.

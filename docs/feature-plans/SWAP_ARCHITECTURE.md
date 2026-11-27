@@ -1,5 +1,29 @@
 # Swap architecture
 
+## Funding contract 2 (2026-11-26)
+
+A new buy uses approved existing private USDC first, then sufficient qualified
+Account 1 USDC from Monad, Base or Arbitrum. Native allocation chooses recipient
+wallets and weights once from the original gross budget. Funding network and
+trade destination are independent: Base funding can support a Robinhood trade,
+and Arbitrum funding can support a Base trade.
+
+The existing Rust machine adds `confidentialFunding`, which stops at verified
+private USDC credit and cannot submit a payout or Fusion order. Native batches
+drive these children sequentially, then one existing `confidentialPayout` operation
+with an explicit approved amount. The final operation cannot consume unrelated
+Account 2 funds. Private-only buys use the same capped downstream operation.
+
+Before a fund-only signature, a fresh authenticated private baseline is persisted
+at the existing Wait boundary. After origin confirmation and route SUCCESS,
+bounded private-balance matching verifies the credit. Ambiguity and expired auth
+reuse the existing reauthentication/Resume transitions with the original baseline.
+`/history` is not used. Legacy operations retain their released interpretation.
+
+Network selection is limited to funding presentation. Sell, return and explicit
+Withdraw from Gizu flows retain their existing signing and destination controls.
+See [runtime enablement](../internal/BACKEND_RUNTIME.md#funding-network-enablement).
+
 **Complexity:** 3 — Detailed. **Status:** implemented architecture reference, not a new proposal.
 **Reviewed:** 2026-11-14 against local source; no live provider or funded-device verification.
 **Ownership:** component responsibilities below; individual maintainer assignment is not recorded.
@@ -29,8 +53,8 @@ addresses; tests in both languages compare them. The file also holds a measured 
 `npm --prefix backend run swap:measure -- --chain <id> [--write]`. Sell and recovery are not limited, so a
 holding stays sellable after its token leaves the list. The per-order liquidity check in
 Fusion preview still runs for every buy.
-The current execution path uses Monad USDC, confidential credit and Robinhood USDG
-as the intermediate asset for a Fusion token trade.
+Funding uses a qualified source USDC network, canonical private USDC, and the
+selected destination cash asset (Robinhood USDG or Base USDC) for a Fusion trade.
 
 A plan may name its target chain with `chainId`; a plan without one is Robinhood (4663).
 The engine resolves it to a pinned `TargetChain` (`pins.rs`) on start and on restore, and

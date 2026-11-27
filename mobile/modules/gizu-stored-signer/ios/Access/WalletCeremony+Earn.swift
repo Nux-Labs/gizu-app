@@ -97,6 +97,7 @@ extension WalletCeremony {
     try require(record.id==walletId && record.journalId==journal && record.earnChain==chain && record.earnCycleIndex==cycle && record.verified)
     let address=try storedEarnConfidentialAddress(record)
     let shared=try deriveAccountAddresses(entropy:record.entropy)[2]
+    if address.lowercased() == shared.lowercased() { try grantPrivateReads(record) }
     let auth = address.lowercased() == shared.lowercased()
       ? try authenticateSwapRead(entropy:record.entropy,salt:salt,random:random,startedMs:started,nowMs:UInt64(Date().timeIntervalSince1970*1000))
       : try authenticateEarnCycleRead(entropy:record.entropy,chainId:UInt64(chain),cycleIndex:UInt32(cycle),salt:salt,random:random,startedMs:started,nowMs:UInt64(Date().timeIntervalSince1970*1000))

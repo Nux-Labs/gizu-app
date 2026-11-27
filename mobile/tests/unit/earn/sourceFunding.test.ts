@@ -187,6 +187,114 @@ test("native account selection retains separate gas and reserve budgets and reje
   expect(() => parsePublicFundingPlan(selection, "999999")).toThrow();
 });
 
+test("native selection distinguishes Account 1 on Base and Monad for a fifteen USDC budget", () => {
+  const leg = {
+    sourceIndex: 1,
+    address: owner,
+    budgetAtoms: "7500000",
+    amountAtoms: "7489900",
+    feeAtoms: "100",
+    reserveAtoms: "10000",
+    decimals: 6,
+  };
+  const value = {
+    version: 2,
+    fundingBatchId: "batch_multi",
+    requestedBudgetAtoms: "15000000",
+    totalAmountAtoms: "14979800",
+    totalFeeAtoms: "200",
+    totalReserveAtoms: "20000",
+    legs: [
+      { ...leg, sourceChainId: 143, token },
+      { ...leg, sourceChainId: 8453, token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" },
+    ],
+  };
+  const parsed = parsePublicFundingPlan(value, "15000000");
+  expect(parsed.legs.map((row) => row.sourceChainId)).toEqual([143, 8453]);
+  expect(() =>
+    parsePublicFundingPlan({ ...value, legs: [value.legs[1], value.legs[1]] }, "15000000"),
+  ).toThrow();
+  expect(() =>
+    parsePublicFundingPlan(
+      { ...value, legs: [value.legs[0], { ...value.legs[1], sourceIndex: 3 }] },
+      "15000000",
+    ),
+  ).toThrow();
+  expect(() =>
+    parsePublicFundingPlan(
+      { ...value, legs: [value.legs[0], { ...value.legs[1], token }] },
+      "15000000",
+    ),
+  ).toThrow();
+});
+
+test("Base funding quote and sponsorship stay on Base while the investment remains Ethereum", () => {
+  const source = {
+    sourceChainId: 8453 as const,
+    token: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    accountIndex: 1,
+    owner,
+  };
+  const q = parseSourceQuote(
+    { ...quote(), chainId: 8453, token: source.token },
+    intent,
+    "fund_1",
+    1,
+    "989900",
+    now,
+    source,
+  );
+  const p = parseSourceFeePlan(
+    {
+      ...fee(),
+      version: "gizu-source-funding-v2",
+      chainId: 8453,
+      sourceChainId: 8453,
+      token: source.token,
+    },
+    intent,
+    recipient,
+    "989900",
+    "1000000",
+    now,
+    source,
+  );
+  expect(sourceFundingProposal(intent, q, p, "1000000", now, 1, source).proposal).toMatchObject({
+    chainId: 8453,
+    profileChainId: 1,
+    token: source.token,
+    sourceAccountIndex: 1,
+  });
+  expect(() =>
+    parseSourceQuote(
+      { ...quote(), chainId: 8453, token },
+      intent,
+      "fund_1",
+      1,
+      "989900",
+      now,
+      source,
+    ),
+  ).toThrow();
+  expect(intent.sourceChainId).toBe(143);
+  const saved = {
+    operationId: "base_saved",
+    walletId: intent.walletId,
+    revision: 1,
+    kind: "sourceFunding",
+    chainId: 8453,
+    sourceAccountIndex: 1,
+    from: owner,
+    amountAtoms: "1000000",
+    nonce: "0x0",
+    blocked: false,
+    canResume: true,
+    status: "planned",
+  };
+  expect(parseSponsoredOperations([saved], intent)[0]?.chainId).toBe(8453);
+  expect(() => parseSponsoredOperations([{ ...saved, token }], intent)).toThrow();
+});
+
 test("a confirmed return stays complete after its private USDC is spent", () => {
   const returned = {
     operationId: "return_1",

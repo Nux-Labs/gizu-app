@@ -2,6 +2,7 @@ import {
   portfolioValue,
   portfolioUsdcBalance,
   portfolioPublicUsdcAtoms,
+  portfolioAvailableUsdcAtoms,
   portfolioVaultPosition,
   vaultPositionProfile,
 } from "@/domain/wallet/portfolioValue";
@@ -54,6 +55,180 @@ test("display total adds owned tokens and vault underlying without changing spen
   });
   expect(native.totalAtoms).toBe("1000000");
 });
+
+function fundingSnapshot() {
+  const owner = "0x" + "1".repeat(40);
+  const tokens = [
+    "0x754704bc059f8c67012fed69bc8a327a5aafb603",
+    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+  ];
+  const fundingSources = ([143, 8453, 42161] as const).map((sourceChainId, index) => ({
+    sourceChainId,
+    token: tokens[index]!,
+    decimals: 6 as const,
+    accountIndex: 1,
+    owner,
+    balanceAtoms: index === 2 ? "5000000" : "10000000",
+    observedAtoms: index === 2 ? "5000000" : "10000000",
+    reservedAtoms: "0",
+    availableAtoms: index === 2 ? "5000000" : "10000000",
+    complete: true,
+    stale: false,
+    syncPending: false,
+    checkedAt,
+  }));
+  return {
+    planningFundingChainIds: [143, 8453, 42161] as
+      import("@/domain/wallet/storedSigner").FundingChainId[] | null,
+    ...snapshot(),
+    totalAtoms: "10000000",
+    fundingSources,
+    fundingCash: {
+      observedAtoms: "25000000",
+      availableAtoms: "25000000",
+      complete: true,
+      stale: false,
+      syncPending: false,
+    },
+    ownedAssets: [
+      asset({
+        chainId: 143,
+        token: "confidential:monad-usdc",
+        balanceAtoms: "2000000",
+        observedAtoms: "2000000",
+        valueUsdcAtoms: "2000000",
+      }),
+      {
+        ...asset({
+          chainId: 8453,
+          token: tokens[1],
+          balanceAtoms: "13000000",
+          observedAtoms: "13000000",
+          valueUsdcAtoms: "13000000",
+        }),
+        fundingIncludedAtoms: "10000000",
+      },
+    ],
+  };
+}
+
+test("funding cash combines three origins and private USDC once while retaining another owner", () => {
+  const value = fundingSnapshot();
+  expect(portfolioUsdcBalance(value)).toEqual({
+    publicAtoms: "25000000",
+    privateAtoms: "2000000",
+    totalAtoms: "27000000",
+  });
+  expect(portfolioPublicUsdcAtoms(value)).toBe("25000000");
+  expect(portfolioAvailableUsdcAtoms(value)).toBe("27000000");
+  expect(portfolioValue(value).totalAtoms).toBe("30000000");
+});
+
+test("unavailable source preserves observed cash but cannot provide a complete maximum", () => {
+  const value = fundingSnapshot();
+  value.fundingSources[1] = {
+    ...value.fundingSources[1]!,
+    balanceAtoms: null as unknown as string,
+    availableAtoms: null as unknown as string,
+    complete: false,
+    stale: true,
+    syncPending: true,
+  };
+  value.fundingCash = {
+    observedAtoms: "25000000",
+    availableAtoms: null as unknown as string,
+    complete: false,
+    stale: true,
+    syncPending: true,
+  };
+  expect(portfolioUsdcBalance(value)?.totalAtoms).toBe("27000000");
+  expect(portfolioPublicUsdcAtoms(value)).toBeNull();
+  expect(portfolioAvailableUsdcAtoms(value)).toBeNull();
+  expect(portfolioValue(value).complete).toBe(false);
+});
+
+test("disabled network observations do not enlarge Max or block enabled Monad cash", () => {
+  const value = fundingSnapshot();
+  value.planningFundingChainIds = [143];
+  value.fundingSources[1] = {
+    ...value.fundingSources[1]!,
+    balanceAtoms: null as unknown as string,
+    availableAtoms: null as unknown as string,
+    complete: false,
+    stale: true,
+    syncPending: true,
+  };
+  value.fundingCash = {
+    ...value.fundingCash,
+    complete: false,
+    availableAtoms: null as unknown as string,
+    stale: true,
+    syncPending: true,
+  };
+  expect(portfolioUsdcBalance(value)?.totalAtoms).toBe("27000000");
+  expect(portfolioPublicUsdcAtoms(value)).toBe("10000000");
+  expect(portfolioAvailableUsdcAtoms(value)).toBe("12000000");
+  value.planningFundingChainIds = [];
+  expect(portfolioAvailableUsdcAtoms(value)).toBe("2000000");
+});
+
+test("failed capability reads preserve observed cash without guessing enabled sources", () => {
+  const value = fundingSnapshot();
+  value.planningFundingChainIds = null;
+  expect(portfolioUsdcBalance(value)?.totalAtoms).toBe("27000000");
+  expect(portfolioAvailableUsdcAtoms(value)).toBeNull();
+});
+
+test.each([
+  ["0", "9900000"],
+  ["25000000", "34900000"],
+])(
+  "confirmed credit with a suppressed source observation and %s unrelated cash does not count pre-credit money twice",
+  (unrelated, expected) => {
+    const value = fundingSnapshot();
+    value.fundingSources[0] = {
+      ...value.fundingSources[0]!,
+      balanceAtoms: null as unknown as string,
+      observedAtoms: null as unknown as string,
+      availableAtoms: null as unknown as string,
+      complete: false,
+      stale: true,
+      syncPending: true,
+    };
+    value.fundingSources[1] = {
+      ...value.fundingSources[1]!,
+      balanceAtoms: unrelated,
+      observedAtoms: unrelated,
+      availableAtoms: unrelated,
+    };
+    value.fundingSources[2] = {
+      ...value.fundingSources[2]!,
+      balanceAtoms: "0",
+      observedAtoms: "0",
+      availableAtoms: "0",
+    };
+    value.fundingCash = {
+      observedAtoms: unrelated,
+      availableAtoms: null as unknown as string,
+      complete: false,
+      stale: true,
+      syncPending: true,
+    };
+    value.ownedAssets = [
+      asset({
+        chainId: 143,
+        token: "confidential:monad-usdc",
+        balanceAtoms: "9900000",
+        observedAtoms: "9900000",
+        valueUsdcAtoms: "9900000",
+      }),
+    ];
+    expect(portfolioUsdcBalance(value)?.totalAtoms).toBe(expected);
+    expect(portfolioValue(value)).toMatchObject({ totalAtoms: expected, complete: false });
+    expect(portfolioAvailableUsdcAtoms(value)).toBeNull();
+  },
+);
 
 test("deduplicates canonical contracts across aliases and keeps confidential USDC distinct", () => {
   const usd = "0x754704Bc059F8C67012fEd69BC8A327a5aafb603";

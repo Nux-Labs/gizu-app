@@ -14,6 +14,17 @@ use zeroize::Zeroizing;
 const SOURCE_ASSET: &str = "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx";
 const DESTINATION_ASSET: &str = "nep141:hood-0x5fc5360d0400a0fd4f2af552add042d716f1d168.omft.near";
 const DESTINATION_TOKEN: &str = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+const ETHEREUM_ASSET: &str = "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near";
+const ETHEREUM_TOKEN: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+fn destination(
+    profile: u64,
+) -> Result<(&'static str, &'static str, &'static str, &'static str), SignerError> {
+    match profile {
+        1 => Ok((ETHEREUM_ASSET, ETHEREUM_TOKEN, "Ethereum", "USDC")),
+        4663 => Ok((DESTINATION_ASSET, DESTINATION_TOKEN, "Robinhood", "USDG")),
+        _ => invalid(),
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -27,12 +38,14 @@ struct Source {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Proposal {
+    #[serde(default, deserialize_with = "explicit_version")]
+    version: Option<u8>,
     kind: String,
     operation_id: String,
     revision: u64,
     profile_chain_id: u64,
     cycle_index: u32,
-    distribution: EarnDistribution,
+    distribution: Option<EarnDistribution>,
     leg: String,
     split_offset_atoms: String,
     credited_atoms: String,
@@ -42,6 +55,12 @@ struct Proposal {
     minimum_destination_atoms: String,
     source: Source,
     deadline_ms: u64,
+}
+// Omission preserves legacy decoding; an explicitly supplied version must be an integer.
+fn explicit_version<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u8>, D::Error> {
+    u8::deserialize(deserializer).map(Some)
 }
 fn invalid<T>() -> Result<T, SignerError> {
     Err(SignerError::InvalidInput)
@@ -111,7 +130,7 @@ fn no_application_fees(v: &Value) -> Result<(), SignerError> {
     }
     Ok(())
 }
-fn private_route_fees(prepared: &Value) -> Result<String, SignerError> {
+fn private_route_fees(prepared: &Value, profile: u64) -> Result<String, SignerError> {
     let rows = [
         prepared,
         &prepared["quoteResponse"],
@@ -134,8 +153,15 @@ fn private_route_fees(prepared: &Value) -> Result<String, SignerError> {
         .as_u64()
         .filter(|v| *v <= 100)
         .ok_or(SignerError::InvalidInput)? as u32;
-    let review =
-        crate::earn_fees::review(Some(&policy.to_string()), "payoutRobinhood", Some(total))?;
+    let review = crate::earn_fees::review(
+        Some(&policy.to_string()),
+        if profile == 1 {
+            "payoutEthereum"
+        } else {
+            "payoutRobinhood"
+        },
+        Some(total),
+    )?;
     let sorted = |value: &Value| -> Result<Vec<Value>, SignerError> {
         let mut fees = value.as_array().ok_or(SignerError::InvalidInput)?.clone();
         fees.sort_by_key(|fee| fee["recipient"].as_str().unwrap_or_default().to_string());
@@ -207,7 +233,10 @@ impl PrivateEarnPayoutOperation {
         let now = clock()?;
         if p.kind != "privateEarnPayout"
             || p.revision == 0
-            || p.profile_chain_id != 4663
+            || !matches!(
+                (p.version, p.profile_chain_id),
+                (None, 4663) | (Some(2), 1 | 4663)
+            )
             || p.operation_id.is_empty()
             || p.operation_id.len() > 96
             || !p
@@ -219,15 +248,26 @@ impl PrivateEarnPayoutOperation {
         {
             return invalid();
         }
-        let slot = p.distribution.slot(&p.leg)?;
+        let slot = match &p.distribution {
+            Some(plan) => plan.slot(&p.leg)?,
+            None if p.version == Some(2) && p.profile_chain_id == 1 => match p.leg.as_str() {
+                "hold" => 0,
+                "invest" => 1,
+                _ => return invalid(),
+            },
+            None => return invalid(),
+        };
+        // The fixed historical 10/90 policy uses the same checked cumulative arithmetic,
+        // while its recipients retain their original role keys rather than distribution keys.
+        let legacy: EarnDistribution = parse(r#"{"version":1,"weightsBps":[1000,9000]}"#)?;
+        let allocation = p.distribution.as_ref().unwrap_or(&legacy);
         let credit = decimal(&p.credited_atoms)?;
         let debit = decimal(&p.amount_atoms)?;
         if credit.is_zero()
             || decimal(&p.minimum_destination_atoms)?.is_zero()
             || decimal(&p.minimum_destination_atoms)? > debit
             || decimal(&p.source.amount_atoms)? != credit
-            || p.distribution
-                .allocations(credit, decimal(&p.split_offset_atoms)?)?[slot as usize]
+            || allocation.allocations(credit, decimal(&p.split_offset_atoms)?)?[slot as usize]
                 != debit
         {
             return invalid();
@@ -237,12 +277,16 @@ impl PrivateEarnPayoutOperation {
             source_key(&seed, &p.source)?.private_key().verifying_key(),
         ))?;
         let recipient = addr(&address(
-            crate::earn_distribution::earn_investment_key(
-                &seed,
-                p.profile_chain_id,
-                p.cycle_index,
-                Some(slot),
-            )?
+            (if p.distribution.is_some() {
+                crate::earn_distribution::earn_investment_key(
+                    &seed,
+                    p.profile_chain_id,
+                    p.cycle_index,
+                    Some(slot),
+                )?
+            } else {
+                crate::earn_cycle_key(&seed, p.profile_chain_id, p.cycle_index, slot as u8)?
+            })
             .private_key()
             .verifying_key(),
         ))?;
@@ -288,6 +332,8 @@ impl PrivateEarnPayoutOperation {
         let c = addr(&s.proposal.source.address)?;
         let debit = decimal(&s.proposal.amount_atoms)?;
         let balance_time = timestamp(&b, "timestampMs")?;
+        let (destination_asset, destination_token, destination_name, destination_symbol) =
+            destination(s.proposal.profile_chain_id)?;
         if addr(text(&b, "confidentialAddress")?)? != c
             || b["assetId"] != SOURCE_ASSET
             || b["authenticated"] != true
@@ -305,9 +351,13 @@ impl PrivateEarnPayoutOperation {
             || addr(text(&p, "destinationRecipient")?)? != s.recipient
             || p["amountAtoms"] != s.proposal.amount_atoms
             || p["assetId"] != SOURCE_ASSET
-            || p["destinationAssetId"] != DESTINATION_ASSET
-            || p["destinationChainId"] != 4663
-            || addr(text(&p, "destinationToken")?)? != addr(DESTINATION_TOKEN)?
+            || p["destinationAssetId"] != destination_asset
+            || p["destinationChainId"] != s.proposal.profile_chain_id
+            || addr(text(&p, "destinationToken")?)? != addr(destination_token)?
+            || (s.proposal.version == Some(2)
+                && (p["version"] != 2 || p["profileChainId"] != s.proposal.profile_chain_id))
+            || (s.proposal.version.is_none()
+                && (p.get("version").is_some() || p.get("profileChainId").is_some()))
             || observed > now
             || now - observed > 60000
             || expires <= now
@@ -316,7 +366,7 @@ impl PrivateEarnPayoutOperation {
         {
             return invalid();
         }
-        let fee_review = private_route_fees(&p)?;
+        let fee_review = private_route_fees(&p, s.proposal.profile_chain_id)?;
         let request: crate::swap::aurora::QuoteRequest =
             serde_json::from_value(p["quoteRequest"].clone())
                 .map_err(|_| SignerError::InvalidInput)?;
@@ -324,7 +374,7 @@ impl PrivateEarnPayoutOperation {
             c,
             s.recipient,
             SOURCE_ASSET,
-            DESTINATION_ASSET,
+            destination_asset,
             debit,
         );
         if request != expected {
@@ -373,7 +423,7 @@ impl PrivateEarnPayoutOperation {
             return invalid();
         }
         let review = format!(
-            "INVEST EXISTING PRIVATE FUNDS IN EARN\nFunding operation {} · revision {}\nExisting private Monad USDC source {} · {} chain {} cycle {} · selected budget {} atoms\nTarget Robinhood chain 4663 · vault investment wallets in cycle {}\n{}\nExact {} allocation {} atoms · prior source offset {} atoms\nDestination investment wallet {} · USDG {}\nGuaranteed minimum {} atoms; maximum route deduction {} atoms, inside the private input budget.\n{}\nAdvanced confidentiality · exact ERC191 payload {} · local nonce reservation {}\nSigning authorizes this private investment payout; it does not confirm destination receipt or vault deposit. Uncertain submissions stay reserved.",
+            "INVEST EXISTING PRIVATE FUNDS IN EARN\nFunding operation {} · revision {}\nExisting private Monad USDC source {} · {} chain {} cycle {} · selected budget {} atoms\nTarget {} chain {} · vault investment wallets in cycle {}\n{}\nExact {} allocation {} atoms · prior source offset {} atoms\nDestination investment wallet {} · {} {}\nGuaranteed minimum {} atoms; maximum route deduction {} atoms, inside the private input budget.\n{}\nAdvanced confidentiality · exact ERC191 payload {} · local nonce reservation {}\nSigning authorizes this private investment payout; it does not confirm destination receipt or vault deposit. Uncertain submissions stay reserved.",
             s.proposal.operation_id,
             s.proposal.revision,
             s.proposal.source.address,
@@ -381,13 +431,20 @@ impl PrivateEarnPayoutOperation {
             s.proposal.source.profile_chain_id,
             s.proposal.source.cycle_index,
             s.proposal.credited_atoms,
+            destination_name,
+            s.proposal.profile_chain_id,
             s.proposal.cycle_index,
-            s.proposal.distribution.review(),
+            s.proposal
+                .distribution
+                .as_ref()
+                .map(EarnDistribution::review)
+                .unwrap_or_else(|| "Legacy split: hold=floor10%, invest=remainder90%".into()),
             s.proposal.leg,
             s.proposal.amount_atoms,
             s.proposal.split_offset_atoms,
             s.recipient,
-            DESTINATION_TOKEN,
+            destination_symbol,
+            destination_token,
             quote.min_amount_out,
             debit - quote.min_amount_out,
             fee_review,
@@ -497,6 +554,153 @@ mod tests {
     }
     fn operation(p: &Value) -> Arc<PrivateEarnPayoutOperation> {
         PrivateEarnPayoutOperation::new(p.to_string(), vec![0; 32]).unwrap()
+    }
+    fn ethereum_fixture() -> (Value, Value, Value, Value) {
+        let (mut p, mut q, b, j) = fixture("swap", 0, 0);
+        let recipient =
+            crate::derive_earn_distribution_addresses(vec![0; 32], 1, 7, 2).unwrap()[0].clone();
+        let asset = "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near";
+        p["version"] = json!(2);
+        p["profileChainId"] = json!(1);
+        p["expectedRecipient"] = json!(recipient);
+        q["version"] = json!(2);
+        q["profileChainId"] = json!(1);
+        q["destinationChainId"] = json!(1);
+        q["destinationRecipient"] = json!(recipient);
+        q["destinationToken"] = json!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+        q["destinationAssetId"] = json!(asset);
+        for field in ["quoteRequest", "quoteResponse"] {
+            let request = if field == "quoteRequest" {
+                &mut q[field]
+            } else {
+                &mut q[field]["quoteRequest"]
+            };
+            request["recipient"] = json!(recipient);
+            request["destinationAsset"] = json!(asset);
+        }
+        (p, q, b, j)
+    }
+    #[test]
+    fn version_two_ethereum_private_balance_signs_the_saved_distribution_once() {
+        let (p, q, b, j) = ethereum_fixture();
+        let op = operation(&p);
+        let review = op
+            .prepare(q.to_string(), b.to_string(), j.to_string())
+            .unwrap();
+        assert!(review.contains("Target Ethereum chain 1"));
+        assert!(review.contains("USDC 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"));
+        assert!(review.contains("3700 bps"));
+        assert!(review.contains("370001 atoms"));
+        op.approve(op.review_hash().unwrap()).unwrap();
+        let signed: Value = parse(&op.sign(j.to_string()).unwrap()).unwrap();
+        assert_eq!(signed["payload"], q["intent"]["payload"]);
+        assert!(op.sign(j.to_string()).is_err());
+    }
+    #[test]
+    fn ethereum_legacy_hold_and_invest_keep_the_saved_ten_ninety_roles() {
+        for (leg, slot, debit) in [("hold", 0, 100000u64), ("invest", 1, 900001u64)] {
+            let (mut p, mut q, b, mut j) = ethereum_fixture();
+            p.as_object_mut().unwrap().remove("distribution");
+            p["leg"] = json!(leg);
+            p["amountAtoms"] = json!(debit.to_string());
+            p["minimumDestinationAtoms"] = json!((debit - 20000).to_string());
+            let recipient =
+                crate::derive_earn_cycle_addresses(vec![0; 32], 1, 7).unwrap()[slot].clone();
+            p["expectedRecipient"] = json!(recipient);
+            q["operationId"] = json!(format!("private_source_1_{slot}"));
+            q["destinationRecipient"] = json!(recipient);
+            q["amountAtoms"] = json!(debit.to_string());
+            q["minimumDestinationAtoms"] = json!((debit - 20000).to_string());
+            for field in ["quoteRequest", "quoteResponse"] {
+                let request = if field == "quoteRequest" {
+                    &mut q[field]
+                } else {
+                    &mut q[field]["quoteRequest"]
+                };
+                request["recipient"] = json!(recipient);
+                request["amount"] = json!(debit.to_string());
+            }
+            q["quoteResponse"]["quote"]["amountIn"] = json!(debit.to_string());
+            q["quoteResponse"]["quote"]["amountOut"] = json!((debit - 10000).to_string());
+            q["quoteResponse"]["quote"]["minAmountOut"] = json!((debit - 20000).to_string());
+            let mut payload: Value = parse(q["intent"]["payload"].as_str().unwrap()).unwrap();
+            payload["intents"][0]["tokens"] =
+                json!({format!("imt:{}:{SOURCE_ASSET}","ab".repeat(32)):debit.to_string()});
+            q["intent"]["payload"] = json!(payload.to_string());
+            j["reservedAtoms"] = json!(debit.to_string());
+            j["payloadHash"] = json!(format!("{:#x}", keccak256(payload.to_string().as_bytes())));
+            let operation = operation(&p);
+            let review = operation
+                .prepare(q.to_string(), b.to_string(), j.to_string())
+                .unwrap();
+            assert!(review.contains("hold=floor10%, invest=remainder90%"));
+            operation.approve(operation.review_hash().unwrap()).unwrap();
+            assert!(operation.sign(j.to_string()).is_ok());
+        }
+    }
+    #[test]
+    fn ethereum_qualified_fees_cannot_use_robinhood_or_withdrawal_authority() {
+        let (p, mut q, b, j) = ethereum_fixture();
+        let fees = json!([{"recipient":"widget_collect.sputnik-dao.near","fee":4}]);
+        q["providerFeeBps"] = json!(4);
+        q["feePolicy"] = json!({"version":"operator-qualified-ethereum-fixture","route":"payoutEthereum","totalBps":4,"appFees":fees,"referral":null,"integratorFeeBps":0,"applicationFeeAtoms":"0"});
+        q["quoteResponse"]["quoteRequest"]["appFees"] = fees;
+        let review = operation(&p)
+            .prepare(q.to_string(), b.to_string(), j.to_string())
+            .unwrap();
+        assert!(review.contains("total 4 bps"));
+        for route in ["payoutRobinhood", "withdrawal"] {
+            q["feePolicy"]["route"] = json!(route);
+            assert!(
+                operation(&p)
+                    .prepare(q.to_string(), b.to_string(), j.to_string())
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn legacy_private_proposal_rejects_explicit_null_version() {
+        let (mut p, _, _, _) = fixture("swap", 0, 0);
+        p["version"] = Value::Null;
+        assert!(PrivateEarnPayoutOperation::new(p.to_string(), vec![0; 32]).is_err());
+    }
+    #[test]
+    fn ethereum_private_balance_rejects_legacy_and_changed_authority() {
+        let (p, q, b, j) = ethereum_fixture();
+        for mutation in 0..5 {
+            let mut changed = p.clone();
+            match mutation {
+                0 => {
+                    changed.as_object_mut().unwrap().remove("version");
+                }
+                1 => changed["version"] = json!(1),
+                2 => changed["profileChainId"] = json!(143),
+                3 => changed["expectedRecipient"] = p["expectedSigner"].clone(),
+                _ => changed["amountAtoms"] = json!("370002"),
+            }
+            assert!(PrivateEarnPayoutOperation::new(changed.to_string(), vec![0; 32]).is_err());
+        }
+        for mutation in 0..8 {
+            let mut changed = q.clone();
+            match mutation {
+                0 => changed["destinationChainId"] = json!(4663),
+                1 => changed["destinationToken"] = json!(DESTINATION_TOKEN),
+                2 => changed["destinationAssetId"] = json!(DESTINATION_ASSET),
+                3 => changed["destinationRecipient"] = p["expectedSigner"].clone(),
+                4 => changed["amountAtoms"] = json!("370002"),
+                5 => changed["minimumDestinationAtoms"] = json!("349999"),
+                6 => {
+                    changed.as_object_mut().unwrap().remove("version");
+                }
+                _ => changed["profileChainId"] = json!(4663),
+            }
+            assert!(
+                operation(&p)
+                    .prepare(changed.to_string(), b.to_string(), j.to_string())
+                    .is_err(),
+                "mutation {mutation}"
+            );
+        }
     }
     #[test]
     fn qualified_provider_fees_are_bound_to_the_exact_quote_and_review() {

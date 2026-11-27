@@ -124,6 +124,9 @@ internal fun activeDepositDrafts(
       .map { it.getString("depositJourneyId") }
       .toSet()
   return journeys.filter {
-    it.getString("phase") != "invested" && it.getString("journeyId") !in abandoned
+    it.getString("phase") != "invested" &&
+      !(it.optString("kind") == "fundingOnly" &&
+        it.getString("phase") in setOf("paid", "cancelled")) &&
+      it.getString("journeyId") !in abandoned
   }
 }

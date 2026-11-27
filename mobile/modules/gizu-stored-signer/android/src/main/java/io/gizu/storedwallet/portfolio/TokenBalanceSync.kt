@@ -21,6 +21,7 @@ internal class NativePortfolioRpc(endpoint: String, post: (suspend (String) -> S
       "https://rpc.monad.xyz" -> 143L
       "https://rpc.mainnet.chain.robinhood.com" -> 4663L
       "https://mainnet.base.org" -> 8453L
+      "https://arb1.arbitrum.io/rpc" -> 42161L
       "https://ethereum-rpc.publicnode.com" -> 1L
       else -> null
     }
@@ -185,6 +186,18 @@ internal class TokenBalanceSync(
       ((0 until pending.length()).map(pending::getString) +
           (0 until owners.length()).map(owners::getString))
         .distinct()
+    root.put("pending", JSONArray(dirty)).put("invalidated", true)
+    save(root)
+  }
+
+  /** Caller has durably verified this source's private funding credit. */
+  fun invalidateConfirmedFunding(owner: String) {
+    val address = owner.lowercase()
+    require(address.matches(Regex("0x[0-9a-f]{40}")))
+    val root = load() ?: return
+    root.getJSONObject("balances").remove(address)
+    val pending = root.getJSONArray("pending")
+    val dirty = ((0 until pending.length()).map(pending::getString) + address).distinct()
     root.put("pending", JSONArray(dirty)).put("invalidated", true)
     save(root)
   }
@@ -524,7 +537,7 @@ internal class TokenBalanceSync(
      * Rollups whose `finalized` tag trails by many minutes (L1 finality); they are observed at
      * `latest`, pinned by block hash with `requireCanonical`. Shared with [OwnedPortfolio].
      */
-    internal val LATEST_CHAINS = setOf(4663L, 8453L)
+    internal val LATEST_CHAINS = setOf(4663L, 8453L, 42161L)
 
     private fun stageMethod(stage: PortfolioDiagnostics.Stage) =
       when (stage) {

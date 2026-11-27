@@ -5,7 +5,9 @@ import {
   type StoredSignerContract,
   type StoredSignerCapabilities,
   type SwapChainId,
+  type FundingSourceKey,
 } from "@/domain/wallet/storedSigner";
+import { isFundingChain } from "@/domain/wallet/fundingNetworks";
 import { AppState, Platform } from "react-native";
 import { NativeCallQueue } from "./nativeCallQueue";
 
@@ -109,6 +111,9 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
       earnSponsoredExecution: result.earnSponsoredExecution === true,
       earnEthereumLiquidityExecution: result.earnEthereumLiquidityExecution === true,
       earnPrivatePayoutExecution: result.earnPrivatePayoutExecution === true,
+      ...(Platform.OS === "android" && result.earnPrivateFundingVersion === 2
+        ? { earnPrivateFundingVersion: 2 as const }
+        : {}),
       earnPartialWithdrawals: Platform.OS === "android" && result.earnPartialWithdrawals === true,
       earnBalanceDeltaSettlement:
         Platform.OS === "android" && result.earnBalanceDeltaSettlement === true,
@@ -124,6 +129,12 @@ export async function getSignerCapabilities(): Promise<StoredSignerCapabilities>
         typeof native.resumeConfidentialWithdrawal === "function" &&
         typeof native.cancelConfidentialWithdrawal === "function",
       confidentialSaleProceeds: result.confidentialSaleProceeds === true,
+      ...(result.fundingContractVersion === 2 &&
+      Array.isArray(result.fundingChainIds) &&
+      result.fundingChainIds.every(isFundingChain) &&
+      new Set(result.fundingChainIds).size === result.fundingChainIds.length
+        ? { fundingContractVersion: 2 as const, fundingChainIds: [...result.fundingChainIds] }
+        : {}),
     };
   } catch {
     return unavailable;
@@ -399,6 +410,60 @@ export function getStoredSwapSigner(): StoredSwapBridge | null {
     lock: () => {
       authorizationGeneration++;
       cancelNativeOperation(native);
+    },
+  };
+}
+
+export function getStoredEarnFundingParentSigner() {
+  const native = nativeModule();
+  if (
+    !native?.createEarnFundingParent ||
+    !native.listEarnFundingParents ||
+    !native.executeEarnFundingParent ||
+    !native.resumeEarnFundingParent ||
+    !native.reconcileEarnFundingParent ||
+    !native.cancelEarnFundingParent
+  )
+    return null;
+  const create = native.createEarnFundingParent.bind(native),
+    list = native.listEarnFundingParents.bind(native),
+    execute = native.executeEarnFundingParent.bind(native),
+    resume = native.resumeEarnFundingParent.bind(native),
+    reconcile = native.reconcileEarnFundingParent.bind(native),
+    cancel = native.cancelEarnFundingParent.bind(native);
+  async function ready() {
+    await checked(native!, "earnPrivatePayoutExecution");
+    if ((await getSignerCapabilities()).earnPrivateFundingVersion !== 2)
+      throw new WalletUnavailableError();
+  }
+  return {
+    async createEarnFundingParent(request: Parameters<typeof create>[0]) {
+      await ready();
+      return create(request);
+    },
+    async listEarnFundingParents(walletId: string) {
+      await ready();
+      return readNative(() => list(walletId));
+    },
+    async executeEarnFundingParent(request: Parameters<typeof execute>[0]) {
+      await ready();
+      return execute(request);
+    },
+    async resumeEarnFundingParent(request: Parameters<typeof resume>[0]) {
+      await ready();
+      return resume(request);
+    },
+    async reconcileEarnFundingParent(request: Parameters<typeof reconcile>[0]) {
+      await ready();
+      return readNative(() => reconcile(request));
+    },
+    async cancelEarnFundingParent(request: Parameters<typeof cancel>[0]) {
+      await ready();
+      return cancel(request);
+    },
+    lock: () => {
+      authorizationGeneration++;
+      cancelNativeOperation(native!);
     },
   };
 }
@@ -741,6 +806,20 @@ export function getStoredEarnSponsoredSigner() {
           async planPublicFunding(walletId: string, budgetAtoms: string) {
             await checked(native, "earnSponsoredExecution");
             return native.planPublicFunding!(walletId, budgetAtoms);
+          },
+        }
+      : {}),
+    ...(native.prepareEarnSourceQuoteForSource
+      ? {
+          async prepareEarnSourceQuoteForSource(
+            walletId: string,
+            source: FundingSourceKey,
+            amount: string,
+            id: string,
+            revision: number,
+          ) {
+            await checked(native, "earnSponsoredExecution");
+            return native.prepareEarnSourceQuoteForSource!(walletId, source, amount, id, revision);
           },
         }
       : {}),

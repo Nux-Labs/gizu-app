@@ -1,5 +1,6 @@
 import { MainnetWalletProvider } from "@/features/wallet/MainnetWalletProvider";
 import { mainnetPortfolio } from "../../support/mainnetWallet";
+import { depositNetworks } from "@/domain/wallet/depositNetworks";
 import { tokenCatalogService } from "@/services/tokenCatalog";
 import { catalogToken } from "../../support/tokenCatalog";
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react-native";
@@ -679,6 +680,103 @@ test("a swap balance shortfall is shown explicitly and refreshes the shared obse
   ).toBeVisible();
   expect(await screen.findByText("Available: 1 USDC")).toBeVisible();
 });
+
+test.each([
+  { partial: false, enabled: [143, 8453, 42161] as const, available: "27" },
+  { partial: true, enabled: [143, 8453, 42161] as const, available: null },
+  { partial: true, enabled: [143] as const, available: "12" },
+])(
+  "Swap Max respects enabled sources and partial observations ($available)",
+  async ({ partial, enabled, available }) => {
+    const address = status.fundingAddress;
+    const at = Date.now();
+    const snapshot = {
+      ...mainnetPortfolio("wallet", address, "10000000"),
+      fundingSources: depositNetworks.map((network) => ({
+        sourceChainId: network.chainId,
+        token: network.token,
+        accountIndex: 1,
+        owner: address,
+        decimals: 6 as const,
+        balanceAtoms:
+          partial && network.chainId === 8453
+            ? null
+            : network.chainId === 42161
+              ? "5000000"
+              : "10000000",
+        observedAtoms: network.chainId === 42161 ? "5000000" : "10000000",
+        reservedAtoms: "0",
+        availableAtoms:
+          partial && network.chainId === 8453
+            ? null
+            : network.chainId === 42161
+              ? "5000000"
+              : "10000000",
+        checkedAt: at,
+        complete: !(partial && network.chainId === 8453),
+        stale: partial && network.chainId === 8453,
+        syncPending: partial && network.chainId === 8453,
+      })),
+      fundingCash: {
+        observedAtoms: "25000000",
+        availableAtoms: partial ? null : "25000000",
+        complete: !partial,
+        stale: partial,
+        syncPending: partial,
+      },
+      ownedAssets: [
+        {
+          assetId: "private",
+          chainId: 143,
+          token: "confidential:monad-usdc",
+          symbol: "USDC (private)",
+          decimals: 6,
+          balanceAtoms: "2000000",
+          observedAtoms: "2000000",
+          complete: true,
+          stale: false,
+          checkedAt: at,
+          valueUsdcAtoms: "2000000",
+          valuationUnavailable: false,
+        },
+      ],
+    };
+    render(
+      <MainnetWalletProvider
+        session={{
+          kind: "mainnet",
+          walletId: "wallet",
+          address,
+          accountId: address,
+          accountIndex: 1,
+          chainId: 143,
+          method: "Passkey",
+        }}
+        service={{
+          getMainnetPortfolio: jest.fn().mockResolvedValue(snapshot),
+          getFundingChainIds: jest.fn().mockResolvedValue(enabled),
+        }}
+      >
+        <SafeAreaProvider>
+          <NativeSwapScreen />
+        </SafeAreaProvider>
+      </MainnetWalletProvider>,
+    );
+    await screen.findByText("COIN");
+    const maximum = screen.getByRole("button", { name: "Use maximum USDC amount" });
+    if (available === null) {
+      expect(await screen.findByText("Available USDC is not fully updated.")).toBeVisible();
+      expect(maximum).toBeDisabled();
+    } else {
+      expect(await screen.findByText(`Available: ${available} USDC`)).toBeVisible();
+      await waitFor(() => expect(maximum).toBeEnabled());
+      fireEvent.press(maximum);
+      expect(screen.getByLabelText("Amount in USDC")).toHaveDisplayValue(available);
+    }
+    expect(screen.queryByText("Base")).toBeNull();
+    expect(screen.queryByText("Arbitrum")).toBeNull();
+  },
+);
 
 test.each([false, true])(
   "a late initial token response preserves the selected Base chain and newer price (duplicate: %s)",

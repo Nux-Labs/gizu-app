@@ -9,9 +9,12 @@ import io.gizu.storedwallet.WalletRecord
 import io.gizu.storedwallet.WalletStore
 import io.gizu.storedwallet.assertPrivateExecutionAvailable
 import io.gizu.storedwallet.earnWithdrawalIndices
+import io.gizu.storedwallet.fundingNetwork
 import io.gizu.storedwallet.fundingReservations
+import io.gizu.storedwallet.fundingSourceId
 import io.gizu.storedwallet.portfolio.NativeOwnedConfidentialPortfolio
 import io.gizu.storedwallet.portfolio.NativeOwnedPortfolio
+import java.math.BigInteger
 import java.security.SecureRandom
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
@@ -22,6 +25,7 @@ import uniffi.gizu_stored_signer_core.allocateSwapRecipients
 import uniffi.gizu_stored_signer_core.allocateSwapRecipientsN
 import uniffi.gizu_stored_signer_core.chooseBuyLegs
 import uniffi.gizu_stored_signer_core.deriveAccountAddressRange
+import uniffi.gizu_stored_signer_core.fundedPrivateAmount
 
 internal sealed class SwapUi {
   data class Review(val text: String) : SwapUi()
@@ -71,10 +75,7 @@ internal class SwapEngine(
       val phase = JSONObject(previous.publicStatus()).getString("phase")
       val existingBatch =
         existing.optJSONObject("fundingBatch")?.let { SwapFundingBatch.restore(it) }
-      val pendingBatch =
-        existingBatch != null &&
-          !existingBatch.cancelled &&
-          existingBatch.currentIndex + 1 < existingBatch.size
+      val pendingBatch = existingBatch?.pending == true
       if ((phase != "CANCELLED" && phase != "COMPLETE") || pendingBatch) {
         fundingAddress = existing.getString("fundingAddress")
         batch = existing.optJSONObject("fundingBatch")?.let { SwapFundingBatch.restore(it) }
@@ -91,30 +92,52 @@ internal class SwapEngine(
       val budget =
         checkNotNull(amountAtoms) { "Choose an exact source budget before starting Swap." }
       check(budget.matches(Regex("[1-9][0-9]{0,19}")))
-      val allocation = JSONObject(NativeFundingPlanner(saved.context, record).plan(budget, "swap"))
+      val choice = if (RANDOM_LEGS) chooseBuyLegs(budget, randomBytes()) else null
+      val reserved =
+        if (choice != null) allocateSwapRecipientsN(record.roleRegistry, choice.count)
+        else allocateSwapRecipients(record.roleRegistry)
+      store.persistRegistry(record.id, reserved.registry)
+      val selectedPlan =
+        JSONObject()
+          .put("kind", "confidentialPayout")
+          .put("target", target)
+          .put("chainId", chainId)
+          .put("recipientIndices", JSONArray(reserved.indices.map { it.toInt() }))
+      if (choice != null) selectedPlan.put("weights", JSONArray(choice.weights.map { it.toInt() }))
+      // The existing private-funded operation permits only its read-only ownership proof before
+      // review. Stop that operation immediately after its authenticated balance response.
+      val privateAvailable = readApprovedPrivateCapacity(record, selectedPlan)
+      val approvedPrivate = privateAvailable.min(budget.toBigInteger())
+      val remaining = budget.toBigInteger() - approvedPrivate
+      val allocation =
+        if (remaining.signum() > 0)
+          JSONObject(NativeFundingPlanner(saved.context, record).plan(remaining.toString(), "swap"))
+        else
+          JSONObject()
+            .put(
+              "fundingBatchId",
+              "funding_" + java.util.UUID.randomUUID().toString().replace("-", ""),
+            )
+            .put("fundingBatchSize", 0)
+            .put("legs", JSONArray())
       reservations = fundingReservations(saved.context, record)
+      val legs = allocation.getJSONArray("legs")
       try {
-        // The wallet count and shares are drawn once for the whole swap and shared by every
-        // funding child, so a restore or retry never rolls them again.
-        val choice = if (RANDOM_LEGS) chooseBuyLegs(budget, randomBytes()) else null
-        val reserved =
-          if (choice != null) allocateSwapRecipientsN(record.roleRegistry, choice.count)
-          else allocateSwapRecipients(record.roleRegistry)
-        store.persistRegistry(record.id, reserved.registry)
-        reservations = fundingReservations(saved.context, record)
         val children = JSONArray()
-        val legs = allocation.getJSONArray("legs")
         for (index in 0 until legs.length()) {
           val leg = legs.getJSONObject(index)
+          val sourceChain = leg.getInt("sourceChainId")
+          val network = fundingNetwork(sourceChain)
+          check(leg.getString("token").equals(network.token, true))
           val plan =
             JSONObject()
-              .put("kind", kind)
+              .put("kind", "confidentialFunding")
               .put("target", target)
               .put("chainId", chainId)
+              .put("sourceChainId", sourceChain)
               .put("sourceIndex", leg.getInt("sourceIndex"))
               .put("amountAtoms", leg.getString("budgetAtoms"))
-              .put("recipientIndices", JSONArray(reserved.indices.map { it.toInt() }))
-          if (choice != null) plan.put("weights", JSONArray(choice.weights.map { it.toInt() }))
+              .put("recipientIndices", JSONArray())
           val child =
             SwapOperation.start(plan.toString(), record.entropy, gateway, now() + index.toULong())
           try {
@@ -129,10 +152,14 @@ internal class SwapEngine(
                 leg.getString("address"),
                 child.operationId(),
                 leg.getString("budgetAtoms"),
+                sourceChain,
               )
             children.put(
               JSONObject()
                 .put("sourceIndex", leg.getInt("sourceIndex"))
+                .put("sourceChainId", sourceChain)
+                .put("sourceId", fundingSourceId(sourceChain, leg.getString("address")))
+                .put("token", network.token)
                 .put("fundingAddress", leg.getString("address"))
                 .put("operationId", child.operationId())
                 .put("budgetAtoms", leg.getString("budgetAtoms"))
@@ -147,13 +174,30 @@ internal class SwapEngine(
             if (index != 0) child.close()
           }
         }
-        batch = SwapFundingBatch.create(allocation, children)
+        batch =
+          SwapFundingBatch.createPooled(
+            allocation,
+            children,
+            JSONObject()
+              .put("walletId", record.id)
+              .put("generation", record.journalId)
+              .put(
+                "confidentialAccount",
+                deriveAccountAddressRange(record.entropy, 2u, 1u).single(),
+              )
+              .put("privateAsset", "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx")
+              .put("originalBudgetAtoms", budget)
+              .put("approvedExistingPrivateAtoms", approvedPrivate.toString())
+              .put("savedPlan", selectedPlan),
+          )
+        if (children.length() == 0) preparePooledExecution(record)
         persist()
       } catch (error: Exception) {
         operation?.cancel()
         batch?.cancel()
         runCatching { if (operation != null) persist() }
-        checkNotNull(reservations).cancelBatchUnsigned(allocation.getString("fundingBatchId"))
+        if (legs.length() > 0)
+          checkNotNull(reservations).cancelBatchUnsigned(allocation.getString("fundingBatchId"))
         throw error
       }
       return
@@ -172,6 +216,86 @@ internal class SwapEngine(
     persist()
   }
 
+  private fun fundingAuthority(): Boolean =
+    batch?.let { !it.cancelled && (!it.pooled || !it.executing) } == true
+
+  private suspend fun readApprovedPrivateCapacity(
+    record: WalletRecord,
+    plan: JSONObject,
+  ): BigInteger {
+    SwapOperation.start(plan.toString(), record.entropy, gateway, now()).use { probe ->
+      repeat(100) {
+        when (val step = probe.nextStep(now())) {
+          is SwapStep.Request -> {
+            check(NativeRpcTransport.allowed(step.url))
+            check(
+              step.url.endsWith("/tokens") ||
+                step.url.endsWith("/auth-salt") ||
+                step.url.endsWith("/authenticate") ||
+                step.url.endsWith("/balances") ||
+                step.url == checkNotNull(SwapChains.of(plan.getLong("chainId"))).rpc
+            )
+            val response = transport.execute(step.method, step.url, step.body)
+            probe.onResponse(step.id, response.first.toUShort(), response.second, now())
+            if (step.url.endsWith("/balances")) {
+              val status = JSONObject(probe.publicStatus())
+              val state = JSONObject(probe.exportState())
+              val pause = status.optString("pausedCode", "")
+              check(pause.isEmpty() || pause == "null" || pause == "NO_PRIVATE_BALANCE") {
+                "A fresh authenticated private balance is required"
+              }
+              check(
+                state.getJSONObject("step").getString("step") == "payoutEstimate" ||
+                  pause == "NO_PRIVATE_BALANCE"
+              )
+              check(
+                state.getJSONObject("data").getString("sourceAsset") ==
+                  "nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx"
+              )
+              return swapBatchAtoms(state.getJSONObject("data").getString("available"))
+            }
+          }
+          is SwapStep.Wait -> kotlinx.coroutines.delay(step.millis.toLong())
+          else -> error("A fresh authenticated private balance is required before funding")
+        }
+      }
+    }
+    error("Private balance lookup did not finish")
+  }
+
+  private fun preparePooledExecution(record: WalletRecord) {
+    val funding = checkNotNull(batch)
+    check(
+      funding.needsExecution &&
+        record.id == funding.json.getString("walletId") &&
+        record.journalId == funding.json.getString("generation")
+    )
+    val plan = funding.executionPlan()
+    val amount =
+      fundedPrivateAmount(
+        funding.json.getString("approvedExistingPrivateAtoms"),
+        funding.credits().toString(),
+      )
+    check(plan.getString("amountAtoms") == amount)
+    val next = SwapOperation.start(plan.toString(), record.entropy, gateway, now())
+    try {
+      val address = deriveAccountAddressRange(record.entropy, 1u, 1u).single()
+      funding.attachExecution(
+        JSONObject()
+          .put("operationId", next.operationId())
+          .put("fundingAddress", address)
+          .put("state", next.exportState())
+          .put("status", next.publicStatus())
+      )
+      operation?.close()
+      operation = next
+      fundingAddress = address
+    } catch (error: Exception) {
+      next.close()
+      throw error
+    }
+  }
+
   /** Temporary: finish Fusion buys for already allocated recipients that still hold USDG. */
   fun startRecovery(
     record: WalletRecord,
@@ -187,10 +311,7 @@ internal class SwapEngine(
       val phase = JSONObject(previous.publicStatus()).getString("phase")
       val existingBatch =
         existing.optJSONObject("fundingBatch")?.let { SwapFundingBatch.restore(it) }
-      val pendingBatch =
-        existingBatch != null &&
-          !existingBatch.cancelled &&
-          existingBatch.currentIndex + 1 < existingBatch.size
+      val pendingBatch = existingBatch?.pending == true
       if ((phase != "CANCELLED" && phase != "COMPLETE") || pendingBatch) {
         fundingAddress = existing.getString("fundingAddress")
         batch = existing.optJSONObject("fundingBatch")?.let { SwapFundingBatch.restore(it) }
@@ -228,8 +349,7 @@ internal class SwapEngine(
         val phase = JSONObject(previous.publicStatus()).getString("phase")
         val pending = existing.optJSONObject("fundingBatch")?.let { SwapFundingBatch.restore(it) }
         check(
-          (phase == "CANCELLED" || phase == "COMPLETE") &&
-            (pending == null || pending.cancelled || pending.currentIndex + 1 == pending.size)
+          (phase == "CANCELLED" || phase == "COMPLETE") && (pending == null || !pending.pending)
         ) {
           "An existing swap needs attention. Open Swap and resume it before selling holdings."
         }
@@ -295,7 +415,11 @@ internal class SwapEngine(
     while (true) {
       store.load().use { record -> assertExecutionAvailable(record) }
       var op = checkNotNull(operation)
-      if (batch != null && !JSONObject(op.exportState()).isNull("approvedMs")) {
+      if (
+        fundingAuthority() &&
+          !JSONObject(op.exportState()).isNull("approvedMs") &&
+          JSONObject(op.publicStatus()).optString("phase") !in setOf("COMPLETE", "CANCELLED")
+      ) {
         if (!scopeAuthorized()) {
           dropScopeKeys()
           return batchReview(null, onProgress)
@@ -306,7 +430,7 @@ internal class SwapEngine(
       when (val step = op.nextStep(now())) {
         is SwapStep.Review -> {
           persist()
-          if (batch != null) {
+          if (fundingAuthority()) {
             dropScopeKeys()
             return batchReview(step.text, onProgress)
           }
@@ -314,7 +438,7 @@ internal class SwapEngine(
         }
         is SwapStep.Unlock -> {
           persist()
-          if (batch != null) {
+          if (fundingAuthority()) {
             dropScopeKeys()
             return batchReview(null, onProgress)
           }
@@ -323,8 +447,18 @@ internal class SwapEngine(
         is SwapStep.Finished -> {
           persist()
           val funding = batch
-          if (funding != null && !funding.cancelled) {
+          if (funding != null && (!funding.pooled || !funding.executing))
             checkNotNull(reservations).complete(op.operationId())
+          if (funding != null && !funding.cancelled) {
+            if (funding.needsExecution) {
+              approvalScope?.invalidate()
+              approvalScope = null
+              unlockedScopedOperation = null
+              store.load().use { record -> preparePooledExecution(record) }
+              persist()
+              onProgress(view())
+              continue
+            }
             if (funding.advanceIfComplete()) {
               op.close()
               operation = SwapOperation.restore(funding.current.getString("state"), gateway)
@@ -366,7 +500,7 @@ internal class SwapEngine(
           try {
             // A response may itself sign a payout or order. Clear the native key first
             // if this batch's in-memory authority elapsed while HTTP was pending.
-            if (batch != null && approvalScope != null && !scopeAuthorized()) dropScopeKeys()
+            if (fundingAuthority() && approvalScope != null && !scopeAuthorized()) dropScopeKeys()
             checkNotNull(operation).onResponse(step.id, status.toUShort(), body, now())
           } catch (error: CancellationException) {
             throw error
@@ -381,7 +515,7 @@ internal class SwapEngine(
   }
 
   fun reviewDigest(text: String): String {
-    if (batch != null) {
+    if (fundingAuthority()) {
       check(text == displayedText)
       return checkNotNull(displayedScope).digest.removePrefix("0x")
     }
@@ -391,7 +525,7 @@ internal class SwapEngine(
   }
 
   val hasFundingBatch: Boolean
-    get() = batch != null
+    get() = fundingAuthority()
 
   private fun children(): List<JSONObject> =
     checkNotNull(batch).json.getJSONArray("children").let { rows ->
@@ -552,8 +686,17 @@ internal class SwapEngine(
       )
       if (funding.currentIndex > 0)
         append(
-          "${funding.currentIndex} source(s) already completed; their purchases remain saved.\n"
+          "${funding.currentIndex} source(s) already completed; their confirmed private credits remain saved.\n"
         )
+      if (funding.pooled) {
+        append(
+          "Approved existing private USDC: ${funding.json.getString("approvedExistingPrivateAtoms")} atoms.\n"
+        )
+        append("Saved downstream distribution: ${funding.json.getJSONObject("savedPlan")}\n")
+        append(
+          "All source credits remain private until every source is confirmed; one private-funded swap then receives a separate native review.\n"
+        )
+      }
       for (index in funding.currentIndex until funding.size) {
         val child = all[index]
         val state = JSONObject(child.getString("state"))
@@ -603,7 +746,7 @@ internal class SwapEngine(
 
   /** The caller has just completed the passkey challenge bound to the entire displayed text. */
   fun authorizeReviewed(record: WalletRecord, text: String) {
-    if (batch == null) {
+    if (!fundingAuthority()) {
       unlock(record)
       approve()
       return
@@ -624,6 +767,7 @@ internal class SwapEngine(
           }
         check(
           leg.getString("address").equals(child.getString("fundingAddress"), true) &&
+            leg.optInt("sourceChainId", 143) == child.optInt("sourceChainId", 143) &&
             leg.getString("budgetAtoms") == child.getString("budgetAtoms")
         )
         checkNotNull(reservations).assertActive(child.getString("operationId"))
@@ -655,19 +799,22 @@ internal class SwapEngine(
 
   fun approve() {
     store.load().use { record -> assertExecutionAvailable(record) }
-    batch?.let { funding ->
-      val ledger = checkNotNull(reservations)
-      val rows = ledger.batch(funding.id).getJSONArray("legs")
-      val leg =
-        (0 until rows.length()).map(rows::getJSONObject).single {
-          it.getString("address").equals(funding.current.getString("fundingAddress"), true)
-        }
-      check(
-        leg.optString("operationId") == checkNotNull(operation).operationId() &&
-          leg.getString("budgetAtoms") == funding.current.getString("budgetAtoms")
-      )
-      ledger.assertActive(checkNotNull(operation).operationId())
-    }
+    batch
+      ?.takeIf { !it.pooled || !it.executing }
+      ?.takeIf { !it.cancelled }
+      ?.let { funding ->
+        val ledger = checkNotNull(reservations)
+        val rows = ledger.batch(funding.id).getJSONArray("legs")
+        val leg =
+          (0 until rows.length()).map(rows::getJSONObject).single {
+            it.optString("operationId") == checkNotNull(operation).operationId()
+          }
+        check(
+          leg.optString("operationId") == checkNotNull(operation).operationId() &&
+            leg.getString("budgetAtoms") == funding.current.getString("budgetAtoms")
+        )
+        ledger.assertActive(checkNotNull(operation).operationId())
+      }
     checkNotNull(operation).approve(now())
     persist()
   }
@@ -690,9 +837,23 @@ internal class SwapEngine(
     approvalScope = null
     displayedScope = null
     operation?.cancel()
+    batch
+      ?.takeIf { it.pooled }
+      ?.let { funding ->
+        for (index in 0 until funding.fundingSize) {
+          if (index == funding.currentIndex) continue
+          val child = funding.json.getJSONArray("children").getJSONObject(index)
+          SwapOperation.restore(child.getString("state"), gateway).use { future ->
+            future.cancel()
+            child.put("state", future.exportState()).put("status", future.publicStatus())
+          }
+        }
+      }
     batch?.cancel()
     persist()
-    batch?.let { checkNotNull(reservations).cancelBatchUnsigned(it.id) }
+    batch
+      ?.takeIf { it.fundingSize > 0 }
+      ?.let { checkNotNull(reservations).cancelBatchUnsigned(it.id) }
   }
 
   fun view(): Map<String, Any?> {
@@ -707,6 +868,9 @@ internal class SwapEngine(
       "targetDecimals" to status.optInt("targetDecimals"),
       "sourceAtoms" to status.optString("sourceAtoms"),
       "creditedAtoms" to status.optString("creditedAtoms"),
+      "budgetAtoms" to status.optString("budgetAtoms"),
+      "fundedPrivateAtoms" to status.optString("fundedPrivateAtoms"),
+      "approvedExistingPrivateAtoms" to status.optString("approvedExistingPrivateAtoms"),
       "payoutsSubmitted" to status.optInt("payoutsSubmitted"),
       "ordersComplete" to status.optInt("ordersComplete"),
       "receivedTargetAtoms" to status.optString("receivedTargetAtoms"),
@@ -747,7 +911,7 @@ internal class SwapEngine(
     val current = JSONObject(status)
     val sold = current.optString("soldAtoms", "0")
     val credit = current.optString("privateCreditedAtoms", "0")
-    val progress = "$sold:$credit"
+    val progress = "${op.operationId()}:$sold:$credit"
     if (
       current.optString("completionTarget") == "confidential" &&
         (sold != "0" || credit != "0") &&
@@ -757,19 +921,31 @@ internal class SwapEngine(
       // credit, so an interrupted refresh cannot retain both as fresh value.
       store.load().use { record ->
         val plan = JSONObject(state).getJSONObject("plan")
-        NativeOwnedPortfolio(saved.context)
-          .invalidateTokens(
-            record,
-            plan.optLong("chainId", SwapChains.ROBINHOOD.chainId),
-            setOf(plan.getString("target")),
-          )
+        if (plan.optString("kind") == "confidentialFunding") {
+          val child = batch?.current
+          if (child?.optBoolean("originObservationInvalidated") != true) {
+            MainnetPortfolio(saved.context)
+              .invalidateConfirmedFunding(
+                record,
+                plan.optInt("sourceChainId", 143),
+                JSONObject(state).getString("source"),
+              )
+            child?.put("originObservationInvalidated", true)
+          }
+        } else
+          NativeOwnedPortfolio(saved.context)
+            .invalidateTokens(
+              record,
+              plan.optLong("chainId", SwapChains.ROBINHOOD.chainId),
+              setOf(plan.getString("target")),
+            )
       }
       lastInvalidatedPublicSaleProgress = progress
     }
     saved.save(batch?.id ?: op.operationId(), state, checkNotNull(fundingAddress), batch?.json)
     // Signatures are durably saved before the shared source reservation becomes signed.
     if (
-      batch != null &&
+      fundingAuthority() &&
         JSONObject(status).getString("phase") != "COMPLETE" &&
         !JSONObject(state).getJSONObject("data").isNull("signedOperation")
     )
@@ -778,13 +954,15 @@ internal class SwapEngine(
     if (
       current.optString("completionTarget") == "confidential" &&
         current.optString("privateCreditedAtoms", "0") != "0" &&
-        current.optString("privateCreditedAtoms") != lastInvalidatedPrivateCredit
+        "${op.operationId()}:${current.optString("privateCreditedAtoms")}" !=
+          lastInvalidatedPrivateCredit
     ) {
       store.load().use { record ->
         val confidential = JSONObject(state).getString("confidential")
         NativeOwnedConfidentialPortfolio(saved.context)
           .invalidateSources(record, setOf(confidential))
-        lastInvalidatedPrivateCredit = current.optString("privateCreditedAtoms")
+        lastInvalidatedPrivateCredit =
+          "${op.operationId()}:${current.optString("privateCreditedAtoms")}"
       }
     }
     diagnostic("persisted")
@@ -879,9 +1057,11 @@ private constructor(
         val p = state.getJSONObject("plan")
         val data = state.getJSONObject("data")
         check(
-          p.getString("kind") == "confidentialSwap" &&
+          p.getString("kind") in setOf("confidentialSwap", "confidentialFunding") &&
             state.getString("id") == child.getString("operationId") &&
-            p.getInt("sourceIndex") == child.getInt("sourceIndex")
+            p.getInt("sourceIndex") == child.getInt("sourceIndex") &&
+            (p.getString("kind") != "confidentialFunding" ||
+              p.getInt("sourceChainId") == child.getInt("sourceChainId"))
         )
         check(
           state.getString("source").equals(child.getString("fundingAddress"), true) &&
@@ -892,6 +1072,7 @@ private constructor(
           swapBatchCanonical(
             JSONObject()
               .put("target", p.get("target"))
+              .put("chainId", p.optLong("chainId", 4663))
               .put("recipientIndices", p.getJSONArray("recipientIndices"))
               .put("recipients", state.getJSONArray("recipients"))
               .put("confidential", state.getString("confidential"))

@@ -18,7 +18,7 @@ import { ActiveSwapCard, LastSwapButton, LastSwapSummary, isFinished } from "./S
 import { Screen } from "@/components/templates/Screen";
 import { formatSwapAmount } from "@/domain/swap";
 import { groupDigits } from "@/domain/wallet/amounts";
-import { portfolioPublicUsdcAtoms } from "@/domain/wallet/portfolioValue";
+import { portfolioAvailableUsdcAtoms } from "@/domain/wallet/portfolioValue";
 import colors from "@/theme/colors.json";
 import { useNativeSwap } from "./useNativeSwap";
 
@@ -38,7 +38,8 @@ export function NativeSwapScreen({
   }
   const [showLast, setShowLast] = useState(false);
   const wallet = useOptionalMainnetWallet();
-  const publicAtoms = wallet?.snapshot ? portfolioPublicUsdcAtoms(wallet.snapshot) : null;
+  const publicAtoms =
+    wallet?.snapshot && !wallet.error ? portfolioAvailableUsdcAtoms(wallet.snapshot) : null;
   const maxAmount = publicAtoms !== null ? formatSwapAmount(BigInt(publicAtoms)) : null;
   const selected = swap.tokens.find((token) => token.address === swap.target);
   const active =
@@ -109,7 +110,9 @@ export function NativeSwapScreen({
                     ? undefined
                     : publicAtoms !== null
                       ? `Available: ${groupDigits(formatSwapAmount(BigInt(publicAtoms)))} USDC`
-                      : "Checking available USDC…"
+                      : wallet.loading
+                        ? "Checking available USDC…"
+                        : "Available USDC is not fully updated."
                 }
                 action={{
                   label: "Max",

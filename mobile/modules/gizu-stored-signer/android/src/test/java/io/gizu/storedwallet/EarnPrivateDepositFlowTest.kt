@@ -11,15 +11,128 @@ import uniffi.gizu_stored_signer_core.deriveAccountAddressRange
 import uniffi.gizu_stored_signer_core.deriveEarnCycleConfidentialAddress
 
 class EarnPrivateDepositFlowTest {
+  @Test
+  fun twoNetworkCreditsResumeIntoOneExistingPrivatePayoutPerRecipient() = runBlocking {
+    DistributionDepositFixtures.record().use { legacy ->
+      val cycles =
+        JSONArray(legacy.earnCycles).also { it.getJSONObject(0).put("privateAccount", "shared") }
+      WalletRecord(
+          legacy.id,
+          legacy.credential,
+          legacy.entropy.copyOf(),
+          true,
+          legacy.journalId,
+          legacy.roleRegistry,
+          4663,
+          false,
+          0,
+          cycles.toString(),
+        )
+        .use { record ->
+          val review = review(record, amount = "1960000")
+          val original = DistributionDepositFixtures.review(record, listOf("990000", "990000"))
+          val publicRows = original.getJSONArray("fundingRows").objects()
+          val owner = publicAccountAddress(record, 1)
+          val minimums = JSONObject()
+          publicRows.forEachIndexed { index, row ->
+            val chain = if (index == 0) 143 else 8453
+            val id = "fund_$chain"
+            row.put("operationId", id)
+            row
+              .getJSONObject("proposal")
+              .put("operationId", id)
+              .put("chainId", chain)
+              .put("sourceAccountIndex", 1)
+              .put("expectedFrom", owner)
+              .put("refundOwner", owner)
+              .put("token", fundingNetwork(chain).token)
+            row.getJSONObject("unsignedUserOperation").put("sender", owner)
+            original
+              .getJSONObject("reservation")
+              .getJSONArray("legs")
+              .getJSONObject(index)
+              .put("sourceIndex", 1)
+              .put("sourceChainId", chain)
+              .put("token", fundingNetwork(chain).token)
+              .put("address", owner)
+              .put("operationId", id)
+            minimums.put(id, "980000")
+          }
+          review
+            .put("version", 2)
+            .put("combinedSourceId", "source0")
+            .put("approvedExistingPrivateAtoms", "0")
+            .put("fundedBudgetMinimumAtoms", "1960000")
+            .put("sourceBudgetAtoms", "2020000")
+            .put("publicFundingRows", JSONArray(publicRows))
+            .put("publicMinimumCredits", minimums)
+            .put("reservation", original.getJSONObject("reservation"))
+          val journal = testDepositJournal()
+          val id = journal.loadOrCreate(record, 4663, null).getString("journeyId")
+          review.put("journeyId", id)
+          journal.saveReview(id, 1, review)
+          val engines =
+            Engines(record, review) {
+                val parent = journal.get(id)
+                depositFundedPrivateReview(
+                  parent.getJSONObject("review"),
+                  parent.optJSONObject("privateHandoff"),
+                )
+              }
+              .apply { pendingCredits += "fund_8453" }
+          val grant =
+            EarnDepositApproval.fromReview(record, review).apply { approveAfterPasskey(1000) }
+          val coordinator = EarnDepositCoordinator(journal, engines)
+          coordinator.confirmed(id, 2, grant)
+          assertEquals("settlingCredit", journal.get(id).getString("phase"))
+          assertEquals(listOf("fund_143", "fund_8453"), engines.registeredFunding)
+          assertEquals(
+            0,
+            engines.rows.values.count {
+              it.getJSONObject("proposal").getString("kind") == "privateEarnPayout"
+            },
+          )
+          coordinator.cancel(id, journal.get(id).getInt("revision"))
+          engines.pendingCredits.clear()
+          val restarted = EarnDepositCoordinator(journal, engines)
+          restarted.reconcile(id)
+          assertEquals(
+            "1980000",
+            journal.get(id).getJSONObject("privateHandoff").getString("source0"),
+          )
+          val remaining =
+            EarnDepositApproval.fromRemainingReview(record, review, 1000).apply {
+              approveAfterPasskey(1000)
+            }
+          restarted.resume(id, journal.get(id).getInt("revision"), remaining)
+          assertEquals("invested", journal.get(id).getString("phase"))
+          val payouts =
+            engines.rows.values.filter {
+              it.getJSONObject("proposal").getString("kind") == "privateEarnPayout"
+            }
+          assertEquals(2, payouts.size)
+          assertEquals(
+            "1980000",
+            payouts
+              .sumOf { it.getJSONObject("proposal").getString("amountAtoms").toLong() }
+              .toString(),
+          )
+          assertEquals(2, engines.executed.count { it.startsWith("funding:") })
+          assertEquals(listOf(0, 1), engines.depositedSlots)
+        }
+    }
+  }
+
   private fun review(
     record: WalletRecord,
     mixed: Boolean = false,
     earnSource: Boolean = false,
+    amount: String = "990000",
   ): JSONObject {
     val review =
       DistributionDepositFixtures.review(
         record,
-        if (mixed) listOf("990000", "990000") else listOf("990000"),
+        if (mixed) listOf(amount, amount) else listOf(amount),
       )
     val source = review.getJSONArray("sources").getJSONObject(0)
     val descriptor =
@@ -32,12 +145,12 @@ class EarnPrivateDepositFlowTest {
           if (earnSource) deriveEarnCycleConfidentialAddress(record.entropy, 1uL, 2u)
           else deriveAccountAddressRange(record.entropy, 2u, 1u).single(),
         )
-        .put("amountAtoms", "990000")
+        .put("amountAtoms", amount)
     source
       .put("kind", "private")
       .put("accountIndex", -1)
       .put("address", descriptor.getString("address"))
-      .put("budgetAtoms", "990000")
+      .put("budgetAtoms", amount)
       .put("maximumFeeAtoms", "0")
       .put("retainedAtoms", "0")
     val privateRow =
@@ -56,8 +169,8 @@ class EarnPrivateDepositFlowTest {
             .put("sourceAccountIndex", -1)
             .put("token", MONAD_EARN_USDC)
             .put("confidentialAccount", cycleConfidential(record))
-            .put("amountAtoms", "990000")
-            .put("budgetAtoms", "990000")
+            .put("amountAtoms", amount)
+            .put("budgetAtoms", amount)
             .put("maximumTokenFeeAtoms", "0")
             .put("source", descriptor),
         )
@@ -65,7 +178,11 @@ class EarnPrivateDepositFlowTest {
     publicRows.forEach { it.getJSONObject("proposal").put("fundingBatchSize", publicRows.size) }
     review
       .put("fundingRows", JSONArray(listOf(privateRow) + publicRows))
-      .put("sourceBudgetAtoms", if (mixed) "2000000" else "990000")
+      .put(
+        "sourceBudgetAtoms",
+        if (mixed) (amount.toBigInteger() * 2.toBigInteger() + 20000.toBigInteger()).toString()
+        else amount,
+      )
     review
       .getJSONObject("reservation")
       .put(
@@ -73,6 +190,7 @@ class EarnPrivateDepositFlowTest {
         JSONArray(review.getJSONObject("reservation").getJSONArray("legs").objects().drop(1)),
       )
     if (!mixed) review.getJSONObject("reservation").put("id", "private_batch1")
+    review.put("confidentialAccount", cycleConfidential(record))
     return review
   }
 
@@ -347,9 +465,13 @@ class EarnPrivateDepositFlowTest {
     }
   }
 
-  private inner class Engines(val record: WalletRecord, val review: JSONObject) :
-    EarnDepositEngines {
+  private inner class Engines(
+    val record: WalletRecord,
+    val review: JSONObject,
+    val currentReview: () -> JSONObject = { review },
+  ) : EarnDepositEngines {
     var prepareUnavailable = false
+    val pendingCredits = mutableSetOf<String>()
     val rows = linkedMapOf<String, JSONObject>()
     val registeredFunding = mutableListOf<String>()
     val creditReads = mutableListOf<String>()
@@ -365,7 +487,9 @@ class EarnPrivateDepositFlowTest {
 
     override suspend fun preparePayout(sourceId: String, leg: String): JSONObject {
       if (prepareUnavailable) throw RpcFailure(RpcFailureCode.HTTP)
-      return payout(record, review, sourceId, leg).also { rows[it.getString("operationId")] = it }
+      return payout(record, currentReview(), sourceId, leg).also {
+        rows[it.getString("operationId")] = it
+      }
     }
 
     override suspend fun prepareDeposit(
@@ -410,6 +534,7 @@ class EarnPrivateDepositFlowTest {
 
     override fun credit(row: JSONObject): String? {
       creditReads += row.getString("operationId")
+      if (row.getString("operationId") in pendingCredits) return null
       return row.getJSONObject("proposal").getString("amountAtoms")
     }
 

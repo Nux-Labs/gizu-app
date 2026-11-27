@@ -1,5 +1,26 @@
 # Swap persistence and recovery boundaries
 
+## Version 2 funding parents (2026-11-26)
+
+Both native hosts preserve the existing encrypted swap envelope/AAD and add a
+versioned funding batch inside it. A parent binds wallet generation, canonical
+private owner/asset, original gross budget, approved existing private amount,
+ordered source identities and the once-selected target/recipients/weights. Each
+fund-only child retains its full Rust state, original baseline, quote, signed
+bytes and exact confirmed credit. One separate execution state follows the
+persisted credit barrier; funding completion alone is not swap completion.
+
+Resume replays completed native credit evidence without a new balance attribution.
+The final private amount is checked with the shared integer helper and excludes
+unapproved private funds. Each transition is persisted before another source or
+downstream signature. Every Wait is persisted, including the baseline-before-sign
+barrier. Existing contract-1 hashes and single-state journals remain readable.
+
+Cancellation releases future unsigned work. Signed unknown work retains its
+reservation and recovery path; confirmed credits stay private. External Earn and
+cashout guards inspect the parent and execution, so a completed funding child
+cannot release an unfinished parent's private budget.
+
 **Complexity:** 3. **Status:** implemented reference. **Source review:** 2026-11-14.
 Companion to [Swap architecture](SWAP_ARCHITECTURE.md). Limits below describe the
 inspected files, not a new cross-platform storage guarantee.
@@ -13,7 +34,7 @@ inspected files, not a new cross-platform storage guarantee.
 | Core machine                                 | Rust, exported into native encrypted storage                          | Plan, step, request IDs, quotes, signed payloads, progress and deadlines needed to continue |
 | Account allocation registry                  | Native wallet record with shared allocation rules                     | Persist before using recipient indices; do not reuse an abandoned allocation by guessing    |
 | Active swap envelope                         | Platform store, scoped to wallet and journal generation               | Exact saved execution evidence; not a general public history                                |
-| Android funding batch/reservations           | Android native batch and reservation stores                           | Tracks source children, committed work and reserved balances across Swap/Earn               |
+| Native funding batch/reservations            | Android/iOS native batch and reservation stores                       | Tracks source children, committed work and reserved balances across Swap/Earn               |
 | Tracked tokens and public summaries          | Separate platform portfolio store                                     | Supports holdings discovery and completed/cancelled history after active-state replacement  |
 | Provider/RPC state                           | External services and chains                                          | Needed to resolve uncertain submission and verify actual delivery                           |
 | Wallet backup                                | Separate native backup system                                         | Wallet recovery is not restoration of an installation's live swap journal                   |
@@ -24,12 +45,12 @@ Both active stores use `gizu-swap-<journalId>.enc` and authenticated context bin
 `gizu-swap:v1:<walletId>:<journalId>`. They require the existing local encryption key.
 Missing keys or invalid envelopes are errors, not an instruction to create a new wallet.
 
-| Detail                  | Android                                                                                        | iOS                                                              |
-| ----------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Envelope                | Version, wallet/operation IDs, funding address, core state, history and optional funding batch | Version, wallet/operation IDs, funding address and core state    |
-| Core state string bound | 67,108,864 UTF-16 code units (`String.length`)                                                 | 67,108,864 UTF-8 bytes                                           |
-| File read/size bound    | 268,435,456 bytes                                                                              | 268,435,456 bytes; save checks clear envelope size plus 32 bytes |
-| Extra orchestration     | Child source operations, reservations and combined review scope                                | Single active core operation in inspected wrapper                |
+| Detail                  | Android                                                                                        | iOS                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Envelope                | Version, wallet/operation IDs, funding address, core state, history and optional funding batch | Version, wallet/operation IDs, funding address and core state        |
+| Core state string bound | 67,108,864 UTF-16 code units (`String.length`)                                                 | 67,108,864 UTF-8 bytes                                               |
+| File read/size bound    | 268,435,456 bytes                                                                              | 268,435,456 bytes; save checks clear envelope size plus 32 bytes     |
+| Extra orchestration     | Child source operations, reservations and combined review scope                                | Versioned source children, reservations and one downstream execution |
 
 See [Android store](../../mobile/modules/gizu-stored-signer/android/src/main/java/io/gizu/storedwallet/swap/SwapStore.kt)
 and [iOS store](../../mobile/modules/gizu-stored-signer/ios/Swap/SwapStore.swift).

@@ -1,5 +1,27 @@
 # Native Earn authorization and platform integration
 
+## Funding contract 2 (2026-11-26)
+
+Source-chain identity is separate from the Earn destination profile. Native
+Account 1 signing accepts only pinned six-decimal USDC on 143, 8453 and 42161;
+Base and Arbitrum cannot select another account index or borrow Monad's token,
+RPC, nonce context or signature domain. Existing Monad return accounts retain
+their released eligibility. First-use delegation and sponsored UserOperations
+continue through the existing native authority and durable signing journals.
+
+A shared-account deposit stores its gross budget, source rows, bounds and saved
+recipient distribution before signing. Completed Earn sources keep their existing
+sealed credit envelopes. The private handoff is persisted before payout signing,
+and refreshed authentication preserves the original baseline and settlement
+identity. `/history` is not used: an indistinguishable or excessive private inflow
+pauses the operation instead of being assigned as its credit.
+
+Contract-1 journals, signed bytes, legacy confidential owners and encryption AAD
+remain readable. Contract-2 recovery reconciles each saved source on its original
+network and never reallocates signed work to a cheaper source. New parent payout
+consumption is bound to one durable child per recipient. Native grants remain
+memory-only; restoring a journal does not restore spending approval.
+
 **Complexity: 2 — Technical.** [Signer overview](NATIVE_SIGNER.md).
 
 Reviewed against source on 2026-11-14. This is not a new device, provider or

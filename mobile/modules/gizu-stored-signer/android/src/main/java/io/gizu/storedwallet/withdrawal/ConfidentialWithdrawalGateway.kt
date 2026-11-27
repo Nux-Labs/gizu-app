@@ -63,9 +63,13 @@ internal class NativeCashoutGateway(
     sources.map { auth(it) }
   },
   private val now: () -> Long = System::currentTimeMillis,
+  private val profileChainId: Int = 4663,
 ) : CashoutGateway {
   init {
     check(route in setOf("cashout", "private-funding"))
+    check(
+      profileChainId in setOf(1, 4663) && (route == "private-funding" || profileChainId == 4663)
+    )
   }
 
   override val groupedReceipts: Boolean
@@ -262,7 +266,11 @@ internal class NativeCashoutGateway(
           .put("operationId", operationId)
           .put("signedData", auth(source))
           .put("recipient", recipient)
-          .put("amountAtoms", amount),
+          .put("amountAtoms", amount)
+          .also {
+            if (route == "private-funding" && profileChainId == 1)
+              it.put("version", 2).put("profileChainId", 1)
+          },
       )
       .also {
         check(it.toString().toByteArray().size <= 262144)

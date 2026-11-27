@@ -30,6 +30,12 @@ internal func assertCashoutCanStart(store: WalletStorage, record: WalletRecord) 
   try require(record.verified && !record.earnRecoveryRequired)
   try require(try EarnVaultJournal(store: store, record: record).all().allSatisfy { !$0.blocked })
   if let saved = try StoredSwapFile(store: store, record: record).load() {
+    if saved["version"] as? Int == 2 {
+      guard let batch = saved["batch"] as? [String: Any],
+        let terminal = batch["terminal"] as? String
+      else { throw WalletFailure.invalid }
+      try require(["COMPLETE", "CANCELLED"].contains(terminal))
+    }
     try assertCashoutSwapFinished(CashoutJSON.object(CashoutJSON.string(saved, "state")))
   }
 }

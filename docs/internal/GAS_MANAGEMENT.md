@@ -1,5 +1,23 @@
 # Gas management
 
+## Source networks and total budgets (2026-11-26)
+
+The existing Pimlico planner, ERC-20 paymaster validation and allowance
+stabilization are parameterized for Monad, Base and Arbitrum. Each source uses
+its pinned native USDC, RPC, authorization domain and provider estimates; rollup
+fees are not replaced with a Monad gas constant. Backend signing remains disabled.
+
+The amount entered is a gross budget. Source gas caps, routing costs and existing
+execution reserves fit inside it; the remaining principal is credited privately
+before the downstream action. Quotes and final preparation must still fit the
+reviewed caps. More sources can require more delegation/UserOperation signatures,
+but do not multiply downstream investments or reroll saved recipients.
+
+Public RPC/token support and executable Aurora quotes are recorded in the
+[feasibility evidence](funding-expansion-public-checks.json).
+Actual charged gas, rollup overhead, refunds and interrupted funded recovery
+remain provider/device qualification before general enablement.
+
 Gas preparation must describe the operation that will actually be signed. A
 business-call simulation, a provider token quote and a final UserOperation are
 different evidence. Signing authority remains native and binds the user's

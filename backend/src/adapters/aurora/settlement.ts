@@ -7,6 +7,8 @@ import {
 } from "./confidential-balance.ts";
 import {
   monadUsdcAssetId,
+  baseUsdcAssetId,
+  arbitrumUsdcAssetId,
   ethereumUsdcAssetId,
   robinhoodUsdgAssetId,
 } from "./assets.ts";
@@ -541,6 +543,8 @@ export class ConfidentialSettlement {
         !/^0x[0-9a-f]{64}$/i.test(expected.transactionHash) ||
         !new Set([
           monadUsdcAssetId,
+          baseUsdcAssetId,
+          arbitrumUsdcAssetId,
           ethereumUsdcAssetId,
           robinhoodUsdgAssetId,
           "nep141:eth.omft.near",

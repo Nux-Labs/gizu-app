@@ -34,6 +34,7 @@ class OwnedPortfolioTest {
     var failure = false
     var stalled = false
     var latestOnly = false
+    var assetDecimals = 18
     var head = 100
 
     private fun hash(number: Int) =
@@ -82,7 +83,7 @@ class OwnedPortfolioTest {
             }
             "0x313ce567" -> {
               decimals++
-              word(BigInteger.valueOf(18))
+              word(BigInteger.valueOf(assetDecimals.toLong()))
             }
             "0x38d52e0f" ->
               word(BigInteger((if (chain == 1L) ETH_EARN_USDC else HOOD_EARN_USDG).drop(2), 16))
@@ -169,6 +170,52 @@ class OwnedPortfolioTest {
         it["token"] == HOOD_EARN_USDG.lowercase()
       }
     assertEquals((before / BigInteger.TWO).toString(), updated["observedAtoms"])
+  }
+
+  @Test
+  fun confirmedFundingSuppressesOnlyItsOwnedUsdcCopyAndRetainsRecipientCash() = runBlocking {
+    val f = Fixture()
+    val record = f.record(count = 0, chain = 0, recipients = 5)
+    val base =
+      Rpc(8453).apply {
+        held = BigInteger.valueOf(10_000_000)
+        assetDecimals = 6
+        latestOnly = true
+      }
+    val token = fundingNetwork(8453).token
+    fun observer() =
+      NativeOwnedPortfolio(
+        file = { f.files.getOrPut(it) { File() } },
+        key = { f.key },
+        rpc = { if (it == 8453L) base else f.rpcs.getValue(it) },
+        deriveCycle = { _, _, _ -> emptyList() },
+        derivePublic = { _, index -> address(index.toLong() + 9_000_000) },
+        targets = { emptyList() },
+        clock = { f.now },
+        swapAssets = { listOf(8453L to token) },
+      )
+    val first = rows(observer().read(record), "ownedAssets").single { it["token"] == token }
+    assertEquals("40000000", first["observedAtoms"])
+    assertEquals("10000000", first["fundingIncludedAtoms"])
+    val cached =
+      rows(observer().read(record, cachedOnly = true), "ownedAssets").single {
+        it["token"] == token
+      }
+    assertEquals("10000000", cached["fundingIncludedAtoms"])
+    observer().invalidateConfirmedFunding(record, 8453, address(9_000_001))
+    base.failure = true
+    val after =
+      rows(observer().read(record, cachedOnly = true), "ownedAssets").single {
+        it["token"] == token
+      }
+    assertEquals("30000000", after["observedAtoms"])
+    assertEquals("0", after["fundingIncludedAtoms"])
+    assertNull(after["balanceAtoms"])
+    val failed =
+      rows(observer().read(record, forceRefresh = true), "ownedAssets").single {
+        it["token"] == token
+      }
+    assertEquals("30000000", failed["observedAtoms"])
   }
 
   @Test

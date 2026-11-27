@@ -37,6 +37,8 @@ export type EarnIntent = {
   profileId: EarnProfileId;
   sourceAddress: string;
   sourceChainId: 143;
+  /** Additive v2 funding origins; legacy sourceChainId remains the Monad identity. */
+  fundingSources?: import("../wallet/storedSigner").FundingSourceKey[];
   confidentialAddress: string;
   /** Account 2 for new returns, including exits from historical investments. */
   returnConfidentialAddress?: string;

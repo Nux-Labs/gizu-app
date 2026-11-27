@@ -10,8 +10,30 @@ import { createEarnWalletService } from "@/services/wallet/earnWallets";
 import { parseEarnWithdrawals } from "@/domain/earn/withdrawal";
 import type { EarnIntent } from "@/domain/earn/types";
 
-import { distributionDepositSnapshot as distributed } from "../../support/depositDistribution";
+import {
+  distributionDepositSnapshot as distributed,
+  pooledDistributionDepositSnapshot,
+} from "../../support/depositDistribution";
 const addresses = Array.from({ length: 5 }, (_, i) => `0x${String(i + 5).repeat(40)}`);
+
+test("pooled funding keeps its gross budget and previews each private recipient once", () => {
+  const raw = pooledDistributionDepositSnapshot();
+  const result = parseDepositSnapshot(raw, { walletId: hoodIntent.walletId });
+  expect(result.review?.sourceBudgetAtoms).toBe("3000000");
+  expect(result.review?.sources).toHaveLength(1);
+  expect(result.review).toHaveProperty("fundingSources", raw.review.fundingSources);
+  expect(result.review?.sources[0]?.allocations).toHaveLength(2);
+  for (const mutation of ["token", "chain", "budget", "duplicate"]) {
+    const changed = pooledDistributionDepositSnapshot();
+    if (mutation === "token")
+      changed.review.fundingSources[1]!.token = changed.review.fundingSources[0]!.token;
+    if (mutation === "chain") changed.review.fundingSources[1]!.sourceChainId = 43114;
+    if (mutation === "budget") changed.review.fundingSources[1]!.budgetAtoms = "1000001";
+    if (mutation === "duplicate")
+      changed.review.fundingSources[1] = { ...changed.review.fundingSources[0]! };
+    expect(() => parseDepositSnapshot(changed, { walletId: hoodIntent.walletId })).toThrow();
+  }
+});
 
 test.each([
   [],

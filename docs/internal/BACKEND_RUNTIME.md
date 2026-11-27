@@ -5,6 +5,28 @@ This reference preserves implementation details and dated verification evidence.
 Historical probes do not establish current provider availability. The API is
 deployed on AWS at `https://api.gizu.io` with networking configured.
 
+## Funding network enablement
+
+`FUNDING_CHAIN_IDS` is an explicit, unique, nonempty comma-separated list from
+`143,8453,42161`. It defaults to `143`. A controlled feature environment can set
+`FUNDING_CHAIN_IDS=143,8453,42161` to expose Base and Arbitrum for funded testing.
+Native capability 2 declares implementation support; the deployed backend list
+controls new source availability. Old backends without the capability endpoint
+remain Monad-only.
+
+Enablement applies to new source planning, preparation and source quotes. It does
+not select the Swap/Earn destination and does not gate already-private spending.
+When disabling a source, retain submit, receipt, bundler, protected quote-binding
+and settlement/recovery handlers for already signed work. Do not roll back to a
+backend/native build that cannot decode the saved version-2 source journals.
+
+Deploy compatible backend recovery handlers before enabling clients/new starts.
+Complete funded source-USDC gas, first-use/delegated operation, settlement, refund
+and interrupted-recovery checks in the feature environment before general rollout.
+The implementation checks and public read-only feasibility evidence do not claim
+those transfers have occurred. See the [implementation verification](NATIVE_SIGNER_VERIFICATION.md#funding-expansion-verification-2026-11-26)
+and [public provider evidence](funding-expansion-public-checks.json).
+
 ## Pinned simulator release
 
 The installer pins [Foundry v1.8.3](https://github.com/foundry-rs/foundry/releases/tag/v1.8.3),
@@ -51,6 +73,27 @@ The default Robinhood lifecycle policy is `gizu-portal-zero-2026-10-12`, based o
 The two observed referrals are `aurora-jh500bnyo9` and `aurora-1u3j2qzclc`. This policy bounds observed service charges; it does not claim the collectors' ultimate beneficiaries were independently established. Configured Gizu/integrator fee and application charge are zero. Listed fee bps exclude other costs already reflected in route output. Exact executable fee breakdown, minimum output, gas cap and withdrawal reserve remain bound to native review.
 
 `EARN_AURORA_FEE_QUALIFICATION_JSON` is optional and overrides this default. The existing versioned schema remains supported; a rule's `referral` may be a string, null, or an explicit list of accepted strings. Unknown collectors/referrals, duplicate collectors and excessive fees remain rejected. The default does not qualify Ethereum routes; those require an explicit route policy.
+
+The existing `/v1/earn/native/private-funding/prepare` endpoint accepts either the unchanged Robinhood request or an explicit `{ "version": 2, "profileChainId": 1 | 4663, ... }` request. Profile 1 pins Ethereum USDC (`0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`) and its existing Aurora asset; `ETHEREUM_RPC_URL` supplies receipt reads. The saved recovery envelope selects the same profile on status/restart, so status requests keep their existing shape. The cashout endpoint remains separate and cannot select this profile.
+
+Ethereum balance-funded Earn uses the existing `payoutEthereum` fee rule. The [unfunded feasibility sample](funding-expansion-public-checks.json) observed `widget_collect.sputnik-dao.near` at 4 bps, but its sanitized record did not retain the referral. It therefore does not automatically qualify an Ethereum default. An operator must qualify the actual quote echo's referral and service fee limits. This deterministic example adds a 4-bps rule to the current registry while preserving its other routes; **use `referral: null` only after verifying a missing/null referral**, otherwise substitute the exact qualified referral. From `backend/`, generate the value for `EARN_AURORA_FEE_QUALIFICATION_JSON`:
+
+```sh
+node --experimental-transform-types --input-type=module -e '
+import { observedAuroraFeeQualification as policy } from "./src/adapters/earn/fee-policy.ts";
+console.log(JSON.stringify({ ...policy, version: "operator-qualified-ethereum-v1", routes: {
+  ...policy.routes,
+  payoutEthereum: {
+    collectors: [{ recipient: "widget_collect.sputnik-dao.near", maximumBps: 4 }],
+    maximumTotalBps: 4, referral: null, integratorFeeBps: 0,
+    applicationFeeAtoms: "0", qualificationReference: "operator-approved-ethereum-v1"
+  }
+}}));'
+```
+
+The existing `GET /v1/funding/capabilities` response advertises `earnPrivateFundingVersion: 2` and `earnPrivateFundingProfileChainIds: [1]` only when an explicit `payoutEthereum` rule (or the supported legacy global fee qualification) is configured. The native implementation flag alone does not enable this path. Older or unqualified backends retain the existing Monad-only Ethereum source-proof flow; Base and Arbitrum are never funded through that fallback. Native parent creation and each fresh public signature also check this qualification.
+
+The fixture in `backend/test/adapters/earn/confidential-private-funding.test.ts` exercises this rule with a null referral; it is deterministic contract coverage, not funded provider qualification. Fee bps do not replace the quoted minimum or cover all route deductions: the original gross private input remains the spending cap, and native review retains the exact net minimum. Unknown fees/referrals remain unavailable until qualified.
 
 Ordinary native settlement does not require `account/history`. Before each funding/return spend the native engine reads a private balance snapshot, saves it alongside the exact signed transaction, and verifies its origin receipt using the chain's execution policy. Settlement verifies the saved sealed quote, successful route status and authenticated balance delta within the quote's minimum/estimated output. Better execution above the estimate requires negotiated `operation-history-v1` evidence: one authenticated history record with exact route, input, owner, recipient and origin transaction bindings, whose credit equals the observed delta. Missing access or ambiguous evidence fails closed. Source funding and payouts proceed sequentially. The server seals credit evidence under `EARN_GATEWAY_RECOVERY_KEY`; only encrypted native journals retain the operation ownership graph. Both payout legs can reuse either attestation after the balance is spent and after a backend restart.
 
