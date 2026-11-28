@@ -57,7 +57,21 @@ includes consent/source/platform metadata, escapes CSV and neutralizes spreadshe
 formulas. It prints only the count, never email addresses. Failed exports are
 removed. Keep CSVs out of Git and public folders and delete them after use.
 Legacy records have empty consent fields: do not treat these as new marketing
-consent. This is an operator command, not a public export endpoint.
+consent.
+
+## Admin signup view
+
+When the API has an `ADMIN_TOKEN` (at least 32 characters, e.g. `openssl rand -hex 32`),
+it serves an operator-only view:
+
+- `https://api.gizu.io/admin/early-access`: table of all signups, newest first
+- `https://api.gizu.io/admin/early-access.csv`: same data as a formula-safe CSV download
+
+The browser asks for credentials via HTTP Basic auth: any username, the token as
+password. Without a token configured the routes do not exist (404). Responses are
+`no-store`, `noindex` and use a restrictive CSP. Store the token in Secrets Manager,
+reference it from the ECS task definition like the other runtime secrets, and rotate
+it by updating the secret and redeploying. Treat downloaded CSVs as above.
 
 ## Verification and rollout
 

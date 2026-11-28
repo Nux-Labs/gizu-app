@@ -44,6 +44,8 @@ const apiEnvSchema = z
     VAULT_CHAINS: vaultChainsEnvironment.optional(),
     CATALOG_CHAINS_JSON: jsonEnvironment(catalogChainsSchema).optional(),
     CATALOG_VAULTS_JSON: jsonEnvironment(catalogVaultsSchema).optional(),
+    // Enables the operator signup view at /admin/early-access; unset = route absent.
+    ADMIN_TOKEN: z.string().min(32).optional(),
     MORPHO_API_URL: z
       .url()
       .refine((value) => value.startsWith("https://"))

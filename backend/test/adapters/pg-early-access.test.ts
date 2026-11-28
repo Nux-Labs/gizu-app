@@ -44,6 +44,12 @@ test("PostgreSQL retains one signup with its original timestamp and merged prefe
     assert.ok(Number.isFinite(Date.parse(final.rows[0].preferences.consentRecordedAt)));
     assert.equal(final.rows[0].preferences.investmentRange, "Under $500");
     assert.equal(final.rows[0].created_at.toISOString(), before.rows[0].created_at.toISOString());
+    await new PgEarlyAccess(client).add({ email: "legacy@example.com" });
+    const listed = await new PgEarlyAccess(client).list();
+    assert.deepEqual(listed.map(({ email, platform, source, consent }) => ({ email, platform, source, consent })), [
+      { email: "legacy@example.com", platform: null, source: null, consent: false },
+      { email: "tester@example.com", platform: "both", source: "landing-footer", consent: true },
+    ]); // Same transaction timestamp, so the email tiebreak orders the rows.
   } finally {
     await app.close();
     await client.query("rollback");

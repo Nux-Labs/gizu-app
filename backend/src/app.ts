@@ -59,6 +59,7 @@ import { registerEarnPayoutRoutes } from "./http/routes/earn-payout.routes.ts";
 import { PgCache } from "./adapters/postgres/pg-cache.ts";
 import { PgEarlyAccess } from "./adapters/postgres/pg-early-access.ts";
 import { registerEarlyAccessRoutes } from "./http/routes/early-access.routes.ts";
+import { registerAdminEarlyAccessRoutes } from "./http/routes/admin-early-access.routes.ts";
 import { PgDatabaseProbe } from "./adapters/postgres/pg-database-probe.ts";
 import { createPgPool } from "./adapters/postgres/pg-pool.ts";
 import type { ApiEnv } from "./env.schema.ts";
@@ -118,7 +119,9 @@ export async function buildApp(secret: ApiEnv): Promise<FastifyInstance> {
   );
 
   registerHealthRoutes(app, healthController);
-  registerEarlyAccessRoutes(app, new PgEarlyAccess(pgPool), secret.NODE_ENV === "local");
+  const earlyAccess = new PgEarlyAccess(pgPool);
+  registerEarlyAccessRoutes(app, earlyAccess, secret.NODE_ENV === "local");
+  if (secret.ADMIN_TOKEN) registerAdminEarlyAccessRoutes(app, earlyAccess, secret.ADMIN_TOKEN);
   registerTokenRoutes(app, new OneInchTokenCatalog(secret.ONEINCH_API_KEY), new StockTokenDetails(secret.ONEINCH_API_KEY));
   registerSwapRoutes(app, {
     aurora: new AuroraIntents(secret.AURORA_API_KEY, diagnosticAuroraFetch((event) => app.log.info(event, "swap provider request"))),

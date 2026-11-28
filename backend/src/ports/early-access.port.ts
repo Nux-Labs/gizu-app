@@ -13,3 +13,17 @@ export type EarlyAccessSignup = {
 export interface EarlyAccess {
   add(signup: EarlyAccessSignup): Promise<void>;
 }
+
+export type EarlyAccessRecord = {
+  email: string;
+  createdAt: Date;
+  platform: string | null;
+  source: string | null;
+  consent: boolean;
+  consentRecordedAt: string | null;
+};
+
+/** Read-only operator view of signups; kept separate from the public write port. */
+export interface EarlyAccessReader {
+  list(): Promise<EarlyAccessRecord[]>;
+}
