@@ -1,12 +1,8 @@
 import { open, unlink } from 'node:fs/promises';
 import pg from 'pg';
+import { csvCell } from '../src/http/csv.ts';
 
-// Quote CSV fields and neutralize spreadsheet formulas in user-controlled values.
-export function csvCell(value) {
-  const text = String(value ?? '');
-  const safe = /^[\s]*[=+@-]/.test(text) || /^[\t\r\n]/.test(text) ? `'${text}` : text;
-  return `"${safe.replaceAll('"', '""')}"`;
-}
+export { csvCell };
 
 export async function exportSignups(client, output) {
   await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
